@@ -122,6 +122,20 @@ uv sync
 
 Try OmniVoice without coding:
 
+**Windows (venv)** — kích hoạt môi trường ảo trước, sau đó chạy demo:
+
+```bat
+venv\Scripts\activate
+omnivoice-demo --ip 127.0.0.1 --port 8001
+```
+
+**Linux / macOS (venv)**:
+
+```bash
+source venv/bin/activate
+omnivoice-demo --ip 127.0.0.1 --port 8001
+```
+
 - Launch the local web UI: `omnivoice-demo --ip 0.0.0.0 --port 8001`
 
 - Or try it directly on [HuggingFace Space](https://huggingface.co/spaces/k2-fsa/OmniVoice)

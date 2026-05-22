@@ -6,10 +6,15 @@ __pycache__/
 dist/
 build/
 .venv/
+venv/
 .env
 .DS_Store
 .pytest_cache/
 .mypy_cache/
+venv/
+.venv/
+__pycache__/
+*.pyc
 .ruff_cache/
 *.so
 /.cache*
