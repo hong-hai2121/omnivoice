@@ -33,3 +33,5 @@ examples/exp*
 .claude/
 *.wav
 *.jsonl
+/mp4/
+/mp4_no_audio/

@@ -61,6 +61,23 @@ class QueueHandler(logging.Handler):
 # ── LOGIC CLONE ──────────────────────────────────────────────────────────────
 SPLIT_CHARS = re.compile(r'(?<=[.!?。！？\n])\s*')
 
+# Ký tự thay bằng khoảng trắng (tránh ghép từ)
+_REPLACE_WITH_SPACE = re.compile(r'[—–\-]+')
+# Ký tự xóa hoàn toàn
+_REMOVE = re.compile(r'["""\'\'\'`~@#$%^&*_+=|\\<>\[\]{}]')
+# Dấu ba chấm → dấu chấm
+_ELLIPSIS = re.compile(r'…+|\.{2,}')
+# Nhiều khoảng trắng → 1
+_SPACES = re.compile(r'[ \t]+')
+
+
+def clean_text(text: str) -> str:
+    text = _ELLIPSIS.sub('.', text)
+    text = _REPLACE_WITH_SPACE.sub(' ', text)
+    text = _REMOVE.sub('', text)
+    text = _SPACES.sub(' ', text)
+    return text.strip()
+
 
 def split_chunks(text: str, max_len: int):
     parts = SPLIT_CHARS.split(text)
@@ -86,7 +103,7 @@ def run_tts(mode, voice_param, text_file, output, chunk_size, progress_var, stat
     from omnivoice.utils.common import get_best_device
 
     try:
-        full_text = Path(text_file).read_text(encoding="utf-8").strip()
+        full_text = clean_text(Path(text_file).read_text(encoding="utf-8"))
         chunks = split_chunks(full_text.lower(), chunk_size)
         total = len(chunks)
 
