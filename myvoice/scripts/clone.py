@@ -4,17 +4,23 @@ Chỉnh phần CẤU HÌNH rồi chạy: python clone.py
 """
 
 import re
+import sys
 import logging
 import numpy as np
 import torch
 import soundfile as sf
 from pathlib import Path
+
+# Gốc repo OmniVoice (chứa package omnivoice) — lùi 2 cấp từ myvoice/scripts/
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_REPO_ROOT))
 from omnivoice.models.omnivoice import OmniVoice
 from omnivoice.utils.common import get_best_device
 
 # ── CẤU HÌNH ────────────────────────────────────────────────────────────────
-REF_AUDIO  = "D:\\Python\\omnivoice\\OmniVoice\\voice\\ngochuyen.MP3"
-TEXT_FILE  = "D:\\Python\\omnivoice\\OmniVoice\\voice\\input.txt"
+BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
+REF_AUDIO  = str(BASE_DIR / "voice" / "ngochuyen.mp3")
+TEXT_FILE  = str(BASE_DIR / "kịch_bản" / "input.txt")
 OUTPUT     = str(Path.home() / "Downloads" / "output.wav")
 
 # Số ký tự tối đa mỗi đoạn (tách tại dấu câu gần nhất)

@@ -3,11 +3,16 @@ Giao diện desktop cho Voice Cloning — chạy: python clone_gui.py
 """
 
 import sys, os
-_VENV_PYTHON = os.path.join(os.path.dirname(__file__), "venv", "Scripts", "python.exe")
+# Gốc repo OmniVoice (chứa package omnivoice + venv) — lùi 2 cấp từ myvoice/scripts/
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+_VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
 if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
     import subprocess
     subprocess.run([_VENV_PYTHON] + sys.argv)
     sys.exit()
+# Để import được package omnivoice ở gốc repo dù chạy từ thư mục con
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import re
 import threading
@@ -26,7 +31,7 @@ except ImportError:
     _HAS_SV_TTK = False
 
 
-BASE_DIR   = Path(__file__).parent
+BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}

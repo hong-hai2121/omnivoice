@@ -14,8 +14,9 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-SRC_DIR = Path(__file__).parent / "mp4"
-DST_DIR = Path(__file__).parent / "mp4_no_audio"
+BASE_DIR = Path(__file__).resolve().parent.parent   # myvoice/
+SRC_DIR = BASE_DIR / "mp4"
+DST_DIR = BASE_DIR / "mp4_no_audio"
 
 # Scale target: 1080×1920 (portrait Full HD, 9:16)
 # scale=1080:-2  → width=1080, height tự điều chỉnh giữ tỷ lệ gốc (chia hết cho 2)
