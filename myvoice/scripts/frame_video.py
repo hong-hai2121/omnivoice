@@ -1,20 +1,23 @@
 """
-Lồng video vào bộ khung trang trí nhiều lớp trong Backbround/.
+Dựng video nền theo độ dài audio rồi lồng vào bộ khung trang trí nhiều lớp.
+
+Quy trình:
+  - Lấy thời lượng từ file audio (kịch_bản/*.wav) làm thời lượng đích.
+  - Ghép RANDOM các video trong videongang/ (lặp lại tới khi đủ thời lượng audio).
+  - Lồng video đã ghép vào khung (cắt bo góc theo khung1).
+  - Mux audio gốc (wav) vào, cắt video đúng bằng độ dài audio (-shortest).
 
 Thứ tự lớp (từ dưới lên trên):
   1. Khung0.png  -> nền dưới cùng
   2. video       -> nằm trong vùng khung của khung1 (cắt bo góc)
-  3. khung1.png  -> viền khung video
-  4. khung3.png  -> lớp trang trí trên cùng (chữ/hoa văn)
-
-Quy trình:
-  - Dò vùng trống + dựng mặt nạ bo góc từ khung1 (viền hồng).
-  - Thu/phóng video vừa vùng trong, cắt bo góc, rồi xếp các lớp lên.
-  - Giữ nguyên audio gốc của video.
+  3. khung1.png  -> viền khung video (bo góc)
+  4. khung2.png  -> lớp trang trí trên cùng (chữ/hoa văn)
 
 MODE:
   - "fit"  : hiện trọn video (có thể có dải nền trên/dưới) — không mất hình.
   - "fill" : phóng to + cắt cho video phủ kín vùng trong khung.
+
+Đầu ra:  kịch_bản/<tên_audio>_videodone.mp4
 
 Cách dùng:
     python frame_video.py
@@ -22,6 +25,7 @@ Cách dùng:
 
 import io
 import json
+import random
 import subprocess
 import sys
 import tempfile
@@ -34,13 +38,13 @@ from scipy import ndimage
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-BASE_DIR = Path(__file__).resolve().parent.parent   # myvoice/
-BG_DIR   = BASE_DIR / "Backbround"
-KHUNG0   = BG_DIR / "Khung0.png"     # nền dưới cùng
-KHUNG1   = BG_DIR / "khung1.png"     # viền khung video
-KHUNG3   = BG_DIR / "khung3.png"     # trang trí trên cùng
-VIDEO_IN = BASE_DIR / "videongang" / "一起来邂逅宫崎骏的夏天_哔哩哔哩_bilibili.mp4"
-OUTPUT   = VIDEO_IN.with_name(VIDEO_IN.stem + "_khung.mp4")
+BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
+BG_DIR     = BASE_DIR / "Backbround"
+KHUNG0     = BG_DIR / "Khung0.png"     # nền dưới cùng
+KHUNG1     = BG_DIR / "khung1.png"     # viền khung video (bo góc)
+KHUNG2     = BG_DIR / "khung2.png"     # trang trí trên cùng
+VIDEO_DIR  = BASE_DIR / "videongang"   # kho video ngang để ghép random
+SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
 MODE  = "fill"      # "fit" hoặc "fill"
 INSET = 6           # thu vào trong vài px để không đè lên viền
@@ -53,6 +57,34 @@ def get_duration(path: Path) -> float:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return float(json.loads(r.stdout)["format"]["duration"])
+
+
+def find_audio() -> Path:
+    """Tìm file wav trong kịch_bản/ (ưu tiên output.wav)."""
+    preferred = SCRIPT_DIR / "output.wav"
+    if preferred.exists():
+        return preferred
+    wavs = sorted(SCRIPT_DIR.glob("*.wav"))
+    if not wavs:
+        print(f"[LỖI] Không tìm thấy file .wav nào trong: {SCRIPT_DIR}")
+        sys.exit(1)
+    return wavs[0]
+
+
+def build_playlist(videos, durations, target):
+    """
+    Trả về (danh sách video theo thứ tự ngẫu nhiên có lặp, tổng thời lượng).
+    Xáo trộn rồi lấy lần lượt; hết thì xáo lại — đảm bảo tổng >= target.
+    """
+    seq, total, pool = [], 0.0, []
+    while total < target:
+        if not pool:
+            pool = videos[:]
+            random.shuffle(pool)
+        v = pool.pop()
+        seq.append(v)
+        total += durations[v]
+    return seq, total
 
 
 def pink_mask(png_path: Path):
@@ -113,24 +145,43 @@ def build_mask(pink, out_path: Path):
 
 
 def main():
-    for f in (KHUNG0, KHUNG1, KHUNG3, VIDEO_IN):
+    for f in (KHUNG0, KHUNG1, KHUNG2):
         if not f.exists():
             print(f"[LỖI] Không tìm thấy: {f}")
             sys.exit(1)
 
+    videos = sorted(VIDEO_DIR.glob("*.mp4"))
+    if not videos:
+        print(f"[LỖI] Không có file .mp4 nào trong: {VIDEO_DIR}")
+        sys.exit(1)
+
+    audio_file = find_audio()
+    audio_dur  = get_duration(audio_file)
+    output     = SCRIPT_DIR / (audio_file.stem + "_videodone.mp4")
+
+    # Khung + vùng trong + mặt nạ bo góc (lấy từ khung1)
     im, pink = pink_mask(KHUNG1)
     cw, ch = im.size                                 # khung = kích thước canvas
     ix, iy, iw, ih = detect_inner_box(im, pink)
-    dur = get_duration(VIDEO_IN)
-
     mask_path = Path(tempfile.gettempdir()) / "khung_mask.png"
     build_mask(pink, mask_path)
+
+    # Ghép random tới khi đủ thời lượng audio
+    durations = {v: get_duration(v) for v in videos}
+    seq, total = build_playlist(videos, durations, audio_dur)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
+                                     delete=False, encoding="utf-8") as f:
+        concat_list = Path(f.name)
+        for v in seq:
+            f.write(f"file '{v.as_posix()}'\n")
 
     print(f"Khung      : {cw}x{ch}")
     print(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
     print(f"Chế độ     : {MODE}")
-    print(f"Đầu vào    : {VIDEO_IN.name}")
-    print(f"Đầu ra     : {OUTPUT}\n")
+    print(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
+    print(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+    print(f"Đầu ra     : {output}\n")
 
     if MODE == "fill":
         # Phủ kín vùng trong rồi cắt thừa; đặt vào canvas tại (ix, iy)
@@ -145,8 +196,8 @@ def main():
             f"pad={cw}:{ch}:{ix}+({iw}-iw)/2:{iy}+({ih}-ih)/2:black[vid];"
         )
 
-    # Xếp lớp: nền khung0 -> video (cắt bo góc) -> viền khung1 -> trang trí khung3
-    # Inputs: 0=video 1=khung0 2=khung1 3=khung3 4=mask
+    # Xếp lớp: nền khung0 -> video (cắt bo góc) -> viền khung1 -> trang trí khung2
+    # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio
     filt = (
         place +
         f"[4:v]format=gray[mask];"
@@ -159,34 +210,37 @@ def main():
 
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(VIDEO_IN),
+        "-f", "concat", "-safe", "0", "-i", str(concat_list),
         "-loop", "1", "-i", str(KHUNG0),
         "-loop", "1", "-i", str(KHUNG1),
-        "-loop", "1", "-i", str(KHUNG3),
+        "-loop", "1", "-i", str(KHUNG2),
         "-loop", "1", "-i", str(mask_path),
+        "-i", str(audio_file),
         "-filter_complex", filt,
         "-map", "[out]",
-        "-map", "0:a?",
-        "-shortest",
+        "-map", "5:a",
+        "-t", f"{audio_dur:.6f}",           # cắt video đúng bằng độ dài audio
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
-        str(OUTPUT),
+        str(output),
     ]
 
     print("Đang dựng video...")
     result = subprocess.run(cmd, capture_output=True, text=True,
                             encoding="utf-8", errors="replace")
+    concat_list.unlink(missing_ok=True)
     mask_path.unlink(missing_ok=True)
     if result.returncode != 0:
         print(f"[LỖI ffmpeg]\n{result.stderr[-1000:]}", file=sys.stderr)
         sys.exit(1)
 
-    size_mb = OUTPUT.stat().st_size / 1024 / 1024
+    final_dur = get_duration(output)
+    size_mb   = output.stat().st_size / 1024 / 1024
     print(f"\nHoàn tất!")
-    print(f"  Thời lượng : {dur:.2f}s")
+    print(f"  Thời lượng : {final_dur:.2f}s")
     print(f"  Dung lượng : {size_mb:.1f} MB")
-    print(f"  Kết quả    : {OUTPUT}")
+    print(f"  Kết quả    : {output}")
 
 
 if __name__ == "__main__":

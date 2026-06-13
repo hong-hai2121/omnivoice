@@ -15,6 +15,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import re
+import hashlib
 import threading
 import logging
 import queue
@@ -24,17 +25,20 @@ import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 from pathlib import Path
 
-try:
-    import sv_ttk
-    _HAS_SV_TTK = True
-except ImportError:
-    _HAS_SV_TTK = False
-
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
+
+# ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
+UI = dict(
+    bg="#ffffff", card="#ffffff", border="#e4e7ec", field="#ffffff",
+    fg="#1f2430", muted="#7b828f",
+    accent="#e84393", accent_dk="#c92f7b", accent_soft="#f4c4dc",
+    track="#edeff2", hover="#f1f3f6", press="#e6e9ee",
+    log_bg="#fbfbfc", log_info="#475063", log_warn="#b07400", log_err="#d62828",
+)
 
 SCRIPT_DIR.mkdir(exist_ok=True)
 
@@ -60,7 +64,7 @@ log_queue = queue.Queue()
 
 class QueueHandler(logging.Handler):
     def emit(self, record):
-        log_queue.put(self.format(record))
+        log_queue.put((record.levelno, self.format(record)))
 
 
 # ── LOGIC CLONE ──────────────────────────────────────────────────────────────
@@ -135,7 +139,21 @@ def split_chunks(text: str, max_len: int):
     return chunks
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, pause_event):
+def unique_path(path: Path) -> Path:
+    """Nếu file đã tồn tại, trả về tên mới tăng số: output.wav → output1.wav → output2.wav…"""
+    if not path.exists():
+        return path
+    m = re.match(r"^(.*?)(\d*)$", path.stem)
+    base = m.group(1)
+    n = int(m.group(2)) + 1 if m.group(2) else 1
+    while True:
+        cand = path.with_name(f"{base}{n}{path.suffix}")
+        if not cand.exists():
+            return cand
+        n += 1
+
+
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -145,6 +163,23 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         output_path = Path(output)
         tmp_dir = output_path.parent / (output_path.stem + "_chunks")
         tmp_dir.mkdir(exist_ok=True)
+
+        # Chữ ký cấu hình (giọng/chế độ/văn bản). Nếu khác lần trước → xóa chunk
+        # cũ để tạo lại, tránh ghép nhầm giọng/đoạn của lần chạy trước.
+        sig = hashlib.sha1("|".join([mode, str(voice_param), *chunks])
+                           .encode("utf-8")).hexdigest()
+        sig_file = tmp_dir / "_signature.txt"
+        old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
+        if old_sig != sig:
+            stale = list(tmp_dir.glob("*.wav"))
+            for w in stale:
+                w.unlink()
+            if stale:
+                logging.warning(
+                    f"Cấu hình đổi (giọng/chế độ/văn bản) → xóa {len(stale)} "
+                    "chunk cũ, tạo lại từ đầu."
+                )
+            sig_file.write_text(sig, encoding="utf-8")
 
         logging.info(f"Tổng {total} đoạn — tải model...")
         status_var.set("Đang tải model...")
@@ -226,6 +261,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         progress_var.set(100)
         status_var.set(f"Xong!  →  {output}")
         logging.info(f"Đã lưu → {output}")
+        btn_preview.config(state="normal")   # cho phép nghe thử kết quả
 
     except Exception as e:
         logging.error(f"Lỗi: {e}")
@@ -242,15 +278,106 @@ class App(tk.Tk):
         super().__init__()
         self.title("OmniVoice TTS")
         self.resizable(True, True)
-        if _HAS_SV_TTK:
-            sv_ttk.set_theme("dark")
+        self.configure(bg=UI["bg"])
+        self._apply_theme()
         self._pause_event = threading.Event()
         self._pause_event.set()
+        self._playing = False
+        self._preview_after = None
+        self._last_output = None
         self._setup_logging()
         self._build_ui()
         self._poll_log()
         self.update_idletasks()
-        self.minsize(self.winfo_width(), self.winfo_height())
+        self.minsize(880, 600)
+        self._center(1000, 660)
+
+    def _apply_theme(self):
+        """Theme nền trắng, phẳng, hiện đại (dựa trên 'clam' để tùy biến màu)."""
+        st = ttk.Style(self)
+        try:
+            st.theme_use("clam")
+        except tk.TclError:
+            pass
+        C = UI
+        base_font  = ("Segoe UI", 10)
+        small_font = ("Segoe UI", 8)
+
+        st.configure(".", background=C["bg"], foreground=C["fg"],
+                     font=base_font, bordercolor=C["border"],
+                     focuscolor=C["bg"], troughcolor=C["track"])
+        st.configure("TFrame", background=C["bg"])
+        st.configure("TLabel", background=C["bg"], foreground=C["fg"])
+        st.configure("Header.TLabel", font=("Segoe UI", 19, "bold"),
+                     foreground=C["fg"])
+        st.configure("Brand.TLabel", font=("Segoe UI", 19, "bold"),
+                     foreground=C["accent"])
+        st.configure("Sub.TLabel", font=("Segoe UI", 9), foreground=C["muted"])
+        st.configure("Hint.TLabel", font=small_font, foreground=C["muted"])
+
+        # Khung "thẻ" có viền nhẹ
+        st.configure("TLabelframe", background=C["card"], bordercolor=C["border"],
+                     relief="solid", borderwidth=1, padding=10)
+        st.configure("TLabelframe.Label", background=C["card"],
+                     foreground=C["accent"], font=("Segoe UI", 10, "bold"))
+
+        # Nhập liệu
+        for w in ("TEntry", "TSpinbox"):
+            st.configure(w, fieldbackground=C["field"], background=C["field"],
+                         bordercolor=C["border"], lightcolor=C["border"],
+                         darkcolor=C["border"], insertcolor=C["fg"], padding=5)
+            st.map(w, bordercolor=[("focus", C["accent"])],
+                   lightcolor=[("focus", C["accent"])])
+        st.configure("TSpinbox", arrowcolor=C["muted"])
+
+        st.configure("TCombobox", fieldbackground=C["field"], background=C["field"],
+                     bordercolor=C["border"], lightcolor=C["border"],
+                     darkcolor=C["border"], arrowcolor=C["muted"], padding=5)
+        st.map("TCombobox",
+               fieldbackground=[("readonly", C["field"])],
+               foreground=[("readonly", C["fg"])],
+               selectbackground=[("readonly", C["field"])],
+               selectforeground=[("readonly", C["fg"])],
+               bordercolor=[("focus", C["accent"])],
+               lightcolor=[("focus", C["accent"])])
+        # Danh sách xổ xuống của combobox
+        self.option_add("*TCombobox*Listbox.background", C["field"])
+        self.option_add("*TCombobox*Listbox.foreground", C["fg"])
+        self.option_add("*TCombobox*Listbox.selectBackground", C["accent"])
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+        self.option_add("*TCombobox*Listbox.font", base_font)
+
+        # Radio
+        st.configure("TRadiobutton", background=C["card"], foreground=C["fg"])
+        st.map("TRadiobutton",
+               background=[("active", C["card"])],
+               foreground=[("active", C["accent"]), ("selected", C["accent"])],
+               indicatorcolor=[("selected", C["accent"]), ("!selected", "#cfd3da")])
+
+        # Nút phụ (xám nhạt) + nút chính (nhấn hồng)
+        st.configure("TButton", background="#eef0f3", foreground=C["fg"],
+                     bordercolor=C["border"], relief="flat",
+                     focusthickness=0, padding=(14, 8), font=base_font)
+        st.map("TButton",
+               background=[("active", C["hover"]), ("pressed", C["press"]),
+                           ("disabled", "#f4f5f7")],
+               foreground=[("disabled", "#aeb4be")])
+        st.configure("Accent.TButton", background=C["accent"], foreground="#ffffff",
+                     padding=(20, 9), font=("Segoe UI", 10, "bold"))
+        st.map("Accent.TButton",
+               background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
+                           ("disabled", C["accent_soft"])],
+               foreground=[("disabled", "#ffffff")])
+
+        # Thanh tiến trình
+        st.configure("TProgressbar", background=C["accent"],
+                     troughcolor=C["track"], bordercolor=C["track"],
+                     lightcolor=C["accent"], darkcolor=C["accent"], thickness=12)
+
+    def _center(self, w, h):
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        x, y = (sw - w) // 2, (sh - h) // 3
+        self.geometry(f"{w}x{h}+{max(x,0)}+{max(y,0)}")
 
     def _setup_logging(self):
         handler = QueueHandler()
@@ -259,12 +386,13 @@ class App(tk.Tk):
         logging.getLogger().setLevel(logging.INFO)
 
     def _build_ui(self):
-        root = ttk.Frame(self, padding=14)
+        C = UI
+        root = ttk.Frame(self, padding=18)
         root.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         # Cột trái (điều khiển) cố định, cột phải (log) mở rộng
-        root.columnconfigure(0, weight=0, minsize=480)
+        root.columnconfigure(0, weight=0, minsize=470)
         root.columnconfigure(1, weight=1)
         root.rowconfigure(0, weight=1)
 
@@ -272,46 +400,52 @@ class App(tk.Tk):
         # CỘT TRÁI — toàn bộ điều khiển
         # ════════════════════════════════════════════════
         left = ttk.Frame(root)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
         left.columnconfigure(0, weight=1)
 
         # ── Header ──
         hdr = ttk.Frame(left)
-        hdr.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        ttk.Label(hdr, text="OmniVoice TTS",
-                  font=("Segoe UI", 16, "bold")).pack(side="left")
-        ttk.Label(hdr, text="  Clone · Thiết kế · Mặc định",
-                  font=("Segoe UI", 9)).pack(side="left", pady=4)
+        hdr.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        title = ttk.Frame(hdr)
+        title.pack(anchor="w")
+        ttk.Label(title, text="🎧", style="Header.TLabel").pack(side="left", padx=(0, 8))
+        ttk.Label(title, text="OmniVoice", style="Header.TLabel").pack(side="left")
+        ttk.Label(title, text="TTS", style="Brand.TLabel").pack(side="left", padx=(6, 0))
+        ttk.Label(hdr, text="Chuyển văn bản thành giọng nói — Clone · Thiết kế · Mặc định",
+                  style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
 
         # ── Chế độ ──
-        sec_mode = ttk.LabelFrame(left, text="  Chế độ  ", padding=8)
-        sec_mode.grid(row=1, column=0, sticky="ew", pady=4)
+        sec_mode = ttk.LabelFrame(left, text="  Chế độ  ")
+        sec_mode.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         sec_mode.columnconfigure(0, weight=1)
 
         self.var_mode = tk.StringVar(value="clone")
         mode_row = ttk.Frame(sec_mode)
         mode_row.grid(row=0, column=0, sticky="w")
         for label, val, desc in [
-            ("🎙 Clone",   "clone",   "Nhái giọng mẫu"),
-            ("🎨 Thiết kế","design",  "Mô tả giọng"),
-            ("🔊 Mặc định","default", "Model tự chọn"),
+            ("🎙  Clone",   "clone",   "Nhái giọng mẫu"),
+            ("🎨  Thiết kế", "design",  "Mô tả giọng"),
+            ("🔊  Mặc định", "default", "Model tự chọn"),
         ]:
             f = ttk.Frame(mode_row)
-            f.pack(side="left", padx=8)
+            f.pack(side="left", padx=(0, 18))
             ttk.Radiobutton(f, text=label, variable=self.var_mode,
                             value=val, command=self._on_mode_change).pack(anchor="w")
-            ttk.Label(f, text=desc, font=("Segoe UI", 8)).pack(anchor="w", padx=18)
+            ttk.Label(f, text=desc, style="Hint.TLabel").pack(anchor="w", padx=22)
+
+        ttk.Separator(sec_mode, orient="horizontal").grid(
+            row=1, column=0, sticky="ew", pady=10)
 
         self.voice_frame = ttk.Frame(sec_mode)
-        self.voice_frame.grid(row=1, column=0, sticky="ew", pady=(8, 2))
+        self.voice_frame.grid(row=2, column=0, sticky="ew")
 
         # Clone
         self.frm_clone = ttk.Frame(self.voice_frame)
-        ttk.Label(self.frm_clone, text="Giọng mẫu:", width=12, anchor="e").pack(side="left", padx=(0, 6))
+        ttk.Label(self.frm_clone, text="Giọng mẫu:", width=11, anchor="w").pack(side="left", padx=(0, 6))
         voices = list_voice_files()
         self.var_ref = tk.StringVar(value=voices[0] if voices else "")
         self.cb_ref = ttk.Combobox(self.frm_clone, textvariable=self.var_ref,
-                                   values=voices, width=34, state="readonly")
+                                   values=voices, width=32, state="readonly")
         self.cb_ref.pack(side="left")
         ttk.Button(self.frm_clone, text="↻", width=3,
                    command=self._refresh_voices).pack(side="left", padx=(6, 0))
@@ -341,54 +475,58 @@ class App(tk.Tk):
         # Default
         self.frm_default = ttk.Frame(self.voice_frame)
         ttk.Label(self.frm_default, text="Model tự động chọn giọng phù hợp với văn bản",
-                  font=("Segoe UI", 9)).pack(side="left", padx=4)
+                  style="Sub.TLabel").pack(side="left", padx=2)
 
         self._on_mode_change()
 
         # ── Tệp ──
-        sec_file = ttk.LabelFrame(left, text="  Tệp  ", padding=8)
-        sec_file.grid(row=2, column=0, sticky="ew", pady=4)
+        sec_file = ttk.LabelFrame(left, text="  Tệp  ")
+        sec_file.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         sec_file.columnconfigure(1, weight=1)
 
         for r, (lbl, attr, default, is_save) in enumerate([
             ("Văn bản (.txt):", "var_txt", str(SCRIPT_DIR / "input.txt"),  False),
             ("Kết quả (.wav):", "var_out", str(SCRIPT_DIR / "output.wav"), True),
         ]):
-            ttk.Label(sec_file, text=lbl, width=15, anchor="e").grid(
-                row=r, column=0, sticky="e", padx=(0, 6), pady=3)
+            ttk.Label(sec_file, text=lbl, width=14, anchor="w").grid(
+                row=r, column=0, sticky="w", padx=(0, 8), pady=4)
             var = tk.StringVar(value=default)
             setattr(self, attr, var)
             ttk.Entry(sec_file, textvariable=var).grid(
-                row=r, column=1, sticky="ew", pady=3)
+                row=r, column=1, sticky="ew", pady=4)
             cmd = (lambda v=var: self._pick_save(v, [("WAV", "*.wav")])) if is_save \
                 else (lambda v=var: self._pick_file(v, [("Text", "*.txt")]))
-            ttk.Button(sec_file, text="Chọn…", width=7, command=cmd).grid(
-                row=r, column=2, padx=(6, 0), pady=3)
+            ttk.Button(sec_file, text="Chọn…", width=8, command=cmd).grid(
+                row=r, column=2, padx=(8, 0), pady=4)
 
         # ── Cài đặt ──
-        sec_opt = ttk.LabelFrame(left, text="  Cài đặt  ", padding=8)
-        sec_opt.grid(row=3, column=0, sticky="ew", pady=4)
+        sec_opt = ttk.LabelFrame(left, text="  Cài đặt  ")
+        sec_opt.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
         ttk.Label(sec_opt, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
         self.var_chunk = tk.IntVar(value=300)
         ttk.Spinbox(sec_opt, from_=100, to=1000, increment=50,
                     textvariable=self.var_chunk, width=7).pack(side="left")
-        ttk.Label(sec_opt, text="  nhỏ hơn = nhẹ RAM GPU hơn",
-                  font=("Segoe UI", 8)).pack(side="left", padx=6)
+        ttk.Label(sec_opt, text="nhỏ hơn = nhẹ RAM GPU hơn",
+                  style="Hint.TLabel").pack(side="left", padx=8)
 
         # ── Hành động ──
         act = ttk.Frame(left)
-        act.grid(row=4, column=0, sticky="ew", pady=(10, 4))
-        self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start, width=12)
-        self.btn_run.pack(side="left", padx=(0, 6))
+        act.grid(row=4, column=0, sticky="ew", pady=(2, 12))
+        self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
+                                  style="Accent.TButton")
+        self.btn_run.pack(side="left", padx=(0, 8))
         self.btn_pause = ttk.Button(act, text="⏸  Tạm dừng", command=self._toggle_pause,
-                                    width=14, state="disabled")
-        self.btn_pause.pack(side="left", padx=(0, 6))
+                                    state="disabled")
+        self.btn_pause.pack(side="left", padx=(0, 8))
+        self.btn_preview = ttk.Button(act, text="🔊  Nghe thử", command=self._toggle_preview,
+                                      state="disabled")
+        self.btn_preview.pack(side="left", padx=(0, 8))
         ttk.Button(act, text="🗑  Xóa chunks", command=self._clear_chunks).pack(side="left")
 
         # ── Tiến trình ──
         prog_frame = ttk.Frame(left)
-        prog_frame.grid(row=5, column=0, sticky="ew", pady=(0, 4))
+        prog_frame.grid(row=5, column=0, sticky="ew")
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -396,20 +534,26 @@ class App(tk.Tk):
         self.progress_bar.grid(row=0, column=0, sticky="ew")
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(prog_frame, textvariable=self.status,
-                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(2, 0))
+                  style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         # ════════════════════════════════════════════════
         # CỘT PHẢI — Log (mở rộng theo chiều ngang)
         # ════════════════════════════════════════════════
-        log_frame = ttk.LabelFrame(root, text="  Log  ", padding=(8, 6))
+        log_frame = ttk.LabelFrame(root, text="  Nhật ký  ")
         log_frame.grid(row=0, column=1, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        self.log_box = scrolledtext.ScrolledText(log_frame, width=60, height=30,
-                                                  state="disabled",
-                                                  font=("Consolas", 9),
-                                                  relief="flat", borderwidth=0)
+        self.log_box = scrolledtext.ScrolledText(
+            log_frame, width=58, height=30, state="disabled",
+            font=("Consolas", 9), relief="flat", borderwidth=0,
+            background=C["log_bg"], foreground=C["log_info"],
+            insertbackground=C["fg"], selectbackground=C["accent_soft"],
+            padx=10, pady=8, wrap="word",
+        )
         self.log_box.grid(row=0, column=0, sticky="nsew")
+        self.log_box.tag_config("info", foreground=C["log_info"])
+        self.log_box.tag_config("warn", foreground=C["log_warn"])
+        self.log_box.tag_config("err", foreground=C["log_err"])
 
     def _build_design_dropdowns(self):
         for w in self.design_attr_frame.winfo_children():
@@ -518,6 +662,7 @@ class App(tk.Tk):
                                "Tiến trình sẽ bắt đầu lại từ đầu!"):
             for f in files:
                 f.unlink()
+            (tmp_dir / "_signature.txt").unlink(missing_ok=True)
             logging.info(f"Đã xóa {len(files)} chunks trong {tmp_dir}")
             self.status.set(f"Đã xóa {len(files)} chunks.")
 
@@ -567,6 +712,16 @@ class App(tk.Tk):
         preview_path.write_text("\n\n".join(chunks), encoding="utf-8")
         logging.info(f"Chia {len(chunks)} đoạn (chunk={self.var_chunk.get()} ký tự) → {preview_path.name}")
 
+        # Nếu file kết quả đã tồn tại → tự đặt tên mới (output.wav → output1.wav …)
+        out_path = unique_path(Path(self.var_out.get()))
+        if str(out_path) != self.var_out.get():
+            logging.info(f"File kết quả đã có → dùng tên mới: {out_path.name}")
+            self.var_out.set(str(out_path))
+            self.status.set(f"Kết quả sẽ lưu thành: {out_path.name}")
+        self._last_output = self.var_out.get()
+
+        self._stop_preview()                         # dừng audio đang nghe (nếu có)
+        self.btn_preview.config(state="disabled")    # khóa tới khi tạo xong lần này
         self._pause_event = threading.Event()
         self._pause_event.set()
         self.btn_run.config(state="disabled")
@@ -577,7 +732,7 @@ class App(tk.Tk):
             target=run_tts,
             args=(mode, voice_param, chunks, self.var_out.get(),
                   self.progress, self.status,
-                  self.btn_run, self.btn_pause, self._pause_event),
+                  self.btn_run, self.btn_pause, self.btn_preview, self._pause_event),
             daemon=True,
         ).start()
 
@@ -589,11 +744,60 @@ class App(tk.Tk):
             self._pause_event.set()
             self.btn_pause.config(text="⏸  Tạm dừng")
 
+    # ── NGHE THỬ KẾT QUẢ ──────────────────────────────────────────────────────
+    def _toggle_preview(self):
+        if self._playing:
+            self._stop_preview()
+        else:
+            self._play_preview()
+
+    def _play_preview(self):
+        path = Path(self._last_output or self.var_out.get())
+        if not path.exists():
+            messagebox.showinfo("Chưa có audio",
+                                "Chưa có file kết quả để nghe. Hãy chạy tạo giọng trước.")
+            return
+        try:
+            import winsound
+            winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
+        except Exception:
+            # Không phát nội bộ được → mở bằng trình phát mặc định của hệ thống
+            try:
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            except Exception as e:
+                messagebox.showerror("Lỗi phát audio", str(e))
+            return
+        self._playing = True
+        self.btn_preview.config(text="⏹  Dừng nghe")
+        # Tự nhả nút khi nghe hết (winsound không báo kết thúc)
+        try:
+            dur = sf.info(str(path)).duration
+            self._preview_after = self.after(int(dur * 1000) + 300, self._stop_preview)
+        except Exception:
+            self._preview_after = None
+
+    def _stop_preview(self):
+        try:
+            import winsound
+            winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+        if self._preview_after is not None:
+            try:
+                self.after_cancel(self._preview_after)
+            except Exception:
+                pass
+            self._preview_after = None
+        self._playing = False
+        self.btn_preview.config(text="🔊  Nghe thử")
+
     def _poll_log(self):
         while not log_queue.empty():
-            msg = log_queue.get_nowait()
+            levelno, msg = log_queue.get_nowait()
+            tag = ("err" if levelno >= logging.ERROR
+                   else "warn" if levelno >= logging.WARNING else "info")
             self.log_box.config(state="normal")
-            self.log_box.insert("end", msg + "\n")
+            self.log_box.insert("end", msg + "\n", tag)
             self.log_box.see("end")
             self.log_box.config(state="disabled")
         self.after(200, self._poll_log)
