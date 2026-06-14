@@ -46,14 +46,15 @@ INPUT  = "D:/Python/omnivoice/OmniVoice/myvoice/videongang/一起来邂逅宫崎
 OUTPUT = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_output.mp4"
 
 # — Render theo từng clip: TRỐNG → ĐẦY → TAN —
-SPAWN_RATE       = 1.5       # số bong bóng sinh ra mỗi giây (đầu clip trống, sinh dần cho đầy)
-MAX_BUBBLES      = 11        # số bong bóng tối đa hiện cùng lúc (mật độ; nhỏ = thưa)
+CLIP_SECONDS     = 30.0      # độ dài video kết quả (giây); None = lấy trọn độ dài video gốc
+SPAWN_RATE       = 2.2       # số bong bóng sinh ra mỗi giây (đầu clip trống, sinh dần cho đầy)
+MAX_BUBBLES      = 16        # số bong bóng tối đa hiện cùng lúc (mật độ; nhỏ = thưa)
 FADE_OUT_SEC     = 3.0       # vài giây CUỐI clip: cả lớp bong bóng mờ tan dần
 COLOR_ROT_SPEED  = 0.05      # tốc độ xoay màu cầu vồng (vòng/giây)
 
 # — Đường đi: bay THẲNG theo đường xéo trái-dưới → phải-trên (không ziczac) —
-SLOW_SPEED       = 40.0      # tốc độ bay (dọc) của loại CHẬM (px/giây)
-FAST_SPEED       = 95.0      # tốc độ bay (dọc) của loại NHANH (px/giây)
+SLOW_SPEED       = 100.0      # tốc độ bay (dọc) của loại CHẬM (px/giây) — +20%
+FAST_SPEED       = 228.0     # tốc độ bay (dọc) của loại NHANH (px/giây) — +20%
 FAST_FRAC        = 0.40      # tỉ lệ bong bóng loại NHANH (còn lại là chậm)
 DRIFT_RATIO      = 0.55      # độ "xéo": tỉ lệ ngang/dọc (>0 = lệch sang PHẢI khi bay lên)
 
