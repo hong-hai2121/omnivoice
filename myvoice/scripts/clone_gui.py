@@ -34,7 +34,9 @@ BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
+FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
+STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
 UI = dict(
@@ -62,6 +64,30 @@ def list_voice_files():
     if not VOICE_DIR.exists():
         return []
     return sorted(f.name for f in VOICE_DIR.iterdir() if f.suffix in AUDIO_EXTS)
+
+
+def strip_star(label: str) -> str:
+    """Bỏ tiền tố ★ để lấy lại tên file thật từ chuỗi hiển thị trong combobox."""
+    return label[len(STAR):] if label.startswith(STAR) else label
+
+
+def load_favorites() -> set:
+    try:
+        import json
+        return set(json.loads(FAV_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def save_favorites(favorites: set):
+    import json
+    try:
+        FAV_FILE.write_text(
+            json.dumps(sorted(favorites), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logging.warning(f"Không lưu được danh sách yêu thích: {e}")
 
 
 # ── QUEUE ĐỂ TRUYỀN LOG TỪ THREAD VỀ GUI ───────────────────────────────────
@@ -316,6 +342,7 @@ class App(tk.Tk):
         self._playing = False
         self._preview_after = None
         self._last_output = None
+        self._favorites = load_favorites()
         self._setup_logging()
         self._build_ui()
         self._poll_log()
@@ -480,13 +507,17 @@ class App(tk.Tk):
         # Clone
         self.frm_clone = ttk.Frame(self.voice_frame)
         ttk.Label(self.frm_clone, text="Giọng mẫu:", width=11, anchor="w").pack(side="left", padx=(0, 6))
-        voices = list_voice_files()
-        self.var_ref = tk.StringVar(value=voices[0] if voices else "")
+        self.var_ref = tk.StringVar()
         self.cb_ref = ttk.Combobox(self.frm_clone, textvariable=self.var_ref,
-                                   values=voices, width=32, state="readonly")
+                                   values=[], width=30, state="readonly")
         self.cb_ref.pack(side="left")
+        self.cb_ref.bind("<<ComboboxSelected>>", lambda e: self._update_fav_button())
+        self.btn_fav = ttk.Button(self.frm_clone, text="☆", width=3,
+                                  command=self._toggle_favorite)
+        self.btn_fav.pack(side="left", padx=(6, 0))
         ttk.Button(self.frm_clone, text="↻", width=3,
                    command=self._refresh_voices).pack(side="left", padx=(6, 0))
+        self._reload_voice_combo()   # nạp danh sách (yêu thích ★ lên đầu) + chọn mục đầu
 
         # Design
         self.frm_design = ttk.Frame(self.voice_frame)
@@ -688,12 +719,51 @@ class App(tk.Tk):
          "design":  self.frm_design,
          "default": self.frm_default}[self.var_mode.get()].pack(anchor="w")
 
+    def _current_voice(self) -> str:
+        """Tên file giọng mẫu thật đang chọn (đã bỏ tiền tố ★)."""
+        return strip_star(self.var_ref.get())
+
+    def _reload_voice_combo(self, keep: str | None = None):
+        """Dựng lại danh sách giọng: yêu thích (★) lên đầu, còn lại theo a-z.
+
+        keep = tên file thật muốn giữ chọn; mặc định giữ mục đang chọn.
+        """
+        files = list_voice_files()
+        favs = [f for f in files if f in self._favorites]
+        rest = [f for f in files if f not in self._favorites]
+        ordered = favs + rest
+        display = [(STAR + f if f in self._favorites else f) for f in ordered]
+        self.cb_ref["values"] = display
+
+        want = keep if keep is not None else self._current_voice()
+        if want in ordered:
+            self.var_ref.set(STAR + want if want in self._favorites else want)
+        elif display:
+            self.var_ref.set(display[0])
+        else:
+            self.var_ref.set("")
+        self._update_fav_button()
+
+    def _update_fav_button(self):
+        fav = self._current_voice() in self._favorites
+        self.btn_fav.config(text="★" if fav else "☆")
+
+    def _toggle_favorite(self):
+        name = self._current_voice()
+        if not name:
+            return
+        if name in self._favorites:
+            self._favorites.discard(name)
+            logging.info(f"☆ Bỏ yêu thích: {name}")
+        else:
+            self._favorites.add(name)
+            logging.info(f"★ Đã thêm yêu thích: {name}")
+        save_favorites(self._favorites)
+        self._reload_voice_combo(keep=name)
+
     def _refresh_voices(self):
-        voices = list_voice_files()
-        self.cb_ref["values"] = voices
-        if voices and self.var_ref.get() not in voices:
-            self.var_ref.set(voices[0])
-        logging.info(f"Tìm thấy {len(voices)} file giọng trong {VOICE_DIR}")
+        self._reload_voice_combo()
+        logging.info(f"Tìm thấy {len(list_voice_files())} file giọng trong {VOICE_DIR}")
 
     def _clear_output(self):
         """Xóa toàn bộ trong thư mục output (wav, video, và các thư mục chunks)."""
@@ -739,7 +809,7 @@ class App(tk.Tk):
     def _start(self):
         mode = self.var_mode.get()
         if mode == "clone":
-            voice_name = self.var_ref.get()
+            voice_name = self._current_voice()
             if not voice_name:
                 messagebox.showwarning("Thiếu giọng mẫu",
                                        f"Không tìm thấy file audio trong:\n{VOICE_DIR}")

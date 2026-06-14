@@ -30,10 +30,13 @@ examples/exp*
 *.wav
 *.jsonl
 *.mp4
+*.mov
+*.mp3
 
 # Dữ liệu nặng của script tự viết (myvoice/) — không đưa lên GitHub
 /myvoice/mp4/
 /myvoice/mp4_no_audio/
 /myvoice/videodoc/
 /myvoice/videongang/
+/myvoice/Anh/
 /myvoice/kịch_bản/output_chunks/
