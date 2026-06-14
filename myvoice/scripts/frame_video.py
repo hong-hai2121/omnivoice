@@ -35,8 +35,12 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# Khi chạy độc lập cần ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt).
+# Guard hasattr vì khi import vào GUI (pythonw/no-console) stdout có thể không có .buffer.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 BG_DIR     = BASE_DIR / "Backbround"
@@ -48,6 +52,9 @@ SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
 MODE  = "fill"      # "fit" hoặc "fill"
 INSET = 6           # thu vào trong vài px để không đè lên viền
+ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa khít, 1.25 = 125%)
+OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
+                    # luồn xuống dưới viền khung1 — khử viền đen quanh video
 
 
 def get_duration(path: Path) -> float:
@@ -60,15 +67,17 @@ def get_duration(path: Path) -> float:
 
 
 def find_audio() -> Path:
-    """Tìm file wav trong kịch_bản/ (ưu tiên output.wav)."""
-    preferred = SCRIPT_DIR / "output.wav"
-    if preferred.exists():
-        return preferred
-    wavs = sorted(SCRIPT_DIR.glob("*.wav"))
-    if not wavs:
-        print(f"[LỖI] Không tìm thấy file .wav nào trong: {SCRIPT_DIR}")
-        sys.exit(1)
-    return wavs[0]
+    """Tìm file wav (ưu tiên output.wav) trong kịch_bản/output/ rồi tới kịch_bản/."""
+    search_dirs = [SCRIPT_DIR / "output", SCRIPT_DIR]
+    for d in search_dirs:
+        if (d / "output.wav").exists():
+            return d / "output.wav"
+    for d in search_dirs:
+        wavs = sorted(d.glob("*.wav"))
+        if wavs:
+            return wavs[0]
+    print(f"[LỖI] Không tìm thấy file .wav nào trong: {SCRIPT_DIR/'output'} hoặc {SCRIPT_DIR}")
+    sys.exit(1)
 
 
 def build_playlist(videos, durations, target):
@@ -144,20 +153,27 @@ def build_mask(pink, out_path: Path):
     Image.fromarray(np.where(show, 255, 0).astype("uint8"), "L").save(out_path)
 
 
-def main():
+def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
+    """
+    Dựng video nền + khung từ một file audio cụ thể.
+
+    Trả về đường dẫn video kết quả. Ném RuntimeError nếu thiếu tài nguyên hoặc
+    ffmpeg lỗi (để bên gọi — ví dụ GUI — bắt và hiển thị). `log` là hàm nhận
+    chuỗi để ghi tiến trình (mặc định print; GUI truyền logging.info).
+    """
     for f in (KHUNG0, KHUNG1, KHUNG2):
         if not f.exists():
-            print(f"[LỖI] Không tìm thấy: {f}")
-            sys.exit(1)
+            raise RuntimeError(f"Không tìm thấy khung: {f}")
 
     videos = sorted(VIDEO_DIR.glob("*.mp4"))
     if not videos:
-        print(f"[LỖI] Không có file .mp4 nào trong: {VIDEO_DIR}")
-        sys.exit(1)
+        raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
 
-    audio_file = find_audio()
+    audio_file = Path(audio_file)
+    if not audio_file.exists():
+        raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur  = get_duration(audio_file)
-    output     = SCRIPT_DIR / (audio_file.stem + "_videodone.mp4")
+    output     = audio_file.parent / (audio_file.stem + "_videodone.mp4")
 
     # Khung + vùng trong + mặt nạ bo góc (lấy từ khung1)
     im, pink = pink_mask(KHUNG1)
@@ -176,18 +192,26 @@ def main():
         for v in seq:
             f.write(f"file '{v.as_posix()}'\n")
 
-    print(f"Khung      : {cw}x{ch}")
-    print(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
-    print(f"Chế độ     : {MODE}")
-    print(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
-    print(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
-    print(f"Đầu ra     : {output}\n")
+    log(f"Khung      : {cw}x{ch}")
+    log(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
+    log(f"Chế độ     : {mode}  (zoom {ZOOM:g}x, nới {OVERSCAN}px)")
+    log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
+    log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+    log(f"Đầu ra     : {output}")
 
-    if MODE == "fill":
-        # Phủ kín vùng trong rồi cắt thừa; đặt vào canvas tại (ix, iy)
+    if mode == "fill":
+        # Nới vùng đặt video ra ngoài OVERSCAN px mỗi cạnh (theo px của khung) để
+        # video luồn xuống dưới viền khung1 → khử viền đen. Đây là "phóng to so với
+        # khung", khác hẳn ZOOM (phóng to nội dung video bên trong vùng đó).
+        bx = max(0, ix - OVERSCAN)
+        by = max(0, iy - OVERSCAN)
+        bw = min(iw + 2 * OVERSCAN, cw - bx)
+        bh = min(ih + 2 * OVERSCAN, ch - by)
+        # Phủ kín vùng (đã nới); ZOOM>1 thì phóng nội dung rồi cắt giữa về đúng vùng.
+        zw, zh = round(bw * ZOOM), round(bh * ZOOM)
         place = (
-            f"[0:v]scale={iw}:{ih}:force_original_aspect_ratio=increase,"
-            f"crop={iw}:{ih},pad={cw}:{ch}:{ix}:{iy}:black[vid];"
+            f"[0:v]scale={zw}:{zh}:force_original_aspect_ratio=increase,"
+            f"crop={bw}:{bh},pad={cw}:{ch}:{bx}:{by}:black[vid];"
         )
     else:  # fit
         # Thu vừa khít (giữ trọn hình), căn giữa trong vùng khung
@@ -226,21 +250,27 @@ def main():
         str(output),
     ]
 
-    print("Đang dựng video...")
+    log("Đang dựng video...")
     result = subprocess.run(cmd, capture_output=True, text=True,
                             encoding="utf-8", errors="replace")
     concat_list.unlink(missing_ok=True)
     mask_path.unlink(missing_ok=True)
     if result.returncode != 0:
-        print(f"[LỖI ffmpeg]\n{result.stderr[-1000:]}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"ffmpeg lỗi:\n{result.stderr[-1000:]}")
 
     final_dur = get_duration(output)
     size_mb   = output.stat().st_size / 1024 / 1024
-    print(f"\nHoàn tất!")
-    print(f"  Thời lượng : {final_dur:.2f}s")
-    print(f"  Dung lượng : {size_mb:.1f} MB")
-    print(f"  Kết quả    : {output}")
+    log(f"Hoàn tất! Thời lượng {final_dur:.2f}s — {size_mb:.1f} MB — {output}")
+    return output
+
+
+def main():
+    audio_file = find_audio()
+    try:
+        build_video(audio_file)
+    except Exception as e:
+        print(f"[LỖI] {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

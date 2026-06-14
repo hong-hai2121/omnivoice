@@ -13,6 +13,10 @@ if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.a
 # Để import được package omnivoice ở gốc repo dù chạy từ thư mục con
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+# Để import được frame_video.py nằm cùng thư mục scripts/
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 import re
 import hashlib
@@ -29,6 +33,7 @@ from pathlib import Path
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
+OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
@@ -41,6 +46,7 @@ UI = dict(
 )
 
 SCRIPT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Tự chuyển input.txt cũ từ voice/ sang kịch_bản/ nếu chưa có
 _old_input = VOICE_DIR / "input.txt"
@@ -139,6 +145,18 @@ def split_chunks(text: str, max_len: int):
     return chunks
 
 
+def chunks_dir_for(output_path: Path) -> Path:
+    """Thư mục chunks dùng chung cho mọi bản đánh số (output, output1, output2…).
+
+    Bỏ phần số đuôi của tên file để các lần chạy ghi vào CÙNG một thư mục
+    (output_chunks), tránh tạo output1_chunks, output2_chunks… mỗi lần và
+    giữ được khả năng tái dùng/“resume” chunk đã tạo.
+    """
+    stem = output_path.stem
+    base = re.match(r"^(.*?)(\d*)$", stem).group(1) or stem
+    return output_path.parent / (base + "_chunks")
+
+
 def unique_path(path: Path) -> Path:
     """Nếu file đã tồn tại, trả về tên mới tăng số: output.wav → output1.wav → output2.wav…"""
     if not path.exists():
@@ -153,7 +171,7 @@ def unique_path(path: Path) -> Path:
         n += 1
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -161,8 +179,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
     try:
         total = len(chunks)
         output_path = Path(output)
-        tmp_dir = output_path.parent / (output_path.stem + "_chunks")
-        tmp_dir.mkdir(exist_ok=True)
+        tmp_dir = chunks_dir_for(output_path)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
 
         # Chữ ký cấu hình (giọng/chế độ/văn bản). Nếu khác lần trước → xóa chunk
         # cũ để tạo lại, tránh ghép nhầm giọng/đoạn của lần chạy trước.
@@ -263,6 +281,19 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         logging.info(f"Đã lưu → {output}")
         btn_preview.config(state="normal")   # cho phép nghe thử kết quả
 
+        # ── TỰ DỰNG VIDEO TỪ AUDIO VỪA TẠO (nếu bật) ───────────────────────
+        if make_video:
+            status_var.set("Đang dựng video...")
+            logging.info("Bắt đầu dựng video từ audio vừa tạo...")
+            try:
+                from frame_video import build_video
+                video_out = build_video(Path(output), log=logging.info)
+                status_var.set(f"Xong! Video → {video_out}")
+                logging.info(f"Đã tạo video → {video_out}")
+            except Exception as e:
+                logging.error(f"Lỗi dựng video: {e}")
+                status_var.set(f"Audio xong, lỗi dựng video: {e}")
+
     except Exception as e:
         logging.error(f"Lỗi: {e}")
         status_var.set(f"Lỗi: {e}")
@@ -350,6 +381,13 @@ class App(tk.Tk):
         # Radio
         st.configure("TRadiobutton", background=C["card"], foreground=C["fg"])
         st.map("TRadiobutton",
+               background=[("active", C["card"])],
+               foreground=[("active", C["accent"]), ("selected", C["accent"])],
+               indicatorcolor=[("selected", C["accent"]), ("!selected", "#cfd3da")])
+
+        # Checkbox
+        st.configure("TCheckbutton", background=C["card"], foreground=C["fg"])
+        st.map("TCheckbutton",
                background=[("active", C["card"])],
                foreground=[("active", C["accent"]), ("selected", C["accent"])],
                indicatorcolor=[("selected", C["accent"]), ("!selected", "#cfd3da")])
@@ -486,7 +524,7 @@ class App(tk.Tk):
 
         for r, (lbl, attr, default, is_save) in enumerate([
             ("Văn bản (.txt):", "var_txt", str(SCRIPT_DIR / "input.txt"),  False),
-            ("Kết quả (.wav):", "var_out", str(SCRIPT_DIR / "output.wav"), True),
+            ("Kết quả (.wav):", "var_out", str(OUTPUT_DIR / "output.wav"), True),
         ]):
             ttk.Label(sec_file, text=lbl, width=14, anchor="w").grid(
                 row=r, column=0, sticky="w", padx=(0, 8), pady=4)
@@ -503,11 +541,21 @@ class App(tk.Tk):
         sec_opt = ttk.LabelFrame(left, text="  Cài đặt  ")
         sec_opt.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
-        ttk.Label(sec_opt, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
+        chunk_row = ttk.Frame(sec_opt)
+        chunk_row.pack(anchor="w", fill="x")
+        ttk.Label(chunk_row, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
         self.var_chunk = tk.IntVar(value=300)
-        ttk.Spinbox(sec_opt, from_=100, to=1000, increment=50,
+        ttk.Spinbox(chunk_row, from_=100, to=1000, increment=50,
                     textvariable=self.var_chunk, width=7).pack(side="left")
-        ttk.Label(sec_opt, text="nhỏ hơn = nhẹ RAM GPU hơn",
+        ttk.Label(chunk_row, text="nhỏ hơn = nhẹ RAM GPU hơn",
+                  style="Hint.TLabel").pack(side="left", padx=8)
+
+        video_row = ttk.Frame(sec_opt)
+        video_row.pack(anchor="w", fill="x", pady=(8, 0))
+        self.var_make_video = tk.BooleanVar(value=True)
+        ttk.Checkbutton(video_row, text="🎬  Tự dựng video sau khi tạo audio",
+                        variable=self.var_make_video).pack(side="left")
+        ttk.Label(video_row, text="(ghép video nền + khung)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         # ── Hành động ──
@@ -522,7 +570,7 @@ class App(tk.Tk):
         self.btn_preview = ttk.Button(act, text="🔊  Nghe thử", command=self._toggle_preview,
                                       state="disabled")
         self.btn_preview.pack(side="left", padx=(0, 8))
-        ttk.Button(act, text="🗑  Xóa chunks", command=self._clear_chunks).pack(side="left")
+        ttk.Button(act, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
 
         # ── Tiến trình ──
         prog_frame = ttk.Frame(left)
@@ -647,24 +695,36 @@ class App(tk.Tk):
             self.var_ref.set(voices[0])
         logging.info(f"Tìm thấy {len(voices)} file giọng trong {VOICE_DIR}")
 
-    def _clear_chunks(self):
-        output_path = Path(self.var_out.get())
-        tmp_dir = output_path.parent / (output_path.stem + "_chunks")
-        if not tmp_dir.exists():
-            messagebox.showinfo("Thông báo", "Không tìm thấy thư mục chunks.")
+    def _clear_output(self):
+        """Xóa toàn bộ trong thư mục output (wav, video, và các thư mục chunks)."""
+        import shutil
+        if not OUTPUT_DIR.exists():
+            messagebox.showinfo("Thông báo", "Chưa có thư mục output.")
             return
-        files = list(tmp_dir.glob("*.wav"))
-        if not files:
-            messagebox.showinfo("Thông báo", "Thư mục chunks đã trống.")
+        items = list(OUTPUT_DIR.iterdir())
+        if not items:
+            messagebox.showinfo("Thông báo", "Thư mục output đã trống.")
             return
-        if messagebox.askyesno("Xác nhận",
-                               f"Xóa {len(files)} file chunks trong:\n{tmp_dir}\n\n"
-                               "Tiến trình sẽ bắt đầu lại từ đầu!"):
-            for f in files:
-                f.unlink()
-            (tmp_dir / "_signature.txt").unlink(missing_ok=True)
-            logging.info(f"Đã xóa {len(files)} chunks trong {tmp_dir}")
-            self.status.set(f"Đã xóa {len(files)} chunks.")
+        n_files = sum(1 for p in items if p.is_file())
+        n_dirs  = sum(1 for p in items if p.is_dir())
+        if not messagebox.askyesno(
+                "Xác nhận",
+                f"Xóa TẤT CẢ trong:\n{OUTPUT_DIR}\n\n"
+                f"({n_files} file + {n_dirs} thư mục — gồm wav, video, chunks)\n\n"
+                "Không thể hoàn tác!"):
+            return
+        self._stop_preview()   # nhả file đang nghe (nếu có) để xóa được
+        for p in items:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+        # Đặt lại tên kết quả về output.wav để đánh số lại từ đầu
+        self.var_out.set(str(OUTPUT_DIR / "output.wav"))
+        self._last_output = None
+        self.btn_preview.config(state="disabled")
+        logging.info(f"Đã xóa toàn bộ output trong {OUTPUT_DIR}")
+        self.status.set("Đã xóa output.")
 
     def _pick_file(self, var, filetypes):
         path = filedialog.askopenfilename(filetypes=filetypes)
@@ -712,7 +772,8 @@ class App(tk.Tk):
         preview_path.write_text("\n\n".join(chunks), encoding="utf-8")
         logging.info(f"Chia {len(chunks)} đoạn (chunk={self.var_chunk.get()} ký tự) → {preview_path.name}")
 
-        # Nếu file kết quả đã tồn tại → tự đặt tên mới (output.wav → output1.wav …)
+        # Nếu file kết quả đã tồn tại → tự đặt tên mới (output.wav → output1.wav …),
+        # KHÔNG ghi đè bản cũ.
         out_path = unique_path(Path(self.var_out.get()))
         if str(out_path) != self.var_out.get():
             logging.info(f"File kết quả đã có → dùng tên mới: {out_path.name}")
@@ -732,7 +793,8 @@ class App(tk.Tk):
             target=run_tts,
             args=(mode, voice_param, chunks, self.var_out.get(),
                   self.progress, self.status,
-                  self.btn_run, self.btn_pause, self.btn_preview, self._pause_event),
+                  self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
+                  self.var_make_video.get()),
             daemon=True,
         ).start()
 
