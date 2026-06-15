@@ -8,12 +8,12 @@ Hiệu ứng tổng thể của cả clip: TRỐNG → ĐẦY → TAN
   - Đầu clip màn hình trống, bong bóng sinh dần từ đáy bay lên cho đầy.
   - Cuối clip cả lớp bong bóng MỜ TAN dần (FADE_OUT_SEC giây cuối).
 
-Vẻ ngoài bong bóng (giống quả cầu 3D, không bị phẳng):
-  - Fresnel: tâm rất trong, càng ra mép càng đục/sáng (rìa quả cầu thuỷ tinh).
-  - Màng xà phòng: số vòng màu cầu vồng tăng theo 1/cosθ → vòng màu dồn ở rìa.
-  - Viền sáng mảnh + đốm specular → có khối.
-  - Bên trong là ẢNH (thư mục Anh/) bo tròn, hoặc nốt nhạc nếu không có ảnh.
-  - Thêm bong bóng "bé tý" trang trí (không ảnh).
+Vẻ ngoài bong bóng: DÙNG ẢNH vỏ ngoài có sẵn (anhla/vongoai.png), phóng/thu theo
+cỡ — KHÔNG tự vẽ vành cầu vồng/viền/đốm sáng nữa.
+  - Vỏ bong bóng = ảnh vongoai.png (đã có sẵn vành óng ánh + phản xạ).
+  - Bên trong là ẢNH (thư mục Anh/) bo tròn đặt giữa, hoặc nốt nhạc nếu không có ảnh.
+  - Đốm phản xạ sáng của vỏ được "screen" đè lại lên ảnh để trông như nằm sau lớp kính.
+  - Thêm bong bóng "bé tý" trang trí (chỉ vỏ, không ảnh).
 
 Cách làm: render từng frame lớp bong bóng (RGBA trong suốt) rồi PIPE thẳng cho
 ffmpeg overlay lên video gốc trong 1 lượt, GIỮ nguyên âm thanh gốc (không tạo
@@ -32,9 +32,7 @@ Thư viện: numpy, Pillow (vẽ nốt nhạc), ffmpeg/ffprobe.
 """
 
 import sys
-import math
 import random
-import colorsys
 import subprocess
 from pathlib import Path
 
@@ -65,7 +63,6 @@ CLIP_SECONDS     = 30.0      # độ dài video kết quả (giây); None = lấ
 SPAWN_RATE       = 2.2       # số bong bóng sinh ra mỗi giây (đầu clip trống, sinh dần cho đầy)
 MAX_BUBBLES      = 16        # số bong bóng tối đa hiện cùng lúc (mật độ; nhỏ = thưa)
 FADE_OUT_SEC     = 3.0       # vài giây CUỐI clip: cả lớp bong bóng mờ tan dần
-COLOR_ROT_SPEED  = 0.05      # tốc độ xoay màu cầu vồng (vòng/giây)
 
 # — Đường đi: bay THẲNG theo đường xéo trái-dưới → phải-trên (không ziczac) —
 SLOW_SPEED       = 100.0      # tốc độ bay (dọc) của loại CHẬM (px/giây) — +20%
@@ -81,37 +78,24 @@ TINY_MIN         = 18        # đường kính bé nhất của loại bé tý (
 TINY_MAX         = 44        # đường kính lớn nhất của loại bé tý (px)
 FADE_START_FRAC  = 0.18      # mỗi bong bóng mờ nhẹ khi tâm vào 18% trên cùng (tránh cắt cứng ở đỉnh)
 
-# — Vẻ ngoài 3D / màng xà phòng —
-CENTER_ALPHA     = 0.05      # độ đục ở TÂM (rất trong)
-EDGE_ALPHA       = 0.42      # độ đục ở RÌA (Fresnel) — tăng dần từ tâm ra mép
-FRESNEL_POWER    = 3.0       # độ cong Fresnel (lớn = tâm trong hơn, dồn đục ra mép)
-RING_DENSITY     = 0.55      # mật độ vòng màu cầu vồng (dồn ở rìa → cảm giác 3D)
-RING_ASYM        = 0.22      # lệch màu nhẹ theo góc cho tự nhiên
-RIM_ALPHA        = 0.55      # độ đậm viền sáng ngoài cùng
-RIM_WHITE        = 0.85      # độ trắng của viền
-HIGHLIGHT_STR    = 1.00      # độ sáng đốm specular chính
+# — Vỏ ngoài bong bóng: ẢNH có sẵn (thay cho việc tự vẽ vành/viền/đốm sáng) —
+SHELL_IMAGE      = str(_HERE / "anhla" / "vongoai.png")  # ảnh vỏ bong bóng (RGBA, nền trong)
+SHELL_OPACITY    = 1.0       # độ đục của vỏ (1 = như ảnh gốc; <1 = nhìn xuyên thấy video sau)
+SPEC_THRESH      = 200.0     # ngưỡng sáng coi là "phản xạ" của vỏ (0..255)
+SPEC_STRENGTH    = 0.85      # độ đậm khi "screen" phản xạ của vỏ ĐÈ lại lên ảnh bên trong
 NOTE_ALPHA       = 0.80      # độ đậm của nốt nhạc (chỉ dùng khi KHÔNG có ảnh)
-
-# — Kính tự thân (TÙY CHỌN): làm bong bóng "đầy" hơn trên nền tối/rỗng —
-#   GLASS_FILL = 0  →  TẮT, dùng đúng hiệu ứng SẠCH như bản MP4 (viền mỏng, thân trong).
-#   Đặt > 0 (vd 0.34) nếu sau này muốn bóng đục/đầy như sương trên mọi nền.
-GLASS_FILL       = 0.0       # 0 = tắt (giống hệt hiệu ứng MP4) ← đang dùng
-GLASS_WHITE      = 0.62      # độ trắng/sương của lớp kính (chỉ có tác dụng khi GLASS_FILL > 0)
 
 # — Ảnh bên trong bong bóng (thay cho nốt nhạc) —
 IMAGE_DIR        = str(_HERE.parent / "Anh")   # thư mục ảnh; rỗng/không ảnh → quay lại nốt nhạc
 IMAGE_EXTS       = {".png", ".jpg", ".jpeg", ".webp"}
-INNER_FRAC       = 0.72      # đường kính ảnh (bo tròn) so với đường kính bong bóng
-INNER_OPACITY    = 0.92      # độ rõ của ảnh trên nền video (1 = đặc)
+INNER_FRAC       = 0.92      # đường kính ảnh (bo tròn) so với đường kính bong bóng — SÁT VIỀN hơn
+INNER_FEATHER    = 0.07      # dải MỜ NGẮN ở vòng ngoài: ảnh mở/tan dần vào vỏ (chuẩn hoá; nhỏ = mờ ít)
+INNER_OPACITY    = 0.97      # độ rõ của ảnh (cao = chân thật, ít bị vỏ phủ lên)
 
 # — Bong bóng "ngôi sao": LUÔN có 1 bóng TO NHẤT mang ảnh này trên màn hình —
 FEATURE_IMAGE_NAME = "Pink.png"  # tên ảnh trong Anh/ dùng cho bong bóng to nhất (luôn hiện)
 FEATURE_IN_RANDOM  = False       # True = ảnh này còn được dùng ngẫu nhiên ở các bóng khác
 FEATURE_OVERLAP    = 0.70        # nhịp sinh bóng feature = OVERLAP × đời sống (nhỏ → luôn ≥1 bóng hiện)
-
-# — Màu cầu vồng —
-RAINBOW_SAT      = 0.90      # độ bão hoà
-RAINBOW_VAL      = 1.00      # độ sáng
 
 # — Khác —
 SEED             = 42        # hạt ngẫu nhiên cố định (None = mỗi lần khác nhau)
@@ -127,15 +111,28 @@ for _name in ("stdout", "stderr"):
         setattr(sys, _name, io.TextIOWrapper(_s.buffer, encoding="utf-8", errors="replace"))
 
 
-# ── Bảng màu cầu vồng 256 màu (hue → RGB), tính sẵn 1 lần ────────────────────
-def _build_palette() -> np.ndarray:
-    pal = np.zeros((256, 3), dtype=np.float32)
-    for i in range(256):
-        r, g, b = colorsys.hsv_to_rgb(i / 256.0, RAINBOW_SAT, RAINBOW_VAL)
-        pal[i] = (r * 255.0, g * 255.0, b * 255.0)
-    return pal
+# ── Nạp ẢNH vỏ bong bóng 1 lần: cắt theo viền alpha rồi đệm về VUÔNG (giữ tâm) ──
+#   Bong bóng trong ảnh thường không phủ kín khung; cắt đúng phần bong bóng rồi
+#   đệm về ô vuông để khi thu/phóng về d×d không bị méo và vẫn nằm GIỮA sprite.
+def _load_shell_base() -> np.ndarray:
+    """Trả ảnh vỏ RGBA uint8 hình VUÔNG, bong bóng nằm giữa, ngoài viền trong suốt."""
+    im = Image.open(SHELL_IMAGE).convert("RGBA")
+    arr = np.asarray(im)
+    alpha = arr[..., 3]
+    ys, xs = np.where(alpha > 8)
+    if len(xs) == 0:
+        return arr.copy()
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    crop = arr[y0:y1, x0:x1]
+    h, w = crop.shape[:2]
+    s = max(h, w)
+    sq = np.zeros((s, s, 4), dtype=np.uint8)
+    oy, ox = (s - h) // 2, (s - w) // 2
+    sq[oy:oy + h, ox:ox + w] = crop
+    return sq
 
-PALETTE = _build_palette()
+_SHELL_BASE = _load_shell_base()   # ảnh vỏ vuông, tính sẵn 1 lần
 
 
 def _load_image_paths():
@@ -205,13 +202,14 @@ def _render_note(d: int, style: int) -> np.ndarray:
 
 
 # ── Đặt ẢNH (bo tròn) vào giữa bong bóng — thay cho nốt nhạc ──────────────────
-def _circular_mask(d: int, frac: float) -> np.ndarray:
-    """Mặt nạ tròn mềm: 1 trong bán kính 'frac' (chuẩn hoá), mờ dần về 0 ở mép."""
+def _circular_mask(d: int, frac: float, feather: float = INNER_FEATHER) -> np.ndarray:
+    """Mặt nạ tròn mềm: =1 trong bán kính 'frac' (chuẩn hoá), MỞ DẦN về 0 trong dải
+    'feather' (đoạn mờ NGẮN sát mép) để ảnh tan mềm vào vỏ bong bóng."""
     R = d / 2.0
     yy, xx = np.mgrid[0:d, 0:d].astype(np.float32)
     c = (d - 1) / 2.0
     rn = np.sqrt(((xx - c) / R) ** 2 + ((yy - c) / R) ** 2)
-    return (1.0 - _smoothstep(frac - 0.04, frac, rn)).astype(np.float32)
+    return (1.0 - _smoothstep(frac - feather, frac, rn)).astype(np.float32)
 
 
 def _build_inner_image(path: Path, d: int):
@@ -252,66 +250,30 @@ def _build_inner(d: int, inner_key):
     return np.zeros((d, d, 3), np.float32), np.zeros((d, d), np.float32)
 
 
-# ── Dựng hình dạng tĩnh 3D của một bong bóng (cache theo (đường kính, nội dung)) ──
+# ── Vỏ bong bóng theo đường kính d: thu/phóng ảnh vỏ về d×d (cache theo d) ──
+_SHELL_CACHE: dict = {}
+
+def _get_shell(d: int):
+    """Trả (rgb d×d×3 float 0..255, alpha d×d float 0..1) của ẢNH vỏ ở cỡ d."""
+    s = _SHELL_CACHE.get(d)
+    if s is None:
+        im = Image.fromarray(_SHELL_BASE).resize((d, d), Image.LANCZOS)
+        a = np.asarray(im, dtype=np.float32)
+        s = (a[..., :3].copy(), (a[..., 3] / 255.0).copy())
+        _SHELL_CACHE[d] = s
+    return s
+
+
+# ── Dựng "sprite" một bong bóng = VỎ (ảnh) + ẢNH bên trong (cache theo (d, nội dung)) ──
+#   Không tự vẽ vành/viền/đốm sáng nữa; vỏ lấy thẳng từ ảnh. Thêm mặt nạ "phản xạ"
+#   (chỗ vỏ sáng gần trắng) để screen ĐÈ lại lên ảnh cho giống nằm sau lớp kính.
 def _build_sprite(d: int, inner_key):
-    R = d / 2.0
-    yy, xx = np.mgrid[0:d, 0:d].astype(np.float32)
-    c = (d - 1) / 2.0
-    nx = (xx - c) / R
-    ny = (yy - c) / R
-    r = np.sqrt(nx * nx + ny * ny)
-    rr = np.clip(r, 0.0, 0.999)
-    inside = r <= 1.0
-
-    # Màng xà phòng: số vòng màu ~ 1/cosθ (path = 1/√(1−r²)) → vòng màu dồn ở rìa
-    path = 1.0 / np.sqrt(1.0 - rr * rr)
-    ang = np.arctan2(ny, nx) / (2.0 * math.pi)
-    hue = (RING_DENSITY * (path - 1.0) + RING_ASYM * ang) % 1.0
-    base_idx = ((hue * 256.0).astype(np.int32) & 255).astype(np.uint8)
-
-    # Khử răng cưa ở mép ngoài
-    edge = 1.0 - _smoothstep(0.985, 1.0, r)
-
-    # Fresnel: trong ở tâm, đục dần ra rìa (rìa quả cầu phản xạ mạnh)
-    fres = rr ** FRESNEL_POWER
-    base_alpha = np.where(inside, CENTER_ALPHA + (EDGE_ALPHA - CENTER_ALPHA) * fres, 0.0).astype(np.float32)
-    white_mix = np.zeros_like(base_alpha)
-
-    # Viền sáng mảnh ngoài cùng
-    rim = np.exp(-((r - 0.965) / 0.022) ** 2).astype(np.float32)
-    base_alpha += rim * RIM_ALPHA
-    white_mix += rim * RIM_WHITE
-
-    # Specular chính (sắc + quầng mềm) ở góc trên-trái
-    hd = np.sqrt((nx + 0.42) ** 2 + (ny + 0.46) ** 2)
-    spec = np.exp(-(hd / 0.10) ** 2) + 0.35 * np.exp(-(hd / 0.24) ** 2)
-    white_mix += spec * HIGHLIGHT_STR
-    base_alpha += spec * 0.55
-
-    # Specular phụ nhỏ (góc dưới-phải) cho cảm giác khối
-    hd2 = np.sqrt((nx - 0.30) ** 2 + (ny - 0.40) ** 2)
-    spec2 = np.exp(-(hd2 / 0.07) ** 2) * 0.5
-    white_mix += spec2
-    base_alpha += spec2 * 0.3
-
-    # Nội dung bên trong (ảnh hoặc nốt nhạc), giữ trong vùng tâm
-    inner_rgb, inner_a = _build_inner(d, inner_key)
-    inner_a = (inner_a * (r <= 0.97)).astype(np.float32)
-
-    # ── KÍNH TỰ THÂN: cho bong bóng nhìn "đầy" trên MỌI nền (kể cả nền rỗng/tối) ──
-    #   Sương kính pearly, sáng ở nửa trên-trái (cùng hướng highlight). KHÔNG phủ
-    #   lên vùng ảnh (nhân với 1−inner_a) để ảnh bên trong vẫn rõ.
-    if GLASS_FILL > 0.0:
-        inside_f = inside.astype(np.float32)
-        shade = np.clip(0.70 - 0.45 * (nx + ny), 0.15, 1.0).astype(np.float32)   # sáng trên-trái
-        clear = 1.0 - inner_a                                                     # chừa vùng ảnh
-        base_alpha = np.maximum(base_alpha, GLASS_FILL * shade * inside_f)
-        white_mix = np.maximum(white_mix, GLASS_WHITE * shade * inside_f * clear)
-
-    base_alpha = np.clip(base_alpha, 0.0, 1.0) * edge
-    white_mix = np.clip(white_mix, 0.0, 1.0) * edge
-
-    return base_idx, base_alpha, white_mix, inner_rgb, inner_a
+    shell_rgb, shell_a = _get_shell(d)
+    lum = shell_rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)   # độ sáng vỏ
+    spec = (np.clip((lum - SPEC_THRESH) / (255.0 - SPEC_THRESH), 0.0, 1.0)
+            * shell_a).astype(np.float32)                                # phản xạ (chỉ trong vỏ)
+    inner_rgb, inner_a = _build_inner(d, inner_key)                       # ảnh/nốt nhạc giữa vỏ
+    return shell_rgb, shell_a, spec, inner_rgb, inner_a
 
 
 _SPRITE_CACHE: dict = {}
@@ -325,7 +287,7 @@ def _get_sprite(d: int, inner_key):
 
 
 class Bubble:
-    __slots__ = ("d", "inner_key", "hue_phase", "x0", "y0", "speed", "vx",
+    __slots__ = ("d", "inner_key", "x0", "y0", "speed", "vx",
                  "t_spawn", "t_despawn", "sprite")
 
 
@@ -340,7 +302,6 @@ def _make_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> Bubble:
             b.inner_key = ("img", rng.choice(RANDOM_IMAGE_INDICES))  # ảnh ngẫu nhiên (trừ Pink.png)
         else:
             b.inner_key = ("note", rng.choice((1, 2, 3)))       # không có ảnh → nốt nhạc
-    b.hue_phase = rng.random()
     r = b.d / 2.0
     # 2 loại tốc độ: nhanh / chậm
     speed = FAST_SPEED if rng.random() < FAST_FRAC else SLOW_SPEED
@@ -359,7 +320,6 @@ def _make_feature_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> 
     b = Bubble()
     b.d = SIZE_MAX                                             # luôn ở mức to nhất
     b.inner_key = ("img", FEATURE_INDEX)
-    b.hue_phase = rng.random()
     r = b.d / 2.0
     b.speed = SLOW_SPEED                                       # bay chậm để nổi bật, ở lâu trên màn hình
     b.vx = b.speed * DRIFT_RATIO
@@ -412,7 +372,7 @@ def _global_fade(t: float, duration: float) -> float:
 
 
 def _composite_over(layer: np.ndarray, b: Bubble, cx: float, cy: float,
-                    fade: float, rot: float, W: int, H: int):
+                    fade: float, W: int, H: int):
     """Trộn (alpha-over) một bong bóng lên lớp RGBA trong suốt 'layer' (uint8 HxWx4)."""
     d = b.d
     x0 = int(round(cx - d / 2.0))
@@ -426,22 +386,18 @@ def _composite_over(layer: np.ndarray, b: Bubble, cx: float, cy: float,
     sx0, sy0 = fx0 - x0, fy0 - y0
     sx1, sy1 = sx0 + (fx1 - fx0), sy0 + (fy1 - fy0)
 
-    base_idx, base_alpha, white_mix, inner_rgb, inner_a = b.sprite
+    shell_rgb, shell_a, spec, inner_rgb, inner_a = b.sprite
 
-    rot_i = np.uint8(int(rot * 256.0) & 255)
-    idx = base_idx[sy0:sy1, sx0:sx1] + rot_i
-    rgb = PALETTE[idx]                                   # (h,w,3) float32 0..255 — màng cầu vồng
+    rgb = shell_rgb[sy0:sy1, sx0:sx1].copy()                     # VỎ bong bóng (ảnh)
 
-    ia = inner_a[sy0:sy1, sx0:sx1, None]
-    rgb = rgb * (1.0 - ia) + inner_rgb[sy0:sy1, sx0:sx1] * ia    # ẢNH bên trong
+    ia = (inner_a[sy0:sy1, sx0:sx1] * INNER_OPACITY)[..., None]
+    rgb = rgb * (1.0 - ia) + inner_rgb[sy0:sy1, sx0:sx1] * ia    # ẢNH đặt vào giữa vỏ
 
-    wm = white_mix[sy0:sy1, sx0:sx1, None]
-    rgb = rgb * (1.0 - wm) + 255.0 * wm                          # viền + highlight ĐÈ lên trên (phản xạ)
+    sp = (spec[sy0:sy1, sx0:sx1] * SPEC_STRENGTH)[..., None]
+    rgb = rgb + (255.0 - rgb) * sp                              # phản xạ của vỏ ĐÈ lại (screen)
 
-    # Độ đục: nơi có ảnh thì đặc hơn (để nhìn rõ ảnh trên video)
-    a = np.maximum(base_alpha[sy0:sy1, sx0:sx1], inner_a[sy0:sy1, sx0:sx1] * INNER_OPACITY)
-    np.minimum(a, 1.0, out=a)
-    a = a * fade
+    # Độ đục: lấy thẳng theo alpha của ẢNH vỏ (SHELL_OPACITY để nhìn xuyên nếu muốn)
+    a = shell_a[sy0:sy1, sx0:sx1] * (SHELL_OPACITY * fade)
 
     # alpha-over lên nền trong suốt: out = src trên dst
     reg = layer[fy0:fy1, fx0:fx1].astype(np.float32)
@@ -476,8 +432,7 @@ def _render_frame(t: float, bubbles, W: int, H: int, duration: float) -> np.ndar
             if fade <= 0.01:
                 continue
         x = b.x0 + b.vx * age                             # đường THẲNG xéo, không ziczac
-        rot = t * COLOR_ROT_SPEED + b.hue_phase
-        _composite_over(layer, b, x, y, fade, rot, W, H)
+        _composite_over(layer, b, x, y, fade, W, H)
     return layer
 
 
