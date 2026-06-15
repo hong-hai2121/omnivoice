@@ -19,9 +19,14 @@ Cách làm: render từng frame lớp bong bóng (RGBA trong suốt) rồi PIPE 
 ffmpeg overlay lên video gốc trong 1 lượt, GIỮ nguyên âm thanh gốc (không tạo
 file overlay trung gian).
 
+Hai chế độ (đặt RENDER_MODE):
+    "transparent"  → xuất MOV nền RỖNG (kênh alpha) để TỰ ghép lên video khác  ← mặc định
+    "burn"         → ghép bong bóng thẳng lên video INPUT, xuất .mp4 (giữ tiếng gốc)
+
 Cách dùng:
-    python bubble_video.py                   # render lên INPUT -> OUTPUT
-    python bubble_video.py in.mp4 out.mp4    # render lên video chỉ định
+    python bubble_video.py                   # theo RENDER_MODE: -> OUTPUT_MOV (hoặc OUTPUT)
+    python bubble_video.py ref.mp4 out.mov   # transparent: ref.mp4 chỉ để lấy kích thước/fps
+    python bubble_video.py in.mp4 out.mp4    # burn: ghép thẳng lên in.mp4
 
 Thư viện: numpy, Pillow (vẽ nốt nhạc), ffmpeg/ffprobe.
 """
@@ -43,7 +48,17 @@ from PIL import Image, ImageDraw
 _HERE = Path(__file__).resolve().parent
 
 INPUT  = "D:/Python/omnivoice/OmniVoice/myvoice/videongang/一起来邂逅宫崎骏的夏天_哔哩哔哩_bilibili.mp4"
-OUTPUT = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_output.mp4"
+OUTPUT = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_output.mp4"          # chế độ "burn"
+OUTPUT_MOV = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_overlay.mov"     # chế độ "transparent"
+
+# — CHẾ ĐỘ RENDER —
+#   "transparent" = xuất MOV nền RỖNG (kênh alpha) để bạn TỰ ghép lên video khác  ← QUAN TRỌNG
+#   "burn"        = ghép bong bóng THẲNG lên video INPUT, xuất .mp4 (giữ tiếng gốc)
+RENDER_MODE      = "transparent"
+# Kích thước/fps cho MOV nền rỗng khi KHÔNG có video tham chiếu (nếu có thì lấy theo video)
+OUTPUT_WIDTH     = 1920
+OUTPUT_HEIGHT    = 1080
+OUTPUT_FPS       = 30.0
 
 # — Render theo từng clip: TRỐNG → ĐẦY → TAN —
 CLIP_SECONDS     = 30.0      # độ dài video kết quả (giây); None = lấy trọn độ dài video gốc
@@ -77,11 +92,22 @@ RIM_WHITE        = 0.85      # độ trắng của viền
 HIGHLIGHT_STR    = 1.00      # độ sáng đốm specular chính
 NOTE_ALPHA       = 0.80      # độ đậm của nốt nhạc (chỉ dùng khi KHÔNG có ảnh)
 
+# — Kính tự thân (TÙY CHỌN): làm bong bóng "đầy" hơn trên nền tối/rỗng —
+#   GLASS_FILL = 0  →  TẮT, dùng đúng hiệu ứng SẠCH như bản MP4 (viền mỏng, thân trong).
+#   Đặt > 0 (vd 0.34) nếu sau này muốn bóng đục/đầy như sương trên mọi nền.
+GLASS_FILL       = 0.0       # 0 = tắt (giống hệt hiệu ứng MP4) ← đang dùng
+GLASS_WHITE      = 0.62      # độ trắng/sương của lớp kính (chỉ có tác dụng khi GLASS_FILL > 0)
+
 # — Ảnh bên trong bong bóng (thay cho nốt nhạc) —
 IMAGE_DIR        = str(_HERE.parent / "Anh")   # thư mục ảnh; rỗng/không ảnh → quay lại nốt nhạc
 IMAGE_EXTS       = {".png", ".jpg", ".jpeg", ".webp"}
 INNER_FRAC       = 0.72      # đường kính ảnh (bo tròn) so với đường kính bong bóng
 INNER_OPACITY    = 0.92      # độ rõ của ảnh trên nền video (1 = đặc)
+
+# — Bong bóng "ngôi sao": LUÔN có 1 bóng TO NHẤT mang ảnh này trên màn hình —
+FEATURE_IMAGE_NAME = "Pink.png"  # tên ảnh trong Anh/ dùng cho bong bóng to nhất (luôn hiện)
+FEATURE_IN_RANDOM  = False       # True = ảnh này còn được dùng ngẫu nhiên ở các bóng khác
+FEATURE_OVERLAP    = 0.70        # nhịp sinh bóng feature = OVERLAP × đời sống (nhỏ → luôn ≥1 bóng hiện)
 
 # — Màu cầu vồng —
 RAINBOW_SAT      = 0.90      # độ bão hoà
@@ -119,6 +145,16 @@ def _load_image_paths():
     return sorted(q for q in p.iterdir() if q.suffix.lower() in IMAGE_EXTS)
 
 IMAGES = _load_image_paths()   # danh sách ảnh để bỏ vào bong bóng (rỗng → dùng nốt nhạc)
+
+# Chỉ số ảnh "ngôi sao" (Pink.png) và nhóm ảnh cho bong bóng ngẫu nhiên
+FEATURE_INDEX = next(
+    (i for i, p in enumerate(IMAGES) if p.name.lower() == FEATURE_IMAGE_NAME.lower()),
+    None,
+)
+RANDOM_IMAGE_INDICES = [
+    i for i in range(len(IMAGES))
+    if FEATURE_IN_RANDOM or i != FEATURE_INDEX                  # loại ảnh feature khỏi nhóm ngẫu nhiên
+]
 
 
 def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
@@ -258,12 +294,22 @@ def _build_sprite(d: int, inner_key):
     white_mix += spec2
     base_alpha += spec2 * 0.3
 
-    base_alpha = np.clip(base_alpha, 0.0, 1.0) * edge
-    white_mix = np.clip(white_mix, 0.0, 1.0) * edge
-
     # Nội dung bên trong (ảnh hoặc nốt nhạc), giữ trong vùng tâm
     inner_rgb, inner_a = _build_inner(d, inner_key)
     inner_a = (inner_a * (r <= 0.97)).astype(np.float32)
+
+    # ── KÍNH TỰ THÂN: cho bong bóng nhìn "đầy" trên MỌI nền (kể cả nền rỗng/tối) ──
+    #   Sương kính pearly, sáng ở nửa trên-trái (cùng hướng highlight). KHÔNG phủ
+    #   lên vùng ảnh (nhân với 1−inner_a) để ảnh bên trong vẫn rõ.
+    if GLASS_FILL > 0.0:
+        inside_f = inside.astype(np.float32)
+        shade = np.clip(0.70 - 0.45 * (nx + ny), 0.15, 1.0).astype(np.float32)   # sáng trên-trái
+        clear = 1.0 - inner_a                                                     # chừa vùng ảnh
+        base_alpha = np.maximum(base_alpha, GLASS_FILL * shade * inside_f)
+        white_mix = np.maximum(white_mix, GLASS_WHITE * shade * inside_f * clear)
+
+    base_alpha = np.clip(base_alpha, 0.0, 1.0) * edge
+    white_mix = np.clip(white_mix, 0.0, 1.0) * edge
 
     return base_idx, base_alpha, white_mix, inner_rgb, inner_a
 
@@ -290,8 +336,8 @@ def _make_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> Bubble:
         b.inner_key = ("none", 0)                               # bé tý → bong bóng trơn
     else:
         b.d = int(rng.uniform(SIZE_MIN, SIZE_MAX))
-        if IMAGES:
-            b.inner_key = ("img", rng.randrange(len(IMAGES)))   # ảnh ngẫu nhiên từ Anh/
+        if RANDOM_IMAGE_INDICES:
+            b.inner_key = ("img", rng.choice(RANDOM_IMAGE_INDICES))  # ảnh ngẫu nhiên (trừ Pink.png)
         else:
             b.inner_key = ("note", rng.choice((1, 2, 3)))       # không có ảnh → nốt nhạc
     b.hue_phase = rng.random()
@@ -308,11 +354,45 @@ def _make_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> Bubble:
     return b
 
 
+def _make_feature_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> Bubble:
+    """Bong bóng 'ngôi sao': cỡ TO NHẤT (SIZE_MAX), mang ảnh Pink.png, bay chậm."""
+    b = Bubble()
+    b.d = SIZE_MAX                                             # luôn ở mức to nhất
+    b.inner_key = ("img", FEATURE_INDEX)
+    b.hue_phase = rng.random()
+    r = b.d / 2.0
+    b.speed = SLOW_SPEED                                       # bay chậm để nổi bật, ở lâu trên màn hình
+    b.vx = b.speed * DRIFT_RATIO
+    b.x0 = rng.uniform(-H * DRIFT_RATIO, W)
+    b.y0 = H + r
+    b.t_spawn = t_spawn
+    b.t_despawn = t_spawn + (H + 2.0 * r) / b.speed
+    b.sprite = _get_sprite(b.d, b.inner_key)
+    return b
+
+
 def _build_schedule(W: int, H: int, duration: float):
-    """Lịch sinh bong bóng: đầu clip TRỐNG, sinh dần từ đáy cho đầy; ngừng sinh gần cuối."""
+    """Lịch sinh bong bóng: đầu clip TRỐNG, sinh dần từ đáy cho đầy; ngừng sinh gần cuối.
+
+    Riêng bong bóng 'ngôi sao' (Pink.png, cỡ to nhất) được sinh NỐI TIẾP nhau để
+    LÚC NÀO trên màn hình cũng có ít nhất 1 bóng này.
+    """
     rng = random.Random(SEED)
     bubbles, intervals = [], []
     stop_spawn = max(0.0, duration - FADE_OUT_SEC)             # ngừng sinh khi bắt đầu mờ tan
+
+    # 1) Luồng bóng "ngôi sao" — luôn có ≥1 bóng to nhất mang Pink.png trên màn hình
+    if FEATURE_INDEX is not None:
+        life = (H + 2.0 * (SIZE_MAX / 2.0)) / SLOW_SPEED       # đời sống 1 bóng feature (giây)
+        period = max(0.5, life * FEATURE_OVERLAP)              # nhịp sinh < đời sống → cửa sổ hiện chồng nhau
+        tf = -life * 0.5                                       # bắt đầu trước t=0 để màn hình không trống
+        while tf < stop_spawn:
+            fb = _make_feature_bubble(rng, W, H, tf)
+            bubbles.append(fb)
+            intervals.append((fb.t_spawn, fb.t_despawn))
+            tf += period
+
+    # 2) Luồng bóng ngẫu nhiên — tôn trọng MAX_BUBBLES (đã tính cả bóng feature)
     t = 0.0
     while t < stop_spawn:
         ncur = sum(1 for (a, b) in intervals if a <= t <= b)   # số đang hiện tại thời điểm t
@@ -402,6 +482,49 @@ def _render_frame(t: float, bubbles, W: int, H: int, duration: float) -> np.ndar
 
 
 # ════════════════════════════════════════════════════════════════════════════
+#  RENDER MOV NỀN RỖNG (kênh alpha) — để GHÉP lên video khác sau này
+#  qtrle/argb = lossless, giữ trong suốt. CPU-only (NVENC không hỗ trợ alpha).
+# ════════════════════════════════════════════════════════════════════════════
+def _transparent_render_spec(ref_path: Path):
+    """Khung/fps/độ dài cho MOV nền rỗng: lấy theo video tham chiếu nếu có, không thì dùng mặc định."""
+    W, H, fps = OUTPUT_WIDTH, OUTPUT_HEIGHT, OUTPUT_FPS
+    if ref_path.exists():
+        W, H = _probe_size(ref_path)
+        fps = _probe_fps(ref_path)
+        if CLIP_SECONDS is None:
+            return W, H, fps, _probe_duration(ref_path)
+    return W, H, fps, float(CLIP_SECONDS or 30.0)
+
+
+def render_transparent_mov(out_path: Path, ref_path: Path):
+    W, H, fps, duration = _transparent_render_spec(ref_path)
+    n_frames = int(round(duration * fps))
+    bubbles = _build_schedule(W, H, duration)
+    print(f"Khung {W}x{H}  fps={fps:.3f}  dài={duration:.2f}s  — {len(bubbles)} bong bóng")
+
+    cmd = [
+        FFMPEG, "-y",
+        "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", f"{fps}", "-i", "-",
+        "-an",
+        "-c:v", "qtrle", "-pix_fmt", "argb",              # codec giữ ALPHA (nền trong suốt)
+        str(out_path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    try:
+        for i in range(n_frames):
+            frame = _render_frame(i / fps, bubbles, W, H, duration)
+            proc.stdin.write(frame.tobytes())
+            if (i + 1) % max(1, n_frames // 10) == 0:
+                print(f"  {i + 1}/{n_frames} frame")
+    finally:
+        proc.stdin.close()
+        rc = proc.wait()
+    if rc != 0:
+        print("[LỖI] ffmpeg render MOV nền rỗng thất bại.", file=sys.stderr)
+        sys.exit(1)
+
+
+# ════════════════════════════════════════════════════════════════════════════
 #  RENDER bong bóng THẲNG lên video (trống → đầy → tan), giữ âm thanh gốc
 #  Pipe từng frame RGBA cho ffmpeg overlay lên video gốc trong 1 lượt.
 # ════════════════════════════════════════════════════════════════════════════
@@ -481,17 +604,40 @@ def _probe_duration(p: Path) -> float:
     return float(r.stdout.strip())
 
 
+def _unique_path(path: Path) -> Path:
+    """Trả về đường dẫn CHƯA tồn tại: nếu trùng thì thêm _2, _3, ... để KHÔNG đè bản cũ."""
+    if not path.exists():
+        return path
+    n = 2
+    while True:
+        cand = path.with_name(f"{path.stem}_{n}{path.suffix}")
+        if not cand.exists():
+            return cand
+        n += 1
+
+
 def main():
     args = sys.argv[1:]
-    in_path = Path(args[0]) if len(args) >= 1 else Path(INPUT)
-    out_path = Path(args[1]) if len(args) >= 2 else Path(OUTPUT)
-    if not in_path.exists():
-        print(f"[LỖI] Không tìm thấy video đầu vào: {in_path}")
-        sys.exit(1)
+    ref_path = Path(args[0]) if len(args) >= 1 else Path(INPUT)
 
-    print(f"Render bong bóng lên: {in_path.name}  (trống → đầy → tan, giữ âm thanh gốc)")
-    render_onto_video(in_path, out_path)
-    print(f"Hoàn tất → {out_path}")
+    if RENDER_MODE == "transparent":
+        # MOV nền RỖNG để ghép lên video khác — video tham chiếu (nếu có) chỉ để lấy kích thước/fps
+        out_path = Path(args[1]) if len(args) >= 2 else Path(OUTPUT_MOV)
+        if out_path.suffix.lower() != ".mov":
+            out_path = out_path.with_suffix(".mov")
+        out_path = _unique_path(out_path)                 # không đè bản cũ → tạo bản mới
+        print(f"Render MOV NỀN RỖNG (để ghép video khác): {out_path.name}  (trống → đầy → tan)")
+        render_transparent_mov(out_path, ref_path)
+        print(f"Hoàn tất → {out_path}")
+    else:  # "burn"
+        out_path = Path(args[1]) if len(args) >= 2 else Path(OUTPUT)
+        if not ref_path.exists():
+            print(f"[LỖI] Không tìm thấy video đầu vào: {ref_path}")
+            sys.exit(1)
+        out_path = _unique_path(out_path)                 # không đè bản cũ → tạo bản mới
+        print(f"Render bong bóng lên: {ref_path.name}  (trống → đầy → tan, giữ âm thanh gốc)")
+        render_onto_video(ref_path, out_path)
+        print(f"Hoàn tất → {out_path}")
 
 
 if __name__ == "__main__":
