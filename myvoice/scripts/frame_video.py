@@ -50,11 +50,23 @@ KHUNG2     = BG_DIR / "khung2.png"     # trang trí trên cùng
 VIDEO_DIR  = BASE_DIR / "videongang"   # kho video ngang để ghép random
 SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
+# Ưu tiên GPU (NVIDIA NVENC) để dựng video; tự fallback về CPU (libx264) nếu GPU lỗi.
+USE_GPU = True
+
 MODE  = "fill"      # "fit" hoặc "fill"
 INSET = 6           # thu vào trong vài px để không đè lên viền
 ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa khít, 1.25 = 125%)
 OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
                     # luồn xuống dưới viền khung1 — khử viền đen quanh video
+
+
+def has_nvenc() -> bool:
+    """Kiểm tra ffmpeg có encoder h264_nvenc hay không."""
+    r = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-encoders"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    return r.returncode == 0 and "h264_nvenc" in r.stdout
 
 
 def get_duration(path: Path) -> float:
@@ -232,27 +244,43 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
         f"[b2][3:v]overlay=0:0[out]"
     )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat", "-safe", "0", "-i", str(concat_list),
-        "-loop", "1", "-i", str(KHUNG0),
-        "-loop", "1", "-i", str(KHUNG1),
-        "-loop", "1", "-i", str(KHUNG2),
-        "-loop", "1", "-i", str(mask_path),
-        "-i", str(audio_file),
-        "-filter_complex", filt,
-        "-map", "[out]",
-        "-map", "5:a",
-        "-t", f"{audio_dur:.6f}",           # cắt video đúng bằng độ dài audio
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        str(output),
-    ]
+    def build_cmd(gpu):
+        if gpu:
+            codec = [
+                "-c:v", "h264_nvenc",
+                "-preset", "p5",        # cân bằng tốc độ/chất lượng
+                "-rc", "vbr",
+                "-cq", "19",
+            ]
+        else:
+            codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+        return [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-loop", "1", "-i", str(KHUNG0),
+            "-loop", "1", "-i", str(KHUNG1),
+            "-loop", "1", "-i", str(KHUNG2),
+            "-loop", "1", "-i", str(mask_path),
+            "-i", str(audio_file),
+            "-filter_complex", filt,
+            "-map", "[out]",
+            "-map", "5:a",
+            "-t", f"{audio_dur:.6f}",           # cắt video đúng bằng độ dài audio
+            *codec,
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k",
+            str(output),
+        ]
 
-    log("Đang dựng video...")
-    result = subprocess.run(cmd, capture_output=True, text=True,
+    use_gpu = USE_GPU and has_nvenc()
+    log("Đang dựng video... (GPU - h264_nvenc)" if use_gpu else "Đang dựng video... (CPU - libx264)")
+    result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
                             encoding="utf-8", errors="replace")
+    # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt dựng.
+    if result.returncode != 0 and use_gpu:
+        log("GPU lỗi, chuyển sang CPU (libx264)...")
+        result = subprocess.run(build_cmd(False), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace")
     concat_list.unlink(missing_ok=True)
     mask_path.unlink(missing_ok=True)
     if result.returncode != 0:

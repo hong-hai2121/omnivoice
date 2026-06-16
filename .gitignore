@@ -39,4 +39,14 @@ examples/exp*
 /myvoice/videodoc/
 /myvoice/videongang/
 /myvoice/Anh/
-/myvoice/kịch_bản/output_chunks/
+
+# Thư mục output sinh tự động (wav, mp4, srt, chunks, _signature.txt)
+/myvoice/kịch_bản/output/
+
+# State/preview sinh tự động của GUI (không cần đưa lên repo)
+/myvoice/voice_favorites.json
+/myvoice/kịch_bản/input_preview.txt
+
+# Cache model Whisper (tải tự động, ~1.9GB) và thư mục tải/transcript của GUI tiếng Trung
+whisper_cache/
+/myvoice/scripts/downloads_zh/
