@@ -38,6 +38,11 @@ FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
+# Kho hiệu ứng phủ lên video (scripts/hieuung/) — thường là .mov có alpha
+EFFECTS_DIR = Path(__file__).resolve().parent / "hieuung"
+EFFECT_EXTS = {".mov", ".mp4", ".webm", ".mkv", ".avi", ".gif"}
+EFFECT_NONE = "Không (mặc định)"                       # mục "không thêm hiệu ứng"
+
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
 UI = dict(
     bg="#ffffff", card="#ffffff", border="#e4e7ec", field="#ffffff",
@@ -64,6 +69,14 @@ def list_voice_files():
     if not VOICE_DIR.exists():
         return []
     return sorted(f.name for f in VOICE_DIR.iterdir() if f.suffix in AUDIO_EXTS)
+
+
+def list_effect_files():
+    """Danh sách file hiệu ứng trong scripts/hieuung/ (chỉ tên file)."""
+    if not EFFECTS_DIR.exists():
+        return []
+    return sorted(f.name for f in EFFECTS_DIR.iterdir()
+                  if f.is_file() and f.suffix.lower() in EFFECT_EXTS)
 
 
 def strip_star(label: str) -> str:
@@ -197,7 +210,7 @@ def unique_path(path: Path) -> Path:
         n += 1
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -313,7 +326,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             logging.info("Bắt đầu dựng video từ audio vừa tạo...")
             try:
                 from frame_video import build_video
-                video_out = build_video(Path(output), log=logging.info)
+                video_out = build_video(Path(output), log=logging.info, effect=effect)
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
             except Exception as e:
@@ -589,6 +602,20 @@ class App(tk.Tk):
         ttk.Label(video_row, text="(ghép video nền + khung)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
+        # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
+        fx_row = ttk.Frame(sec_opt)
+        fx_row.pack(anchor="w", fill="x", pady=(8, 0))
+        ttk.Label(fx_row, text="✨  Hiệu ứng:").pack(side="left", padx=(0, 8))
+        self.var_effect = tk.StringVar(value=EFFECT_NONE)
+        self.cb_effect = ttk.Combobox(fx_row, textvariable=self.var_effect,
+                                      values=[EFFECT_NONE] + list_effect_files(),
+                                      width=26, state="readonly")
+        self.cb_effect.pack(side="left")
+        ttk.Button(fx_row, text="↻", width=3,
+                   command=self._refresh_effects).pack(side="left", padx=(6, 0))
+        ttk.Label(fx_row, text="(phủ lên toàn video)",
+                  style="Hint.TLabel").pack(side="left", padx=8)
+
         # ── Hành động ──
         act = ttk.Frame(left)
         act.grid(row=4, column=0, sticky="ew", pady=(2, 12))
@@ -765,6 +792,15 @@ class App(tk.Tk):
         self._reload_voice_combo()
         logging.info(f"Tìm thấy {len(list_voice_files())} file giọng trong {VOICE_DIR}")
 
+    def _refresh_effects(self):
+        """Nạp lại danh sách hiệu ứng trong scripts/hieuung/."""
+        cur = self.var_effect.get()
+        effects = list_effect_files()
+        self.cb_effect["values"] = [EFFECT_NONE] + effects
+        if cur not in ([EFFECT_NONE] + effects):
+            self.var_effect.set(EFFECT_NONE)
+        logging.info(f"Tìm thấy {len(effects)} hiệu ứng trong {EFFECTS_DIR}")
+
     def _clear_output(self):
         """Xóa toàn bộ trong thư mục output (wav, video, và các thư mục chunks)."""
         import shutil
@@ -857,6 +893,15 @@ class App(tk.Tk):
         self._pause_event.set()
         self.btn_run.config(state="disabled")
         self.btn_pause.config(state="normal", text="⏸  Tạm dừng")
+        # Hiệu ứng phủ video (nếu chọn) — chuyển thành đường dẫn đầy đủ
+        effect_name = self.var_effect.get()
+        effect_path = None
+        if effect_name and effect_name != EFFECT_NONE:
+            p = EFFECTS_DIR / effect_name
+            effect_path = str(p) if p.exists() else None
+            if effect_path:
+                logging.info(f"Hiệu ứng phủ video: {effect_name}")
+
         self.progress.set(0)
         self.status.set(f"Đã chia {len(chunks)} đoạn — đang khởi động...")
         threading.Thread(
@@ -864,7 +909,7 @@ class App(tk.Tk):
             args=(mode, voice_param, chunks, self.var_out.get(),
                   self.progress, self.status,
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
-                  self.var_make_video.get()),
+                  self.var_make_video.get(), effect_path),
             daemon=True,
         ).start()
 

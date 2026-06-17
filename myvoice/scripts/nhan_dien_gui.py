@@ -82,6 +82,7 @@ COPY_PREFIX = (
 "Các câu quảng bá kênh vẫn dịch đúng ý nếu có trong văn bản, nhưng không để chúng làm rối mạch truyện chính. "
 "Nội dung còn lại vẫn phải dịch sát nghĩa, giữ đúng mạch truyện, đúng cảm xúc, đúng quan hệ nhân vật và đúng diễn biến gốc. "
 "Ưu tiên bản dịch tiếng Việt tự nhiên, dễ đọc, dễ hiểu, nhưng tuyệt đối không bịa thêm nội dung mới."
+"Chỉ cần trả lời đúng nội dung không cần các câu giao tiếp như là Dưới đây là bản dịch sát nghĩa tiếng Việt tiếp theo của truyện ngắn"
 )
 
 
@@ -120,19 +121,48 @@ UI = dict(
 log_queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
 ui_queue: "queue.Queue[tuple]" = queue.Queue()   # ("seg", text) | ("prog", fraction)
 
+# Console THẬT (terminal VSCode) — giữ lại để vẫn in log ra terminal kể cả khi
+# sys.stdout bị thay bằng _StdoutToLog trong thread nền.
+_CONSOLE = sys.stdout
+
+
+def _to_console(text: str) -> None:
+    """In một dòng ra terminal VSCode (bỏ qua nếu chạy bằng pythonw, không có console)."""
+    try:
+        if _CONSOLE is not None:
+            _CONSOLE.write(text.rstrip("\n") + "\n")
+            _CONSOLE.flush()
+    except Exception:
+        pass
+
 
 def log(msg, level="info"):
-    log_queue.put((level, str(msg)))
+    text = str(msg)
+    log_queue.put((level, text))
+    _to_console(text)   # hiện log ra cả terminal VSCode
 
 
 class _StdoutToLog:
-    """Chuyển mọi print() trong thread nền vào ô log của GUI."""
+    """Chuyển mọi print() trong thread nền vào ô log của GUI, đồng thời vẫn in ra
+    terminal VSCode (mirror) để theo dõi tiến trình ở console."""
+    def __init__(self, mirror=None):
+        self._mirror = mirror
     def write(self, s):
+        if self._mirror is not None:
+            try:
+                self._mirror.write(s)
+                self._mirror.flush()
+            except Exception:
+                pass
         s = s.rstrip("\n")
         if s.strip():
             log_queue.put(("info", s))
     def flush(self):
-        pass
+        if self._mirror is not None:
+            try:
+                self._mirror.flush()
+            except Exception:
+                pass
 
 
 # ── Tải audio bằng yt-dlp → trả về đường dẫn mp3 ─────────────────────────────
@@ -194,7 +224,7 @@ def download_mp3(url: str, out_dir: Path) -> str | None:
 # ── Worker: (tải nếu là link) + nhận diện (chạy trong thread) ────────────────
 def worker(source: str, model_name: str, speed: float, on_seg, on_prog, on_done):
     old_stdout = sys.stdout
-    sys.stdout = _StdoutToLog()
+    sys.stdout = _StdoutToLog(mirror=old_stdout)
     transcript = None
     try:
         source = source.strip().strip('"').strip("'")
@@ -340,6 +370,16 @@ class App:
         self.btn_copy = ttk.Button(res_bar, text="📋 Sao chép kết quả",
                                    style="Ghost.TButton", command=self._copy_result)
         self.btn_copy.pack(side="right")
+
+        # Hàng nút sao chép theo từng ĐOẠN (1,2,3...) — tạo động sau khi nhận diện
+        # xong, trùng với cách .docx tách đoạn. Bấm số nào thì chép đoạn đó;
+        # riêng đoạn 1 được chèn thêm "Câu mở đầu" (COPY_PREFIX) lên trước.
+        self.chunk_bar = tk.Frame(res_frame, bg=UI["bg"])
+        self.chunk_bar.pack(fill="x", pady=(0, 2))
+        self._chunks = []
+        self._chunk_btns = []
+        self._copied = set()   # chỉ số các đoạn đã được chép (để tô màu)
+
         self.result = scrolledtext.ScrolledText(res_frame, font=("Microsoft YaHei", 13),
                                                 wrap="word", bg="#ffffff", fg=UI["fg"],
                                                 relief="flat", padx=10, pady=8)
@@ -415,6 +455,66 @@ class App:
         self.btn_copy.config(text="✔ Đã sao chép")
         self.root.after(1200, lambda: self.btn_copy.config(text="📋 Sao chép kết quả"))
 
+    def _clear_chunk_buttons(self):
+        """Xoá hàng nút đoạn (gọi khi bắt đầu nhận diện mới)."""
+        for w in self.chunk_bar.winfo_children():
+            w.destroy()
+        self._chunks = []
+        self._chunk_btns = []
+        self._copied = set()   # chỉ số các đoạn đã được chép (để tô màu)
+
+    def _build_chunk_buttons(self, transcript):
+        """Tạo dãy nút số 1,2,3... theo các đoạn đã tách (giống .docx).
+
+        Chỉ hiện khi tách được từ 2 đoạn trở lên (1 đoạn thì nút 'Sao chép
+        kết quả' là đủ). Bấm nút k → chép đoạn k; riêng đoạn 1 chèn câu mở đầu.
+        """
+        self._clear_chunk_buttons()
+        self._chunks = recog.split_into_chunks(transcript) if transcript else []
+        if len(self._chunks) <= 1:
+            return
+
+        ttk.Label(self.chunk_bar, text="📋 Chép theo đoạn:",
+                  style="Muted.TLabel").pack(side="left")
+        for idx in range(len(self._chunks)):
+            first = (idx == 0)
+            b = tk.Button(
+                self.chunk_bar, text=str(idx + 1), width=3, cursor="hand2",
+                font=("Segoe UI Semibold", 10), relief="flat", bd=0,
+                bg=(UI["accent"] if first else UI["hover"]),
+                fg=("#ffffff" if first else UI["fg"]),
+                activebackground=UI["accent_dk"], activeforeground="#ffffff",
+                command=lambda i=idx: self._copy_chunk(i),
+            )
+            b.pack(side="left", padx=(6 if idx == 0 else 3, 0))
+            self._chunk_btns.append(b)
+        ttk.Label(self.chunk_bar, text="(đoạn 1 kèm câu mở đầu)",
+                  style="Muted.TLabel").pack(side="left", padx=(8, 0))
+
+    def _copy_chunk(self, idx):
+        """Chép đoạn thứ idx (0-based) vào clipboard; đoạn 1 kèm câu mở đầu."""
+        if idx >= len(self._chunks):
+            return
+        text = self._chunks[idx]
+        if idx == 0:
+            prefix = self.prefix_box.get("1.0", "end").strip()
+            save_prefix(prefix)                       # nhớ câu mở đầu cho lần sau
+            if prefix:
+                text = prefix + "\n\n" + text
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.root.update()  # giữ nội dung trên clipboard kể cả khi đóng app
+        kem = " (kèm câu mở đầu)" if idx == 0 else ""
+        self.status.set(f"📋 Đã chép đoạn {idx + 1}{kem} vào clipboard.")
+        # Tô màu nút để biết đoạn nào đã chép: các đoạn đã chép trước tô xanh nhạt,
+        # đoạn vừa bấm tô xanh đậm cho nổi bật.
+        for i in self._copied:
+            self._chunk_btns[i].config(bg="#9bd5b0", fg="#ffffff",
+                                       activebackground=UI["ok"])
+        self._copied.add(idx)
+        self._chunk_btns[idx].config(bg=UI["ok"], fg="#ffffff",
+                                     activebackground=UI["ok"])
+
     def _reset_prefix(self):
         """Khôi phục câu mở đầu về mặc định và lưu lại."""
         self.prefix_box.delete("1.0", "end")
@@ -444,6 +544,7 @@ class App:
         self.btn_run.config(state="disabled")
         self.status.set("⏳ Đang tải model / chuẩn bị...")
         self.result.delete("1.0", "end")
+        self._clear_chunk_buttons()   # bỏ nút đoạn của lần nhận diện trước
         self._clear_log()
         self.progress["value"] = 0
         self.nb.select(0)  # xem tab Kết quả để thấy chữ chạy live
@@ -464,6 +565,16 @@ class App:
             daemon=True,
         ).start()
 
+    def _play_done_sound(self, ok=True):
+        """Phát âm báo khi chạy xong (thành công/thất bại). Bỏ qua nếu lỗi."""
+        try:
+            import winsound
+            winsound.MessageBeep(
+                winsound.MB_ICONASTERISK if ok else winsound.MB_ICONHAND
+            )
+        except Exception:
+            pass
+
     def _finish(self, transcript):
         self._busy = False
         self.btn_run.config(state="normal")
@@ -471,11 +582,14 @@ class App:
             # Thay nội dung live bằng bản hoàn chỉnh (gọn, chuẩn)
             self.result.delete("1.0", "end")
             self.result.insert("1.0", transcript)
+            self._build_chunk_buttons(transcript)   # tạo nút số theo đoạn đã tách
             self.progress["value"] = 100
             self.status.set("✅ Hoàn thành. Đã lưu file Word .docx vào thư mục kịch_bản.")
             self.nb.select(0)
+            self._play_done_sound(ok=True)          # 🔔 báo âm thanh khi xong
         else:
             self.status.set("❌ Thất bại. Xem tab 'Nhật ký'.")
+            self._play_done_sound(ok=False)
 
     # ── Log polling ──
     def _clear_log(self):

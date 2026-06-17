@@ -296,23 +296,51 @@ BURN_STYLE = (
 )
 
 
+def has_nvenc() -> bool:
+    """Kiểm tra ffmpeg có encoder h264_nvenc (GPU NVIDIA) hay không."""
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        return r.returncode == 0 and "h264_nvenc" in r.stdout
+    except Exception:
+        return False
+
+
 def burn_subs(video_path: Path, srt_path: Path, out_path: Path, style=BURN_STYLE):
     """Vẽ CỨNG phụ đề thẳng vào khung hình (hardsub) — phải re-encode video.
 
+    Ưu tiên GPU (h264_nvenc) cho nhanh; nếu GPU lỗi tự fallback về CPU (libx264).
     Để né rắc rối escape đường dẫn Windows (dấu ':' của ổ đĩa) trong bộ lọc
     subtitles, ta chạy ffmpeg với cwd = thư mục chứa .srt và chỉ truyền TÊN file.
     """
     vf = f"subtitles={srt_path.name}:force_style='{style}'"
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(video_path.resolve()),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-c:a", "copy",
-        str(out_path.resolve()),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", cwd=str(srt_path.parent))
+
+    def build_cmd(gpu):
+        if gpu:
+            codec = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19"]
+        else:
+            codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+        return [
+            "ffmpeg", "-y",
+            "-i", str(video_path.resolve()),
+            "-vf", vf,
+            *codec,
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            str(out_path.resolve()),
+        ]
+
+    use_gpu = has_nvenc()
+    print("   Encode: GPU (h264_nvenc)" if use_gpu else "   Encode: CPU (libx264)")
+    result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", cwd=str(srt_path.parent))
+    # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt.
+    if result.returncode != 0 and use_gpu:
+        print("   GPU lỗi, chuyển sang CPU (libx264)...")
+        result = subprocess.run(build_cmd(False), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", cwd=str(srt_path.parent))
     if result.returncode != 0:
         print(f"❌ Lỗi ffmpeg khi burn sub:\n{result.stderr[-1200:]}", file=sys.stderr)
         return False

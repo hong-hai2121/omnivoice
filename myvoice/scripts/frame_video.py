@@ -10,8 +10,9 @@ Quy trình:
 Thứ tự lớp (từ dưới lên trên):
   1. Khung0.png  -> nền dưới cùng
   2. video       -> nằm trong vùng khung của khung1 (cắt bo góc)
-  3. khung1.png  -> viền khung video (bo góc)
-  4. khung2.png  -> lớp trang trí trên cùng (chữ/hoa văn)
+  3. hiệu ứng    -> (tùy chọn) phủ lên video, NẰM DƯỚI khung1/khung2
+  4. khung1.png  -> viền khung video (bo góc)
+  5. khung2.png  -> lớp trang trí trên cùng (chữ/hoa văn)
 
 MODE:
   - "fit"  : hiện trọn video (có thể có dải nền trên/dưới) — không mất hình.
@@ -165,17 +166,27 @@ def build_mask(pink, out_path: Path):
     Image.fromarray(np.where(show, 255, 0).astype("uint8"), "L").save(out_path)
 
 
-def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
+def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
     Trả về đường dẫn video kết quả. Ném RuntimeError nếu thiếu tài nguyên hoặc
     ffmpeg lỗi (để bên gọi — ví dụ GUI — bắt và hiển thị). `log` là hàm nhận
     chuỗi để ghi tiến trình (mặc định print; GUI truyền logging.info).
+
+    effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
+            Nếu có, hiệu ứng được phủ lên video NHƯNG nằm dưới khung1/khung2
+            (lặp lại nếu ngắn hơn audio). None/để trống = không thêm hiệu ứng.
     """
     for f in (KHUNG0, KHUNG1, KHUNG2):
         if not f.exists():
             raise RuntimeError(f"Không tìm thấy khung: {f}")
+
+    # Chuẩn hóa hiệu ứng: bỏ qua nếu rỗng hoặc file không tồn tại.
+    effect = Path(effect) if effect else None
+    if effect and not effect.exists():
+        log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
+        effect = None
 
     videos = sorted(VIDEO_DIR.glob("*.mp4"))
     if not videos:
@@ -209,6 +220,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
     log(f"Chế độ     : {mode}  (zoom {ZOOM:g}x, nới {OVERSCAN}px)")
     log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
     log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+    log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
     log(f"Đầu ra     : {output}")
 
     if mode == "fill":
@@ -232,16 +244,32 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
             f"pad={cw}:{ch}:{ix}+({iw}-iw)/2:{iy}+({ih}-ih)/2:black[vid];"
         )
 
-    # Xếp lớp: nền khung0 -> video (cắt bo góc) -> viền khung1 -> trang trí khung2
-    # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio
+    # Xếp lớp: nền khung0 -> video (cắt bo góc) -> (tùy chọn) hiệu ứng
+    #          -> viền khung1 -> trang trí khung2.
+    # Hiệu ứng nằm NGAY TRÊN video nhưng DƯỚI khung1/khung2, nên bong bóng chỉ
+    # trôi trong vùng video; viền khung và chữ trang trí vẫn nằm đè lên trên.
+    # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio [6=hiệu ứng]
     filt = (
         place +
         f"[4:v]format=gray[mask];"
         f"[vid][mask]alphamerge[va];"
         f"[1:v]scale={cw}:{ch}[bg];"
         f"[bg][va]overlay=0:0[b1];"
-        f"[b1][2:v]overlay=0:0[b2];"
-        f"[b2][3:v]overlay=0:0[out]"
+    )
+    if effect:
+        # Hiệu ứng (MOV có alpha) phủ kín canvas, kéo dài cả video (stream_loop ở
+        # input lo phần lặp lại nếu hiệu ứng ngắn hơn audio).
+        filt += (
+            f"[6:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,"
+            f"crop={cw}:{ch},format=rgba[fx];"
+            f"[b1][fx]overlay=0:0:shortest=0[bfx];"
+        )
+        base = "[bfx]"
+    else:
+        base = "[b1]"
+    filt += (
+        f"{base}[2:v]overlay=0:0[b2];"   # ghép khung1 (đè lên cả hiệu ứng)
+        f"[b2][3:v]overlay=0:0[out]"     # ghép khung2 trên cùng
     )
 
     def build_cmd(gpu):
@@ -254,7 +282,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
             ]
         else:
             codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
-        return [
+        cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_list),
             "-loop", "1", "-i", str(KHUNG0),
@@ -262,6 +290,11 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
             "-loop", "1", "-i", str(KHUNG2),
             "-loop", "1", "-i", str(mask_path),
             "-i", str(audio_file),
+        ]
+        if effect:
+            # -stream_loop -1: lặp vô hạn input hiệu ứng (sẽ bị -t cắt đúng độ dài).
+            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 6
+        cmd += [
             "-filter_complex", filt,
             "-map", "[out]",
             "-map", "5:a",
@@ -271,6 +304,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print) -> Path:
             "-c:a", "aac", "-b:a", "192k",
             str(output),
         ]
+        return cmd
 
     use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video... (GPU - h264_nvenc)" if use_gpu else "Đang dựng video... (CPU - libx264)")

@@ -32,6 +32,7 @@ examples/exp*
 *.mp4
 *.mov
 *.mp3
+*.docx
 
 # Dữ liệu nặng của script tự viết (myvoice/) — không đưa lên GitHub
 /myvoice/mp4/
