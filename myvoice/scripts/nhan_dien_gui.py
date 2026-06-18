@@ -48,42 +48,21 @@ PLACEHOLDER = "Chọn file hoặc dán đường dẫn file (mp3/mp4/wav...) —
 # Câu hướng dẫn MẶC ĐỊNH được chèn lên ĐẦU mỗi lần bấm "Sao chép kết quả".
 # Người dùng có thể sửa ngay trên GUI (tab "Câu mở đầu"); bản đã sửa lưu ở PREFIX_FILE.
 COPY_PREFIX = (
-"Dưới đây là một truyện ngắn tiếng Trung. Hãy dịch sang tiếng Việt sát nghĩa nhất có thể, "
-"giữ nguyên đầy đủ nội dung, tình tiết, nhân vật, diễn biến và ý nghĩa gốc của truyện. "
-"Không tự ý thêm tình tiết mới, không tự ý bớt tình tiết, không biến đổi nội dung thành một câu chuyện khác. "
-"Tuy nhiên, khi chuyển sang tiếng Việt, hãy được phép diễn đạt lại câu chữ cho tự nhiên, rõ nghĩa và dễ hiểu với người Việt, "
-"miễn là không làm sai lệch ý gốc. Không dịch cứng từng chữ nếu cách dịch đó khiến câu tiếng Việt khó hiểu, thô hoặc không tự nhiên. "
-"Nếu một cụm tiếng Trung có nghĩa hàm ý, tiếng lóng, cách nói ẩn dụ, cách nói châm biếm hoặc cách nói theo truyện mạng, "
-"hãy dịch theo nghĩa thực tế trong ngữ cảnh, giúp người Việt hiểu đúng ngay khi đọc. "
-"Ví dụ: nếu gặp cách nói như “发绿的僵尸鸭”, không dịch cứng thành “vịt zombie phát xanh”, "
-"mà hãy diễn đạt dễ hiểu là “thịt vịt chết lâu ngày, đã hư đến mức chuyển màu xanh” hoặc "
-"“thịt vịt hỏng, chết lâu ngày đến mức phát xanh” tùy ngữ cảnh. "
-"Nếu có chỗ nào câu chữ bị sai do nhận diện giọng nói, lỗi chính tả, lỗi đồng âm, thiếu dấu câu hoặc câu văn bị méo nghĩa, "
-"hãy tự đoán theo ngữ cảnh, tự ngắt câu lại hợp lý và dịch theo nghĩa hợp lý nhất. "
-"Nếu văn bản có dấu hiệu được nhận diện từ audio tốc độ nhanh, nhiều chỗ bị dính câu, mất chữ, sai tên riêng hoặc sai thuật ngữ, "
-"hãy ưu tiên khôi phục ý đúng theo mạch truyện trước khi dịch. "
-"Với các thuật ngữ truyện mạng Trung Quốc như 系统, 攻略, 假千金, 真千金, 金手指, 宿主, 重生, 绑定, "
-"时空管理局, 高维度系统, 豆包, 豆包网..., hãy dịch sao cho người Việt dễ hiểu, có thể Việt hóa theo nghĩa, "
-"không cần dịch cứng từng chữ. Ví dụ: 系统 dịch là hệ thống, 攻略 dịch là lấy lòng/công lược/thao túng thiện cảm tùy ngữ cảnh, "
-"假千金 dịch là thiên kim giả, 真千金 dịch là thiên kim thật, 金手指 dịch là bàn tay vàng/năng lực gian lận, "
-"宿主 dịch là ký chủ hoặc người được hệ thống ràng buộc tùy ngữ cảnh, 重生 dịch là trọng sinh/sống lại, "
-"绑定 dịch là ràng buộc/liên kết, 时空管理局 dịch là Cục Quản lý Thời không, "
-"豆包 dịch là hệ thống Đậu Bao ngốc nghếch hoặc hệ thống Đậu Bao, "
-"豆包网 dịch là web Đậu Bao giả hoặc Trang web Đậu Bao tùy ngữ cảnh. "
-"Với các món ăn, đồ vật, thành ngữ hoặc cách gọi đặc thù Trung Quốc, hãy dịch sao cho người Việt dễ hiểu. "
-"Nếu cần, có thể giữ tên gốc kèm cách giải thích ngắn trong câu, nhưng không được làm dài dòng quá mức. "
-"Tên nhân vật, địa danh, quan hệ gia đình và xưng hô phải dịch nhất quán trong toàn truyện. "
-"Nếu gặp các tên bị nhận diện sai nhưng theo ngữ cảnh là cùng một người, hãy tự quy về một tên thống nhất. "
-"Ví dụ cùng một nhân vật nhưng bị nhận diện thành nhiều dạng khác nhau thì hãy chọn một tên Việt hóa nhất quán và dùng xuyên suốt. "
-"Khi dịch truyện, nếu gặp câu quảng bá kênh như “小薯条邀你一起看书咯”, "
-"“请点赞/订阅/转发/打赏”, “感谢支持”, hoặc các câu kêu gọi like, theo dõi, đăng ký, chia sẻ, tặng quà, "
-"hãy đổi tên kênh gốc thành “mimi Truyện”, không giữ tên kênh Trung Quốc. "
-"Ví dụ: “小薯条邀你一起看书咯” dịch thành “mimi Truyện mời bạn cùng đọc truyện đây”. "
-"Các câu quảng bá kênh vẫn dịch đúng ý nếu có trong văn bản, nhưng không để chúng làm rối mạch truyện chính. "
-"Nội dung còn lại vẫn phải dịch sát nghĩa, giữ đúng mạch truyện, đúng cảm xúc, đúng quan hệ nhân vật và đúng diễn biến gốc. "
-"Ưu tiên bản dịch tiếng Việt tự nhiên, dễ đọc, dễ hiểu, nhưng tuyệt đối không bịa thêm nội dung mới."
-"Chỉ cần trả lời đúng nội dung không cần các câu giao tiếp như là Dưới đây là bản dịch sát nghĩa tiếng Việt tiếp theo của truyện ngắn"
-"và không ghi lưu ý gì tự thêm vào giữa đoạn văn bản vì tôi sẽ không đọc lại nên bạn viết lưu ý thêm tôi cũng không biết"
+"Vào thẳng nội dung dịch, không viết câu mở đầu, lời chào, tiêu đề phụ hay bất kỳ văn bản dẫn nhập nào. "
+
+"Bạn là người dịch truyện ngắn tiếng Trung sang tiếng Việt. "
+"Hãy dịch sát nghĩa nhất có thể, giữ nguyên đầy đủ nội dung, tình tiết, nhân vật, quan hệ, diễn biến, cảm xúc và ý nghĩa gốc. "
+"Không tự ý thêm tình tiết mới, không bớt nội dung, không biến đổi truyện thành câu chuyện khác. "
+"Nếu gặp tiếng lóng, ẩn dụ, châm biếm, cách nói truyện mạng hoặc cụm từ có nghĩa hàm ý, hãy dịch theo nghĩa thực tế trong ngữ cảnh. "
+"Nếu văn bản có lỗi do nhận diện giọng nói, lỗi chính tả, đồng âm, thiếu dấu câu, dính câu, sai tên riêng hoặc méo nghĩa, hãy tự khôi phục ý hợp lý theo mạch truyện, ngắt câu lại cho đúng rồi dịch. "
+"hãy dịch sao cho người Việt dễ hiểu và nhất quán theo ngữ cảnh."
+"Tên nhân vật, địa danh, quan hệ gia đình và xưng hô phải thống nhất trong toàn truyện. "
+"Nếu cùng một nhân vật bị nhận diện thành nhiều tên khác nhau, hãy tự quy về một tên Việt hóa nhất quán. "
+"Với món ăn, đồ vật, thành ngữ hoặc cách gọi đặc thù Trung Quốc, hãy dịch sao cho người Việt dễ hiểu; nếu cần có thể giữ tên gốc kèm giải thích ngắn, nhưng không dài dòng. "
+"Nếu gặp câu quảng bá kênh, kêu gọi like, đăng ký, chia sẻ, tặng quà như “小薯条邀你一起看书咯”, “请点赞/订阅/转发/打赏”, “感谢支持”..., "
+"hãy đổi tên kênh gốc thành “mimi Truyện” và dịch đúng ý, nhưng không để làm rối mạch truyện chính. "
+"Ví dụ: “小薯条邀你一起看书咯” dịch là “mimi Truyện mời bạn cùng đọc truyện đây”. "
+"Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện."
 )
 
 
@@ -276,13 +255,19 @@ class App:
         self.root = root
         root.title("Nhận diện giọng nói tiếng Trung")
         root.configure(bg=UI["bg"])
-        root.geometry("760x600")
-        root.minsize(640, 520)
+        self._center(root, 980, 600)
+        root.minsize(880, 520)
 
         self._busy = False
         self._build_styles()
         self._build_ui()
         self.root.after(120, self._poll_log)
+
+    def _center(self, root, w, h):
+        """Mở cửa sổ ở giữa màn hình (ngang giữa, 1/3 từ trên xuống)."""
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = (sw - w) // 2, (sh - h) // 3
+        root.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
 
     def _build_styles(self):
         st = ttk.Style()
@@ -371,6 +356,10 @@ class App:
         self.btn_copy = ttk.Button(res_bar, text="📋 Sao chép kết quả",
                                    style="Ghost.TButton", command=self._copy_result)
         self.btn_copy.pack(side="right")
+        # Gửi thẳng các đoạn sang Gemini (mở Firefox bằng Selenium) — xem gemini_client.py
+        self.btn_gemini = ttk.Button(res_bar, text="🤖 Gửi Gemini",
+                                     style="Accent.TButton", command=self._send_gemini)
+        self.btn_gemini.pack(side="right", padx=(0, 8))
 
         # Hàng nút sao chép theo từng ĐOẠN (1,2,3...) — tạo động sau khi nhận diện
         # xong, trùng với cách .docx tách đoạn. Bấm số nào thì chép đoạn đó;
@@ -386,6 +375,14 @@ class App:
                                                 relief="flat", padx=10, pady=8)
         self.result.pack(fill="both", expand=True)
         nb.add(res_frame, text="  Kết quả (中文)  ")
+
+        # Tab hiển thị kết quả Gemini trả về (live theo từng đoạn)
+        gem_frame = tk.Frame(nb, bg=UI["bg"])
+        self.gemini_box = scrolledtext.ScrolledText(gem_frame, font=("Segoe UI", 12),
+                                                    wrap="word", bg="#ffffff", fg=UI["fg"],
+                                                    relief="flat", padx=10, pady=8)
+        self.gemini_box.pack(fill="both", expand=True)
+        nb.add(gem_frame, text="  Kết quả Gemini  ")
 
         log_frame = tk.Frame(nb, bg=UI["bg"])
         self.logbox = scrolledtext.ScrolledText(log_frame, font=("Consolas", 9), wrap="word",
@@ -516,6 +513,66 @@ class App:
         self._chunk_btns[idx].config(bg=UI["ok"], fg="#ffffff",
                                      activebackground=UI["ok"])
 
+    # ── Gửi sang Gemini ───────────────────────────────────────────────────────
+    def _send_gemini(self):
+        """Gửi các đoạn (đã tách khi nhận diện) sang Gemini qua Firefox/Selenium."""
+        if self._busy:
+            messagebox.showinfo("Đang bận", "Đang nhận diện, vui lòng đợi xong rồi gửi Gemini.")
+            return
+
+        # Ưu tiên các đoạn đã tách; chưa có thì tự tách từ nội dung đang hiển thị.
+        chunks = list(self._chunks)
+        if not chunks:
+            text = self.result.get("1.0", "end").strip()
+            if not text:
+                self.status.set("⚠️ Chưa có nội dung để gửi Gemini.")
+                return
+            chunks = recog.split_into_chunks(text)
+        if not chunks:
+            self.status.set("⚠️ Không tách được đoạn nào để gửi.")
+            return
+
+        prefix = self.prefix_box.get("1.0", "end").strip()
+        save_prefix(prefix)  # nhớ câu mở đầu cho lần sau
+
+        if not messagebox.askyesno(
+            "Gửi sang Gemini",
+            f"Sẽ mở Firefox và gửi {len(chunks)} đoạn sang Gemini.\n\n"
+            "Hãy ĐÓNG Firefox đang mở (profile bị khoá khi đang chạy) và đảm bảo "
+            "profile đã đăng nhập Google.\n\nTiếp tục?",
+        ):
+            return
+
+        self.btn_gemini.config(state="disabled")
+        self.gemini_box.delete("1.0", "end")
+        self.status.set("🤖 Đang gửi sang Gemini...")
+        self.nb.select(1)  # mở tab "Kết quả Gemini" để xem chữ chạy live
+        threading.Thread(
+            target=self._gemini_worker, args=(chunks, prefix), daemon=True
+        ).start()
+
+    def _gemini_worker(self, chunks, prefix):
+        try:
+            import gemini_client
+        except Exception as e:
+            log(f"❌ Không nạp được gemini_client: {e}", "err")
+            ui_queue.put(("gemini_done", None))
+            return
+        try:
+            results = gemini_client.send_chunks_to_gemini(
+                chunks, prefix=prefix,
+                on_log=lambda m: log(m),
+                on_result=lambda i, total, ans: ui_queue.put(("gemini", (i, total, ans))),
+            )
+            out = KICHBAN_DIR / "gemini_result.docx"
+            gemini_client.save_results_docx(chunks, results, out)
+            log(f"💾 Đã lưu kết quả Gemini: {out}", "ok")
+            ui_queue.put(("gemini_done", str(out)))
+        except Exception as e:
+            log(f"❌ Lỗi gửi Gemini: {e}", "err")
+            log(traceback.format_exc(), "err")
+            ui_queue.put(("gemini_done", None))
+
     def _reset_prefix(self):
         """Khôi phục câu mở đầu về mặc định và lưu lại."""
         self.prefix_box.delete("1.0", "end")
@@ -622,6 +679,20 @@ class App:
                     self.status.set(f"📝 Đang nhận diện... {pct:.0f}%")
                 elif kind == "done":
                     self._finish(payload)
+                elif kind == "gemini":
+                    i, total, ans = payload
+                    self.gemini_box.insert("end", f"───── Đoạn {i + 1}/{total} ─────\n")
+                    self.gemini_box.insert("end", (ans or "(trống)") + "\n\n")
+                    self.gemini_box.see("end")
+                    self.status.set(f"🤖 Gemini: xong đoạn {i + 1}/{total}")
+                elif kind == "gemini_done":
+                    self.btn_gemini.config(state="normal")
+                    if payload:
+                        self.status.set("✅ Gemini xong. Đã lưu gemini_result.docx vào kịch_bản.")
+                        self._play_done_sound(ok=True)
+                    else:
+                        self.status.set("❌ Gửi Gemini thất bại. Xem tab 'Nhật ký'.")
+                        self._play_done_sound(ok=False)
         except queue.Empty:
             pass
         self.root.after(120, self._poll_log)

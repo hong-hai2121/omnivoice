@@ -70,6 +70,12 @@ MAX_TITLE = 100        # ký tự
 MAX_DESC = 5000        # ký tự
 MAX_TAGS_TOTAL = 480   # tổng ký tự của toàn bộ tag (YouTube ~500, để dư an toàn)
 
+# Giới hạn thumbnail của YouTube (kiểm tra ngay ở GUI, khỏi đợi API báo lỗi).
+THUMB_MAX_BYTES = 2 * 1024 * 1024       # tối đa 2MB
+THUMB_MIN_WIDTH = 640                   # chiều rộng tối thiểu
+THUMB_REC_W, THUMB_REC_H = 1280, 720    # độ phân giải khuyến nghị
+THUMB_FORMATS = {"JPEG", "PNG", "GIF", "BMP"}   # định dạng YouTube chấp nhận
+
 # Danh mục video phổ biến (categoryId của YouTube). Nhãn hiển thị → id.
 CATEGORIES = {
     "Phim & Hoạt hình (1)": "1",
@@ -251,9 +257,10 @@ class App:
         self.root = root
         self.q = queue.Queue()           # hàng đợi log/progress từ thread worker
         self.worker = None
+        self.thumb_ok = True             # thumbnail có hợp lệ không (cập nhật bởi _check_thumb)
         root.title("Đăng video tự động lên YouTube")
         root.configure(bg=UI["bg"])
-        root.geometry("760x720")
+        self._center(root, 760, 720)
         root.minsize(680, 600)
 
         self._build_styles()
@@ -261,6 +268,12 @@ class App:
         self._build_log()
         self._load_settings()
         self._poll_queue()
+
+    def _center(self, root, w, h):
+        """Mở cửa sổ ở giữa màn hình (ngang giữa, 1/3 từ trên xuống)."""
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        x, y = (sw - w) // 2, (sh - h) // 3
+        root.geometry(f"{w}x{h}+{max(x, 0)}+{max(y, 0)}")
 
     # ---- style ----
     def _build_styles(self):
@@ -346,11 +359,15 @@ class App:
         row3.columnconfigure(1, weight=1)
         ttk.Label(row3, text="Thumbnail").grid(row=0, column=0, sticky="w")
         self.var_thumb = tk.StringVar()
+        self.var_thumb.trace_add("write", self._check_thumb)
         ttk.Entry(row3, textvariable=self.var_thumb).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(row3, text="Chọn...", command=self._pick_thumb).grid(row=0, column=2)
         self.var_kids = tk.BooleanVar(value=False)
         ttk.Checkbutton(row3, text="Nội dung cho trẻ em",
                         variable=self.var_kids).grid(row=0, column=3, padx=(10, 0))
+        # Dòng trạng thái kiểm tra thumbnail (✔ xanh / ⚠ vàng / ✖ đỏ)
+        self.lbl_thumb = ttk.Label(row3, text="", style="Muted.TLabel")
+        self.lbl_thumb.grid(row=1, column=1, columnspan=3, sticky="w", padx=6)
         r += 1
 
         # Hẹn giờ đăng
@@ -407,6 +424,57 @@ class App:
         f = filedialog.askopenfilename(title="Chọn ảnh thumbnail", filetypes=IMAGE_EXTS)
         if f:
             self.var_thumb.set(f)
+
+    def _check_thumb(self, *_):
+        """Kiểm tra thumbnail ngay tại GUI theo giới hạn của YouTube.
+        Cập nhật self.thumb_ok và dòng trạng thái màu (✔/⚠/✖)."""
+        path = self.var_thumb.get().strip()
+        self.thumb_ok = True
+        if not path:
+            self.lbl_thumb.config(text="", foreground=UI["muted"])
+            return
+
+        p = Path(path)
+        if not p.is_file():
+            self.thumb_ok = False
+            self.lbl_thumb.config(text="✖ Không tìm thấy file ảnh.", foreground=UI["log_err"])
+            return
+
+        size = p.stat().st_size
+        try:
+            from PIL import Image
+            with Image.open(p) as im:
+                w, h = im.size
+                fmt = im.format
+        except Exception:
+            self.thumb_ok = False
+            self.lbl_thumb.config(text="✖ Không đọc được ảnh (file hỏng hoặc không phải ảnh).",
+                                  foreground=UI["log_err"])
+            return
+
+        errs, warns = [], []
+        if size > THUMB_MAX_BYTES:
+            errs.append(f"dung lượng {size/1024/1024:.1f}MB > 2MB")
+        if fmt not in THUMB_FORMATS:
+            errs.append(f"định dạng {fmt} không hỗ trợ (chỉ JPG/PNG/GIF)")
+        if w < THUMB_MIN_WIDTH:
+            errs.append(f"rộng {w}px < tối thiểu {THUMB_MIN_WIDTH}px")
+        # Cảnh báo (không chặn upload):
+        if h and abs(w / h - 16 / 9) > 0.05:
+            warns.append("tỷ lệ không phải 16:9 (YouTube sẽ thêm viền)")
+        if w < THUMB_REC_W or h < THUMB_REC_H:
+            warns.append(f"nên dùng {THUMB_REC_W}x{THUMB_REC_H}")
+
+        info = f"{w}x{h}, {fmt}, {size/1024:.0f}KB"
+        if errs:
+            self.thumb_ok = False
+            self.lbl_thumb.config(text="✖ " + info + " — " + "; ".join(errs),
+                                  foreground=UI["log_err"])
+        elif warns:
+            self.lbl_thumb.config(text="⚠ " + info + " — " + "; ".join(warns),
+                                  foreground=UI["log_warn"])
+        else:
+            self.lbl_thumb.config(text="✔ " + info + " — phù hợp", foreground=UI["log_ok"])
 
     def _toggle_sched(self):
         self.ent_sched.config(state="normal" if self.var_sched_on.get() else "disabled")
@@ -477,8 +545,10 @@ class App:
         if len(self.txt_desc.get('1.0', 'end-1c')) > MAX_DESC:
             return f"Mô tả quá dài (> {MAX_DESC} ký tự)."
         th = self.var_thumb.get().strip()
-        if th and not Path(th).is_file():
-            return "File thumbnail không tồn tại."
+        if th:
+            self._check_thumb()
+            if not self.thumb_ok:
+                return "Thumbnail không hợp lệ — xem dòng đỏ dưới ô thumbnail."
         if self.var_sched_on.get():
             try:
                 self._sched_to_rfc3339()
