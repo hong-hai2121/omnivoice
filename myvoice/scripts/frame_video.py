@@ -8,11 +8,11 @@ Quy trình:
   - Mux audio gốc (wav) vào, cắt video đúng bằng độ dài audio (-shortest).
 
 Thứ tự lớp (từ dưới lên trên):
-  1. Khung0.png  -> nền dưới cùng
-  2. video       -> nằm trong vùng khung của khung1 (cắt bo góc)
-  3. hiệu ứng    -> (tùy chọn) phủ lên video, NẰM DƯỚI khung1/khung2
-  4. khung1.png  -> viền khung video (bo góc)
-  5. khung2.png  -> lớp trang trí trên cùng (chữ/hoa văn)
+  1. Khung0.png       -> nền dưới cùng
+  2. video + hiệu ứng -> hiệu ứng phủ THẲNG vào video ghép, rồi cùng đưa vào
+                         khung1 và cắt bo góc (dư ra ngoài khung1 bị cắt bỏ)
+  3. khung1.png       -> viền khung video (bo góc)
+  4. khung2.png       -> lớp trang trí trên cùng (chữ/hoa văn)
 
 MODE:
   - "fit"  : hiện trọn video (có thể có dải nền trên/dưới) — không mất hình.
@@ -77,6 +77,17 @@ def get_duration(path: Path) -> float:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return float(json.loads(r.stdout)["format"]["duration"])
+
+
+def get_resolution(path: Path) -> tuple[int, int]:
+    """Lấy (width, height) của luồng video đầu tiên bằng ffprobe."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "json", str(path)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    s = json.loads(r.stdout)["streams"][0]
+    return int(s["width"]), int(s["height"])
 
 
 def find_audio() -> Path:
@@ -175,8 +186,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     chuỗi để ghi tiến trình (mặc định print; GUI truyền logging.info).
 
     effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
-            Nếu có, hiệu ứng được phủ lên video NHƯNG nằm dưới khung1/khung2
-            (lặp lại nếu ngắn hơn audio). None/để trống = không thêm hiệu ứng.
+            Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC, rồi mới đưa vào
+            khung1 và cắt bo góc (lặp lại nếu ngắn hơn audio). None = không thêm.
     """
     for f in (KHUNG0, KHUNG1, KHUNG2):
         if not f.exists():
@@ -223,6 +234,22 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
     log(f"Đầu ra     : {output}")
 
+    # ── Bước 1: phủ hiệu ứng THẲNG vào video thô (trước khi đưa vào khung) ──────
+    # Hiệu ứng được scale đúng kích thước video ghép rồi overlay lên video, nên
+    # bong bóng "dính" vào nội dung video; khi đưa video vào khung + cắt bo góc thì
+    # hiệu ứng cũng bị cắt theo đúng vùng khung1 (không tràn ra nền/khung).
+    src_label = "[0:v]"
+    pre = ""
+    if effect:
+        vw, vh = get_resolution(seq[0])   # các clip đã chuẩn hoá cùng độ phân giải
+        pre = (
+            f"[6:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
+            f"crop={vw}:{vh},format=rgba[fx];"
+            f"[0:v][fx]overlay=0:0:shortest=0[srcfx];"
+        )
+        src_label = "[srcfx]"
+
+    # ── Bước 2: đưa video (đã có hiệu ứng) vào vùng trong của khung ────────────
     if mode == "fill":
         # Nới vùng đặt video ra ngoài OVERSCAN px mỗi cạnh (theo px của khung) để
         # video luồn xuống dưới viền khung1 → khử viền đen. Đây là "phóng to so với
@@ -234,42 +261,28 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
         # Phủ kín vùng (đã nới); ZOOM>1 thì phóng nội dung rồi cắt giữa về đúng vùng.
         zw, zh = round(bw * ZOOM), round(bh * ZOOM)
         place = (
-            f"[0:v]scale={zw}:{zh}:force_original_aspect_ratio=increase,"
+            f"{src_label}scale={zw}:{zh}:force_original_aspect_ratio=increase,"
             f"crop={bw}:{bh},pad={cw}:{ch}:{bx}:{by}:black[vid];"
         )
     else:  # fit
         # Thu vừa khít (giữ trọn hình), căn giữa trong vùng khung
         place = (
-            f"[0:v]scale={iw}:{ih}:force_original_aspect_ratio=decrease,"
+            f"{src_label}scale={iw}:{ih}:force_original_aspect_ratio=decrease,"
             f"pad={cw}:{ch}:{ix}+({iw}-iw)/2:{iy}+({ih}-ih)/2:black[vid];"
         )
 
-    # Xếp lớp: nền khung0 -> video (cắt bo góc) -> (tùy chọn) hiệu ứng
-    #          -> viền khung1 -> trang trí khung2.
-    # Hiệu ứng nằm NGAY TRÊN video nhưng DƯỚI khung1/khung2, nên bong bóng chỉ
-    # trôi trong vùng video; viền khung và chữ trang trí vẫn nằm đè lên trên.
+    # ── Bước 3: xếp lớp khung — nền khung0 -> video (cắt bo góc) -> khung1 -> khung2
+    # Hiệu ứng đã nằm sẵn trong [vid] (cắt bo góc cùng video), nên khung1/khung2 phủ
+    # bình thường lên trên; phần hiệu ứng dư ra ngoài khung1 đã bị mask cắt bỏ.
     # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio [6=hiệu ứng]
     filt = (
-        place +
+        pre + place +
         f"[4:v]format=gray[mask];"
         f"[vid][mask]alphamerge[va];"
         f"[1:v]scale={cw}:{ch}[bg];"
         f"[bg][va]overlay=0:0[b1];"
-    )
-    if effect:
-        # Hiệu ứng (MOV có alpha) phủ kín canvas, kéo dài cả video (stream_loop ở
-        # input lo phần lặp lại nếu hiệu ứng ngắn hơn audio).
-        filt += (
-            f"[6:v]scale={cw}:{ch}:force_original_aspect_ratio=increase,"
-            f"crop={cw}:{ch},format=rgba[fx];"
-            f"[b1][fx]overlay=0:0:shortest=0[bfx];"
-        )
-        base = "[bfx]"
-    else:
-        base = "[b1]"
-    filt += (
-        f"{base}[2:v]overlay=0:0[b2];"   # ghép khung1 (đè lên cả hiệu ứng)
-        f"[b2][3:v]overlay=0:0[out]"     # ghép khung2 trên cùng
+        f"[b1][2:v]overlay=0:0[b2];"
+        f"[b2][3:v]overlay=0:0[out]"
     )
 
     def build_cmd(gpu):

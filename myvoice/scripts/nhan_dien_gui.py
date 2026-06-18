@@ -83,6 +83,7 @@ COPY_PREFIX = (
 "Nội dung còn lại vẫn phải dịch sát nghĩa, giữ đúng mạch truyện, đúng cảm xúc, đúng quan hệ nhân vật và đúng diễn biến gốc. "
 "Ưu tiên bản dịch tiếng Việt tự nhiên, dễ đọc, dễ hiểu, nhưng tuyệt đối không bịa thêm nội dung mới."
 "Chỉ cần trả lời đúng nội dung không cần các câu giao tiếp như là Dưới đây là bản dịch sát nghĩa tiếng Việt tiếp theo của truyện ngắn"
+"và không ghi lưu ý gì tự thêm vào giữa đoạn văn bản vì tôi sẽ không đọc lại nên bạn viết lưu ý thêm tôi cũng không biết"
 )
 
 

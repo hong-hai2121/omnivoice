@@ -51,3 +51,8 @@ examples/exp*
 # Cache model Whisper (tải tự động, ~1.9GB) và thư mục tải/transcript của GUI tiếng Trung
 whisper_cache/
 /myvoice/scripts/downloads_zh/
+
+# Khóa OAuth của YouTube uploader — TUYỆT ĐỐI không đưa lên repo (bí mật)
+/myvoice/YOUTUBE/client_secret.json
+/myvoice/YOUTUBE/token.json
+/myvoice/YOUTUBE/settings.json
