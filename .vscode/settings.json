@@ -1,0 +1,53 @@
+{
+  // === Bỏ qua các thư mục nặng để chuột không bị loading liên tục ===
+  // File watcher: không theo dõi thay đổi ở các thư mục/loại file nặng
+  "files.watcherExclude": {
+    "**/venv/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.git/objects/**": true,
+    "**/whisper_cache/**": true,
+    "**/myvoice/mp4/**": true,
+    "**/myvoice/voice/**": true,
+    "**/myvoice/videodoc/**": true,
+    "**/myvoice/videongang/**": true,
+    "**/myvoice/Backbround/**": true,
+    "**/myvoice/Anh/**": true,
+    "**/*.mp4": true,
+    "**/*.mov": true,
+    "**/*.wav": true,
+    "**/*.mp3": true
+  },
+
+  // Tìm kiếm (Ctrl+Shift+F) bỏ qua các thư mục nặng
+  "search.exclude": {
+    "**/venv": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/whisper_cache": true,
+    "**/myvoice/mp4": true,
+    "**/myvoice/voice": true,
+    "**/myvoice/videodoc": true,
+    "**/myvoice/videongang": true,
+    "**/myvoice/Backbround": true,
+    "**/myvoice/Anh": true,
+    "**/uv.lock": true
+  },
+
+  // Ẩn bớt rác trong cây thư mục (tuỳ chọn, cho gọn)
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true
+  },
+
+  // === Pylance: đừng phân tích cả venv ===
+  "python.analysis.exclude": [
+    "**/venv/**",
+    "**/.venv/**",
+    "**/whisper_cache/**",
+    "**/myvoice/mp4/**",
+    "**/myvoice/voice/**"
+  ],
+  "python.analysis.indexing": true,
+  "python.analysis.diagnosticMode": "openFilesOnly"
+}

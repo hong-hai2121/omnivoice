@@ -1,0 +1,149 @@
+# -*- coding: utf-8 -*-
+"""
+seo_docx_parser.py — Tách TIÊU ĐỀ / MÔ TẢ / THẺ TAG từ file SEO của Gemini
+(seoYoutube.docx) để dùng đăng YouTube qua API.
+
+Định dạng Gemini trả về (nhận diện theo TỪ KHÓA, KHÔNG phụ thuộc emoji/số bước):
+
+    ... CHỌN TIÊU ĐỀ VIDEO
+        (Độ dài ...)                    ← chú thích, bỏ qua
+        <các tiêu đề ứng viên> ...
+    🏆 TIÊU ĐỀ TỐT NHẤT ĐƯỢC CHỌN:
+        <tiêu đề>                       ← LẤY dòng ngay sau mốc này
+    ... THẺ TAG ...
+        (Độ dài ...)                    ← chú thích, bỏ qua
+        Plaintext                       ← nhãn khối code, bỏ qua
+        tag1, tag2, tag3, ...           ← dòng CSV = danh sách THẺ TAG
+    ... MÔ TẢ VIDEO ...
+        (Bạn chỉ cần copy ...)          ← chú thích, bỏ qua
+        <toàn bộ phần còn lại>          ← gộp thành MÔ TẢ
+
+Dùng:
+    from seo_docx_parser import parse_seo_docx
+    seo = parse_seo_docx("seoYoutube.docx")
+    seo["title"], seo["description"], seo["tags"]   # tags là list[str]
+"""
+
+from pathlib import Path
+
+
+def _norm(s):
+    """Chuẩn hoá để so khớp từ khoá: gộp khoảng trắng + viết hoa (bỏ dấu giữ nguyên)."""
+    return " ".join((s or "").split()).upper()
+
+
+def _is_note(text):
+    """Dòng chú thích trong ngoặc kiểu '(Độ dài ...)' — bỏ qua khi tách nội dung."""
+    t = (text or "").strip()
+    return t.startswith("(") and t.endswith(")")
+
+
+# Nhãn rác do Gemini chèn khi xuất khối code (không phải nội dung thật).
+_CODE_LABELS = {"PLAINTEXT", "PLAIN TEXT", "TEXT", "CODE", "MARKDOWN"}
+
+
+def _read_paragraphs(path):
+    """Đọc các paragraph nội dung (bỏ Heading/Title) đã strip, giữ nguyên thứ tự."""
+    from docx import Document
+    doc = Document(str(path))
+    out = []
+    for p in doc.paragraphs:
+        style = p.style.name or ""
+        if style.startswith("Heading") or style.startswith("Title"):
+            continue
+        out.append(p.text.strip())
+    return out
+
+
+def parse_seo_docx(path):
+    """Trả về dict {'title': str, 'description': str, 'tags': list[str]}."""
+    paras = _read_paragraphs(path)
+    n = len(paras)
+
+    def find(keyword):
+        kw = keyword.upper()
+        for i, t in enumerate(paras):
+            if kw in _norm(t):
+                return i
+        return -1
+
+    i_best = find("TIÊU ĐỀ TỐT NHẤT")
+    i_tag = find("THẺ TAG")
+    i_desc = find("MÔ TẢ VIDEO")
+    if i_desc < 0:
+        i_desc = find("MÔ TẢ")
+
+    # ── TIÊU ĐỀ: dòng nội dung đầu tiên sau mốc "TIÊU ĐỀ TỐT NHẤT" ──
+    title = ""
+    if i_best >= 0:
+        for t in paras[i_best + 1:]:
+            if t and not _is_note(t):
+                title = t
+                break
+    # Dự phòng: chưa có mốc "tốt nhất" thì lấy ứng viên đầu trong mục chọn tiêu đề.
+    if not title:
+        i_pick = find("CHỌN TIÊU ĐỀ")
+        if i_pick >= 0:
+            for t in paras[i_pick + 1:]:
+                if t and not _is_note(t):
+                    title = t
+                    break
+
+    # ── THẺ TAG: dòng CSV (nhiều dấu phẩy nhất) trong khoảng [i_tag, i_desc) ──
+    tags = []
+    if i_tag >= 0:
+        end = i_desc if i_desc > i_tag else n
+        best_line = ""
+        for t in paras[i_tag + 1:end]:
+            if not t or _is_note(t) or _norm(t) in _CODE_LABELS:
+                continue
+            if t.count(",") > best_line.count(","):
+                best_line = t
+        tags = [x.strip() for x in best_line.split(",") if x.strip()]
+
+    # ── MÔ TẢ: từ sau dòng chú thích của mục Mô tả tới hết tài liệu ──
+    description = ""
+    if i_desc >= 0:
+        start = i_desc + 1
+        while start < n and (not paras[start] or _is_note(paras[start])):
+            start += 1
+        desc_lines = list(paras[start:])
+        while desc_lines and not desc_lines[-1]:   # bỏ dòng trống ở cuối
+            desc_lines.pop()
+        description = "\n".join(desc_lines).strip()
+
+    # ── Tổng hợp lỗi CẤU TRÚC để báo cho người dùng nếu Gemini trả khác mong đợi ──
+    issues = []
+    if n == 0:
+        issues.append("File chưa có nội dung SEO (rỗng).")
+    else:
+        if not title:
+            issues.append("Không tìm thấy TIÊU ĐỀ "
+                          "(thiếu mục 'TIÊU ĐỀ TỐT NHẤT' hoặc 'CHỌN TIÊU ĐỀ').")
+        if not tags:
+            issues.append("Không tìm thấy THẺ TAG "
+                          "(thiếu mục 'THẺ TAG' hoặc dòng tag ngăn cách bằng dấu phẩy).")
+        if not description:
+            issues.append("Không tìm thấy MÔ TẢ (thiếu mục 'MÔ TẢ VIDEO').")
+
+    return {"title": title, "description": description, "tags": tags, "issues": issues}
+
+
+if __name__ == "__main__":
+    import sys
+    src = sys.argv[1] if len(sys.argv) > 1 else str(
+        Path(__file__).resolve().parent.parent / "kịch_bản" / "seoYoutube.docx"
+    )
+    seo = parse_seo_docx(src)
+    if seo["issues"]:
+        print("⚠️ CẢNH BÁO CẤU TRÚC:")
+        for s in seo["issues"]:
+            print("  •", s)
+        print()
+    print("===== TIÊU ĐỀ =====")
+    print(seo["title"], f"({len(seo['title'])} ký tự)")
+    print("\n===== THẺ TAG =====")
+    print(f"{len(seo['tags'])} tag | tổng {sum(len(t) for t in seo['tags'])} ký tự")
+    print(", ".join(seo["tags"]))
+    print("\n===== MÔ TẢ =====")
+    print(seo["description"])

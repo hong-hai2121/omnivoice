@@ -57,6 +57,8 @@ YT_DIR.mkdir(exist_ok=True)
 CLIENT_SECRET_FILE = YT_DIR / "client_secret.json"      # bạn tải từ Google Cloud Console
 TOKEN_FILE = YT_DIR / "token.json"                      # token đăng nhập, tự sinh sau lần đầu
 SETTINGS_FILE = YT_DIR / "settings.json"                # ghi nhớ lựa chọn lần trước
+KICHBAN_DIR = BASE_DIR.parent / "kịch_bản"              # nơi chứa seoYoutube.docx (kết quả SEO Gemini)
+SEO_DOCX_FILE = KICHBAN_DIR / "seoYoutube.docx"         # file SEO để tách Tiêu đề/Mô tả/Thẻ tag
 
 VIDEO_EXTS = [("Video", "*.mp4 *.mov *.mkv *.avi *.flv *.webm *.m4v *.wmv"),
               ("Tất cả", "*.*")]
@@ -390,6 +392,8 @@ class App:
         self.btn_upload = ttk.Button(rowb, text="⬆  ĐĂNG VIDEO", style="Accent.TButton",
                                      command=self._on_upload)
         self.btn_upload.pack(side="left")
+        ttk.Button(rowb, text="📥 Lấy SEO (seoYoutube.docx)",
+                   command=self._load_seo_from_docx).pack(side="left", padx=6)
         ttk.Button(rowb, text="Mở thư mục cấu hình",
                    command=self._open_cfg_dir).pack(side="left", padx=6)
         ttk.Button(rowb, text="Hướng dẫn lấy quyền",
@@ -419,6 +423,65 @@ class App:
             self.var_video.set(f)
             if not self.var_title.get().strip():
                 self.var_title.set(Path(f).stem)   # gợi ý tiêu đề từ tên file
+
+    def _load_seo_from_docx(self):
+        """Đọc seoYoutube.docx (kết quả SEO Gemini), tách Tiêu đề/Mô tả/Thẻ tag và
+        điền vào các ô tương ứng để chuẩn bị đăng YouTube."""
+        path = SEO_DOCX_FILE
+        if not path.exists():
+            f = filedialog.askopenfilename(
+                title="Chọn file SEO (.docx)",
+                filetypes=[("Word", "*.docx"), ("Tất cả", "*.*")])
+            if not f:
+                return
+            path = Path(f)
+        try:
+            from seo_docx_parser import parse_seo_docx
+            seo = parse_seo_docx(path)
+        except ImportError:
+            messagebox.showerror("Thiếu thư viện",
+                                 "Chưa cài python-docx. Chạy: pip install python-docx")
+            return
+        except Exception as e:
+            messagebox.showerror("Lỗi đọc SEO", f"Không đọc được {path}:\n{e}")
+            self.log("LỖI đọc SEO: " + str(e), "err")
+            return
+
+        title, desc, tags = seo["title"], seo["description"], seo["tags"]
+        issues = seo.get("issues", [])
+
+        # Không tách được gì → nhiều khả năng Gemini trả về CẤU TRÚC KHÁC (hoặc file rỗng).
+        if not (title or desc or tags):
+            detail = "\n".join("• " + s for s in issues) if issues else \
+                "• Không tìm thấy các mục Tiêu đề / Thẻ tag / Mô tả quen thuộc."
+            messagebox.showerror(
+                "Không đọc được SEO",
+                "Gemini có thể đã trả về CẤU TRÚC KHÁC với định dạng mong đợi nên "
+                "không tách được nội dung:\n\n" + detail +
+                "\n\nHãy mở seoYoutube.docx kiểm tra, hoặc chạy lại seo_youtube_gemini.py.")
+            self.log("LỖI SEO: không tách được nội dung — " + " | ".join(issues), "err")
+            return
+
+        # Tách được MỘT PHẦN → vẫn điền phần có, nhưng CẢNH BÁO rõ phần bị thiếu.
+        if issues:
+            messagebox.showwarning(
+                "SEO thiếu một số phần",
+                "Cấu trúc SEO khác mong đợi — chỉ lấy được một phần. Thiếu:\n\n" +
+                "\n".join("• " + s for s in issues) +
+                "\n\nHãy kiểm tra lại các ô trước khi đăng.")
+            for s in issues:
+                self.log("⚠ SEO thiếu: " + s, "warn")
+
+        if title:
+            self.var_title.set(title)
+        if desc:
+            self.txt_desc.delete("1.0", "end")
+            self.txt_desc.insert("1.0", desc)
+        if tags:
+            self.var_tags.set(", ".join(tags))
+        self._update_counters()
+        self.log(f"✔ Đã lấy SEO từ {path.name}: tiêu đề {len(title)} ký tự, "
+                 f"{len(tags)} thẻ tag, mô tả {len(desc)} ký tự.", "ok")
 
     def _pick_thumb(self):
         f = filedialog.askopenfilename(title="Chọn ảnh thumbnail", filetypes=IMAGE_EXTS)
