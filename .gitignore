@@ -47,6 +47,10 @@ examples/exp*
 # State/preview sinh tự động của GUI (không cần đưa lên repo)
 /myvoice/voice_favorites.json
 /myvoice/kịch_bản/input_preview.txt
+/myvoice/kịch_bản/input.txt
+
+# Thumbnail sinh từ tiêu đề / ảnh nền, không đưa lên Git
+**/thumbnail*.png
 
 # Cache model Whisper (tải tự động, ~1.9GB) và thư mục tải/transcript của GUI tiếng Trung
 whisper_cache/

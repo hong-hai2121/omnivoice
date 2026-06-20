@@ -54,11 +54,41 @@ SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 # Ưu tiên GPU (NVIDIA NVENC) để dựng video; tự fallback về CPU (libx264) nếu GPU lỗi.
 USE_GPU = True
 
+# Chiều cao thấp nhất của video xuất. Nếu bộ khung PNG bị thay bằng bản 720p,
+# video vẫn được render lại tối thiểu 1080p thay vì hạ theo kích thước khung.
+MIN_OUTPUT_HEIGHT = 1080
+# Hạ CQ/CRF để ưu tiên chi tiết sau khi ghép khung. File xuất sẽ lớn hơn và
+# dựng chậm hơn một chút so với cấu hình mặc định trước đây (CQ 19 / CRF 18).
+NVENC_CQ = 16
+X264_CRF = 16
+
 MODE  = "fill"      # "fit" hoặc "fill"
 INSET = 6           # thu vào trong vài px để không đè lên viền
 ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa khít, 1.25 = 125%)
 OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
                     # luồn xuống dưới viền khung1 — khử viền đen quanh video
+
+
+def _even(value: float) -> int:
+    """Kích thước video phải chia hết cho 2 để mã hóa yuv420p."""
+    return max(2, int(round(value / 2.0)) * 2)
+
+
+def output_canvas_size(width: int, height: int) -> tuple[int, int]:
+    """Trả về canvas giữ tỷ lệ, cao ít nhất MIN_OUTPUT_HEIGHT."""
+    scale = max(1.0, MIN_OUTPUT_HEIGHT / height)
+    return _even(width * scale), _even(height * scale)
+
+
+def scale_box(x: int, y: int, w: int, h: int,
+              source_w: int, source_h: int,
+              target_w: int, target_h: int) -> tuple[int, int, int, int]:
+    """Scale tọa độ vùng trong của khung mà không làm lệch mép."""
+    left = round(x * target_w / source_w)
+    top = round(y * target_h / source_h)
+    right = round((x + w) * target_w / source_w)
+    bottom = round((y + h) * target_h / source_h)
+    return left, top, right - left, bottom - top
 
 
 def has_nvenc() -> bool:
@@ -211,8 +241,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
 
     # Khung + vùng trong + mặt nạ bo góc (lấy từ khung1)
     im, pink = pink_mask(KHUNG1)
-    cw, ch = im.size                                 # khung = kích thước canvas
+    source_w, source_h = im.size
+    cw, ch = output_canvas_size(source_w, source_h)
     ix, iy, iw, ih = detect_inner_box(im, pink)
+    ix, iy, iw, ih = scale_box(
+        ix, iy, iw, ih, source_w, source_h, cw, ch
+    )
     mask_path = Path(tempfile.gettempdir()) / "khung_mask.png"
     build_mask(pink, mask_path)
 
@@ -226,7 +260,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
         for v in seq:
             f.write(f"file '{v.as_posix()}'\n")
 
-    log(f"Khung      : {cw}x{ch}")
+    log(f"Khung gốc  : {source_w}x{source_h}")
+    log(f"Video xuất : {cw}x{ch} (tối thiểu {MIN_OUTPUT_HEIGHT}p)")
     log(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
     log(f"Chế độ     : {mode}  (zoom {ZOOM:g}x, nới {OVERSCAN}px)")
     log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
@@ -254,10 +289,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
         # Nới vùng đặt video ra ngoài OVERSCAN px mỗi cạnh (theo px của khung) để
         # video luồn xuống dưới viền khung1 → khử viền đen. Đây là "phóng to so với
         # khung", khác hẳn ZOOM (phóng to nội dung video bên trong vùng đó).
-        bx = max(0, ix - OVERSCAN)
-        by = max(0, iy - OVERSCAN)
-        bw = min(iw + 2 * OVERSCAN, cw - bx)
-        bh = min(ih + 2 * OVERSCAN, ch - by)
+        overscan_x = round(OVERSCAN * cw / source_w)
+        overscan_y = round(OVERSCAN * ch / source_h)
+        bx = max(0, ix - overscan_x)
+        by = max(0, iy - overscan_y)
+        bw = min(iw + 2 * overscan_x, cw - bx)
+        bh = min(ih + 2 * overscan_y, ch - by)
         # Phủ kín vùng (đã nới); ZOOM>1 thì phóng nội dung rồi cắt giữa về đúng vùng.
         zw, zh = round(bw * ZOOM), round(bh * ZOOM)
         place = (
@@ -277,24 +314,32 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio [6=hiệu ứng]
     filt = (
         pre + place +
-        f"[4:v]format=gray[mask];"
+        f"[4:v]scale={cw}:{ch}:flags=lanczos,format=gray[mask];"
         f"[vid][mask]alphamerge[va];"
         f"[1:v]scale={cw}:{ch}[bg];"
         f"[bg][va]overlay=0:0[b1];"
-        f"[b1][2:v]overlay=0:0[b2];"
-        f"[b2][3:v]overlay=0:0[out]"
+        f"[2:v]scale={cw}:{ch}:flags=lanczos[frame1];"
+        f"[b1][frame1]overlay=0:0[b2];"
+        f"[3:v]scale={cw}:{ch}:flags=lanczos[frame2];"
+        f"[b2][frame2]overlay=0:0[out]"
     )
 
     def build_cmd(gpu):
         if gpu:
             codec = [
                 "-c:v", "h264_nvenc",
-                "-preset", "p5",        # cân bằng tốc độ/chất lượng
+                "-preset", "p7",        # chất lượng cao nhất của NVENC
+                "-tune", "hq",
                 "-rc", "vbr",
-                "-cq", "19",
+                "-cq", str(NVENC_CQ),
+                "-b:v", "0",            # để CQ tự cấp bitrate theo cảnh
+                "-profile:v", "high",
             ]
         else:
-            codec = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+            codec = [
+                "-c:v", "libx264", "-preset", "slow",
+                "-crf", str(X264_CRF), "-profile:v", "high",
+            ]
         cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_list),
