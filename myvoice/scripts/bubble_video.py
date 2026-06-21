@@ -44,10 +44,11 @@ from PIL import Image, ImageDraw
 #  THAM SỐ — chỉnh tại đây
 # ════════════════════════════════════════════════════════════════════════════
 _HERE = Path(__file__).resolve().parent
+EFFECTS_DIR = _HERE / "hieuung"
 
 INPUT  = "D:/Python/omnivoice/OmniVoice/myvoice/videongang/一起来邂逅宫崎骏的夏天_哔哩哔哩_bilibili.mp4"
-OUTPUT = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_output.mp4"          # chế độ "burn"
-OUTPUT_MOV = "D:/Python/omnivoice/OmniVoice/myvoice/scripts/bubbles_overlay.mov"     # chế độ "transparent"
+OUTPUT = str(EFFECTS_DIR / "bubbles_output.mp4")          # chế độ "burn"
+OUTPUT_MOV = str(EFFECTS_DIR / "bubbles_overlay.mov")      # chế độ "transparent"
 
 # — CHẾ ĐỘ RENDER —
 #   "transparent" = xuất MOV nền RỖNG (kênh alpha) để bạn TỰ ghép lên video khác  ← QUAN TRỌNG
@@ -60,6 +61,9 @@ OUTPUT_FPS       = 30.0
 
 # — Render theo từng clip: TRỐNG → ĐẦY → TAN —
 CLIP_SECONDS     = 30.0      # độ dài video kết quả (giây); None = lấy trọn độ dài video gốc
+# True = mỗi ảnh thường dùng đúng 1 lần, video tự dừng sau khi ảnh cuối bay hết + fade-out.
+# Chế độ này không dùng CLIP_SECONDS; phù hợp nhất với MOV nền trong suốt.
+RENDER_UNTIL_IMAGES_FINISH = False
 SPAWN_RATE       = 2.2       # số bong bóng sinh ra mỗi giây (đầu clip trống, sinh dần cho đầy)
 MAX_BUBBLES      = 16        # số bong bóng tối đa hiện cùng lúc (mật độ; nhỏ = thưa)
 FADE_OUT_SEC     = 3.0       # vài giây CUỐI clip: cả lớp bong bóng mờ tan dần
@@ -291,9 +295,19 @@ class Bubble:
                  "t_spawn", "t_despawn", "sprite")
 
 
-def _make_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> Bubble:
+def _make_bubble(
+    rng: random.Random,
+    W: int,
+    H: int,
+    t_spawn: float,
+    image_index: int | None = None,
+) -> Bubble:
     b = Bubble()
-    if rng.random() < TINY_FRAC:
+    if image_index is not None:
+        # Chế độ "dùng hết ảnh": ép ảnh này xuất hiện một lần, không chọn ngẫu nhiên/lặp lại.
+        b.d = int(rng.uniform(SIZE_MIN, SIZE_MAX))
+        b.inner_key = ("img", image_index)
+    elif rng.random() < TINY_FRAC:
         b.d = int(rng.uniform(TINY_MIN, TINY_MAX))
         b.inner_key = ("none", 0)                               # bé tý → bong bóng trơn
     else:
@@ -331,12 +345,60 @@ def _make_feature_bubble(rng: random.Random, W: int, H: int, t_spawn: float) -> 
     return b
 
 
-def _build_schedule(W: int, H: int, duration: float):
+def _build_until_images_finish_schedule(W: int, H: int) -> tuple[list[Bubble], float]:
+    """Mỗi ảnh thường xuất hiện một lần; độ dài clip do ảnh cuối quyết định.
+
+    Pink.png vẫn là bong bóng feature riêng, nên không nằm trong hàng đợi khi
+    FEATURE_IN_RANDOM=False. Các ảnh còn lại được xáo trộn theo SEED, mỗi ảnh
+    sinh đúng một bong bóng có ảnh, rồi video chờ bóng cuối bay hết và mờ tan.
+    """
+    rng = random.Random(SEED)
+    image_indices = list(RANDOM_IMAGE_INDICES)
+    rng.shuffle(image_indices)
+    if not image_indices:
+        # Không có ảnh thường: không render clip vô hạn; chỉ trả về khoảng fade ngắn.
+        return [], max(1.0, FADE_OUT_SEC)
+
+    bubbles: list[Bubble] = []
+    intervals: list[tuple[float, float]] = []
+    t = 0.0
+    last_image_spawn = 0.0
+
+    for image_index in image_indices:
+        # Chờ nếu đã đạt giới hạn số bong bóng ảnh đang hiển thị.
+        while sum(1 for start, end in intervals if start <= t <= end) >= MAX_BUBBLES:
+            active_ends = [end for start, end in intervals if start <= t <= end]
+            t = min(active_ends) + 0.001
+
+        bubble = _make_bubble(rng, W, H, t, image_index=image_index)
+        bubbles.append(bubble)
+        intervals.append((bubble.t_spawn, bubble.t_despawn))
+        last_image_spawn = t
+        t += (1.0 / SPAWN_RATE) * rng.uniform(0.7, 1.3)
+
+    # Pink.png tiếp tục là bong bóng feature trong lúc hàng đợi ảnh thường đang chạy.
+    if FEATURE_INDEX is not None:
+        life = (H + SIZE_MAX) / SLOW_SPEED
+        period = max(0.5, life * FEATURE_OVERLAP)
+        feature_time = -life * 0.5
+        while feature_time <= last_image_spawn:
+            feature = _make_feature_bubble(rng, W, H, feature_time)
+            bubbles.append(feature)
+            feature_time += period
+
+    last_visible = max(bubble.t_despawn for bubble in bubbles)
+    return bubbles, last_visible + max(FADE_OUT_SEC, 0.0)
+
+
+def _build_schedule(W: int, H: int, duration: float) -> tuple[list[Bubble], float]:
     """Lịch sinh bong bóng: đầu clip TRỐNG, sinh dần từ đáy cho đầy; ngừng sinh gần cuối.
 
     Riêng bong bóng 'ngôi sao' (Pink.png, cỡ to nhất) được sinh NỐI TIẾP nhau để
     LÚC NÀO trên màn hình cũng có ít nhất 1 bóng này.
     """
+    if RENDER_UNTIL_IMAGES_FINISH:
+        return _build_until_images_finish_schedule(W, H)
+
     rng = random.Random(SEED)
     bubbles, intervals = [], []
     stop_spawn = max(0.0, duration - FADE_OUT_SEC)             # ngừng sinh khi bắt đầu mờ tan
@@ -361,7 +423,7 @@ def _build_schedule(W: int, H: int, duration: float):
             bubbles.append(bub)
             intervals.append((bub.t_spawn, bub.t_despawn))
         t += (1.0 / SPAWN_RATE) * rng.uniform(0.7, 1.3)        # nhịp sinh có nhiễu nhẹ
-    return bubbles
+    return bubbles, duration
 
 
 def _global_fade(t: float, duration: float) -> float:
@@ -453,8 +515,8 @@ def _transparent_render_spec(ref_path: Path):
 
 def render_transparent_mov(out_path: Path, ref_path: Path):
     W, H, fps, duration = _transparent_render_spec(ref_path)
+    bubbles, duration = _build_schedule(W, H, duration)
     n_frames = int(round(duration * fps))
-    bubbles = _build_schedule(W, H, duration)
     print(f"Khung {W}x{H}  fps={fps:.3f}  dài={duration:.2f}s  — {len(bubbles)} bong bóng")
 
     cmd = [
@@ -488,8 +550,13 @@ def render_onto_video(in_path: Path, out_path: Path):
     fps = _probe_fps(in_path)
     duration = _probe_duration(in_path)
     has_audio = _has_audio(in_path)
+    bubbles, scheduled_duration = _build_schedule(W, H, duration)
+    if RENDER_UNTIL_IMAGES_FINISH and scheduled_duration > duration:
+        print(
+            "[CẢNH BÁO] Video gốc ngắn hơn thời lượng cần để dùng hết ảnh; "
+            "các ảnh cuối có thể chưa xuất hiện. Dùng MOV nền trong suốt để không giới hạn thời gian."
+        )
     n_frames = int(round(duration * fps))
-    bubbles = _build_schedule(W, H, duration)
     print(f"Khung {W}x{H}  fps={fps:.3f}  dài={duration:.2f}s  — {len(bubbles)} bong bóng")
 
     # input 0 = video gốc · input 1 = lớp bong bóng (rawvideo qua stdin)
@@ -577,18 +644,22 @@ def main():
 
     if RENDER_MODE == "transparent":
         # MOV nền RỖNG để ghép lên video khác — video tham chiếu (nếu có) chỉ để lấy kích thước/fps
-        out_path = Path(args[1]) if len(args) >= 2 else Path(OUTPUT_MOV)
+        requested_output = Path(args[1]) if len(args) >= 2 else Path(OUTPUT_MOV)
+        out_path = EFFECTS_DIR / requested_output.name
         if out_path.suffix.lower() != ".mov":
             out_path = out_path.with_suffix(".mov")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path = _unique_path(out_path)                 # không đè bản cũ → tạo bản mới
         print(f"Render MOV NỀN RỖNG (để ghép video khác): {out_path.name}  (trống → đầy → tan)")
         render_transparent_mov(out_path, ref_path)
         print(f"Hoàn tất → {out_path}")
     else:  # "burn"
-        out_path = Path(args[1]) if len(args) >= 2 else Path(OUTPUT)
+        requested_output = Path(args[1]) if len(args) >= 2 else Path(OUTPUT)
+        out_path = EFFECTS_DIR / requested_output.name
         if not ref_path.exists():
             print(f"[LỖI] Không tìm thấy video đầu vào: {ref_path}")
             sys.exit(1)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path = _unique_path(out_path)                 # không đè bản cũ → tạo bản mới
         print(f"Render bong bóng lên: {ref_path.name}  (trống → đầy → tan, giữ âm thanh gốc)")
         render_onto_video(ref_path, out_path)

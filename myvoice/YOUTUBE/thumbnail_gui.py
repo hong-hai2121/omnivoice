@@ -1,0 +1,365 @@
+# -*- coding: utf-8 -*-
+"""GUI tạo thumbnail: nhập tiêu đề, số tập và chọn ảnh mèo ngẫu nhiên.
+
+Chạy từ thư mục gốc OmniVoice:
+    venv\Scripts\python myvoice\YOUTUBE\thumbnail_gui.py
+"""
+
+from __future__ import annotations
+
+import json
+import queue
+import random
+import threading
+import traceback
+from pathlib import Path
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+from PIL import Image, ImageOps, ImageTk
+
+import dien_tieu_de_thumbnail as renderer
+
+
+STATE_FILE = Path(__file__).resolve().with_name("thumbnail_gui_state.json")
+WINDOW_WIDTH = 1040
+WINDOW_HEIGHT = 735
+
+
+class ThumbnailGUI:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Tạo thumbnail YouTube")
+        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+        self.root.minsize(920, 650)
+        self.root.configure(bg="#F4F6FB")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self.events: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.photos = renderer.list_photo_files(renderer.CAT_IMAGE_DIR)
+        self.selected_photo: Path | None = None
+        self.preview_image: ImageTk.PhotoImage | None = None
+        self.running = False
+
+        self.number_var = tk.StringVar(value=self._load_episode_number())
+        self.photo_name_var = tk.StringVar(value="Chưa chọn ảnh")
+        self.status_var = tk.StringVar(value="Sẵn sàng")
+        self.output_var = tk.StringVar(value="")
+
+        self._build_ui()
+        self._choose_random_photo()
+        self.root.after(100, self._poll_events)
+        self.root.after(120, self._center_window)
+
+    @staticmethod
+    def _load_episode_number() -> str:
+        """Đọc số tập gần nhất; lỗi/mất file thì quay về 01."""
+        try:
+            saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            number = str(saved.get("episode_number", "")).strip()
+            if number.isdecimal():
+                return number.zfill(max(2, len(number)))
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        return renderer.DEFAULT_NUMBER
+
+    def _save_episode_number(self) -> None:
+        number = self.number_var.get().strip()
+        if not number.isdecimal():
+            return
+        try:
+            STATE_FILE.write_text(
+                json.dumps({"episode_number": number}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Không làm gián đoạn GUI nếu thư mục không cho ghi cấu hình.
+            pass
+
+    def _center_window(self) -> None:
+        # Dùng kích thước đặt sẵn thay vì winfo_width() khi Tk vừa khởi tạo (lúc đó
+        # Windows đôi khi trả về 1×1, khiến góc trái trên nằm đúng giữa màn hình).
+        x = max(0, (self.root.winfo_screenwidth() - WINDOW_WIDTH) // 2)
+        y = max(0, (self.root.winfo_screenheight() - WINDOW_HEIGHT) // 2)
+        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{x}+{y}")
+
+    def _setup_style(self) -> None:
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
+        style.configure("TEntry", padding=8, font=("Segoe UI", 11))
+        style.configure("Accent.TButton", background="#6D5CE8", foreground="white", padding=(18, 11), font=("Segoe UI", 11, "bold"))
+        style.map("Accent.TButton", background=[("active", "#5946D8"), ("disabled", "#C9C3F4")])
+        style.configure("Soft.TButton", background="#EEEAFE", foreground="#5140C8", padding=(13, 8), font=("Segoe UI", 10, "bold"))
+        style.map("Soft.TButton", background=[("active", "#E0DBFB")])
+        style.configure("Stepper.TButton", background="#E7E3FC", foreground="#5140C8", padding=(7, 3), font=("Segoe UI", 13, "bold"))
+        style.map("Stepper.TButton", background=[("active", "#D8D1FA")])
+
+    @staticmethod
+    def _card(parent: tk.Misc) -> tk.Frame:
+        return tk.Frame(
+            parent,
+            bg="white",
+            highlightbackground="#E4E8F1",
+            highlightthickness=1,
+            padx=22,
+            pady=20,
+        )
+
+    def _build_ui(self) -> None:
+        self._setup_style()
+
+        header = tk.Frame(self.root, bg="#302B63", height=120)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        tk.Label(
+            header,
+            text="THUMBNAIL STUDIO",
+            bg="#302B63",
+            fg="#FFFFFF",
+            font=("Segoe UI", 19, "bold"),
+        ).pack(anchor="w", padx=34, pady=(22, 2))
+        tk.Label(
+            header,
+            text="Nhập tiêu đề · đánh số tập · chọn ảnh mèo ngẫu nhiên · tạo thumbnail chỉ với một nút bấm",
+            bg="#302B63",
+            fg="#D9D4FF",
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=34)
+
+        main = tk.Frame(self.root, bg="#F4F6FB", padx=24, pady=22)
+        main.pack(fill="both", expand=True)
+        main.columnconfigure(0, weight=6, minsize=510)
+        main.columnconfigure(1, weight=4, minsize=350)
+        main.rowconfigure(0, weight=1)
+
+        input_card = self._card(main)
+        input_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        input_card.columnconfigure(0, weight=1)
+
+        tk.Label(input_card, text="Nội dung thumbnail", bg="white", fg="#1F2440", font=("Segoe UI", 15, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        tk.Label(
+            input_card,
+            text="Thiết kế tự căn giữa, xuống dòng và phóng to theo độ dài tiêu đề.",
+            bg="white",
+            fg="#697386",
+            font=("Segoe UI", 10),
+        ).grid(row=1, column=0, sticky="w", pady=(3, 17))
+
+        tk.Label(input_card, text="TIÊU ĐỀ", bg="white", fg="#4A5568", font=("Segoe UI", 9, "bold")).grid(
+            row=2, column=0, sticky="w", pady=(0, 6)
+        )
+        self.title_text = tk.Text(
+            input_card,
+            height=5,
+            wrap="word",
+            font=("Segoe UI", 13),
+            bg="#FBFCFF",
+            fg="#1F2440",
+            insertbackground="#6D5CE8",
+            relief="solid",
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground="#DFE4EE",
+            highlightcolor="#8A7CF0",
+            padx=12,
+            pady=10,
+        )
+        self.title_text.grid(row=3, column=0, sticky="ew")
+
+        number_card = tk.Frame(input_card, bg="#F8F7FF", padx=14, pady=12, highlightbackground="#E6E1FF", highlightthickness=1)
+        number_card.grid(row=4, column=0, sticky="ew", pady=(16, 0))
+        number_card.columnconfigure(1, weight=1)
+        tk.Label(number_card, text="Số tập", bg="#F8F7FF", fg="#38305F", font=("Segoe UI", 11, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Entry(number_card, textvariable=self.number_var, width=9, justify="center", font=("Segoe UI", 14, "bold")).grid(
+            row=0, column=1, sticky="e"
+        )
+        stepper = tk.Frame(number_card, bg="#F8F7FF")
+        stepper.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        ttk.Button(stepper, text="−", style="Stepper.TButton", width=3, command=lambda: self._change_episode(-1)).pack(
+            side="left", padx=(0, 4)
+        )
+        ttk.Button(stepper, text="+", style="Stepper.TButton", width=3, command=lambda: self._change_episode(1)).pack(
+            side="left"
+        )
+        tk.Label(number_card, text="Ví dụ: 01, 02, 15", bg="#F8F7FF", fg="#77708E", font=("Segoe UI", 9)).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        separator = tk.Frame(input_card, bg="#EBEEF5", height=1)
+        separator.grid(row=5, column=0, sticky="ew", pady=18)
+
+        photo_header = tk.Frame(input_card, bg="white")
+        photo_header.grid(row=6, column=0, sticky="ew")
+        photo_header.columnconfigure(0, weight=1)
+        tk.Label(photo_header, text="Ảnh mèo ngẫu nhiên", bg="white", fg="#1F2440", font=("Segoe UI", 12, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        self.random_button = ttk.Button(photo_header, text="↻ Đổi ảnh", style="Soft.TButton", command=self._choose_random_photo)
+        self.random_button.grid(row=0, column=1, sticky="e")
+        tk.Label(
+            input_card,
+            textvariable=self.photo_name_var,
+            bg="white",
+            fg="#697386",
+            font=("Segoe UI", 10),
+            anchor="w",
+            wraplength=430,
+        ).grid(row=7, column=0, sticky="w", pady=(6, 18))
+
+        action = tk.Frame(input_card, bg="white")
+        action.grid(row=8, column=0, sticky="ew")
+        action.columnconfigure(1, weight=1)
+        self.create_button = ttk.Button(action, text="✦ Tạo thumbnail", style="Accent.TButton", command=self._start_render)
+        self.create_button.grid(row=0, column=0, sticky="w")
+        self.status_label = tk.Label(action, textvariable=self.status_var, bg="white", fg="#6D5CE8", font=("Segoe UI", 10, "bold"))
+        self.status_label.grid(row=0, column=1, sticky="e")
+
+        preview_card = self._card(main)
+        preview_card.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        preview_card.columnconfigure(0, weight=1)
+        preview_card.rowconfigure(2, weight=1)
+        tk.Label(preview_card, text="Xem trước ảnh mèo", bg="white", fg="#1F2440", font=("Segoe UI", 15, "bold")).grid(
+            row=0, column=0, sticky="w"
+        )
+        tk.Label(
+            preview_card,
+            text=f"Tự chọn từ {len(self.photos)} ảnh trong thư mục Anh",
+            bg="white",
+            fg="#697386",
+            font=("Segoe UI", 10),
+        ).grid(row=1, column=0, sticky="w", pady=(3, 16))
+        preview_shell = tk.Frame(preview_card, bg="#F5F6FA", highlightbackground="#E2E6EF", highlightthickness=1)
+        preview_shell.grid(row=2, column=0, sticky="nsew")
+        self.preview_label = tk.Label(preview_shell, bg="#F5F6FA", anchor="center")
+        self.preview_label.pack(fill="both", expand=True, padx=10, pady=10)
+
+        output_card = tk.Frame(preview_card, bg="#F8FAFE", padx=12, pady=11, highlightbackground="#E1E8F4", highlightthickness=1)
+        output_card.grid(row=3, column=0, sticky="ew", pady=(16, 0))
+        tk.Label(output_card, text="FILE KẾT QUẢ", bg="#F8FAFE", fg="#607089", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        tk.Label(
+            output_card,
+            textvariable=self.output_var,
+            bg="#F8FAFE",
+            fg="#285EA8",
+            font=("Segoe UI", 9),
+            justify="left",
+            anchor="w",
+            wraplength=310,
+        ).pack(anchor="w", pady=(4, 0))
+
+    def _choose_random_photo(self) -> None:
+        if self.running:
+            return
+        if not self.photos:
+            messagebox.showerror("Không có ảnh", f"Không tìm thấy ảnh trong:\n{renderer.CAT_IMAGE_DIR}")
+            return
+        choices = [path for path in self.photos if path != self.selected_photo] or self.photos
+        self.selected_photo = random.choice(choices)
+        self.photo_name_var.set(f"Đang dùng: {self.selected_photo.name}")
+        self._update_preview(self.selected_photo)
+
+    def _update_preview(self, photo_path: Path) -> None:
+        image = Image.open(photo_path).convert("RGBA")
+        image = ImageOps.contain(image, (410, 260), method=Image.Resampling.LANCZOS)
+        background = Image.new("RGBA", (420, 310), (245, 246, 250, 255))
+        offset = ((background.width - image.width) // 2, (background.height - image.height) // 2)
+        background.alpha_composite(image, dest=offset)
+        self.preview_image = ImageTk.PhotoImage(background)
+        self.preview_label.configure(image=self.preview_image)
+
+    def _change_episode(self, delta: int) -> None:
+        current = self.number_var.get().strip()
+        if not current.isdecimal():
+            messagebox.showerror("Số tập không hợp lệ", "Số tập chỉ gồm các chữ số, ví dụ 01 hoặc 12.", parent=self.root)
+            return
+        width = max(2, len(current))
+        next_number = max(0, int(current) + delta)
+        self.number_var.set(str(next_number).zfill(width))
+        self._save_episode_number()
+
+    def _start_render(self) -> None:
+        if self.running:
+            return
+        title = self.title_text.get("1.0", "end").strip()
+        number = self.number_var.get().strip()
+        if not title:
+            messagebox.showerror("Thiếu tiêu đề", "Hãy nhập tiêu đề thumbnail.", parent=self.root)
+            return
+        if not number:
+            messagebox.showerror("Thiếu số", "Hãy nhập số tập, ví dụ 01.", parent=self.root)
+            return
+        if self.selected_photo is None:
+            messagebox.showerror("Thiếu ảnh", "Hãy chọn ảnh ngẫu nhiên trước.", parent=self.root)
+            return
+
+        self.running = True
+        self.create_button.configure(state="disabled")
+        self.random_button.configure(state="disabled")
+        self.status_var.set("Đang tạo...")
+        self.status_label.configure(fg="#D97706")
+        self.output_var.set("")
+        threading.Thread(
+            target=self._render_worker,
+            args=(title, number, self.selected_photo),
+            daemon=True,
+        ).start()
+
+    def _render_worker(self, title: str, number: str, photo_path: Path) -> None:
+        try:
+            output = renderer.add_title(
+                renderer.SOURCE_IMAGE,
+                renderer.next_thumbnail_path(),
+                title,
+                photo_path,
+                renderer.FRAME_IMAGE,
+                number,
+                renderer.NUMBER_FRAME_IMAGE,
+            )
+            self.events.put(("done", str(output)))
+        except BaseException:
+            self.events.put(("error", traceback.format_exc()))
+
+    def _poll_events(self) -> None:
+        try:
+            while True:
+                kind, value = self.events.get_nowait()
+                if kind == "done":
+                    self.running = False
+                    self.create_button.configure(state="normal")
+                    self.random_button.configure(state="normal")
+                    self.status_var.set("Hoàn tất")
+                    self.status_label.configure(fg="#15803D")
+                    self.output_var.set(value)
+                    messagebox.showinfo("Hoàn tất", f"Đã tạo thumbnail:\n{value}", parent=self.root)
+                elif kind == "error":
+                    self.running = False
+                    self.create_button.configure(state="normal")
+                    self.random_button.configure(state="normal")
+                    self.status_var.set("Có lỗi")
+                    self.status_label.configure(fg="#DC2626")
+                    self.output_var.set(value)
+                    messagebox.showerror("Tạo thumbnail thất bại", "Xem lỗi hiển thị bên dưới.", parent=self.root)
+        except queue.Empty:
+            pass
+        self.root.after(100, self._poll_events)
+
+    def _on_close(self) -> None:
+        if self.running:
+            messagebox.showwarning("Đang tạo thumbnail", "Hãy đợi quá trình tạo thumbnail hoàn tất trước khi đóng.", parent=self.root)
+            return
+        self._save_episode_number()
+        self.root.destroy()
+
+
+def main() -> None:
+    root = tk.Tk()
+    ThumbnailGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
