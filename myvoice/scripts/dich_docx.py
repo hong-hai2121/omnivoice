@@ -39,8 +39,8 @@ import dich_gemini as g
 
 # ── Đường dẫn mặc định ───────────────────────────────────────────────────────
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
-DEFAULT_INPUT = KICHBAN_DIR / "已完结复仇 爽文一口气看完更过瘾_哔哩哔哩_bilibili_zh.docx"
-DEFAULT_OUTPUT = KICHBAN_DIR / "noidungGemini.docx"
+DEFAULT_INPUT = KICHBAN_DIR / "tiengTrung.docx"
+DEFAULT_OUTPUT = KICHBAN_DIR / "gemini_result.docx"
 PREFIX_FILE = Path(_SCRIPTS_DIR) / "copy_prefix.txt"
 
 

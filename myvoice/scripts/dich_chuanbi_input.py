@@ -3,7 +3,7 @@
 dich_chuanbi_input.py — Chuẩn bị input.txt cho TTS từ kết quả Gemini.
 
 Luồng (chạy TRƯỚC khi tạo audio):
-  1. CHECK noidungGemini.docx bằng dich_kiemtra (bắt câu dẫn nhập/thừa
+  1. CHECK gemini_result.docx bằng dich_kiemtra (bắt câu dẫn nhập/thừa
      Gemini hay tự thêm, vd "Dưới đây là bản dịch...", "Bản dịch truyện ngắn").
      → Nếu CÓ: BÁO (beep + liệt kê) và DỪNG, KHÔNG ghi input.txt (sửa docx trước).
   2. Bỏ cấu trúc: tiêu đề "Kết quả dịch từ Gemini" và các mục "Đoạn k".
@@ -12,7 +12,7 @@ Luồng (chạy TRƯỚC khi tạo audio):
 
 Chạy:
     python dich_chuanbi_input.py
-    python dich_chuanbi_input.py "noidungGemini.docx" -o "input.txt"
+    python dich_chuanbi_input.py "gemini_result.docx" -o "input.txt"
     python dich_chuanbi_input.py --force   # ghi input.txt kể cả khi check thấy lỗi
 
 Mã thoát: 0 = đã ghi input.txt · 1 = check thấy lỗi (đã dừng) · 2 = thiếu file/nội dung.
@@ -40,7 +40,7 @@ from pathlib import Path
 import dich_kiemtra as checker
 
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
-DEFAULT_DOCX = KICHBAN_DIR / "noidungGemini.docx"
+DEFAULT_DOCX = KICHBAN_DIR / "gemini_result.docx"
 DEFAULT_INPUT = KICHBAN_DIR / "input.txt"
 
 # Dòng cấu trúc cần bỏ (kể cả khi không phải Heading): tiêu đề tổng + "Đoạn k ..."
@@ -88,7 +88,7 @@ def main(argv=None):
         sys.exit(2)  # không có file
     if findings and not args.force:
         print("\n⛔ DỪNG: docx còn câu dẫn nhập/thừa ở trên → CHƯA ghi input.txt, "
-              "CHƯA tạo audio.\n   Hãy sửa lại noidungGemini.docx (hoặc chạy lại với "
+              "CHƯA tạo audio.\n   Hãy sửa lại gemini_result.docx (hoặc chạy lại với "
               "--force nếu vẫn muốn ghi).")
         sys.exit(1)
     if findings and args.force:

@@ -34,7 +34,9 @@ BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
-GEMINI_DOCX = SCRIPT_DIR / "noidungGemini.docx"       # kết quả dịch Gemini → nguồn nội dung TTS
+GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemini → nguồn nội dung TTS
+CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
+PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
@@ -103,6 +105,26 @@ def save_favorites(favorites: set):
         )
     except Exception as e:
         logging.warning(f"Không lưu được danh sách yêu thích: {e}")
+
+
+def load_prefix() -> str:
+    """Câu mở đầu dịch (copy_prefix.txt, dùng chung với GUI nhận diện); chưa có thì rỗng."""
+    try:
+        if PREFIX_FILE.exists():
+            return PREFIX_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def read_chinese_docx_chunks(path) -> list[str]:
+    """Đọc nội dung tiếng Trung (bỏ Heading/Title), tách đoạn như khi nhận diện."""
+    from docx import Document
+    import nhandien_giongnoi as recog
+    doc = Document(str(path))
+    parts = [p.text.strip() for p in doc.paragraphs
+             if p.text.strip() and not (p.style.name or "").startswith(("Heading", "Title"))]
+    return recog.split_into_chunks("".join(parts))
 
 
 # ── QUEUE ĐỂ TRUYỀN LOG TỪ THREAD VỀ GUI ───────────────────────────────────
@@ -212,7 +234,7 @@ def unique_path(path: Path) -> Path:
         n += 1
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -322,7 +344,26 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         logging.info(f"Đã lưu → {output}")
         btn_preview.config(state="normal")   # cho phép nghe thử kết quả
 
-        # ── TỰ DỰNG VIDEO TỪ AUDIO VỪA TẠO (nếu bật) ───────────────────────
+        # ── (TÙY CHỌN) CẮT THÊM BẢN 10–15 PHÚT TỪ AUDIO FULL ───────────────
+        # Dựa trên video_timclip: dò khoảng lặng cuối câu gần mốc đích, cắt
+        # tại đó. Audio full ở trên KHÔNG đổi — đây chỉ là file phụ output_cut.wav.
+        cut_path = None
+        if cut_audio:
+            status_var.set("Đang cắt bản 10–15 phút...")
+            try:
+                from video_timclip import cut_audio_at_sentence_end
+                cp = output_path.with_name(output_path.stem + "_cut" + output_path.suffix)
+                cut_seconds, _ = cut_audio_at_sentence_end(
+                    output_path, cp,
+                    target_minutes=cut_target, min_minutes=cut_min,
+                    max_minutes=cut_max, silence_db=-35.0, min_silence=0.5)
+                cut_path = cp
+                m, s = divmod(cut_seconds, 60)
+                logging.info(f"✂ Đã cắt bản ngắn tại {int(m)}:{s:05.2f} → {cut_path.name}")
+            except Exception as e:
+                logging.warning(f"Không cắt được bản 10–15 phút: {e}")
+
+        # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         if make_video:
             status_var.set("Đang dựng video...")
             logging.info("Bắt đầu dựng video từ audio vừa tạo...")
@@ -334,6 +375,28 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             except Exception as e:
                 logging.error(f"Lỗi dựng video: {e}")
                 status_var.set(f"Audio xong, lỗi dựng video: {e}")
+
+        # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
+        # Mặc định lấy AUDIO BẢN CẮT (output_cut.wav). Nếu chọn "dùng audio không
+        # cắt" thì lấy audio full → video dọc có tiếng giống video ngang.
+        if make_video_doc:
+            if doc_full_audio:
+                doc_audio = output_path
+            elif cut_path and cut_path.exists():
+                doc_audio = cut_path
+            else:
+                logging.warning("Chưa có bản cắt → video dọc dùng tạm audio full.")
+                doc_audio = output_path
+            status_var.set("Đang dựng video dọc...")
+            logging.info(f"Bắt đầu dựng video dọc từ {doc_audio.name}...")
+            try:
+                from video_doc import build_video_doc
+                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=effect)
+                status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
+                logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
+            except Exception as e:
+                logging.error(f"Lỗi dựng video dọc: {e}")
+                status_var.set(f"Lỗi video dọc: {e}")
 
     except Exception as e:
         logging.error(f"Lỗi: {e}")
@@ -357,13 +420,14 @@ class App(tk.Tk):
         self._playing = False
         self._preview_after = None
         self._last_output = None
+        self._pipe_busy = False
         self._favorites = load_favorites()
         self._setup_logging()
         self._build_ui()
         self._poll_log()
         self.update_idletasks()
-        self.minsize(880, 600)
-        self._center(1000, 660)
+        self.minsize(1200, 620)
+        self._center(1420, 672)
 
     def _apply_theme(self):
         """Theme nền trắng, phẳng, hiện đại (dựa trên 'clam' để tùy biến màu)."""
@@ -471,16 +535,22 @@ class App(tk.Tk):
         root.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        # Cột trái (điều khiển) cố định, cột phải (log) mở rộng
-        root.columnconfigure(0, weight=0, minsize=470)
-        root.columnconfigure(1, weight=1)
+        # 3 cột: [quy trình tạo kịch bản] · [điều khiển TTS] · [log mở rộng]
+        root.columnconfigure(0, weight=0, minsize=330)
+        root.columnconfigure(1, weight=0, minsize=470)
+        root.columnconfigure(2, weight=1)
         root.rowconfigure(0, weight=1)
 
         # ════════════════════════════════════════════════
-        # CỘT TRÁI — toàn bộ điều khiển
+        # CỘT 1 — Quy trình tạo kịch bản (nhận diện → Gemini → input.txt)
+        # ════════════════════════════════════════════════
+        self._build_pipeline_column(root, 0)
+
+        # ════════════════════════════════════════════════
+        # CỘT 2 — toàn bộ điều khiển TTS
         # ════════════════════════════════════════════════
         left = ttk.Frame(root)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+        left.grid(row=0, column=1, sticky="nsew", padx=(0, 16))
         left.columnconfigure(0, weight=1)
 
         # ── Header ──
@@ -491,9 +561,6 @@ class App(tk.Tk):
         ttk.Label(title, text="🎧", style="Header.TLabel").pack(side="left", padx=(0, 8))
         ttk.Label(title, text="OmniVoice", style="Header.TLabel").pack(side="left")
         ttk.Label(title, text="TTS", style="Brand.TLabel").pack(side="left", padx=(6, 0))
-        # Mở GUI nhận diện giọng nói tiếng Trung (cửa sổ riêng) — bước đầu của quy trình
-        ttk.Button(title, text="🎙  Nhận diện giọng nói",
-                   command=self._open_nhan_dien).pack(side="right")
         ttk.Label(hdr, text="Chuyển văn bản thành giọng nói — Clone · Thiết kế · Mặc định",
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
 
@@ -590,14 +657,14 @@ class App(tk.Tk):
         sec_opt = ttk.LabelFrame(left, text="  Cài đặt  ")
         sec_opt.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
-        # Nguồn nội dung: lấy từ Gemini (noidungGemini.docx) + kiểm tra trước khi tạo
+        # Nguồn nội dung: lấy từ Gemini (gemini_result.docx) + kiểm tra trước khi tạo
         gem_row = ttk.Frame(sec_opt)
         gem_row.pack(anchor="w", fill="x", pady=(0, 8))
         self.var_from_gemini = tk.BooleanVar(value=True)
         ttk.Checkbutton(gem_row,
                         text="🌐  Lấy nội dung từ Gemini + kiểm tra trước khi tạo",
                         variable=self.var_from_gemini).pack(side="left")
-        ttk.Label(gem_row, text="(noidungGemini.docx → input.txt)",
+        ttk.Label(gem_row, text="(gemini_result.docx → input.txt)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         chunk_row = ttk.Frame(sec_opt)
@@ -633,9 +700,46 @@ class App(tk.Tk):
         ttk.Label(fx_row, text="(phủ lên toàn video)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
+        # Cắt bản 10–15 phút (file phụ output_cut.wav) — gộp 1 dòng cho gọn chiều cao
+        cut_row = ttk.Frame(sec_opt)
+        cut_row.pack(anchor="w", fill="x", pady=(8, 0))
+        self.var_cut_audio = tk.BooleanVar(value=True)
+        ttk.Checkbutton(cut_row, text="✂️  Cắt 10–15 phút",
+                        variable=self.var_cut_audio).pack(side="left")
+        ttk.Label(cut_row, text="Đích:").pack(side="left", padx=(10, 2))
+        self.var_cut_target = tk.DoubleVar(value=12.0)
+        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
+                    textvariable=self.var_cut_target, width=4).pack(side="left")
+        ttk.Label(cut_row, text="Từ:").pack(side="left", padx=(8, 2))
+        self.var_cut_min = tk.DoubleVar(value=10.0)
+        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
+                    textvariable=self.var_cut_min, width=4).pack(side="left")
+        ttk.Label(cut_row, text="Đến:").pack(side="left", padx=(8, 2))
+        self.var_cut_max = tk.DoubleVar(value=15.0)
+        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
+                    textvariable=self.var_cut_max, width=4).pack(side="left")
+
+        # Video dọc (1080x1920, KHÔNG khung) — 2 lựa chọn chung 1 dòng cho gọn
+        vdoc_row = ttk.Frame(sec_opt)
+        vdoc_row.pack(anchor="w", fill="x", pady=(8, 0))
+        self.var_make_video_doc = tk.BooleanVar(value=True)
+        ttk.Checkbutton(vdoc_row, text="📱  Video dọc (từ bản cắt)",
+                        variable=self.var_make_video_doc).pack(side="left")
+        self.var_doc_full_audio = tk.BooleanVar(value=False)
+        ttk.Checkbutton(vdoc_row, text="dùng audio không cắt",
+                        variable=self.var_doc_full_audio).pack(side="left", padx=(12, 0))
+
+        # ════════════════════════════════════════════════
+        # CỘT 3 (PHẢI) — Hành động + tiến trình ở TRÊN, nhật ký (nhỏ) ở DƯỚI
+        # ════════════════════════════════════════════════
+        right = ttk.Frame(root)
+        right.grid(row=0, column=2, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(2, weight=1)   # chỉ ô nhật ký giãn ra theo chiều cao
+
         # ── Hành động ──
-        act = ttk.Frame(left)
-        act.grid(row=4, column=0, sticky="ew", pady=(2, 12))
+        act = ttk.Frame(right)
+        act.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
                                   style="Accent.TButton")
         self.btn_run.pack(side="left", padx=(0, 8))
@@ -648,8 +752,8 @@ class App(tk.Tk):
         ttk.Button(act, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
 
         # ── Tiến trình ──
-        prog_frame = ttk.Frame(left)
-        prog_frame.grid(row=5, column=0, sticky="ew")
+        prog_frame = ttk.Frame(right)
+        prog_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -659,15 +763,13 @@ class App(tk.Tk):
         ttk.Label(prog_frame, textvariable=self.status,
                   style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        # ════════════════════════════════════════════════
-        # CỘT PHẢI — Log (mở rộng theo chiều ngang)
-        # ════════════════════════════════════════════════
-        log_frame = ttk.LabelFrame(root, text="  Nhật ký  ")
-        log_frame.grid(row=0, column=1, sticky="nsew")
+        # ── Nhật ký (nhỏ lại — chỉ để theo dõi, không quan trọng) ──
+        log_frame = ttk.LabelFrame(right, text="  Nhật ký  ")
+        log_frame.grid(row=2, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_box = scrolledtext.ScrolledText(
-            log_frame, width=58, height=30, state="disabled",
+            log_frame, width=46, height=10, state="disabled",
             font=("Consolas", 9), relief="flat", borderwidth=0,
             background=C["log_bg"], foreground=C["log_info"],
             insertbackground=C["fg"], selectbackground=C["accent_soft"],
@@ -873,7 +975,7 @@ class App(tk.Tk):
             messagebox.showerror("Lỗi mở Nhận diện", str(e))
 
     def _prepare_input_from_gemini(self) -> bool:
-        """Quy trình trước khi tạo audio: lấy nội dung từ noidungGemini.docx.
+        """Quy trình trước khi tạo audio: lấy nội dung từ gemini_result.docx.
 
         1) KIỂM TRA câu dẫn nhập/thừa (dich_kiemtra). Có lỗi → báo + DỪNG,
            không tạo audio (để sửa docx trước).
@@ -895,7 +997,7 @@ class App(tk.Tk):
             return False
 
         # 1) KIỂM TRA
-        logging.info("🔎 Kiểm tra noidungGemini.docx trước khi tạo audio...")
+        logging.info("🔎 Kiểm tra gemini_result.docx trước khi tạo audio...")
         findings = cg.check_docx(GEMINI_DOCX, on_log=logging.info)
         if findings:
             lines = []
@@ -904,7 +1006,7 @@ class App(tk.Tk):
                 lines.append(f"• {label}: {phrases}")
             messagebox.showwarning(
                 "Gemini còn câu dẫn nhập/thừa",
-                "noidungGemini.docx còn câu dẫn nhập/thừa:\n\n"
+                "gemini_result.docx còn câu dẫn nhập/thừa:\n\n"
                 + "\n".join(lines)
                 + "\n\nHãy sửa lại docx rồi thử lại. (CHƯA tạo audio.)")
             self.status.set("⛔ Gemini còn câu thừa — chưa tạo audio.")
@@ -927,6 +1029,187 @@ class App(tk.Tk):
             return False
         logging.info(f"✅ Đã lấy {len(content)} ký tự từ Gemini → {out.name} (đã qua kiểm tra)")
         return True
+
+    # ── QUY TRÌNH TẠO KỊCH BẢN (cột trái) ─────────────────────────────────────
+    def _build_pipeline_column(self, parent, col):
+        """Cột trái: nhận diện giọng nói → dịch Gemini → chuẩn bị input.txt."""
+        wrap = ttk.Frame(parent)
+        wrap.grid(row=0, column=col, sticky="nsew", padx=(0, 16))
+        wrap.columnconfigure(0, weight=1)
+
+        hdr = ttk.Frame(wrap)
+        hdr.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        ttk.Label(hdr, text="🛠  Tạo kịch bản", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(hdr, text="Audio/Video → 中文 → Gemini → input.txt",
+                  style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+
+        # ① Nhận diện giọng nói
+        s1 = ttk.LabelFrame(wrap, text="  ①  Nhận diện giọng nói  ")
+        s1.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        s1.columnconfigure(0, weight=1)
+        frow = ttk.Frame(s1)
+        frow.grid(row=0, column=0, sticky="ew")
+        frow.columnconfigure(0, weight=1)
+        self.pipe_var_file = tk.StringVar()
+        ttk.Entry(frow, textvariable=self.pipe_var_file).grid(row=0, column=0, sticky="ew")
+        ttk.Button(frow, text="Chọn…", width=8,
+                   command=self._pipe_pick_file).grid(row=0, column=1, padx=(8, 0))
+        orow = ttk.Frame(s1)
+        orow.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(orow, text="Model:").pack(side="left")
+        self.pipe_var_model = tk.StringVar(value="medium")
+        ttk.Combobox(orow, textvariable=self.pipe_var_model, width=9, state="readonly",
+                     values=["tiny", "base", "small", "medium", "large-v3"]).pack(side="left", padx=(4, 12))
+        ttk.Label(orow, text="Tốc độ:").pack(side="left")
+        self.pipe_var_speed = tk.StringVar(value="0.7")
+        ttk.Combobox(orow, textvariable=self.pipe_var_speed, width=5, state="readonly",
+                     values=["0.6", "0.7", "0.8", "0.9", "1.0"]).pack(side="left", padx=(4, 0))
+        self.btn_recog = ttk.Button(s1, text="🎙  Nhận diện → tiếng Trung",
+                                    style="Accent.TButton", command=self._pipe_recognize)
+        self.btn_recog.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        ttk.Label(s1, text="(→ tiengTrung.docx)", style="Hint.TLabel").grid(
+            row=3, column=0, sticky="w", pady=(4, 0))
+
+        # ② Dịch Gemini
+        s2 = ttk.LabelFrame(wrap, text="  ②  Dịch qua Gemini  ")
+        s2.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        s2.columnconfigure(0, weight=1)
+        self.btn_gemini = ttk.Button(s2, text="🌐  Gửi Gemini (Firefox)",
+                                     style="Accent.TButton", command=self._pipe_send_gemini)
+        self.btn_gemini.grid(row=0, column=0, sticky="ew")
+        ttk.Label(s2, text="(tiengTrung.docx → gemini_result.docx)",
+                  style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        # ③ Chuẩn bị input.txt
+        s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.txt  ")
+        s3.grid(row=3, column=0, sticky="ew", pady=(0, 12))
+        s3.columnconfigure(0, weight=1)
+        self.btn_prep = ttk.Button(s3, text="📝  Tạo input.txt",
+                                   style="Accent.TButton", command=self._pipe_prepare_input)
+        self.btn_prep.grid(row=0, column=0, sticky="ew")
+        ttk.Label(s3, text="(kiểm tra + gemini_result.docx → input.txt)",
+                  style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        # Tiến trình + trạng thái của quy trình
+        pf = ttk.Frame(wrap)
+        pf.grid(row=4, column=0, sticky="ew", pady=(2, 0))
+        pf.columnconfigure(0, weight=1)
+        self.pipe_progress = tk.IntVar(value=0)
+        ttk.Progressbar(pf, variable=self.pipe_progress, maximum=100).grid(
+            row=0, column=0, sticky="ew")
+        self.pipe_status = tk.StringVar(value="Sẵn sàng.")
+        ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(4, 0))
+
+        ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
+                   command=self._open_nhan_dien).grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+    def _pipe_pick_file(self):
+        path = filedialog.askopenfilename(
+            title="Chọn file audio/video tiếng Trung",
+            filetypes=[("Audio/Video", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma "
+                                       "*.mp4 *.mkv *.mov *.avi *.webm *.flv"),
+                       ("Tất cả", "*.*")])
+        if path:
+            self.pipe_var_file.set(path)
+
+    def _pipe_set_busy(self, busy: bool):
+        self._pipe_busy = busy
+        state = "disabled" if busy else "normal"
+        for b in (self.btn_recog, self.btn_gemini, self.btn_prep):
+            b.config(state=state)
+
+    def _pipe_recognize(self):
+        if self._pipe_busy:
+            return
+        media = self.pipe_var_file.get().strip()
+        if not media or not os.path.isfile(media):
+            messagebox.showwarning("Thiếu file",
+                                   "Hãy chọn file audio/video cần nhận diện.")
+            return
+        self._pipe_set_busy(True)
+        self.pipe_progress.set(0)
+        self.pipe_status.set("🎙  Đang nhận diện...")
+        threading.Thread(
+            target=self._pipe_recognize_worker,
+            args=(media, self.pipe_var_model.get(), self.pipe_var_speed.get()),
+            daemon=True).start()
+
+    def _pipe_recognize_worker(self, media, model, speed):
+        try:
+            import nhandien_giongnoi as recog
+            logging.info(f"🎙  Nhận diện: {Path(media).name} (model={model}, tốc độ={speed})")
+            transcript = recog.transcribe_chinese(
+                media, model_name=model, speed=float(speed),
+                on_progress=lambda f: self.pipe_progress.set(int(f * 100)))
+            if not transcript:
+                logging.error("❌ Nhận diện thất bại / không có nội dung.")
+                self.pipe_status.set("❌ Nhận diện thất bại.")
+                return
+            recog.save_docx(transcript, str(CHINESE_DOCX), title=Path(media).name)
+            n = len(recog.split_into_chunks(transcript))
+            self.pipe_progress.set(100)
+            logging.info(f"✅ Nhận diện xong: {len(transcript)} ký tự, {n} đoạn → {CHINESE_DOCX.name}")
+            self.pipe_status.set(f"✅ Xong ({n} đoạn) → {CHINESE_DOCX.name}")
+        except Exception as e:
+            logging.error(f"Lỗi nhận diện: {e}")
+            self.pipe_status.set(f"Lỗi: {e}")
+        finally:
+            self._pipe_set_busy(False)
+
+    def _pipe_send_gemini(self):
+        if self._pipe_busy:
+            return
+        if not CHINESE_DOCX.exists():
+            messagebox.showwarning(
+                "Chưa có nội dung",
+                f"Chưa thấy {CHINESE_DOCX.name}.\nHãy bấm ① Nhận diện trước "
+                "(hoặc đặt file tiengTrung.docx vào thư mục kịch_bản).")
+            return
+        if not messagebox.askyesno(
+                "Gửi Gemini",
+                "Sẽ mở Firefox và gửi nội dung sang Gemini.\n\n"
+                "Hãy ĐÓNG Firefox đang mở (nếu có) và đảm bảo profile đã đăng nhập "
+                "Google.\n\nTiếp tục?"):
+            return
+        self._pipe_set_busy(True)
+        self.pipe_progress.set(0)
+        self.pipe_status.set("🌐  Đang gửi Gemini...")
+        threading.Thread(target=self._pipe_gemini_worker, daemon=True).start()
+
+    def _pipe_gemini_worker(self):
+        try:
+            chunks = read_chinese_docx_chunks(CHINESE_DOCX)
+            if not chunks:
+                logging.error("❌ Không đọc được nội dung tiếng Trung để gửi.")
+                self.pipe_status.set("❌ Nội dung trống.")
+                return
+            import dich_gemini as g
+            prefix = load_prefix()
+            logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini (mở Firefox)...")
+            results = g.send_chunks_to_gemini(
+                chunks, prefix=prefix, on_log=logging.info,
+                on_result=lambda i, total, ans: self.pipe_status.set(
+                    f"🌐 Gemini: đoạn {i + 1}/{total}"))
+            g.save_results_docx(chunks, results, GEMINI_DOCX)
+            ok = sum(1 for r in results if r and r.strip())
+            logging.info(f"✅ Gemini xong: {ok}/{len(results)} đoạn → {GEMINI_DOCX.name}")
+            self.pipe_status.set(f"✅ Gemini xong → {GEMINI_DOCX.name}")
+        except Exception as e:
+            logging.error(f"Lỗi gửi Gemini: {e}")
+            self.pipe_status.set(f"Lỗi: {e}")
+        finally:
+            self._pipe_set_busy(False)
+
+    def _pipe_prepare_input(self):
+        if self._pipe_busy:
+            return
+        if self._prepare_input_from_gemini():
+            self.pipe_status.set("✅ Đã tạo input.txt từ Gemini.")
+            messagebox.showinfo(
+                "Xong",
+                "Đã tạo input.txt từ gemini_result.docx.\n"
+                "Giờ có thể bấm '▶ Chạy' để tạo audio.")
 
     def _start(self):
         mode = self.var_mode.get()
@@ -962,6 +1245,26 @@ class App(tk.Tk):
         if not chunks:
             messagebox.showwarning("File trống", "File văn bản không có nội dung.")
             return
+
+        # Tham số cắt bản 10–15 phút (đọc + kiểm tra TRƯỚC khi khóa nút)
+        cut_audio = self.var_cut_audio.get()
+        cut_target = cut_min = cut_max = 0.0
+        if cut_audio:
+            try:
+                cut_target = float(self.var_cut_target.get())
+                cut_min = float(self.var_cut_min.get())
+                cut_max = float(self.var_cut_max.get())
+            except Exception:
+                messagebox.showwarning("Cấu hình cắt sai", "Số phút không hợp lệ.")
+                return
+            if not (0 < cut_min <= cut_max):
+                messagebox.showwarning("Cấu hình cắt sai",
+                                       "Cần thỏa: 0 < phút 'Từ' ≤ phút 'Đến'.")
+                return
+
+        # Video dọc: bật/tắt + dùng audio cắt (mặc định) hay audio full
+        make_video_doc = self.var_make_video_doc.get()
+        doc_full_audio = self.var_doc_full_audio.get()
 
         preview_path = text_file.parent / (text_file.stem + "_preview.txt")
         if preview_path.exists():
@@ -1000,7 +1303,9 @@ class App(tk.Tk):
             args=(mode, voice_param, chunks, self.var_out.get(),
                   self.progress, self.status,
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
-                  self.var_make_video.get(), effect_path),
+                  self.var_make_video.get(), effect_path,
+                  cut_audio, cut_target, cut_min, cut_max,
+                  make_video_doc, doc_full_audio),
             daemon=True,
         ).start()
 

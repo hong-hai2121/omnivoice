@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-seo_youtube_gemini.py — Lấy ĐOẠN ĐẦU của nội dung đã dịch (noidungGemini.docx),
+seo_youtube_gemini.py — Lấy ĐOẠN ĐẦU của nội dung đã dịch (gemini_result.docx),
 gửi NGUYÊN VĂN (KHÔNG kèm câu lệnh / yêu cầu nào) lên một cuộc trò chuyện Gemini
 đã được tạo sẵn cho việc SEO YouTube, rồi lưu kết quả ra seoYoutube.docx.
 
@@ -11,8 +11,8 @@ gửi NGUYÊN VĂN (KHÔNG kèm câu lệnh / yêu cầu nào) lên một cuộc
 • Không chèn prefix/câu lệnh — đúng yêu cầu "chỉ gửi nội dung".
 
 Chạy:
-    python seo_youtube_gemini.py                          # dùng noidungGemini.docx mặc định
-    python seo_youtube_gemini.py "noidungGemini.docx"     # đổi file nguồn
+    python seo_youtube_gemini.py                          # dùng gemini_result.docx mặc định
+    python seo_youtube_gemini.py "gemini_result.docx"     # đổi file nguồn
     python seo_youtube_gemini.py -o "seoYoutube.docx"      # đổi file kết quả
     python seo_youtube_gemini.py --chars 1500             # cắt còn N ký tự đầu (0 = cả đoạn)
     python seo_youtube_gemini.py --no-keep-open           # đóng Firefox sau khi xong
@@ -56,7 +56,7 @@ SEO_GEMINI_URL = os.environ.get(
 
 # ── Đường dẫn mặc định ───────────────────────────────────────────────────────
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
-DEFAULT_INPUT = KICHBAN_DIR / "noidungGemini.docx"
+DEFAULT_INPUT = KICHBAN_DIR / "gemini_result.docx"
 DEFAULT_OUTPUT = KICHBAN_DIR / "seoYoutube.docx"
 
 
@@ -131,7 +131,7 @@ def main(argv=None):
         description="Gửi đoạn đầu của truyện (đã dịch) lên Gemini SEO YouTube và lưu kết quả."
     )
     parser.add_argument("input", nargs="?", default=str(DEFAULT_INPUT),
-                        help="File .docx nguồn (mặc định: noidungGemini.docx).")
+                        help="File .docx nguồn (mặc định: gemini_result.docx).")
     parser.add_argument("-o", "--output", default=str(DEFAULT_OUTPUT),
                         help="File .docx lưu kết quả (mặc định: seoYoutube.docx).")
     parser.add_argument("--chars", type=int, default=0,

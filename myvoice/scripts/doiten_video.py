@@ -1,37 +1,69 @@
 # -*- coding: utf-8 -*-
 """
-Chuẩn hóa và đặt lại tên video ngang trong thư mục videongang.
+Chuẩn hóa + đổi tên tuần tự video — cho CẢ video NGANG lẫn video DỌC.
 
-Mỗi lần chạy:
-  1. Quét toàn bộ video trong thư mục, chỉ giữ video NGANG (width > height).
-  2. Video chưa chuẩn hóa  -> ép về cùng 1 khung hình (mặc định 1920x1080, 30fps,
-     giữ tỷ lệ gốc + chèn viền đen) và LOẠI BỎ ÂM THANH GỐC.
-  3. Đặt lại tên toàn bộ theo số thứ tự (1.mp4, 2.mp4, ...). Video nào đã đúng
-     số thứ tự thì giữ nguyên, video nào lệch thì đổi tên.
+Hai chế độ:
+  - ngang : thư mục videongang/, ép về 1920x1080, GIỮ video ngang (w > h), tag _ng_
+  - doc   : thư mục videodoc/,   ép về 1080x1920, GIỮ video dọc  (h > w), tag _doc_
+
+Mỗi lần chạy (theo chế độ đã chọn):
+  1. Quét video trong thư mục, chỉ giữ video ĐÚNG HƯỚNG của chế độ.
+  2. Video chưa chuẩn hóa -> ép cùng khung hình + 30fps + LOẠI BỎ ÂM THANH GỐC.
+  3. Đổi tên toàn bộ theo số thứ tự (<tag>001.mp4, <tag>002.mp4, ...). File đã đúng
+     số thì giữ nguyên, lệch thì đổi.
+
+Cách dùng:
+    python doiten_video.py                 # MỞ GUI để chọn ngang/dọc rồi chạy
+    python doiten_video.py --mode ngang    # chạy thẳng chế độ ngang (không GUI)
+    python doiten_video.py --mode doc      # chạy thẳng chế độ dọc (không GUI)
 
 Yêu cầu: ffmpeg và ffprobe có trong PATH.
 """
 
+import argparse
+import io
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-# ----------------------------- CẤU HÌNH -----------------------------
-VIDEO_DIR = r"D:\Python\omnivoice\OmniVoice\myvoice\videongang"
-TARGET_W = 1920          # chiều rộng khung hình chuẩn
-TARGET_H = 1080          # chiều cao khung hình chuẩn
+# Ép UTF-8 cho stdout/stderr khi chạy CLI (guard cho trường hợp không có .buffer).
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+BASE_DIR = Path(__file__).resolve().parent.parent   # myvoice/
+
+# ----------------------------- CẤU HÌNH THEO CHẾ ĐỘ -----------------------------
+# orient: "landscape" = giữ video ngang (w > h); "portrait" = giữ video dọc (h > w).
+MODES = {
+    "ngang": {
+        "label": "Video ngang (videongang → 1920×1080)",
+        "dir": BASE_DIR / "videongang",
+        "target_w": 1920, "target_h": 1080,
+        "tag": "_ng_",
+        "orient": "landscape",
+    },
+    "doc": {
+        "label": "Video dọc (videodoc → 1080×1920)",
+        "dir": BASE_DIR / "videodoc",
+        "target_w": 1080, "target_h": 1920,
+        "tag": "_doc_",
+        "orient": "portrait",
+    },
+}
+
 TARGET_FPS = 30          # khung hình/giây
 OUT_EXT = ".mp4"         # đuôi file đầu ra
 NUM_DIGITS = 3           # số chữ số khi đánh số (3 -> 001, 002, ...)
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm", ".m4v", ".wmv", ".ts"}
-# Marker đánh dấu file đã được chuẩn hóa (đã ép khung hình + bỏ tiếng).
-PROCESSED_TAG = "_ng_"
 # Ưu tiên dùng GPU (NVIDIA NVENC); tự fallback về CPU (libx264) nếu GPU lỗi.
 USE_GPU = True
-# --------------------------------------------------------------------
+# --------------------------------------------------------------------------------
 
-# Được gán trong main(): True nếu ffmpeg có encoder h264_nvenc.
+# Được gán trong run_rename(): True nếu ffmpeg có encoder h264_nvenc.
 HAVE_NVENC = False
 
 
@@ -45,176 +77,316 @@ def has_nvenc():
     return res.returncode == 0 and "h264_nvenc" in res.stdout
 
 
-def probe_dimensions(path):
-    """Trả về (width, height) hoặc None nếu không đọc được."""
+def probe_stream(path):
+    """Trả về (codec_name, width, height) hoặc None nếu không đọc được."""
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "v:0",
-        "-show_entries", "stream=width,height",
+        "-show_entries", "stream=codec_name,width,height",
         "-of", "json", path,
     ]
     res = run(cmd)
     if res.returncode != 0:
         return None
     try:
-        streams = json.loads(res.stdout).get("streams", [])
-        if not streams:
-            return None
-        w = int(streams[0]["width"])
-        h = int(streams[0]["height"])
-        return w, h
+        s = json.loads(res.stdout).get("streams", [])[0]
+        return s.get("codec_name", ""), int(s["width"]), int(s["height"])
     except (ValueError, KeyError, IndexError):
         return None
 
 
-def is_processed(name):
-    """File đã chuẩn hóa có dạng <PROCESSED_TAG><số><OUT_EXT>, ví dụ _ng_001.mp4"""
+def is_processed(name, tag):
+    """File đã chuẩn hóa có dạng <tag><số><OUT_EXT>, ví dụ _ng_001.mp4 / _doc_001.mp4"""
     base, ext = os.path.splitext(name)
     if ext.lower() != OUT_EXT:
         return False
-    if not base.startswith(PROCESSED_TAG):
+    if not base.startswith(tag):
         return False
-    num = base[len(PROCESSED_TAG):]
-    return num.isdigit()
+    return base[len(tag):].isdigit()
 
 
-def processed_index(name):
-    base = os.path.splitext(name)[0]
-    return int(base[len(PROCESSED_TAG):])
+def processed_index(name, tag):
+    return int(os.path.splitext(name)[0][len(tag):])
 
 
-def final_name(index):
-    return f"{PROCESSED_TAG}{index:0{NUM_DIGITS}d}{OUT_EXT}"
+def final_name(index, tag):
+    return f"{tag}{index:0{NUM_DIGITS}d}{OUT_EXT}"
 
 
-def _encode(src_path, dst_path, gpu):
-    """Chạy ffmpeg với encoder GPU hoặc CPU. Trả về (ok, thông báo lỗi)."""
-    vf = (
-        f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=decrease,"
-        f"pad={TARGET_W}:{TARGET_H}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"setsar=1,fps={TARGET_FPS}"
-    )
-    if gpu:
-        codec = [
-            "-c:v", "h264_nvenc",
-            "-preset", "p5",        # cân bằng tốc độ/chất lượng
-            "-rc", "vbr",
-            "-cq", "20",
-        ]
-    else:
-        codec = [
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "20",
-        ]
-    cmd = [
-        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", src_path,
-        "-vf", vf,
-        "-an",                      # loại bỏ toàn bộ âm thanh gốc
-        *codec,
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        dst_path,
-    ]
+def _ff(cmd):
+    """Chạy ffmpeg, trả về (ok, dòng lỗi cuối)."""
     res = run(cmd)
     err = res.stderr.strip().splitlines()[-1] if res.stderr.strip() else ""
     return res.returncode == 0, err
 
 
-def normalize(src_path, dst_path):
-    """Ép khung hình về TARGET_WxTARGET_H, bỏ tiếng. Trả về True nếu thành công."""
-    if USE_GPU and HAVE_NVENC:
-        ok, err = _encode(src_path, dst_path, gpu=True)
+def _same_aspect(w, h, tw, th):
+    """True nếu tỉ lệ khung hình của clip ~ bằng tỉ lệ đích (cho phép sai số nhỏ)."""
+    return abs(w / h - tw / th) < 0.01
+
+
+def normalize(src_path, dst_path, target_w, target_h, codec, w, h, log=print):
+    """Chuẩn hóa video về target_w×target_h + bỏ tiếng. Trả về (True/False, mô tả cách làm).
+
+    - Clip ĐÃ đúng (h264 + đúng kích thước)  -> chỉ COPY + bỏ tiếng (giữ nguyên fps, ~tức thì).
+    - Clip CẦN convert, CÙNG tỉ lệ           -> full GPU (scale_cuda), ép 30fps.
+    - Clip CẦN convert, KHÁC tỉ lệ           -> CPU scale + pad (letterbox), ép 30fps.
+    Khi convert: ưu tiên NVENC, lỗi thì fallback libx264.
+    """
+    # 1) Đã đúng định dạng đích -> copy nguyên luồng video, chỉ bỏ tiếng. Giữ nguyên fps.
+    if codec == "h264" and w == target_w and h == target_h:
+        ok, err = _ff(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                       "-i", src_path, "-c", "copy", "-an",
+                       "-movflags", "+faststart", dst_path])
         if ok:
-            return True
-        print(f"    [GPU lỗi -> CPU] {err}")
+            return True, "copy (giữ fps)"
+        log(f"    [copy lỗi -> encode] {err}")
         if os.path.exists(dst_path):
             os.remove(dst_path)
 
-    ok, err = _encode(src_path, dst_path, gpu=False)
+    # 2) Cần convert, CÙNG tỉ lệ + có NVENC -> giải mã + scale + encode TOÀN BỘ trên GPU.
+    if USE_GPU and HAVE_NVENC and _same_aspect(w, h, target_w, target_h):
+        ok, err = _ff([
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-i", src_path,
+            "-vf", f"scale_cuda={target_w}:{target_h}", "-r", str(TARGET_FPS),
+            "-an", "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20",
+            "-movflags", "+faststart", dst_path])
+        if ok:
+            return True, "scale GPU, ép 30fps"
+        log(f"    [GPU scale lỗi -> CPU] {err}")
+        if os.path.exists(dst_path):
+            os.remove(dst_path)
+
+    # 3) Fallback / khác tỉ lệ: CPU scale + pad (letterbox), ép 30fps.
+    vf = (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        f"setsar=1,fps={TARGET_FPS}"
+    )
+    enc = (["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20"]
+           if (USE_GPU and HAVE_NVENC)
+           else ["-c:v", "libx264", "-preset", "medium", "-crf", "20"])
+    ok, err = _ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-hwaccel", "cuda", "-i", src_path,
+        "-vf", vf, "-an", *enc,
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst_path])
+    if ok:
+        return True, "scale+pad, ép 30fps"
+    # Có thể -hwaccel cuda không hỗ trợ -> thử lại không hwaccel.
+    ok, err = _ff([
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", src_path, "-vf", vf, "-an", *enc,
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst_path])
     if not ok:
-        print(f"    [LỖI ffmpeg] {err}")
-    return ok
+        log(f"    [LỖI ffmpeg] {err}")
+    return ok, "scale+pad, ép 30fps"
 
 
-def main():
+def run_rename(mode, log=print):
+    """Chuẩn hóa + đổi tên tuần tự cho 1 chế độ ('ngang' hoặc 'doc')."""
     global HAVE_NVENC
-    if not os.path.isdir(VIDEO_DIR):
-        print(f"Không tìm thấy thư mục: {VIDEO_DIR}")
-        sys.exit(1)
+    cfg = MODES[mode]
+    video_dir = str(cfg["dir"])
+    tag = cfg["tag"]
+    tw, th = cfg["target_w"], cfg["target_h"]
+    orient = cfg["orient"]
+    huong = "ngang" if orient == "landscape" else "dọc"
+
+    if not os.path.isdir(video_dir):
+        log(f"Không tìm thấy thư mục: {video_dir}")
+        return 0
 
     HAVE_NVENC = has_nvenc()
-    if USE_GPU and HAVE_NVENC:
-        print("Encoder: GPU (h264_nvenc), fallback CPU (libx264)")
-    else:
-        print("Encoder: CPU (libx264)")
+    log("Encoder: GPU (h264_nvenc), fallback CPU (libx264)"
+        if (USE_GPU and HAVE_NVENC) else "Encoder: CPU (libx264)")
 
-    entries = [f for f in os.listdir(VIDEO_DIR)
-               if os.path.isfile(os.path.join(VIDEO_DIR, f))
+    entries = [f for f in os.listdir(video_dir)
+               if os.path.isfile(os.path.join(video_dir, f))
                and os.path.splitext(f)[1].lower() in VIDEO_EXTS]
 
-    processed = sorted([f for f in entries if is_processed(f)], key=processed_index)
-    raw = [f for f in entries if not is_processed(f)]
+    processed = sorted([f for f in entries if is_processed(f, tag)],
+                       key=lambda f: processed_index(f, tag))
+    raw = [f for f in entries if not is_processed(f, tag)]
 
-    print(f"Thư mục : {VIDEO_DIR}")
-    print(f"Đã chuẩn hóa: {len(processed)} | Chưa xử lý: {len(raw)}")
+    log(f"Chế độ  : {cfg['label']}")
+    log(f"Thư mục : {video_dir}")
+    log(f"Đã chuẩn hóa: {len(processed)} | Chưa xử lý: {len(raw)}")
 
-    # 1) Xử lý các video thô: lọc video ngang, chuẩn hóa khung hình + bỏ tiếng.
+    # 1) Xử lý video thô: lọc đúng hướng, chuẩn hóa khung hình + bỏ tiếng.
     new_processed = []   # đường dẫn tạm (chưa đánh số cuối cùng)
-    skipped_portrait = 0
+    skipped = 0
     for f in raw:
-        src = os.path.join(VIDEO_DIR, f)
-        dims = probe_dimensions(src)
-        if dims is None:
-            print(f"  [BỎ QUA] không đọc được: {f}")
+        src = os.path.join(video_dir, f)
+        info = probe_stream(src)
+        if info is None:
+            log(f"  [BỎ QUA] không đọc được: {f}")
             continue
-        w, h = dims
-        if w <= h:
-            skipped_portrait += 1
-            print(f"  [BỎ QUA] video dọc/vuông ({w}x{h}): {f}")
+        codec, w, h = info
+        wrong = (orient == "landscape" and w <= h) or (orient == "portrait" and h <= w)
+        if wrong:
+            skipped += 1
+            log(f"  [BỎ QUA] sai hướng cho chế độ {huong} ({w}x{h}): {f}")
             continue
 
-        # tên tạm an toàn, tránh trùng trong lúc xử lý
-        tmp = os.path.join(VIDEO_DIR, f"__tmp_{len(new_processed)}{OUT_EXT}")
-        print(f"  [XỬ LÝ] {f}  ({w}x{h}) -> {TARGET_W}x{TARGET_H}, bỏ tiếng")
-        if normalize(src, tmp):
+        tmp = os.path.join(video_dir, f"__tmp_{len(new_processed)}{OUT_EXT}")
+        ok, how = normalize(src, tmp, tw, th, codec, w, h, log=log)
+        if ok:
+            log(f"  [OK] {f}  ({codec} {w}x{h}) -> {how}")
             os.remove(src)               # xóa file gốc sau khi tạo bản chuẩn hóa
             new_processed.append(tmp)
         else:
+            log(f"  [LỖI] {f}")
             if os.path.exists(tmp):
                 os.remove(tmp)
 
-    # 2) Gộp danh sách: video đã chuẩn hóa trước đó + video vừa xử lý.
-    ordered = [os.path.join(VIDEO_DIR, f) for f in processed] + new_processed
+    # 2) Gộp: video đã chuẩn hóa trước đó + video vừa xử lý.
+    ordered = [os.path.join(video_dir, f) for f in processed] + new_processed
 
-    # 3) Đặt lại tên tuần tự. Đổi tên 2 pha (qua tên tạm) để tránh đè nhau.
-    desired = [os.path.join(VIDEO_DIR, final_name(i)) for i in range(1, len(ordered) + 1)]
+    # 3) Đặt lại tên tuần tự (đổi tên 2 pha qua tên tạm để tránh đè nhau).
+    desired = [os.path.join(video_dir, final_name(i, tag)) for i in range(1, len(ordered) + 1)]
 
-    # Pha A: đưa mọi file cần đổi tên về tên trung gian duy nhất.
     stage = []
     renamed = 0
     for i, (cur, want) in enumerate(zip(ordered, desired)):
         if os.path.normcase(cur) == os.path.normcase(want):
             stage.append(cur)            # đã đúng số thứ tự, giữ nguyên
             continue
-        mid = os.path.join(VIDEO_DIR, f"__stage_{i}{OUT_EXT}")
+        mid = os.path.join(video_dir, f"__stage_{i}{OUT_EXT}")
         os.replace(cur, mid)
         stage.append(mid)
 
-    # Pha B: từ tên trung gian -> tên cuối cùng.
     for cur, want in zip(stage, desired):
         if os.path.normcase(cur) == os.path.normcase(want):
             continue
         os.replace(cur, want)
         renamed += 1
 
-    print("-" * 50)
-    print(f"Hoàn tất. Tổng video ngang: {len(ordered)}")
-    print(f"  - Mới chuẩn hóa: {len(new_processed)}")
-    print(f"  - Đổi tên lại  : {renamed}")
-    if skipped_portrait:
-        print(f"  - Bỏ qua video dọc/vuông: {skipped_portrait}")
+    log("-" * 50)
+    log(f"Hoàn tất. Tổng video {huong}: {len(ordered)}")
+    log(f"  - Mới chuẩn hóa: {len(new_processed)}")
+    log(f"  - Đổi tên lại  : {renamed}")
+    if skipped:
+        log(f"  - Bỏ qua sai hướng: {skipped}")
+    return len(ordered)
+
+
+# ───────────────────────── GIAO DIỆN (chọn ngang/dọc) ──────────────────────────
+def _build_rename_gui(root):
+    """Dựng toàn bộ widget vào `root` (tách riêng để test được mà không mainloop)."""
+    import queue
+    import threading
+    import tkinter as tk
+    from tkinter import ttk, scrolledtext
+
+    root.title("Đổi tên & chuẩn hóa video")
+    root.configure(bg="#ffffff")
+    root.geometry("700x480")
+
+    try:
+        st = ttk.Style(root)
+        st.theme_use("clam")
+        st.configure(".", background="#ffffff", foreground="#1f2430", font=("Segoe UI", 10))
+        st.configure("TFrame", background="#ffffff")
+        st.configure("TLabel", background="#ffffff")
+        st.configure("TRadiobutton", background="#ffffff")
+        st.configure("Accent.TButton", foreground="#ffffff", background="#e84393",
+                     font=("Segoe UI Semibold", 10), padding=(18, 9), borderwidth=0)
+        st.map("Accent.TButton",
+               background=[("active", "#c92f7b"), ("disabled", "#f0a8c6")])
+    except tk.TclError:
+        pass
+
+    log_q: "queue.Queue[str]" = queue.Queue()
+    busy = {"v": False}
+
+    frm = ttk.Frame(root, padding=16)
+    frm.pack(fill="both", expand=True)
+
+    ttk.Label(frm, text="Chuẩn hóa khung hình + xóa tiếng + đổi tên tuần tự",
+              font=("Segoe UI Semibold", 13)).pack(anchor="w")
+    ttk.Label(frm, text="Chọn thư mục video cần xử lý rồi bấm Chạy.",
+              foreground="#7b828f").pack(anchor="w", pady=(2, 10))
+
+    mode_var = tk.StringVar(value="ngang")
+    mrow = ttk.Frame(frm)
+    mrow.pack(anchor="w")
+    ttk.Label(mrow, text="Chế độ:").pack(side="left", padx=(0, 12))
+    for val in ("ngang", "doc"):
+        ttk.Radiobutton(mrow, text=MODES[val]["label"], variable=mode_var,
+                        value=val).pack(side="left", padx=(0, 16))
+
+    btn = ttk.Button(frm, text="▶  Chạy", style="Accent.TButton")
+    btn.pack(anchor="w", pady=(12, 8))
+
+    box = scrolledtext.ScrolledText(frm, height=16, font=("Consolas", 9), wrap="word",
+                                    state="disabled", relief="flat",
+                                    bg="#fbfbfc", padx=10, pady=8)
+    box.pack(fill="both", expand=True)
+
+    def gui_log(msg):
+        log_q.put(str(msg))
+
+    def worker(mode):
+        try:
+            run_rename(mode, log=gui_log)
+        except Exception as e:
+            gui_log(f"[LỖI] {e}")
+        finally:
+            log_q.put("__DONE__")
+
+    def start():
+        if busy["v"]:
+            return
+        busy["v"] = True
+        btn.config(state="disabled")
+        box.config(state="normal")
+        box.delete("1.0", "end")
+        box.config(state="disabled")
+        threading.Thread(target=worker, args=(mode_var.get(),), daemon=True).start()
+
+    btn.config(command=start)
+
+    def poll():
+        try:
+            while True:
+                line = log_q.get_nowait()
+                if line == "__DONE__":
+                    busy["v"] = False
+                    btn.config(state="normal")
+                    continue
+                box.config(state="normal")
+                box.insert("end", line + "\n")
+                box.see("end")
+                box.config(state="disabled")
+        except queue.Empty:
+            pass
+        root.after(150, poll)
+
+    poll()
+    return root
+
+
+def launch_gui():
+    import tkinter as tk
+    root = tk.Tk()
+    _build_rename_gui(root)
+    root.mainloop()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Chuẩn hóa khung hình + xóa tiếng + đổi tên tuần tự (video ngang/dọc)."
+    )
+    parser.add_argument("--mode", choices=["ngang", "doc"],
+                        help="Chạy thẳng chế độ này (không mở GUI).")
+    args = parser.parse_args()
+
+    if args.mode:
+        run_rename(args.mode)
+    else:
+        launch_gui()
 
 
 if __name__ == "__main__":

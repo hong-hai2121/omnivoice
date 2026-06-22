@@ -8,7 +8,7 @@ dich_kiemtra.py — Kiểm tra file .docx kết quả Gemini, phát hiện các 
 Nếu thấy → THÔNG BÁO: in cảnh báo + beep, liệt kê đoạn nào dính câu nào.
 
 Chạy:
-    python dich_kiemtra.py                      # kiểm tra noidungGemini.docx mặc định
+    python dich_kiemtra.py                      # kiểm tra gemini_result.docx mặc định
     python dich_kiemtra.py "duong_dan.docx"     # kiểm tra file khác
 
 Mã thoát: 0 = sạch, 1 = có phát hiện (tiện gọi từ script khác).
@@ -29,7 +29,7 @@ from pathlib import Path
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 KICHBAN_DIR = _SCRIPTS_DIR.parent / "kịch_bản"
-DEFAULT_DOCX = KICHBAN_DIR / "noidungGemini.docx"
+DEFAULT_DOCX = KICHBAN_DIR / "gemini_result.docx"
 
 # ── Các câu "dẫn nhập / thừa" cần phát hiện (so khớp KHÔNG phân biệt hoa thường).
 #    Thêm/bớt câu ở đây nếu gặp mẫu mới. ────────────────────────────────────────
