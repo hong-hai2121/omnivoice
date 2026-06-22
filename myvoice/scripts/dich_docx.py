@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-dich_docx_gemini.py — Đọc file .docx kết quả nhận diện (đã tách "ĐOẠN k"), gửi
+dich_docx.py — Đọc file .docx kết quả nhận diện (đã tách "ĐOẠN k"), gửi
 TỪNG ĐOẠN lên Gemini để dịch, rồi lưu kết quả ra .docx. Dùng lại được nhiều lần.
 
 Chạy:
-    python dich_docx_gemini.py                         # dùng đường dẫn mặc định bên dưới
-    python dich_docx_gemini.py "input.docx"            # đổi file nguồn
-    python dich_docx_gemini.py "input.docx" -o "out.docx"
-    python dich_docx_gemini.py --limit 1               # chỉ gửi đoạn 1 (để test)
-    python dich_docx_gemini.py --no-keep-open          # đóng Firefox sau khi xong
+    python dich_docx.py                         # dùng đường dẫn mặc định bên dưới
+    python dich_docx.py "input.docx"            # đổi file nguồn
+    python dich_docx.py "input.docx" -o "out.docx"
+    python dich_docx.py --limit 1               # chỉ gửi đoạn 1 (để test)
+    python dich_docx.py --no-keep-open          # đóng Firefox sau khi xong
 
 Đặc điểm:
 • Câu mở đầu (prefix dịch) lấy từ scripts/copy_prefix.txt, chỉ chèn vào ĐOẠN 1
@@ -35,7 +35,7 @@ import argparse
 from pathlib import Path
 
 from docx import Document
-import gemini_client as g
+import dich_gemini as g
 
 # ── Đường dẫn mặc định ───────────────────────────────────────────────────────
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
@@ -84,7 +84,7 @@ def run(input_path, output_path, limit=0, keep_open=True, log=print):
         acc.append(ans)
         # Lưu DẦN ngay sau khi nhận xong đoạn này (trước khi gửi đoạn kế tiếp)
         g.save_results_docx(chunks[:len(acc)], acc, output_path)
-        # In nguyên văn kết quả đoạn để theo dõi (logic lấy từ _send_docx_gemini.py)
+        # In nguyên văn kết quả đoạn để theo dõi
         log(f"\n========== KẾT QUẢ ĐOẠN {i + 1}/{total} ==========\n{ans or '(trống)'}\n")
         log(f"💾 Đã lưu {len(acc)}/{total} đoạn → {output_path}")
 

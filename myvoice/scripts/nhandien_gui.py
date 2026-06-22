@@ -3,12 +3,12 @@
 Giao diện: dán link video (Bilibili/YouTube/TikTok...) → tự tải MP3 → nhận diện
 giọng nói TIẾNG TRUNG thành văn bản.
 
-Chạy:  python nhan_dien_gui.py
+Chạy:  python nhandien_gui.py
 """
 
 import sys, os
 
-# ── Tự chuyển sang python của venv (giống clone_gui.py) ──────────────────────
+# ── Tự chuyển sang python của venv (giống taogiong_gui.py) ──────────────────────
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 _VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
 if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
@@ -28,7 +28,7 @@ from tkinter import ttk, scrolledtext, messagebox, filedialog
 from pathlib import Path
 
 # Tái dùng pipeline nhận diện đã viết sẵn
-import nhan_dien_audio_tieng_trung as recog
+import nhandien_giongnoi as recog
 
 # ── Cấu hình thư mục ─────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent          # myvoice/scripts/
@@ -37,6 +37,10 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 # Thư mục kịch bản của dự án — nơi lưu file .docx kết quả nhận diện
 KICHBAN_DIR = BASE_DIR.parent / "kịch_bản"
 KICHBAN_DIR.mkdir(exist_ok=True)
+
+# File .docx được nạp SẴN vào ô kết quả khi vừa mở GUI (đỡ phải nhận diện lại).
+# Đây là kết quả tiếng Trung đã chỉnh tay; mở app lên là dùng được ngay/gửi Gemini.
+DEFAULT_RESULT_DOCX = KICHBAN_DIR / "tiengTrung.docx"
 
 MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 DEFAULT_MODEL = "medium"
@@ -89,7 +93,24 @@ def save_prefix(text: str) -> None:
     except Exception:
         pass
 
-# ── Bảng màu (đồng bộ với clone_gui.py) ──────────────────────────────────────
+
+def read_docx_body(path) -> str:
+    """Đọc NỘI DUNG (中文) từ file .docx do app xuất ra, BỎ các tiêu đề.
+
+    File .docx có Heading 1 = tên file, Heading 2 = nhãn "ĐOẠN k (n ký tự)",
+    Normal = đoạn văn thật. Chỉ lấy các đoạn KHÔNG phải heading rồi ghép lại
+    (tiếng Trung không có dấu cách nên nối liền). Trả về "" nếu lỗi/rỗng.
+    """
+    try:
+        from docx import Document
+        doc = Document(str(path))
+        parts = [p.text.strip() for p in doc.paragraphs
+                 if not p.style.name.startswith("Heading") and p.text.strip()]
+        return "".join(parts)
+    except Exception:
+        return ""
+
+# ── Bảng màu (đồng bộ với taogiong_gui.py) ──────────────────────────────────────
 UI = dict(
     bg="#ffffff", fg="#1f2430", muted="#7b828f",
     accent="#e84393", accent_dk="#c92f7b",
@@ -261,7 +282,25 @@ class App:
         self._busy = False
         self._build_styles()
         self._build_ui()
+        self._load_default_result()   # nạp sẵn nội dung từ tiengTung.docx (nếu có)
         self.root.after(120, self._poll_log)
+
+    def _load_default_result(self):
+        """Khi mở app: nạp sẵn nội dung từ DEFAULT_RESULT_DOCX vào ô kết quả.
+
+        Có nội dung là dùng/gửi Gemini được ngay, khỏi nhận diện lại. Không có
+        file thì im lặng bỏ qua (vẫn dùng app bình thường).
+        """
+        if not DEFAULT_RESULT_DOCX.exists():
+            return
+        text = read_docx_body(DEFAULT_RESULT_DOCX)
+        if not text:
+            return
+        self.result.delete("1.0", "end")
+        self.result.insert("1.0", text)
+        self._build_chunk_buttons(text)   # tạo nút số theo đoạn đã tách
+        self.status.set(f"📄 Đã nạp sẵn nội dung từ {DEFAULT_RESULT_DOCX.name} "
+                        f"({len(self._chunks)} đoạn). Có thể gửi Gemini ngay.")
 
     def _center(self, root, w, h):
         """Mở cửa sổ ở giữa màn hình (ngang giữa, 1/3 từ trên xuống)."""
@@ -356,7 +395,7 @@ class App:
         self.btn_copy = ttk.Button(res_bar, text="📋 Sao chép kết quả",
                                    style="Ghost.TButton", command=self._copy_result)
         self.btn_copy.pack(side="right")
-        # Gửi thẳng các đoạn sang Gemini (mở Firefox bằng Selenium) — xem gemini_client.py
+        # Gửi thẳng các đoạn sang Gemini (mở Firefox bằng Selenium) — xem dich_gemini.py
         self.btn_gemini = ttk.Button(res_bar, text="🤖 Gửi Gemini",
                                      style="Accent.TButton", command=self._send_gemini)
         self.btn_gemini.pack(side="right", padx=(0, 8))
@@ -553,19 +592,19 @@ class App:
 
     def _gemini_worker(self, chunks, prefix):
         try:
-            import gemini_client
+            import dich_gemini
         except Exception as e:
-            log(f"❌ Không nạp được gemini_client: {e}", "err")
+            log(f"❌ Không nạp được dich_gemini: {e}", "err")
             ui_queue.put(("gemini_done", None))
             return
         try:
-            results = gemini_client.send_chunks_to_gemini(
+            results = dich_gemini.send_chunks_to_gemini(
                 chunks, prefix=prefix,
                 on_log=lambda m: log(m),
                 on_result=lambda i, total, ans: ui_queue.put(("gemini", (i, total, ans))),
             )
             out = KICHBAN_DIR / "gemini_result.docx"
-            gemini_client.save_results_docx(chunks, results, out)
+            dich_gemini.save_results_docx(chunks, results, out)
             log(f"💾 Đã lưu kết quả Gemini: {out}", "ok")
             ui_queue.put(("gemini_done", str(out)))
         except Exception as e:

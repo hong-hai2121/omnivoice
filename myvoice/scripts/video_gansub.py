@@ -14,10 +14,10 @@ Gắn phụ đề (sub) vào video — dùng ĐÚNG chữ từ file kịch bản
 
 Cách dùng:
     # mặc định: audio tách từ video, kịch bản = ../kịch_bản/input.txt
-    python gan_sub_video.py "duong_dan/output_videodone.mp4"
+    python video_gansub.py "duong_dan/output_videodone.mp4"
 
     # chỉ rõ audio + kịch bản + nơi lưu
-    python gan_sub_video.py "output_videodone.mp4" --audio "output3.wav" \
+    python video_gansub.py "output_videodone.mp4" --audio "output3.wav" \
         --script "../kịch_bản/input.txt" --out "output_sub.mp4"
 
 Yêu cầu:
@@ -42,7 +42,7 @@ except Exception:
 
 # Tái dùng hạ tầng Whisper sẵn có (nạp model từ cache local, không gọi mạng)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nhan_dien_audio_tieng_trung import (  # noqa: E402
+from nhandien_giongnoi import (  # noqa: E402
     extract_audio,
     get_audio_duration,
     get_model,

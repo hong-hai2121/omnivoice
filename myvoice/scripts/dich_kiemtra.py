@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-check_gemini_docx.py — Kiểm tra file .docx kết quả Gemini, phát hiện các câu
+dich_kiemtra.py — Kiểm tra file .docx kết quả Gemini, phát hiện các câu
 "dẫn nhập" / câu thừa mà Gemini hay tự thêm (dù prefix đã yêu cầu KHÔNG thêm), ví dụ:
     "Dưới đây là bản dịch tiếng Việt sát nghĩa, đầy đủ nội dung..."
     "Bản dịch truyện ngắn"
@@ -8,8 +8,8 @@ check_gemini_docx.py — Kiểm tra file .docx kết quả Gemini, phát hiện 
 Nếu thấy → THÔNG BÁO: in cảnh báo + beep, liệt kê đoạn nào dính câu nào.
 
 Chạy:
-    python check_gemini_docx.py                      # kiểm tra noidungGemini.docx mặc định
-    python check_gemini_docx.py "duong_dan.docx"     # kiểm tra file khác
+    python dich_kiemtra.py                      # kiểm tra noidungGemini.docx mặc định
+    python dich_kiemtra.py "duong_dan.docx"     # kiểm tra file khác
 
 Mã thoát: 0 = sạch, 1 = có phát hiện (tiện gọi từ script khác).
 """

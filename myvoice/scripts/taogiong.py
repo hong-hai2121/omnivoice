@@ -1,6 +1,6 @@
 """
 Voice cloning — hỗ trợ text dài, tự động lưu tiến trình.
-Chỉnh phần CẤU HÌNH rồi chạy: python clone.py
+Chỉnh phần CẤU HÌNH rồi chạy: python taogiong.py
 """
 
 import re

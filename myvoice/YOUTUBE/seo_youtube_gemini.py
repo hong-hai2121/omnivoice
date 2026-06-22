@@ -29,8 +29,8 @@ if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.a
     subprocess.run([_VENV_PYTHON] + sys.argv)
     sys.exit()
 
-# Thư mục hiện tại (myvoice/YOUTUBE) + thư mục scripts (nơi có gemini_client.py,
-# dich_docx_gemini.py). Thêm cả hai vào sys.path để import được.
+# Thư mục hiện tại (myvoice/YOUTUBE) + thư mục scripts (nơi có dich_gemini.py,
+# dich_docx.py). Thêm cả hai vào sys.path để import được.
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SCRIPTS_DIR = os.path.join(os.path.dirname(_THIS_DIR), "scripts")
 for _p in (_THIS_DIR, _SCRIPTS_DIR):
@@ -40,8 +40,8 @@ for _p in (_THIS_DIR, _SCRIPTS_DIR):
 import argparse
 from pathlib import Path
 
-import gemini_client as g
-from dich_docx_gemini import read_chunks
+import dich_gemini as g
+from dich_docx import read_chunks
 
 # ── Link cuộc trò chuyện Gemini chuyên SEO YouTube (đã có sẵn chỉ dẫn) ─────────
 SEO_GEMINI_URL = os.environ.get(

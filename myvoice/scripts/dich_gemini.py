@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-gemini_client.py — Mở Firefox bằng Selenium, vào Gemini (gemini.google.com),
+dich_gemini.py — Mở Firefox bằng Selenium, vào Gemini (gemini.google.com),
 gửi từng ĐOẠN văn bản (đã tách ở bước nhận diện) rồi lấy kết quả trả về.
 
 Tương tự src/browser_client.py của dự án GetLinktoText (gửi ChatGPT), nhưng nhắm
 vào Gemini. Dùng được theo 2 cách:
 
-1) Gọi từ GUI nhận diện (nhan_dien_gui.py) — sau khi nhận diện + chia đoạn xong,
+1) Gọi từ GUI nhận diện (nhandien_gui.py) — sau khi nhận diện + chia đoạn xong,
    bấm nút "🤖 Gửi Gemini":
        send_chunks_to_gemini(chunks, prefix=..., on_log=..., on_result=...)
 
 2) Chạy thẳng từ terminal:
-       python gemini_client.py "đường_dẫn.txt_hoặc_.docx"
+       python dich_gemini.py "đường_dẫn.txt_hoặc_.docx"
    → đọc nội dung, tách đoạn, gửi Gemini, in kết quả + lưu *_gemini.docx.
 
 LƯU Ý QUAN TRỌNG
@@ -26,7 +26,7 @@ LƯU Ý QUAN TRỌNG
 import sys
 import os
 
-# ── Tự chuyển sang python của venv (giống clone_gui.py / nhan_dien_gui.py) ────
+# ── Tự chuyển sang python của venv (giống taogiong_gui.py / nhandien_gui.py) ────
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 _VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
 if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
@@ -399,7 +399,7 @@ def main(argv=None):
 
     # Tái dùng bộ tách đoạn của pipeline nhận diện nếu có.
     try:
-        import nhan_dien_audio_tieng_trung as recog
+        import nhandien_giongnoi as recog
         chunks = recog.split_into_chunks(text)
     except Exception:
         chunks = [text]

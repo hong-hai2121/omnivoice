@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""GUI điều khiển hiệu ứng bong bóng của bubble_video.py.
+"""GUI điều khiển hiệu ứng bong bóng của video_bongbong.py.
 
 Chạy từ thư mục gốc OmniVoice:
-    venv\Scripts\python myvoice\scripts\bubble_video_gui.py
+    venv\Scripts\python myvoice\scripts\video_bongbong_gui.py
 
-GUI gọi trực tiếp các hàm render trong bubble_video.py; không sửa các giá trị
+GUI gọi trực tiếp các hàm render trong video_bongbong.py; không sửa các giá trị
 mặc định trong file renderer.
 """
 
@@ -21,7 +21,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-import bubble_video as bubble
+import video_bongbong as bubble
 
 
 EFFECTS_DIR = Path(bubble.EFFECTS_DIR)

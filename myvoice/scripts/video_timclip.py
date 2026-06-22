@@ -2,9 +2,9 @@
 """Đề xuất đoạn cắt video ngắn từ kịch bản truyện tiếng Việt.
 
 Ví dụ:
-    python auto_clip_finder.py kich_ban.txt
-    python auto_clip_finder.py kich_ban.txt --top 10 --output-dir ket_qua
-    python auto_clip_finder.py kich_ban.txt --long-from-start --target-minutes 12
+    python video_timclip.py kich_ban.txt
+    python video_timclip.py kich_ban.txt --top 10 --output-dir ket_qua
+    python video_timclip.py kich_ban.txt --long-from-start --target-minutes 12
 
 Phiên bản này không gọi API hay dùng thư viện ngoài. Điểm số là heuristic dựa
 trên từ khóa, lời thoại, mức độ căng thẳng và rủi ro lộ kết.

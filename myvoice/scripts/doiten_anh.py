@@ -4,8 +4,8 @@
 Chạy trực tiếp script sẽ đổi tên. Dùng --dry-run nếu chỉ muốn xem trước.
 
 Ví dụ chạy từ thư mục gốc OmniVoice:
-    venv\Scripts\python myvoice\scripts\rename_images.py            # đổi tên thật
-    venv\Scripts\python myvoice\scripts\rename_images.py --dry-run  # chỉ xem trước
+    venv\Scripts\python myvoice\scripts\doiten_anh.py            # đổi tên thật
+    venv\Scripts\python myvoice\scripts\doiten_anh.py --dry-run  # chỉ xem trước
 
 Ảnh đã có tên số chuẩn như 1.png, 2.jpg, ... được giữ nguyên. Chỉ ảnh có tên
 khác mới nhận số tiếp theo sau số lớn nhất đang có. Phần mở rộng được giữ nguyên.

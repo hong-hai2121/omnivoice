@@ -21,7 +21,7 @@ MODE:
 Đầu ra:  kịch_bản/<tên_audio>_videodone.mp4
 
 Cách dùng:
-    python frame_video.py
+    python video_khung.py
 """
 
 import io

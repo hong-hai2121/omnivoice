@@ -117,8 +117,8 @@ def main():
             print(f"  [{r['file']}]  crest={r['crest']}x  {spike_info}")
             print(f"    Text: {r['text']}")
             print()
-        print("→ Xóa các file lỗi trong output_chunks/ rồi chạy lại clone_gui.py để generate lại.")
-        print("→ Xóa các file lỗi trên rồi chạy lại clone_gui.py để generate lại.")
+        print("→ Xóa các file lỗi trong output_chunks/ rồi chạy lại taogiong_gui.py để generate lại.")
+        print("→ Xóa các file lỗi trên rồi chạy lại taogiong_gui.py để generate lại.")
     else:
         print("Không phát hiện spike — tất cả file bình thường.")
 

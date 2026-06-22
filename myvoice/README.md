@@ -31,24 +31,24 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 
 | Script | Mục đích |
 | --- | --- |
-| `scripts/clone_gui.py` | Giao diện chính để tạo/clone giọng nói từ kịch bản. |
-| `scripts/clone.py` | Bản chạy dòng lệnh của quy trình clone giọng. |
-| `scripts/check_audio_spikes.py` | Rà các đoạn WAV lỗi/spike sau khi tạo audio. |
-| `scripts/remove_audio.py` | Xóa audio gốc khỏi video nguồn trước khi ghép. |
-| `scripts/make_final_video.py` | Ghép video đã tắt tiếng với `kịch_bản/output.wav`. |
-| `scripts/frame_video.py` | Đưa video vào khung PNG trong `Backbround/`. |
-| `scripts/rename_videongang.py` | Chuẩn hóa và đổi tên **video ngang** theo thứ tự; không xử lý ảnh. |
-| `scripts/rename_images.py` | Chỉ đổi tên ảnh mới/chưa có tên số chuẩn trong `Anh/`; các file như `1.png`, `2.jpg` và `Pink.png` được giữ nguyên. Chạy trực tiếp sẽ đổi tên, thêm `--dry-run` để chỉ xem trước. |
-| `scripts/bubble_video.py` | Tạo/ghép hiệu ứng bong bóng; đọc ảnh trong `Anh/` và xử lý riêng `Pink.png`. Đầu ra mặc định nằm trong `scripts/hieuung/`. |
-| `scripts/bubble_video_gui.py` | Giao diện chọn video, ảnh, tên file xuất và các tham số hiệu ứng để chạy `bubble_video.py` mà không sửa mã. Đầu ra luôn nằm trong `scripts/hieuung/`. |
-| `scripts/gan_sub_video.py` | Gắn phụ đề vào video. |
-| `scripts/auto_clip_finder.py` | Tìm/gợi ý đoạn clip phù hợp từ nội dung. |
-| `scripts/tach_doan_docx.py` | Tách nội dung DOCX thành các phần. |
-| `scripts/dich_docx_gemini.py` | Dịch DOCX qua Gemini. |
-| `scripts/chuanbi_input_tu_gemini.py` | Chuẩn bị dữ liệu đầu vào từ kết quả Gemini. |
-| `scripts/check_gemini_docx.py` | Kiểm tra DOCX do Gemini tạo/trả về. |
-| `scripts/nhan_dien_gui.py` | Giao diện nhận diện/chuyển đổi audio. |
-| `scripts/nhan_dien_audio_tieng_trung.py` | Nhận diện audio tiếng Trung. |
+| `scripts/taogiong_gui.py` | Giao diện chính để tạo/clone giọng nói từ kịch bản. |
+| `scripts/taogiong.py` | Bản chạy dòng lệnh của quy trình clone giọng. |
+| `scripts/taogiong_kiemtra_audio.py` | Rà các đoạn WAV lỗi/spike sau khi tạo audio. |
+| `scripts/video_xoatieng.py` | Xóa audio gốc khỏi video nguồn trước khi ghép. |
+| `scripts/video_ghepcuoi.py` | Ghép video đã tắt tiếng với `kịch_bản/output.wav`. |
+| `scripts/video_khung.py` | Đưa video vào khung PNG trong `Backbround/`. |
+| `scripts/doiten_video.py` | Chuẩn hóa và đổi tên **video ngang** theo thứ tự; không xử lý ảnh. |
+| `scripts/doiten_anh.py` | Chỉ đổi tên ảnh mới/chưa có tên số chuẩn trong `Anh/`; các file như `1.png`, `2.jpg` và `Pink.png` được giữ nguyên. Chạy trực tiếp sẽ đổi tên, thêm `--dry-run` để chỉ xem trước. |
+| `scripts/video_bongbong.py` | Tạo/ghép hiệu ứng bong bóng; đọc ảnh trong `Anh/` và xử lý riêng `Pink.png`. Đầu ra mặc định nằm trong `scripts/hieuung/`. |
+| `scripts/video_bongbong_gui.py` | Giao diện chọn video, ảnh, tên file xuất và các tham số hiệu ứng để chạy `video_bongbong.py` mà không sửa mã. Đầu ra luôn nằm trong `scripts/hieuung/`. |
+| `scripts/video_gansub.py` | Gắn phụ đề vào video. |
+| `scripts/video_timclip.py` | Tìm/gợi ý đoạn clip phù hợp từ nội dung. |
+| `scripts/dich_tachdoan.py` | Tách nội dung DOCX thành các phần. |
+| `scripts/dich_docx.py` | Dịch DOCX qua Gemini. |
+| `scripts/dich_chuanbi_input.py` | Chuẩn bị dữ liệu đầu vào từ kết quả Gemini. |
+| `scripts/dich_kiemtra.py` | Kiểm tra DOCX do Gemini tạo/trả về. |
+| `scripts/nhandien_gui.py` | Giao diện nhận diện/chuyển đổi audio. |
+| `scripts/nhandien_giongnoi.py` | Nhận diện audio tiếng Trung. |
 | `YOUTUBE/tao_thumbnail.py` | Tạo thumbnail 1280×720 từ tiêu đề SEO hoặc DOCX. |
 | `YOUTUBE/dien_tieu_de_thumbnail.py` | Ghép nền `thumbnail/khung nên.png`, tiêu đề/ảnh mèo/số tập và khung trên `thumbnail/khung trên.png` theo đúng thứ tự lớp; ảnh mèo từ `Anh/` được crop theo `thumbnail/ảnh.png`. Tạo PNG mới, không ghi đè ảnh gốc. |
 | `YOUTUBE/thumbnail_gui.py` | GUI nhập tiêu đề và số tập; tự chọn ảnh mèo ngẫu nhiên trong `Anh/`, có xem trước ảnh trước khi tạo thumbnail. Kết quả lưu trong `kịch_bản/output/` theo tên `thumbnail01.png`, `thumbnail02.png`, … |
@@ -57,28 +57,28 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 
 ## Lưu ý về thư mục `Anh/`
 
-`bubble_video.py` chỉ nạp các ảnh `.png`, `.jpg`, `.jpeg`, `.webp` rồi dùng chúng trong hiệu ứng. Nó **không đổi tên bất kỳ file nào**.
+`video_bongbong.py` chỉ nạp các ảnh `.png`, `.jpg`, `.jpeg`, `.webp` rồi dùng chúng trong hiệu ứng. Nó **không đổi tên bất kỳ file nào**.
 
 `Pink.png` được khai báo qua `FEATURE_IMAGE_NAME = "Pink.png"`. Khi cần đổi tên hàng loạt ảnh, phải dùng một script riêng và luôn loại trừ file này để tên `Pink.png` không thay đổi.
 
-Script có sẵn cho việc này là `scripts/rename_images.py`. Các ảnh đã tên số chuẩn như `1.png`, `2.jpg` được giữ nguyên. Ảnh mới được sắp theo tên kiểu tự nhiên (ví dụ `2.png` trước `10.png`), giữ phần mở rộng và nhận số tiếp theo sau số lớn nhất hiện có:
+Script có sẵn cho việc này là `scripts/doiten_anh.py`. Các ảnh đã tên số chuẩn như `1.png`, `2.jpg` được giữ nguyên. Ảnh mới được sắp theo tên kiểu tự nhiên (ví dụ `2.png` trước `10.png`), giữ phần mở rộng và nhận số tiếp theo sau số lớn nhất hiện có:
 
 ```powershell
 # Đổi tên thật
-venv\Scripts\python myvoice\scripts\rename_images.py
+venv\Scripts\python myvoice\scripts\doiten_anh.py
 
 # Chỉ xem danh sách thay đổi
-venv\Scripts\python myvoice\scripts\rename_images.py --dry-run
+venv\Scripts\python myvoice\scripts\doiten_anh.py --dry-run
 ```
 
 ## Quy trình cơ bản
 
 ```text
 kịch_bản/input.txt
-  → clone_gui.py hoặc clone.py
+  → taogiong_gui.py hoặc taogiong.py
   → kịch_bản/output.wav
-  → remove_audio.py (nếu cần chuẩn bị video nguồn)
-  → make_final_video.py / frame_video.py / bubble_video.py / gan_sub_video.py
+  → video_xoatieng.py (nếu cần chuẩn bị video nguồn)
+  → video_ghepcuoi.py / video_khung.py / video_bongbong.py / video_gansub.py
   → video hoàn thiện
 ```
 
@@ -87,7 +87,7 @@ kịch_bản/input.txt
 Chạy giao diện bằng lệnh sau:
 
 ```powershell
-venv\Scripts\python myvoice\scripts\bubble_video_gui.py
+venv\Scripts\python myvoice\scripts\video_bongbong_gui.py
 ```
 
 Chế độ **Ghép trực tiếp** tạo MP4 có bong bóng và giữ âm thanh video. Chế độ **MOV trong suốt** tạo lớp bong bóng có alpha để ghép ở bước khác. GUI luôn giữ `Pink.png` làm ảnh của bong bóng lớn nhất nếu file này có trong thư mục ảnh. Mọi file xuất được lưu tại `scripts/hieuung/`; nếu trùng tên, renderer tự thêm `_2`, `_3`, … thay vì ghi đè file cũ.

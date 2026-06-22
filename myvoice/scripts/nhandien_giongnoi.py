@@ -7,9 +7,9 @@ nhưng đây là một script ĐỘC LẬP: chỉ cần truyền vào 1 file aud
 script sẽ trích xuất âm thanh và nhận diện thành văn bản tiếng Trung.
 
 Cách dùng:
-    python nhan_dien_audio_tieng_trung.py "duong_dan/file.mp3"
-    python nhan_dien_audio_tieng_trung.py "video.mp4" --model large-v3 --out ketqua.txt
-    python nhan_dien_audio_tieng_trung.py "audio.wav" --pinyin
+    python nhandien_giongnoi.py "duong_dan/file.mp3"
+    python nhandien_giongnoi.py "video.mp4" --model large-v3 --out ketqua.txt
+    python nhandien_giongnoi.py "audio.wav" --pinyin
 
 Yêu cầu cài đặt:
     pip install faster-whisper
@@ -398,13 +398,13 @@ def to_pinyin(text):
 def main():
     # Không truyền đường dẫn → mở giao diện (GUI) cho tiện thay vì báo lỗi
     if len(sys.argv) == 1:
-        gui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nhan_dien_gui.py")
+        gui_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nhandien_gui.py")
         if os.path.exists(gui_path):
             print("ℹ️ Không có đường dẫn file → mở giao diện (GUI)...")
             subprocess.run([sys.executable, gui_path])
             return
         print("❌ Hãy truyền đường dẫn file, ví dụ:\n"
-              "   python nhan_dien_audio_tieng_trung.py \"duong_dan/file.mp3\"")
+              "   python nhandien_giongnoi.py \"duong_dan/file.mp3\"")
         return
 
     parser = argparse.ArgumentParser(

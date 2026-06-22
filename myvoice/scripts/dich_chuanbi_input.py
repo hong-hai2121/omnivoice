@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-chuanbi_input_tu_gemini.py — Chuẩn bị input.txt cho TTS từ kết quả Gemini.
+dich_chuanbi_input.py — Chuẩn bị input.txt cho TTS từ kết quả Gemini.
 
 Luồng (chạy TRƯỚC khi tạo audio):
-  1. CHECK noidungGemini.docx bằng check_gemini_docx (bắt câu dẫn nhập/thừa
+  1. CHECK noidungGemini.docx bằng dich_kiemtra (bắt câu dẫn nhập/thừa
      Gemini hay tự thêm, vd "Dưới đây là bản dịch...", "Bản dịch truyện ngắn").
      → Nếu CÓ: BÁO (beep + liệt kê) và DỪNG, KHÔNG ghi input.txt (sửa docx trước).
   2. Bỏ cấu trúc: tiêu đề "Kết quả dịch từ Gemini" và các mục "Đoạn k".
   3. Ghép toàn bộ nội dung thành 1 đoạn hoàn chỉnh → ghi vào kịch_bản/input.txt.
-  → Sau đó mở clone_gui.py bấm "▶ Chạy" để tạo audio.
+  → Sau đó mở taogiong_gui.py bấm "▶ Chạy" để tạo audio.
 
 Chạy:
-    python chuanbi_input_tu_gemini.py
-    python chuanbi_input_tu_gemini.py "noidungGemini.docx" -o "input.txt"
-    python chuanbi_input_tu_gemini.py --force   # ghi input.txt kể cả khi check thấy lỗi
+    python dich_chuanbi_input.py
+    python dich_chuanbi_input.py "noidungGemini.docx" -o "input.txt"
+    python dich_chuanbi_input.py --force   # ghi input.txt kể cả khi check thấy lỗi
 
 Mã thoát: 0 = đã ghi input.txt · 1 = check thấy lỗi (đã dừng) · 2 = thiếu file/nội dung.
 """
@@ -37,7 +37,7 @@ import re
 import argparse
 from pathlib import Path
 
-import check_gemini_docx as checker
+import dich_kiemtra as checker
 
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
 DEFAULT_DOCX = KICHBAN_DIR / "noidungGemini.docx"
@@ -104,7 +104,7 @@ def main(argv=None):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content, encoding="utf-8")
     print(f"💾 BƯỚC 3 — Đã ghi {len(content)} ký tự → {out_path}")
-    print("✅ SẴN SÀNG TẠO AUDIO: mở clone_gui.py và bấm '▶ Chạy'.")
+    print("✅ SẴN SÀNG TẠO AUDIO: mở taogiong_gui.py và bấm '▶ Chạy'.")
     sys.exit(0)
 
 

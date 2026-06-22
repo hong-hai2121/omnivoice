@@ -1,5 +1,5 @@
 """
-Giao diện desktop cho Voice Cloning — chạy: python clone_gui.py
+Giao diện desktop cho Voice Cloning — chạy: python taogiong_gui.py
 """
 
 import sys, os
@@ -13,7 +13,7 @@ if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.a
 # Để import được package omnivoice ở gốc repo dù chạy từ thư mục con
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-# Để import được frame_video.py nằm cùng thư mục scripts/
+# Để import được video_khung.py nằm cùng thư mục scripts/
 _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
@@ -327,7 +327,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("Đang dựng video...")
             logging.info("Bắt đầu dựng video từ audio vừa tạo...")
             try:
-                from frame_video import build_video
+                from video_khung import build_video
                 video_out = build_video(Path(output), log=logging.info, effect=effect)
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
@@ -862,7 +862,7 @@ class App(tk.Tk):
     def _open_nhan_dien(self):
         """Mở GUI nhận diện giọng nói tiếng Trung trong cửa sổ/tiến trình riêng."""
         import subprocess
-        gui = Path(__file__).resolve().parent / "nhan_dien_gui.py"
+        gui = Path(__file__).resolve().parent / "nhandien_gui.py"
         if not gui.exists():
             messagebox.showerror("Thiếu file", f"Không thấy:\n{gui}")
             return
@@ -875,7 +875,7 @@ class App(tk.Tk):
     def _prepare_input_from_gemini(self) -> bool:
         """Quy trình trước khi tạo audio: lấy nội dung từ noidungGemini.docx.
 
-        1) KIỂM TRA câu dẫn nhập/thừa (check_gemini_docx). Có lỗi → báo + DỪNG,
+        1) KIỂM TRA câu dẫn nhập/thừa (dich_kiemtra). Có lỗi → báo + DỪNG,
            không tạo audio (để sửa docx trước).
         2) Bỏ cấu trúc 'Kết quả dịch từ Gemini' / 'Đoạn k', ghép thành 1 nội dung.
         3) Ghi vào file 'Văn bản' (input.txt) đang cấu hình.
@@ -889,9 +889,9 @@ class App(tk.Tk):
                 "'Lấy nội dung từ Gemini' để dùng input.txt thủ công.")
             return False
         try:
-            import check_gemini_docx as cg
+            import dich_kiemtra as cg
         except Exception as e:
-            messagebox.showerror("Thiếu check_gemini_docx", str(e))
+            messagebox.showerror("Thiếu dich_kiemtra", str(e))
             return False
 
         # 1) KIỂM TRA

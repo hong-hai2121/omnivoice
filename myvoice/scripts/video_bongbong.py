@@ -24,9 +24,9 @@ Hai chế độ (đặt RENDER_MODE):
     "burn"         → ghép bong bóng thẳng lên video INPUT, xuất .mp4 (giữ tiếng gốc)
 
 Cách dùng:
-    python bubble_video.py                   # theo RENDER_MODE: -> OUTPUT_MOV (hoặc OUTPUT)
-    python bubble_video.py ref.mp4 out.mov   # transparent: ref.mp4 chỉ để lấy kích thước/fps
-    python bubble_video.py in.mp4 out.mp4    # burn: ghép thẳng lên in.mp4
+    python video_bongbong.py                   # theo RENDER_MODE: -> OUTPUT_MOV (hoặc OUTPUT)
+    python video_bongbong.py ref.mp4 out.mov   # transparent: ref.mp4 chỉ để lấy kích thước/fps
+    python video_bongbong.py in.mp4 out.mp4    # burn: ghép thẳng lên in.mp4
 
 Thư viện: numpy, Pillow (vẽ nốt nhạc), ffmpeg/ffprobe.
 """
