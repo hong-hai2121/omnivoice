@@ -33,13 +33,28 @@ def _norm(s):
 
 
 def _is_note(text):
-    """Dòng chú thích trong ngoặc kiểu '(Độ dài ...)' — bỏ qua khi tách nội dung."""
+    """Dòng chú thích trong ngoặc kiểu '(Độ dài ...)' — bỏ qua khi tách nội dung.
+
+    Chấp nhận cả khi Gemini thêm dấu câu/nháy sau dấu ')' cuối, ví dụ '(...).' hay '(...)”'.
+    """
     t = (text or "").strip()
-    return t.startswith("(") and t.endswith(")")
+    if not t.startswith("("):
+        return False
+    core = t.rstrip(" .,;:!?…。\"'’”")
+    return core.endswith(")") or core.endswith("）")
 
 
 # Nhãn rác do Gemini chèn khi xuất khối code (không phải nội dung thật).
 _CODE_LABELS = {"PLAINTEXT", "PLAIN TEXT", "TEXT", "CODE", "MARKDOWN"}
+
+# Câu hướng dẫn Gemini hay chèn đầu phần Mô tả — luôn bỏ khỏi mô tả dù nằm ở đâu.
+_DESC_SKIP_PHRASES = ("copy toàn bộ nội dung", "dán vào phần mô tả")
+
+
+def _is_desc_hint(text):
+    """Dòng hướng dẫn 'copy ... dán vào phần mô tả' — không phải nội dung mô tả thật."""
+    t = _norm(text)
+    return any(_norm(p) in t for p in _DESC_SKIP_PHRASES)
 
 
 def _read_paragraphs(path):
@@ -107,7 +122,7 @@ def parse_seo_docx(path):
         start = i_desc + 1
         while start < n and (not paras[start] or _is_note(paras[start])):
             start += 1
-        desc_lines = list(paras[start:])
+        desc_lines = [ln for ln in paras[start:] if not _is_desc_hint(ln)]
         while desc_lines and not desc_lines[-1]:   # bỏ dòng trống ở cuối
             desc_lines.pop()
         description = "\n".join(desc_lines).strip()

@@ -40,12 +40,13 @@ if _SCRIPTS_DIR not in sys.path:
 
 import json
 import queue
+import random
 import threading
 import traceback
 import subprocess
 import webbrowser
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, filedialog
@@ -59,6 +60,7 @@ TOKEN_FILE = YT_DIR / "token.json"                      # token đăng nhập, t
 SETTINGS_FILE = YT_DIR / "settings.json"                # ghi nhớ lựa chọn lần trước
 KICHBAN_DIR = BASE_DIR.parent / "kịch_bản"              # nơi chứa seoYoutube.docx (kết quả SEO Gemini)
 SEO_DOCX_FILE = KICHBAN_DIR / "seoYoutube.docx"         # file SEO để tách Tiêu đề/Mô tả/Thẻ tag
+OUTPUT_DIR = KICHBAN_DIR / "output"                     # nơi chứa video đã dựng (output*_videodone.mp4, *_doc.mp4)
 
 VIDEO_EXTS = [("Video", "*.mp4 *.mov *.mkv *.avi *.flv *.webm *.m4v *.wmv"),
               ("Tất cả", "*.*")]
@@ -104,12 +106,18 @@ PRIVACY = {
 }
 DEFAULT_PRIVACY = "Không công khai / ai có link (unlisted)"
 
-# ── Bảng màu giao diện (nền trắng, accent đỏ YouTube) ────────────────────────
+# ── Bảng màu giao diện (nền xám nhạt hiện đại, accent đỏ YouTube) ─────────────
 UI = dict(
-    bg="#ffffff", card="#ffffff", border="#e4e7ec", field="#ffffff",
-    fg="#1f2430", muted="#7b828f",
-    accent="#ff0000", accent_dk="#cc0000",
-    hover="#f1f3f6",
+    bg="#f4f6fb",          # nền trang
+    surface="#ffffff",     # nền thẻ/khối
+    border="#e2e6ef",
+    field="#ffffff",
+    fg="#1f2440", muted="#6b7280",
+    accent="#ff2433", accent_dk="#d61f2b",     # đỏ YouTube — nút ĐĂNG + tiến trình
+    seo="#5b5ce2", seo_dk="#4849c7",           # tím indigo — nút SEO + Thumbnail
+    soft="#eaedf4", soft_dk="#dde1ea",         # nút phụ
+    hover="#eef1f6",
+    header="#26244f", header_sub="#c9c9ef",    # thanh tiêu đề trên cùng
     log_bg="#fbfbfc", log_info="#475063", log_warn="#b07400", log_err="#d62828",
     log_ok="#1d8a4e",
 )
@@ -262,13 +270,16 @@ class App:
         self.thumb_ok = True             # thumbnail có hợp lệ không (cập nhật bởi _check_thumb)
         root.title("Đăng video tự động lên YouTube")
         root.configure(bg=UI["bg"])
-        self._center(root, 760, 720)
-        root.minsize(680, 600)
+        self._center(root, 770, 900)
+        root.minsize(700, 560)
 
         self._build_styles()
+        self._build_header()
+        self._build_scroll_body()
         self._build_form()
         self._build_log()
         self._load_settings()
+        self._set_default_video()   # điền sẵn video mới nhất trong kịch_bản/output
         self._poll_queue()
 
     def _center(self, root, w, h):
@@ -284,32 +295,149 @@ class App:
             st.theme_use("clam")
         except tk.TclError:
             pass
-        st.configure("TFrame", background=UI["bg"])
-        st.configure("TLabel", background=UI["bg"], foreground=UI["fg"])
-        st.configure("Muted.TLabel", background=UI["bg"], foreground=UI["muted"])
-        st.configure("TButton", padding=6)
-        st.configure("Accent.TButton", foreground="#ffffff",
-                     background=UI["accent"], padding=8)
+        C = UI
+        base = ("Segoe UI", 10)
+        st.configure(".", font=base, background=C["bg"], foreground=C["fg"])
+        st.configure("TFrame", background=C["bg"])
+        st.configure("TLabel", background=C["bg"], foreground=C["fg"], font=base)
+        st.configure("Muted.TLabel", background=C["bg"], foreground=C["muted"],
+                     font=("Segoe UI", 9))
+        st.configure("Field.TLabel", background=C["bg"], foreground=C["fg"],
+                     font=("Segoe UI", 10, "bold"))
+
+        # Trường nhập + spinbox
+        for w in ("TEntry", "TSpinbox"):
+            st.configure(w, fieldbackground=C["field"], background=C["field"],
+                         bordercolor=C["border"], lightcolor=C["border"],
+                         darkcolor=C["border"], foreground=C["fg"],
+                         insertcolor=C["fg"], padding=6)
+            st.map(w, bordercolor=[("focus", C["accent"])],
+                   lightcolor=[("focus", C["accent"])])
+        st.configure("TSpinbox", arrowcolor=C["muted"])
+
+        # Combobox
+        st.configure("TCombobox", fieldbackground=C["field"], background=C["field"],
+                     bordercolor=C["border"], lightcolor=C["border"],
+                     darkcolor=C["border"], arrowcolor=C["muted"], padding=5)
+        st.map("TCombobox",
+               fieldbackground=[("readonly", C["field"])],
+               foreground=[("readonly", C["fg"])],
+               selectbackground=[("readonly", C["field"])],
+               selectforeground=[("readonly", C["fg"])],
+               bordercolor=[("focus", C["accent"])],
+               lightcolor=[("focus", C["accent"])])
+        self.root.option_add("*TCombobox*Listbox.background", C["field"])
+        self.root.option_add("*TCombobox*Listbox.foreground", C["fg"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", C["seo"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+
+        # Checkbutton
+        st.configure("TCheckbutton", background=C["bg"], foreground=C["fg"])
+        st.map("TCheckbutton",
+               background=[("active", C["bg"])],
+               foreground=[("active", C["seo"]), ("selected", C["seo"])],
+               indicatorcolor=[("selected", C["seo"]), ("!selected", "#cfd3da")])
+
+        # Nút mặc định = nút phụ (soft)
+        st.configure("TButton", background=C["soft"], foreground=C["fg"],
+                     bordercolor=C["border"], relief="flat", focusthickness=0,
+                     padding=(12, 7), font=base)
+        st.map("TButton",
+               background=[("active", C["hover"]), ("pressed", C["soft_dk"]),
+                           ("disabled", "#f1f2f5")],
+               foreground=[("disabled", "#b3b8c2")])
+        st.configure("Soft.TButton", background=C["soft"], foreground=C["fg"],
+                     padding=(12, 7))
+        st.map("Soft.TButton",
+               background=[("active", C["hover"]), ("pressed", C["soft_dk"])])
+
+        # Nút chính ĐĂNG (đỏ YouTube)
+        st.configure("Accent.TButton", background=C["accent"], foreground="#ffffff",
+                     padding=(22, 10), font=("Segoe UI", 10, "bold"))
         st.map("Accent.TButton",
-               background=[("active", UI["accent_dk"]), ("disabled", "#f0a3a3")])
+               background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
+                           ("disabled", "#f3a6ad")],
+               foreground=[("disabled", "#ffffff")])
+
+        # Nút quy trình SEO + Thumbnail (tím indigo)
+        st.configure("Seo.TButton", background=C["seo"], foreground="#ffffff",
+                     padding=(16, 9), font=("Segoe UI", 10, "bold"))
+        st.map("Seo.TButton",
+               background=[("active", C["seo_dk"]), ("pressed", C["seo_dk"]),
+                           ("disabled", "#c7c8f0")],
+               foreground=[("disabled", "#ffffff")])
+
+        # Nút chip nhỏ (đặt nhanh giờ)
+        st.configure("Chip.TButton", background=C["soft"], foreground=C["seo"],
+                     padding=(9, 4), font=("Segoe UI", 9, "bold"))
+        st.map("Chip.TButton", background=[("active", C["hover"])])
+
+        # Nút stepper số tập (−/+)
+        st.configure("Stepper.TButton", background=C["soft"], foreground=C["fg"],
+                     padding=(2, 1), font=("Segoe UI", 13, "bold"))
+        st.map("Stepper.TButton", background=[("active", C["hover"])])
+
+        # Thanh tiến trình (đỏ)
+        st.configure("TProgressbar", background=C["accent"], troughcolor=C["soft"],
+                     bordercolor=C["soft"], lightcolor=C["accent"],
+                     darkcolor=C["accent"], thickness=12)
+
+    # ---- header ----
+    def _build_header(self):
+        """Thanh tiêu đề màu trên cùng — nâng cảm giác hiện đại, không đổi bố cục form."""
+        C = UI
+        bar = tk.Frame(self.root, bg=C["header"], height=88)
+        bar.pack(fill="x")
+        bar.pack_propagate(False)
+        inner = tk.Frame(bar, bg=C["header"])
+        inner.pack(anchor="w", padx=24, pady=15)
+        row = tk.Frame(inner, bg=C["header"])
+        row.pack(anchor="w")
+        tk.Label(row, text=" ▶ ", bg=C["accent"], fg="#ffffff",
+                 font=("Segoe UI", 12, "bold")).pack(side="left")
+        tk.Label(row, text="  ĐĂNG VIDEO YOUTUBE", bg=C["header"], fg="#ffffff",
+                 font=("Segoe UI", 17, "bold")).pack(side="left")
+        tk.Label(inner,
+                 text="Lấy SEO Gemini · tạo thumbnail · hẹn giờ đăng — tất cả trong một cửa sổ",
+                 bg=C["header"], fg=C["header_sub"],
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
+
+    # ---- vùng cuộn được (để form dài vẫn xem đủ trên màn hình thấp) ----
+    def _build_scroll_body(self):
+        container = ttk.Frame(self.root)
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, bg=UI["bg"], highlightthickness=0)
+        vsb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        self.body = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=self.body, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        self.body.bind("<Configure>",
+                       lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind_all("<MouseWheel>",
+                        lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
 
     # ---- form ----
     def _build_form(self):
         pad = dict(padx=12, pady=4)
-        frm = ttk.Frame(self.root)
+        frm = ttk.Frame(self.body)
         frm.pack(fill="x", **pad)
         frm.columnconfigure(1, weight=1)
 
         r = 0
         # File video
-        ttk.Label(frm, text="File video *").grid(row=r, column=0, sticky="w")
+        ttk.Label(frm, text="File video *", style="Field.TLabel").grid(row=r, column=0, sticky="w")
         self.var_video = tk.StringVar()
         ttk.Entry(frm, textvariable=self.var_video).grid(row=r, column=1, sticky="ew", padx=6)
-        ttk.Button(frm, text="Chọn...", command=self._pick_video).grid(row=r, column=2)
+        ttk.Button(frm, text="Chọn...", style="Soft.TButton",
+                   command=self._pick_video).grid(row=r, column=2)
         r += 1
 
         # Tiêu đề
-        ttk.Label(frm, text="Tiêu đề *").grid(row=r, column=0, sticky="w")
+        ttk.Label(frm, text="Tiêu đề *", style="Field.TLabel").grid(row=r, column=0, sticky="w")
         self.var_title = tk.StringVar()
         self.var_title.trace_add("write", lambda *_: self._update_counters())
         ttk.Entry(frm, textvariable=self.var_title).grid(row=r, column=1, sticky="ew", padx=6)
@@ -318,9 +446,12 @@ class App:
         r += 1
 
         # Mô tả
-        ttk.Label(frm, text="Mô tả").grid(row=r, column=0, sticky="nw", pady=(6, 0))
-        self.txt_desc = tk.Text(frm, height=6, wrap="word",
-                                bg=UI["field"], fg=UI["fg"], relief="solid", borderwidth=1)
+        ttk.Label(frm, text="Mô tả", style="Field.TLabel").grid(row=r, column=0, sticky="nw", pady=(6, 0))
+        self.txt_desc = tk.Text(frm, height=5, wrap="word",
+                                bg=UI["field"], fg=UI["fg"], relief="flat", borderwidth=0,
+                                highlightthickness=1, highlightbackground=UI["border"],
+                                highlightcolor=UI["accent"], padx=8, pady=6,
+                                font=("Segoe UI", 10))
         self.txt_desc.grid(row=r, column=1, columnspan=2, sticky="ew", padx=6, pady=(6, 0))
         self.txt_desc.bind("<KeyRelease>", lambda _e: self._update_counters())
         r += 1
@@ -329,7 +460,7 @@ class App:
         r += 1
 
         # Tags
-        ttk.Label(frm, text="Thẻ tag").grid(row=r, column=0, sticky="w")
+        ttk.Label(frm, text="Thẻ tag", style="Field.TLabel").grid(row=r, column=0, sticky="w")
         self.var_tags = tk.StringVar()
         self.var_tags.trace_add("write", lambda *_: self._update_counters())
         ttk.Entry(frm, textvariable=self.var_tags).grid(row=r, column=1, sticky="ew", padx=6)
@@ -340,16 +471,31 @@ class App:
                   style="Muted.TLabel").grid(row=r, column=1, sticky="w", padx=6)
         r += 1
 
+        # Số tập (dùng cho thumbnail) — có nút tăng/giảm
+        row_ep = ttk.Frame(frm)
+        row_ep.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Label(row_ep, text="Số tập (thumbnail)", style="Field.TLabel").pack(side="left")
+        self.var_episode = tk.StringVar(value="01")
+        ttk.Entry(row_ep, textvariable=self.var_episode, width=6,
+                  justify="center").pack(side="left", padx=6)
+        ttk.Button(row_ep, text="−", width=3, style="Stepper.TButton",
+                   command=lambda: self._change_episode(-1)).pack(side="left")
+        ttk.Button(row_ep, text="+", width=3, style="Stepper.TButton",
+                   command=lambda: self._change_episode(1)).pack(side="left", padx=(4, 0))
+        ttk.Label(row_ep, text="(ví dụ: 01, 02, 15)",
+                  style="Muted.TLabel").pack(side="left", padx=8)
+        r += 1
+
         # Danh mục + quyền riêng tư
         row2 = ttk.Frame(frm)
         row2.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         row2.columnconfigure(1, weight=1)
         row2.columnconfigure(3, weight=1)
-        ttk.Label(row2, text="Danh mục").grid(row=0, column=0, sticky="w")
+        ttk.Label(row2, text="Danh mục", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         self.var_cat = tk.StringVar(value=DEFAULT_CATEGORY)
         ttk.Combobox(row2, textvariable=self.var_cat, values=list(CATEGORIES),
                      state="readonly", width=24).grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Label(row2, text="Chế độ").grid(row=0, column=2, sticky="w")
+        ttk.Label(row2, text="Chế độ", style="Field.TLabel").grid(row=0, column=2, sticky="w")
         self.var_priv = tk.StringVar(value=DEFAULT_PRIVACY)
         ttk.Combobox(row2, textvariable=self.var_priv, values=list(PRIVACY),
                      state="readonly", width=30).grid(row=0, column=3, sticky="w", padx=6)
@@ -359,11 +505,12 @@ class App:
         row3 = ttk.Frame(frm)
         row3.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         row3.columnconfigure(1, weight=1)
-        ttk.Label(row3, text="Thumbnail").grid(row=0, column=0, sticky="w")
+        ttk.Label(row3, text="Thumbnail", style="Field.TLabel").grid(row=0, column=0, sticky="w")
         self.var_thumb = tk.StringVar()
         self.var_thumb.trace_add("write", self._check_thumb)
         ttk.Entry(row3, textvariable=self.var_thumb).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(row3, text="Chọn...", command=self._pick_thumb).grid(row=0, column=2)
+        ttk.Button(row3, text="Chọn...", style="Soft.TButton",
+                   command=self._pick_thumb).grid(row=0, column=2)
         self.var_kids = tk.BooleanVar(value=False)
         ttk.Checkbutton(row3, text="Nội dung cho trẻ em",
                         variable=self.var_kids).grid(row=0, column=3, padx=(10, 0))
@@ -372,32 +519,88 @@ class App:
         self.lbl_thumb.grid(row=1, column=1, columnspan=3, sticky="w", padx=6)
         r += 1
 
-        # Hẹn giờ đăng
-        row4 = ttk.Frame(frm)
-        row4.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        # ── Hẹn giờ đăng — chọn Ngày/Tháng/Năm/Giờ/Phút bằng spinbox cho dễ nhập ──
+        sched = ttk.Frame(frm)
+        sched.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
+        top = ttk.Frame(sched)
+        top.grid(row=0, column=0, sticky="w")
         self.var_sched_on = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row4, text="Hẹn giờ đăng (giờ máy tính)",
+        ttk.Checkbutton(top, text="Hẹn giờ đăng (giờ máy tính)",
                         variable=self.var_sched_on,
-                        command=self._toggle_sched).grid(row=0, column=0, sticky="w")
-        self.var_sched = tk.StringVar()
-        self.ent_sched = ttk.Entry(row4, textvariable=self.var_sched, width=22, state="disabled")
-        self.ent_sched.grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Label(row4, text="dạng: 2026-06-20 14:30",
-                  style="Muted.TLabel").grid(row=0, column=2, sticky="w")
+                        command=self._toggle_sched).pack(side="left")
+        ttk.Label(top, text="— video để 'riêng tư' tới giờ rồi tự công khai",
+                  style="Muted.TLabel").pack(side="left", padx=8)
+
+        # Mặc định: bây giờ + 1 giờ (làm tròn phút về 0)
+        d0 = (datetime.now() + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+        self.var_s_day = tk.StringVar(value=f"{d0.day:02d}")
+        self.var_s_month = tk.StringVar(value=f"{d0.month:02d}")
+        self.var_s_year = tk.StringVar(value=str(d0.year))
+        self.var_s_hour = tk.StringVar(value=f"{d0.hour:02d}")
+        self.var_s_minute = tk.StringVar(value=f"{d0.minute:02d}")
+        self._sched_widgets = []   # các spinbox bị khóa/mở theo checkbox
+
+        def _mk_spin(parent, lo, hi, var, width, fmt="%02.0f", inc=1):
+            sp = ttk.Spinbox(parent, from_=lo, to=hi, textvariable=var, width=width,
+                             wrap=True, format=fmt, increment=inc, state="disabled",
+                             command=self._update_sched_preview)
+            sp.bind("<KeyRelease>", lambda _e: self._update_sched_preview())
+            self._sched_widgets.append(sp)
+            return sp
+
+        picker = ttk.Frame(sched)
+        picker.grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(picker, text="Ngày").pack(side="left")
+        _mk_spin(picker, 1, 31, self.var_s_day, 4).pack(side="left", padx=(4, 12))
+        ttk.Label(picker, text="Tháng").pack(side="left")
+        _mk_spin(picker, 1, 12, self.var_s_month, 4).pack(side="left", padx=(4, 12))
+        ttk.Label(picker, text="Năm").pack(side="left")
+        _mk_spin(picker, d0.year, d0.year + 3, self.var_s_year, 6,
+                 fmt="%.0f").pack(side="left", padx=(4, 16))
+        ttk.Label(picker, text="lúc").pack(side="left")
+        _mk_spin(picker, 0, 23, self.var_s_hour, 4).pack(side="left", padx=(4, 2))
+        ttk.Label(picker, text=":").pack(side="left")
+        _mk_spin(picker, 0, 59, self.var_s_minute, 4, inc=5).pack(side="left", padx=(2, 0))
+
+        # Nút đặt nhanh — LUÔN bấm được (bấm là tự bật hẹn giờ + điền sẵn)
+        quick = ttk.Frame(sched)
+        quick.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(quick, text="Đặt nhanh:", style="Muted.TLabel").pack(side="left")
+        for _label, _kw in [("+1 giờ", dict(hours=1)),
+                            ("Tối nay 20:00", dict(at=(20, 0))),
+                            ("Sáng mai 08:00", dict(at=(8, 0), tomorrow=True))]:
+            ttk.Button(quick, text=_label, style="Chip.TButton",
+                       command=lambda k=_kw: self._sched_quick(**k)).pack(side="left", padx=(6, 0))
+
+        self.lbl_sched = ttk.Label(sched, text="", style="Muted.TLabel")
+        self.lbl_sched.grid(row=3, column=0, sticky="w", pady=(6, 0))
         r += 1
 
-        # Nút thao tác
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        r += 1
+
+        # Nút thao tác — hàng 1: đăng video + quy trình SEO/thumbnail
         rowb = ttk.Frame(frm)
         rowb.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(12, 0))
         self.btn_upload = ttk.Button(rowb, text="⬆  ĐĂNG VIDEO", style="Accent.TButton",
                                      command=self._on_upload)
         self.btn_upload.pack(side="left")
-        ttk.Button(rowb, text="📥 Lấy SEO (seoYoutube.docx)",
-                   command=self._load_seo_from_docx).pack(side="left", padx=6)
-        ttk.Button(rowb, text="Mở thư mục cấu hình",
-                   command=self._open_cfg_dir).pack(side="left", padx=6)
-        ttk.Button(rowb, text="Hướng dẫn lấy quyền",
-                   command=self._open_help).pack(side="left")
+        self.btn_seo = ttk.Button(rowb, text="🤖 Lấy SEO + Thumbnail", style="Seo.TButton",
+                                  command=self._on_seo_pipeline)
+        self.btn_seo.pack(side="left", padx=8)
+        ttk.Button(rowb, text="📄 Đọc SEO sẵn", style="Soft.TButton",
+                   command=self._load_seo_from_docx).pack(side="left")
+        r += 1
+
+        # Hàng 2: tiện ích cấu hình
+        rowb2 = ttk.Frame(frm)
+        rowb2.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Button(rowb2, text="Mở thư mục cấu hình", style="Soft.TButton",
+                   command=self._open_cfg_dir).pack(side="left")
+        ttk.Button(rowb2, text="Hướng dẫn lấy quyền", style="Soft.TButton",
+                   command=self._open_help).pack(side="left", padx=6)
         r += 1
 
         # Thanh tiến trình
@@ -405,28 +608,123 @@ class App:
         self.pb.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(10, 0))
 
     def _build_log(self):
-        wrap = ttk.Frame(self.root)
+        wrap = ttk.Frame(self.body)
         wrap.pack(fill="both", expand=True, padx=12, pady=(8, 12))
-        ttk.Label(wrap, text="Nhật ký", style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(wrap, text="NHẬT KÝ", style="Muted.TLabel").pack(anchor="w", pady=(0, 4))
         self.log_widget = scrolledtext.ScrolledText(
-            wrap, height=8, wrap="word", state="disabled",
-            bg=UI["log_bg"], fg=UI["log_info"], relief="solid", borderwidth=1)
+            wrap, height=6, wrap="word", state="disabled",
+            bg=UI["log_bg"], fg=UI["log_info"], relief="flat", borderwidth=0,
+            highlightthickness=1, highlightbackground=UI["border"],
+            highlightcolor=UI["border"], padx=10, pady=8, font=("Consolas", 9))
         self.log_widget.pack(fill="both", expand=True)
         for tag, color in [("info", UI["log_info"]), ("warn", UI["log_warn"]),
                            ("err", UI["log_err"]), ("ok", UI["log_ok"])]:
             self.log_widget.tag_config(tag, foreground=color)
 
     # ---- helpers GUI ----
+    def _find_latest_video(self):
+        """Video mới nhất (theo thời gian sửa) trong kịch_bản/output, hoặc "" nếu không có."""
+        exts = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm", ".m4v", ".wmv"}
+        if not OUTPUT_DIR.is_dir():
+            return ""
+        vids = [p for p in OUTPUT_DIR.iterdir()
+                if p.is_file() and p.suffix.lower() in exts]
+        if not vids:
+            return ""
+        return str(max(vids, key=lambda p: p.stat().st_mtime))
+
+    def _set_default_video(self):
+        """Khi mở app: điền sẵn video mới nhất trong kịch_bản/output (nếu ô đang trống)."""
+        if self.var_video.get().strip():
+            return
+        latest = self._find_latest_video()
+        if latest:
+            self.var_video.set(latest)
+            if not self.var_title.get().strip():
+                self.var_title.set(Path(latest).stem)   # gợi ý tiêu đề từ tên file
+            self.log(f"Đã chọn sẵn video mới nhất: {Path(latest).name}", "info")
+
     def _pick_video(self):
-        f = filedialog.askopenfilename(title="Chọn file video", filetypes=VIDEO_EXTS)
+        init = str(OUTPUT_DIR) if OUTPUT_DIR.is_dir() else str(Path.home())
+        f = filedialog.askopenfilename(title="Chọn file video",
+                                       initialdir=init, filetypes=VIDEO_EXTS)
         if f:
             self.var_video.set(f)
             if not self.var_title.get().strip():
                 self.var_title.set(Path(f).stem)   # gợi ý tiêu đề từ tên file
 
+    def _change_episode(self, delta):
+        """Tăng/giảm số tập, giữ độ rộng (zero-pad) như 01, 02 ..."""
+        cur = self.var_episode.get().strip()
+        if not cur.isdecimal():
+            self.var_episode.set("01")
+            return
+        width = max(2, len(cur))
+        self.var_episode.set(str(max(0, int(cur) + delta)).zfill(width))
+
+    def _title_with_episode(self, title):
+        """Chèn 'Số <số tập>' ngay sau 'Mimi Truyện' trong tiêu đề (khớp số ở thumbnail).
+
+        Không có 'Mimi Truyện' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên.
+        """
+        ep = self.var_episode.get().strip()
+        if not ep or not title:
+            return title
+        suffix = f"Số {ep}"
+        marker = "mimi truyện"
+        idx = title.lower().rfind(marker)
+        if idx == -1:
+            return f"{title} {suffix}"
+        end = idx + len(marker)
+        after = title[end:]
+        if after.lstrip().lower().startswith("số"):   # tránh nhân đôi khi chạy lại
+            return title
+        return f"{title[:end]} {suffix}{after}".rstrip()
+
+    def _apply_seo(self, seo):
+        """Điền Tiêu đề/Mô tả/Thẻ tag từ dict SEO đã tách vào form. Chạy ở main thread.
+
+        Trả về tiêu đề (str) nếu điền được, "" nếu không tách được nội dung.
+        """
+        title, desc, tags = seo["title"], seo["description"], seo["tags"]
+        issues = seo.get("issues", [])
+
+        # Không tách được gì → nhiều khả năng Gemini trả về CẤU TRÚC KHÁC (hoặc file rỗng).
+        if not (title or desc or tags):
+            detail = "\n".join("• " + s for s in issues) if issues else \
+                "• Không tìm thấy các mục Tiêu đề / Thẻ tag / Mô tả quen thuộc."
+            messagebox.showerror(
+                "Không đọc được SEO",
+                "Gemini có thể đã trả về CẤU TRÚC KHÁC với định dạng mong đợi nên "
+                "không tách được nội dung:\n\n" + detail +
+                "\n\nHãy mở seoYoutube.docx kiểm tra, hoặc chạy lại quy trình SEO.")
+            self.log("LỖI SEO: không tách được nội dung — " + " | ".join(issues), "err")
+            return ""
+
+        # Tách được MỘT PHẦN → vẫn điền phần có, nhưng CẢNH BÁO rõ phần bị thiếu.
+        if issues:
+            messagebox.showwarning(
+                "SEO thiếu một số phần",
+                "Cấu trúc SEO khác mong đợi — chỉ lấy được một phần. Thiếu:\n\n" +
+                "\n".join("• " + s for s in issues) +
+                "\n\nHãy kiểm tra lại các ô trước khi đăng.")
+            for s in issues:
+                self.log("⚠ SEO thiếu: " + s, "warn")
+
+        if title:
+            self.var_title.set(self._title_with_episode(title))
+        if desc:
+            self.txt_desc.delete("1.0", "end")
+            self.txt_desc.insert("1.0", desc)
+        if tags:
+            self.var_tags.set(", ".join(tags))
+        self._update_counters()
+        self.log(f"✔ SEO: tiêu đề {len(title)} ký tự, {len(tags)} thẻ tag, "
+                 f"mô tả {len(desc)} ký tự.", "ok")
+        return title
+
     def _load_seo_from_docx(self):
-        """Đọc seoYoutube.docx (kết quả SEO Gemini), tách Tiêu đề/Mô tả/Thẻ tag và
-        điền vào các ô tương ứng để chuẩn bị đăng YouTube."""
+        """Đọc lại seoYoutube.docx CÓ SẴN (không chạy Gemini), điền vào form."""
         path = SEO_DOCX_FILE
         if not path.exists():
             f = filedialog.askopenfilename(
@@ -446,42 +744,80 @@ class App:
             messagebox.showerror("Lỗi đọc SEO", f"Không đọc được {path}:\n{e}")
             self.log("LỖI đọc SEO: " + str(e), "err")
             return
+        self._apply_seo(seo)
 
-        title, desc, tags = seo["title"], seo["description"], seo["tags"]
-        issues = seo.get("issues", [])
-
-        # Không tách được gì → nhiều khả năng Gemini trả về CẤU TRÚC KHÁC (hoặc file rỗng).
-        if not (title or desc or tags):
-            detail = "\n".join("• " + s for s in issues) if issues else \
-                "• Không tìm thấy các mục Tiêu đề / Thẻ tag / Mô tả quen thuộc."
-            messagebox.showerror(
-                "Không đọc được SEO",
-                "Gemini có thể đã trả về CẤU TRÚC KHÁC với định dạng mong đợi nên "
-                "không tách được nội dung:\n\n" + detail +
-                "\n\nHãy mở seoYoutube.docx kiểm tra, hoặc chạy lại seo_youtube_gemini.py.")
-            self.log("LỖI SEO: không tách được nội dung — " + " | ".join(issues), "err")
+    # ---- quy trình: SEO Gemini → điền form → tạo thumbnail ----
+    def _on_seo_pipeline(self):
+        """Bấm 'Lấy SEO + Thumbnail': chạy seo_youtube_gemini → điền form → thumbnail."""
+        if self.worker is not None:
             return
+        if not messagebox.askyesno(
+                "Lấy SEO + Tạo thumbnail",
+                "Quy trình tự động:\n"
+                "①  Mở Firefox, gửi nội dung lên Gemini SEO → seoYoutube.docx\n"
+                "②  Điền Tiêu đề / Mô tả / Thẻ tag vào form\n"
+                "③  Tạo thumbnail từ tiêu đề + số tập, dùng luôn làm thumbnail đăng\n\n"
+                "Hãy ĐÓNG Firefox đang mở (profile bị khoá khi đang chạy) và đảm bảo "
+                "profile đã đăng nhập Google.\n\nTiếp tục?"):
+            return
+        number = self.var_episode.get().strip()
+        self.pb["value"] = 0
+        self.btn_seo.config(state="disabled")
+        self.btn_upload.config(state="disabled")
+        self.worker = threading.Thread(target=self._run_seo_pipeline,
+                                       args=(number,), daemon=True)
+        self.worker.start()
 
-        # Tách được MỘT PHẦN → vẫn điền phần có, nhưng CẢNH BÁO rõ phần bị thiếu.
-        if issues:
-            messagebox.showwarning(
-                "SEO thiếu một số phần",
-                "Cấu trúc SEO khác mong đợi — chỉ lấy được một phần. Thiếu:\n\n" +
-                "\n".join("• " + s for s in issues) +
-                "\n\nHãy kiểm tra lại các ô trước khi đăng.")
-            for s in issues:
-                self.log("⚠ SEO thiếu: " + s, "warn")
+    def _run_seo_pipeline(self, number):
+        """Chạy nền: ① Gemini SEO → ② đọc + điền form → ③ tạo thumbnail."""
+        try:
+            try:
+                import seo_youtube_gemini as seo_gen
+            except Exception as e:
+                self.log("Không nạp được seo_youtube_gemini: " + str(e), "err")
+                return
 
-        if title:
-            self.var_title.set(title)
-        if desc:
-            self.txt_desc.delete("1.0", "end")
-            self.txt_desc.insert("1.0", desc)
-        if tags:
-            self.var_tags.set(", ".join(tags))
-        self._update_counters()
-        self.log(f"✔ Đã lấy SEO từ {path.name}: tiêu đề {len(title)} ký tự, "
-                 f"{len(tags)} thẻ tag, mô tả {len(desc)} ký tự.", "ok")
+            src = str(seo_gen.DEFAULT_INPUT)
+            if not Path(src).exists():
+                self.log(f"Không thấy nguồn dịch: {src}\n"
+                         "Hãy dịch Gemini (tạo gemini_result.docx) trước.", "err")
+                return
+
+            # ① Tạo SEO qua Gemini
+            self.log("①  Mở Firefox + gửi nội dung lên Gemini SEO...", "info")
+            seo_gen.run(src, str(SEO_DOCX_FILE), keep_open=True,
+                        log=lambda m: self.log(str(m), "info"))
+
+            # ② Đọc SEO + điền form (điền widget phải ở main thread → qua queue)
+            from seo_docx_parser import parse_seo_docx
+            seo = parse_seo_docx(SEO_DOCX_FILE)
+            self.q.put(("seo_fill", seo))
+
+            # ③ Tạo thumbnail từ tiêu đề SEO + số tập
+            title = (seo.get("title") or "").strip()
+            if not title:
+                self.log("⚠ SEO không có tiêu đề → bỏ qua bước tạo thumbnail.", "warn")
+                return
+            self.log("③  Tạo thumbnail...", "info")
+            thumb = self._make_thumbnail(title, number)
+            self.q.put(("thumb_done", str(thumb)))
+        except Exception as e:
+            self.log("LỖI quy trình SEO: " + str(e), "err")
+            self.log(traceback.format_exc(), "err")
+        finally:
+            self.q.put(("seo_done",))
+
+    def _make_thumbnail(self, title, number):
+        """Render 1 thumbnail vào kịch_bản/output bằng dien_tieu_de_thumbnail."""
+        import dien_tieu_de_thumbnail as tr
+        photos = tr.list_photo_files(tr.CAT_IMAGE_DIR)
+        if not photos:
+            raise RuntimeError(f"Không có ảnh nền trong: {tr.CAT_IMAGE_DIR}")
+        photo = random.choice(photos)
+        return tr.add_title(
+            tr.SOURCE_IMAGE, tr.next_thumbnail_path(), title, photo,
+            tr.FRAME_IMAGE, (number or tr.DEFAULT_NUMBER), tr.NUMBER_FRAME_IMAGE,
+        )
 
     def _pick_thumb(self):
         f = filedialog.askopenfilename(title="Chọn ảnh thumbnail", filetypes=IMAGE_EXTS)
@@ -540,7 +876,68 @@ class App:
             self.lbl_thumb.config(text="✔ " + info + " — phù hợp", foreground=UI["log_ok"])
 
     def _toggle_sched(self):
-        self.ent_sched.config(state="normal" if self.var_sched_on.get() else "disabled")
+        state = "normal" if self.var_sched_on.get() else "disabled"
+        for w in self._sched_widgets:
+            w.config(state=state)
+        self._update_sched_preview()
+
+    def _sched_datetime(self):
+        """Ghép các spinbox thành datetime (giờ máy). Lỗi nếu ngày/giờ không hợp lệ."""
+        try:
+            d = int(self.var_s_day.get())
+            mo = int(self.var_s_month.get())
+            y = int(self.var_s_year.get())
+            h = int(self.var_s_hour.get())
+            mi = int(self.var_s_minute.get())
+        except (TypeError, ValueError):
+            raise ValueError("Ngày/giờ phải là số.")
+        try:
+            return datetime(y, mo, d, h, mi)
+        except ValueError:
+            raise ValueError("Ngày giờ không tồn tại (ví dụ 30/02).")
+
+    def _update_sched_preview(self):
+        """Hiện ngày giờ sẽ đăng (kèm thứ trong tuần) hoặc cảnh báo nếu sai/quá khứ."""
+        if not self.var_sched_on.get():
+            self.lbl_sched.config(text="", foreground=UI["muted"])
+            return
+        try:
+            dt = self._sched_datetime()
+        except ValueError as e:
+            self.lbl_sched.config(text="⚠ " + str(e), foreground=UI["log_err"])
+            return
+        thu = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"][dt.weekday()]
+        if dt <= datetime.now():
+            self.lbl_sched.config(
+                text=f"→ {thu}, {dt.strftime('%d/%m/%Y %H:%M')}  — ⚠ đã ở quá khứ",
+                foreground=UI["log_warn"])
+        else:
+            self.lbl_sched.config(
+                text=f"→ Sẽ đăng: {thu}, {dt.strftime('%d/%m/%Y %H:%M')}",
+                foreground=UI["log_ok"])
+
+    def _set_sched(self, dt):
+        """Điền datetime vào các spinbox và bật hẹn giờ (dùng cho nút đặt nhanh)."""
+        self.var_s_day.set(f"{dt.day:02d}")
+        self.var_s_month.set(f"{dt.month:02d}")
+        self.var_s_year.set(str(dt.year))
+        self.var_s_hour.set(f"{dt.hour:02d}")
+        self.var_s_minute.set(f"{dt.minute:02d}")
+        if not self.var_sched_on.get():
+            self.var_sched_on.set(True)
+        self._toggle_sched()   # mở khóa spinbox + cập nhật xem trước
+
+    def _sched_quick(self, hours=None, at=None, tomorrow=False):
+        """Đặt nhanh: sau N giờ, hoặc đến mốc giờ cố định (tự đẩy sang mai nếu đã qua)."""
+        now = datetime.now()
+        if hours:
+            dt = (now + timedelta(hours=hours)).replace(second=0, microsecond=0)
+        else:
+            hh, mm = at
+            dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if tomorrow or dt <= now:
+                dt += timedelta(days=1)
+        self._set_sched(dt)
 
     def _open_cfg_dir(self):
         try:
@@ -591,6 +988,17 @@ class App:
                     self.pb["value"] = rest[0]
                 elif kind == "done":
                     self.btn_upload.config(state="normal")
+                    self.btn_seo.config(state="normal")
+                    self.worker = None
+                elif kind == "seo_fill":
+                    self._apply_seo(rest[0])
+                elif kind == "thumb_done":
+                    path = rest[0]
+                    self.var_thumb.set(path)   # dùng luôn làm thumbnail để đăng
+                    self.log("Đã tạo thumbnail: " + path, "ok")
+                elif kind == "seo_done":
+                    self.btn_seo.config(state="normal")
+                    self.btn_upload.config(state="normal")
                     self.worker = None
         except queue.Empty:
             pass
@@ -614,15 +1022,16 @@ class App:
                 return "Thumbnail không hợp lệ — xem dòng đỏ dưới ô thumbnail."
         if self.var_sched_on.get():
             try:
-                self._sched_to_rfc3339()
-            except ValueError:
-                return "Giờ hẹn không đúng định dạng (vd: 2026-06-20 14:30)."
+                dt = self._sched_datetime()
+            except ValueError as e:
+                return "Giờ hẹn không hợp lệ: " + str(e)
+            if dt <= datetime.now():
+                return "Giờ hẹn phải ở tương lai (hãy chọn ngày giờ sau hiện tại)."
         return None
 
     def _sched_to_rfc3339(self):
-        """Chuyển 'YYYY-MM-DD HH:MM' (giờ máy) sang RFC3339 UTC mà API yêu cầu."""
-        raw = self.var_sched.get().strip()
-        dt = datetime.strptime(raw, "%Y-%m-%d %H:%M")
+        """Chuyển ngày giờ đã chọn (giờ máy) sang RFC3339 UTC mà API yêu cầu."""
+        dt = self._sched_datetime()
         dt_utc = dt.astimezone().astimezone(timezone.utc)
         return dt_utc.strftime("%Y-%m-%dT%H:%M:%S.0Z")
 
@@ -648,6 +1057,7 @@ class App:
         self._save_settings()
         self.pb["value"] = 0
         self.btn_upload.config(state="disabled")
+        self.btn_seo.config(state="disabled")
         self.worker = threading.Thread(target=self._run, args=(opts,), daemon=True)
         self.worker.start()
 
@@ -676,6 +1086,7 @@ class App:
             "category": self.var_cat.get(),
             "privacy": self.var_priv.get(),
             "made_for_kids": self.var_kids.get(),
+            "episode": self.var_episode.get(),
         }
         try:
             SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
@@ -698,6 +1109,9 @@ class App:
             if data.get("privacy") in PRIVACY:
                 self.var_priv.set(data["privacy"])
             self.var_kids.set(bool(data.get("made_for_kids", False)))
+            ep = str(data.get("episode", "")).strip()
+            if ep.isdecimal():
+                self.var_episode.set(ep.zfill(max(2, len(ep))))
             self._update_counters()
         except Exception:
             pass

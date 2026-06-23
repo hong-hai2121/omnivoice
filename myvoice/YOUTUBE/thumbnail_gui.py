@@ -22,6 +22,9 @@ import dien_tieu_de_thumbnail as renderer
 
 
 STATE_FILE = Path(__file__).resolve().with_name("thumbnail_gui_state.json")
+# Tiêu đề được lấy từ cùng file SEO mà công cụ đăng video dùng (kịch_bản/seoYoutube.docx).
+KICHBAN_DIR = Path(__file__).resolve().parent.parent / "kịch_bản"
+SEO_DOCX_FILE = KICHBAN_DIR / "seoYoutube.docx"
 WINDOW_WIDTH = 1040
 WINDOW_HEIGHT = 735
 
@@ -47,6 +50,7 @@ class ThumbnailGUI:
         self.output_var = tk.StringVar(value="")
 
         self._build_ui()
+        self._autofill_title_from_seo()   # điền sẵn tiêu đề từ seoYoutube.docx (giống file đăng video)
         self._choose_random_photo()
         self.root.after(100, self._poll_events)
         self.root.after(120, self._center_window)
@@ -250,6 +254,25 @@ class ThumbnailGUI:
             anchor="w",
             wraplength=310,
         ).pack(anchor="w", pady=(4, 0))
+
+    def _autofill_title_from_seo(self) -> None:
+        """Tự điền tiêu đề từ kịch_bản/seoYoutube.docx — cùng nguồn với công cụ đăng video.
+
+        Chỉ điền khi ô tiêu đề đang trống; thiếu file/thư viện thì im lặng bỏ qua.
+        """
+        if self.title_text.get("1.0", "end").strip():
+            return
+        if not SEO_DOCX_FILE.exists():
+            return
+        try:
+            from seo_docx_parser import parse_seo_docx
+            seo = parse_seo_docx(SEO_DOCX_FILE)
+        except Exception:
+            return
+        title = (seo.get("title") or "").strip()
+        if title:
+            self.title_text.insert("1.0", title)
+            self.status_var.set(f"Đã điền tiêu đề từ {SEO_DOCX_FILE.name}")
 
     def _choose_random_photo(self) -> None:
         if self.running:
