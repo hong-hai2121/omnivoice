@@ -921,35 +921,60 @@ class App(tk.Tk):
         logging.info(f"Tìm thấy {len(effects)} hiệu ứng trong {EFFECTS_DIR}")
 
     def _clear_output(self):
-        """Xóa toàn bộ trong thư mục output (wav, video, và các thư mục chunks)."""
+        """Xóa toàn bộ trong output/ VÀ làm rỗng các file trong kịch_bản/.
+
+        - output/ (kịch_bản/output): xóa hẳn mọi file + thư mục con (wav, video, chunks).
+        - kịch_bản/: LÀM RỖNG các file nằm trực tiếp ở đây (input.txt, tiengTrung.docx,
+          gemini_result.docx, seoYoutube.docx...) — giữ tên file, xóa sạch nội dung.
+          Riêng .docx ghi lại thành docx RỖNG HỢP LỆ để code đọc sau không lỗi.
+          Thư mục con (output/) không bị coi là file nên không bị đụng ở bước này.
+        """
         import shutil
-        if not OUTPUT_DIR.exists():
-            messagebox.showinfo("Thông báo", "Chưa có thư mục output.")
+        out_items = list(OUTPUT_DIR.iterdir()) if OUTPUT_DIR.exists() else []
+        kb_files = [p for p in SCRIPT_DIR.iterdir() if p.is_file()] if SCRIPT_DIR.exists() else []
+
+        if not out_items and not kb_files:
+            messagebox.showinfo("Thông báo", "Không có gì để xóa hay làm rỗng.")
             return
-        items = list(OUTPUT_DIR.iterdir())
-        if not items:
-            messagebox.showinfo("Thông báo", "Thư mục output đã trống.")
-            return
-        n_files = sum(1 for p in items if p.is_file())
-        n_dirs  = sum(1 for p in items if p.is_dir())
+
+        n_files = sum(1 for p in out_items if p.is_file())
+        n_dirs  = sum(1 for p in out_items if p.is_dir())
         if not messagebox.askyesno(
                 "Xác nhận",
-                f"Xóa TẤT CẢ trong:\n{OUTPUT_DIR}\n\n"
-                f"({n_files} file + {n_dirs} thư mục — gồm wav, video, chunks)\n\n"
+                f"• XÓA HẾT trong:\n   {OUTPUT_DIR}\n"
+                f"   ({n_files} file + {n_dirs} thư mục — wav, video, chunks)\n\n"
+                f"• LÀM RỖNG {len(kb_files)} file trong:\n   {SCRIPT_DIR}\n"
+                f"   (input.txt, tiengTrung.docx, gemini_result.docx, seoYoutube.docx...)\n\n"
                 "Không thể hoàn tác!"):
             return
         self._stop_preview()   # nhả file đang nghe (nếu có) để xóa được
-        for p in items:
+
+        # 1) Xóa hẳn mọi thứ trong output/
+        for p in out_items:
             if p.is_dir():
                 shutil.rmtree(p, ignore_errors=True)
             else:
                 p.unlink(missing_ok=True)
+
+        # 2) Làm rỗng các file trong kịch_bản/ (giữ tên, xóa nội dung)
+        emptied = 0
+        for p in kb_files:
+            try:
+                if p.suffix.lower() == ".docx":
+                    from docx import Document
+                    Document().save(str(p))          # docx rỗng nhưng hợp lệ
+                else:
+                    p.write_text("", encoding="utf-8")
+                emptied += 1
+            except Exception as e:
+                logging.warning(f"Không làm rỗng được {p.name}: {e}")
+
         # Đặt lại tên kết quả về output.wav để đánh số lại từ đầu
         self.var_out.set(str(OUTPUT_DIR / "output.wav"))
         self._last_output = None
         self.btn_preview.config(state="disabled")
-        logging.info(f"Đã xóa toàn bộ output trong {OUTPUT_DIR}")
-        self.status.set("Đã xóa output.")
+        logging.info(f"Đã xóa output trong {OUTPUT_DIR} và làm rỗng {emptied} file trong {SCRIPT_DIR}")
+        self.status.set("Đã xóa output + làm rỗng kịch_bản.")
 
     def _pick_file(self, var, filetypes):
         path = filedialog.askopenfilename(filetypes=filetypes)

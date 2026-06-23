@@ -65,7 +65,7 @@ COPY_PREFIX = (
 "Với món ăn, đồ vật, thành ngữ hoặc cách gọi đặc thù Trung Quốc, hãy dịch sao cho người Việt dễ hiểu; nếu cần có thể giữ tên gốc kèm giải thích ngắn, nhưng không dài dòng. "
 "Nếu gặp câu quảng bá kênh, kêu gọi like, đăng ký, chia sẻ, tặng quà như “小薯条邀你一起看书咯”, “请点赞/订阅/转发/打赏”, “感谢支持”..., "
 "hãy đổi tên kênh gốc thành “mimi Truyện” và dịch đúng ý, nhưng không để làm rối mạch truyện chính. "
-"Ví dụ: “小薯条邀你一起看书咯” dịch là “mimi Truyện mời bạn cùng đọc truyện đây”. "
+"Ví dụ: “小薯条邀你一起看书咯” dịch là “Mimi Truyện xin mời bạn lắng nghe câu chuyện hôm nay nhé”. "
 "Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện."
 )
 

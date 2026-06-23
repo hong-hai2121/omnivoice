@@ -192,6 +192,16 @@ def get_credentials(log):
     return creds
 
 
+def _http_reason(err):
+    """Lấy 'reason' từ HttpError của Google API (vd 'forbidden', 'thumbnailSizeTooLarge')."""
+    try:
+        data = json.loads(err.content.decode("utf-8"))
+        errs = data.get("error", {}).get("errors", [])
+        return errs[0].get("reason", "") if errs else ""
+    except Exception:
+        return ""
+
+
 def upload_video(opts, log, progress_cb):
     """
     Thực hiện upload. `opts` là dict gồm:
@@ -244,17 +254,45 @@ def upload_video(opts, log, progress_cb):
     log(f"Đăng video thành công! ID = {video_id}", "ok")
     log(f"Link: https://youtu.be/{video_id}", "ok")
 
-    # Đặt thumbnail (nếu có).
+    # Đặt thumbnail (nếu có) — KHÔNG đợi YouTube xử lý xong video.
+    # Ngay sau khi tải lên, video còn "đang xử lý" nên YouTube đôi khi từ chối
+    # thumbnail tạm thời → thử lại vài lần có chờ tăng dần. Lỗi quyền/ảnh sai
+    # (chưa xác minh kênh, ảnh > 2MB...) là vĩnh viễn → dừng sớm + báo rõ.
     if opts.get("thumbnail_path"):
-        try:
-            log("Đang đặt ảnh thumbnail...", "info")
-            youtube.thumbnails().set(
-                videoId=video_id,
-                media_body=MediaFileUpload(opts["thumbnail_path"]),
-            ).execute()
-            log("Đã đặt thumbnail.", "ok")
-        except HttpError as e:
-            log(f"Không đặt được thumbnail (video vẫn đã đăng): {e}", "warn")
+        import time
+        log("Đang đặt ảnh thumbnail...", "info")
+        FATAL = {"forbidden", "thumbnailSizeTooLarge", "invalidImage",
+                 "invalidImageFormat", "mediaBodyRequired"}
+        delays = [0, 3, 6, 10, 15, 20]   # thử ngay, rồi chờ dần (tổng ~54s nếu cứ lỗi)
+        last_err = None
+        for i, wait in enumerate(delays):
+            if wait:
+                time.sleep(wait)
+            try:
+                youtube.thumbnails().set(
+                    videoId=video_id,
+                    media_body=MediaFileUpload(opts["thumbnail_path"]),
+                ).execute()
+                log("Đã đặt thumbnail. Hoàn tất.", "ok")
+                last_err = None
+                break
+            except HttpError as e:
+                last_err = e
+                reason = _http_reason(e)
+                if reason in FATAL:
+                    break   # thử lại cũng vô ích
+                log(f"  Thumbnail chưa nhận (lần {i + 1}/{len(delays)}: "
+                    f"{reason or 'video đang xử lý'}) — chờ rồi thử lại...", "warn")
+        if last_err is not None:
+            reason = _http_reason(last_err)
+            log(f"Không đặt được thumbnail (video vẫn đã đăng): {last_err}", "warn")
+            if reason == "forbidden":
+                log("→ Kênh CHƯA XÁC MINH nên YouTube không cho đặt thumbnail tùy chỉnh. "
+                    "Hãy xác minh tại https://www.youtube.com/verify rồi đặt thumbnail thủ công.", "warn")
+            elif reason == "thumbnailSizeTooLarge":
+                log("→ Ảnh thumbnail vượt 2MB. Hãy giảm dung lượng ảnh.", "warn")
+            elif reason in ("invalidImage", "invalidImageFormat"):
+                log("→ Ảnh không hợp lệ (chỉ JPG/PNG/GIF/BMP).", "warn")
 
     return video_id
 
@@ -270,14 +308,12 @@ class App:
         self.thumb_ok = True             # thumbnail có hợp lệ không (cập nhật bởi _check_thumb)
         root.title("Đăng video tự động lên YouTube")
         root.configure(bg=UI["bg"])
-        self._center(root, 770, 900)
-        root.minsize(700, 560)
+        self._center(root, 1320, 720)
+        root.minsize(1080, 560)
 
         self._build_styles()
         self._build_header()
-        self._build_scroll_body()
         self._build_form()
-        self._build_log()
         self._load_settings()
         self._set_default_video()   # điền sẵn video mới nhất trong kịch_bản/output
         self._poll_queue()
@@ -382,6 +418,12 @@ class App:
                      bordercolor=C["soft"], lightcolor=C["accent"],
                      darkcolor=C["accent"], thickness=12)
 
+        # Thẻ nhóm (LabelFrame có viền + tiêu đề)
+        st.configure("Card.TLabelframe", background=C["bg"], bordercolor=C["border"],
+                     relief="solid", borderwidth=1)
+        st.configure("Card.TLabelframe.Label", background=C["bg"], foreground=C["seo"],
+                     font=("Segoe UI", 11, "bold"))
+
     # ---- header ----
     def _build_header(self):
         """Thanh tiêu đề màu trên cùng — nâng cảm giác hiện đại, không đổi bố cục form."""
@@ -402,144 +444,131 @@ class App:
                  bg=C["header"], fg=C["header_sub"],
                  font=("Segoe UI", 9)).pack(anchor="w", pady=(5, 0))
 
-    # ---- vùng cuộn được (để form dài vẫn xem đủ trên màn hình thấp) ----
-    def _build_scroll_body(self):
-        container = ttk.Frame(self.root)
-        container.pack(fill="both", expand=True)
-        canvas = tk.Canvas(container, bg=UI["bg"], highlightthickness=0)
-        vsb = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        self.body = ttk.Frame(canvas)
-        win = canvas.create_window((0, 0), window=self.body, anchor="nw")
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
-        self.body.bind("<Configure>",
-                       lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
-
     # ---- form ----
     def _build_form(self):
-        pad = dict(padx=12, pady=4)
-        frm = ttk.Frame(self.body)
-        frm.pack(fill="x", **pad)
-        frm.columnconfigure(1, weight=1)
+        outer = ttk.Frame(self.root)
+        outer.pack(fill="both", expand=True, padx=14, pady=12)
+        outer.columnconfigure(0, weight=5, uniform="col")
+        outer.columnconfigure(1, weight=4, uniform="col")
+        outer.columnconfigure(2, weight=5, uniform="col")
+        outer.rowconfigure(0, weight=1)
 
-        r = 0
-        # File video
-        ttk.Label(frm, text="File video *", style="Field.TLabel").grid(row=r, column=0, sticky="w")
+        # ════════════ CỘT 1 — NỘI DUNG VIDEO ════════════
+        c1 = ttk.LabelFrame(outer, text="  Nội dung video  ",
+                            style="Card.TLabelframe", padding=12)
+        c1.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        c1.columnconfigure(0, weight=1)
+
+        ttk.Label(c1, text="File video *", style="Field.TLabel").grid(
+            row=0, column=0, sticky="w")
+        fv = ttk.Frame(c1)
+        fv.grid(row=1, column=0, sticky="ew", pady=(2, 10))
+        fv.columnconfigure(0, weight=1)
         self.var_video = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.var_video).grid(row=r, column=1, sticky="ew", padx=6)
-        ttk.Button(frm, text="Chọn...", style="Soft.TButton",
-                   command=self._pick_video).grid(row=r, column=2)
-        r += 1
+        ttk.Entry(fv, textvariable=self.var_video).grid(row=0, column=0, sticky="ew")
+        ttk.Button(fv, text="Chọn...", style="Soft.TButton",
+                   command=self._pick_video).grid(row=0, column=1, padx=(6, 0))
 
-        # Tiêu đề
-        ttk.Label(frm, text="Tiêu đề *", style="Field.TLabel").grid(row=r, column=0, sticky="w")
+        th = ttk.Frame(c1)
+        th.grid(row=2, column=0, sticky="ew")
+        th.columnconfigure(0, weight=1)
+        ttk.Label(th, text="Tiêu đề *", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        self.lbl_title_cnt = ttk.Label(th, text="0/100", style="Muted.TLabel")
+        self.lbl_title_cnt.grid(row=0, column=1, sticky="e")
         self.var_title = tk.StringVar()
         self.var_title.trace_add("write", lambda *_: self._update_counters())
-        ttk.Entry(frm, textvariable=self.var_title).grid(row=r, column=1, sticky="ew", padx=6)
-        self.lbl_title_cnt = ttk.Label(frm, text="0/100", style="Muted.TLabel")
-        self.lbl_title_cnt.grid(row=r, column=2, sticky="e")
-        r += 1
+        ttk.Entry(c1, textvariable=self.var_title).grid(
+            row=3, column=0, sticky="ew", pady=(2, 10))
 
-        # Mô tả
-        ttk.Label(frm, text="Mô tả", style="Field.TLabel").grid(row=r, column=0, sticky="nw", pady=(6, 0))
-        self.txt_desc = tk.Text(frm, height=5, wrap="word",
+        dh = ttk.Frame(c1)
+        dh.grid(row=4, column=0, sticky="ew")
+        dh.columnconfigure(0, weight=1)
+        ttk.Label(dh, text="Mô tả", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        self.lbl_desc_cnt = ttk.Label(dh, text="0/5000", style="Muted.TLabel")
+        self.lbl_desc_cnt.grid(row=0, column=1, sticky="e")
+        self.txt_desc = tk.Text(c1, height=8, wrap="word",
                                 bg=UI["field"], fg=UI["fg"], relief="flat", borderwidth=0,
                                 highlightthickness=1, highlightbackground=UI["border"],
                                 highlightcolor=UI["accent"], padx=8, pady=6,
                                 font=("Segoe UI", 10))
-        self.txt_desc.grid(row=r, column=1, columnspan=2, sticky="ew", padx=6, pady=(6, 0))
+        self.txt_desc.grid(row=5, column=0, sticky="nsew", pady=(2, 10))
         self.txt_desc.bind("<KeyRelease>", lambda _e: self._update_counters())
-        r += 1
-        self.lbl_desc_cnt = ttk.Label(frm, text="0/5000", style="Muted.TLabel")
-        self.lbl_desc_cnt.grid(row=r, column=1, columnspan=2, sticky="e", padx=6)
-        r += 1
+        c1.rowconfigure(5, weight=1)
 
-        # Tags
-        ttk.Label(frm, text="Thẻ tag", style="Field.TLabel").grid(row=r, column=0, sticky="w")
+        th2 = ttk.Frame(c1)
+        th2.grid(row=6, column=0, sticky="ew")
+        th2.columnconfigure(0, weight=1)
+        ttk.Label(th2, text="Thẻ tag", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        self.lbl_tags_cnt = ttk.Label(th2, text="0/480", style="Muted.TLabel")
+        self.lbl_tags_cnt.grid(row=0, column=1, sticky="e")
         self.var_tags = tk.StringVar()
         self.var_tags.trace_add("write", lambda *_: self._update_counters())
-        ttk.Entry(frm, textvariable=self.var_tags).grid(row=r, column=1, sticky="ew", padx=6)
-        self.lbl_tags_cnt = ttk.Label(frm, text="0/480", style="Muted.TLabel")
-        self.lbl_tags_cnt.grid(row=r, column=2, sticky="e")
-        r += 1
-        ttk.Label(frm, text="(các tag cách nhau bằng dấu phẩy)",
-                  style="Muted.TLabel").grid(row=r, column=1, sticky="w", padx=6)
-        r += 1
+        ttk.Entry(c1, textvariable=self.var_tags).grid(
+            row=7, column=0, sticky="ew", pady=(2, 0))
+        ttk.Label(c1, text="(các tag cách nhau bằng dấu phẩy)",
+                  style="Muted.TLabel").grid(row=8, column=0, sticky="w")
 
-        # Số tập (dùng cho thumbnail) — có nút tăng/giảm
-        row_ep = ttk.Frame(frm)
-        row_ep.grid(row=r, column=0, columnspan=3, sticky="w", pady=(8, 0))
-        ttk.Label(row_ep, text="Số tập (thumbnail)", style="Field.TLabel").pack(side="left")
+        # ════════════ CỘT 2 — TUỲ CHỌN ĐĂNG ════════════
+        c2 = ttk.LabelFrame(outer, text="  Tuỳ chọn đăng  ",
+                            style="Card.TLabelframe", padding=12)
+        c2.grid(row=0, column=1, sticky="nsew", padx=8)
+        c2.columnconfigure(0, weight=1)
+
+        ep = ttk.Frame(c2)
+        ep.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(ep, text="Số tập (thumbnail)", style="Field.TLabel").pack(side="left")
         self.var_episode = tk.StringVar(value="01")
-        ttk.Entry(row_ep, textvariable=self.var_episode, width=6,
+        ttk.Entry(ep, textvariable=self.var_episode, width=6,
                   justify="center").pack(side="left", padx=6)
-        ttk.Button(row_ep, text="−", width=3, style="Stepper.TButton",
+        ttk.Button(ep, text="−", width=3, style="Stepper.TButton",
                    command=lambda: self._change_episode(-1)).pack(side="left")
-        ttk.Button(row_ep, text="+", width=3, style="Stepper.TButton",
+        ttk.Button(ep, text="+", width=3, style="Stepper.TButton",
                    command=lambda: self._change_episode(1)).pack(side="left", padx=(4, 0))
-        ttk.Label(row_ep, text="(ví dụ: 01, 02, 15)",
-                  style="Muted.TLabel").pack(side="left", padx=8)
-        r += 1
 
-        # Danh mục + quyền riêng tư
-        row2 = ttk.Frame(frm)
-        row2.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        row2.columnconfigure(1, weight=1)
-        row2.columnconfigure(3, weight=1)
-        ttk.Label(row2, text="Danh mục", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(c2, text="Danh mục", style="Field.TLabel").grid(row=1, column=0, sticky="w")
         self.var_cat = tk.StringVar(value=DEFAULT_CATEGORY)
-        ttk.Combobox(row2, textvariable=self.var_cat, values=list(CATEGORIES),
-                     state="readonly", width=24).grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Label(row2, text="Chế độ", style="Field.TLabel").grid(row=0, column=2, sticky="w")
-        self.var_priv = tk.StringVar(value=DEFAULT_PRIVACY)
-        ttk.Combobox(row2, textvariable=self.var_priv, values=list(PRIVACY),
-                     state="readonly", width=30).grid(row=0, column=3, sticky="w", padx=6)
-        r += 1
+        ttk.Combobox(c2, textvariable=self.var_cat, values=list(CATEGORIES),
+                     state="readonly").grid(row=2, column=0, sticky="ew", pady=(2, 10))
 
-        # Thumbnail + made for kids
-        row3 = ttk.Frame(frm)
-        row3.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        row3.columnconfigure(1, weight=1)
-        ttk.Label(row3, text="Thumbnail", style="Field.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(c2, text="Chế độ (quyền riêng tư)", style="Field.TLabel").grid(
+            row=3, column=0, sticky="w")
+        self.var_priv = tk.StringVar(value=DEFAULT_PRIVACY)
+        ttk.Combobox(c2, textvariable=self.var_priv, values=list(PRIVACY),
+                     state="readonly").grid(row=4, column=0, sticky="ew", pady=(2, 8))
+
+        self.var_kids = tk.BooleanVar(value=False)
+        ttk.Checkbutton(c2, text="Nội dung cho trẻ em",
+                        variable=self.var_kids).grid(row=5, column=0, sticky="w", pady=(0, 10))
+
+        ttk.Label(c2, text="Thumbnail", style="Field.TLabel").grid(row=6, column=0, sticky="w")
+        tf = ttk.Frame(c2)
+        tf.grid(row=7, column=0, sticky="ew", pady=(2, 0))
+        tf.columnconfigure(0, weight=1)
         self.var_thumb = tk.StringVar()
         self.var_thumb.trace_add("write", self._check_thumb)
-        ttk.Entry(row3, textvariable=self.var_thumb).grid(row=0, column=1, sticky="ew", padx=6)
-        ttk.Button(row3, text="Chọn...", style="Soft.TButton",
-                   command=self._pick_thumb).grid(row=0, column=2)
-        self.var_kids = tk.BooleanVar(value=False)
-        ttk.Checkbutton(row3, text="Nội dung cho trẻ em",
-                        variable=self.var_kids).grid(row=0, column=3, padx=(10, 0))
-        # Dòng trạng thái kiểm tra thumbnail (✔ xanh / ⚠ vàng / ✖ đỏ)
-        self.lbl_thumb = ttk.Label(row3, text="", style="Muted.TLabel")
-        self.lbl_thumb.grid(row=1, column=1, columnspan=3, sticky="w", padx=6)
-        r += 1
+        ttk.Entry(tf, textvariable=self.var_thumb).grid(row=0, column=0, sticky="ew")
+        ttk.Button(tf, text="Chọn...", style="Soft.TButton",
+                   command=self._pick_thumb).grid(row=0, column=1, padx=(6, 0))
+        self.lbl_thumb = ttk.Label(c2, text="", style="Muted.TLabel")
+        self.lbl_thumb.grid(row=8, column=0, sticky="w", pady=(2, 8))
 
-        # ── Hẹn giờ đăng — chọn Ngày/Tháng/Năm/Giờ/Phút bằng spinbox cho dễ nhập ──
-        sched = ttk.Frame(frm)
-        sched.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Separator(c2, orient="horizontal").grid(row=9, column=0, sticky="ew", pady=(2, 8))
 
-        top = ttk.Frame(sched)
-        top.grid(row=0, column=0, sticky="w")
+        sc = ttk.Frame(c2)
+        sc.grid(row=10, column=0, sticky="w")
         self.var_sched_on = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Hẹn giờ đăng (giờ máy tính)",
-                        variable=self.var_sched_on,
+        ttk.Checkbutton(sc, text="Hẹn giờ đăng (giờ máy)", variable=self.var_sched_on,
                         command=self._toggle_sched).pack(side="left")
-        ttk.Label(top, text="— video để 'riêng tư' tới giờ rồi tự công khai",
-                  style="Muted.TLabel").pack(side="left", padx=8)
+        ttk.Label(c2, text="Video để 'riêng tư' tới giờ rồi tự công khai",
+                  style="Muted.TLabel").grid(row=11, column=0, sticky="w")
 
-        # Mặc định: bây giờ + 1 giờ (làm tròn phút về 0)
         d0 = (datetime.now() + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
         self.var_s_day = tk.StringVar(value=f"{d0.day:02d}")
         self.var_s_month = tk.StringVar(value=f"{d0.month:02d}")
         self.var_s_year = tk.StringVar(value=str(d0.year))
         self.var_s_hour = tk.StringVar(value=f"{d0.hour:02d}")
         self.var_s_minute = tk.StringVar(value=f"{d0.minute:02d}")
-        self._sched_widgets = []   # các spinbox bị khóa/mở theo checkbox
+        self._sched_widgets = []
 
         def _mk_spin(parent, lo, hi, var, width, fmt="%02.0f", inc=1):
             sp = ttk.Spinbox(parent, from_=lo, to=hi, textvariable=var, width=width,
@@ -549,77 +578,74 @@ class App:
             self._sched_widgets.append(sp)
             return sp
 
-        picker = ttk.Frame(sched)
-        picker.grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(picker, text="Ngày").pack(side="left")
-        _mk_spin(picker, 1, 31, self.var_s_day, 4).pack(side="left", padx=(4, 12))
-        ttk.Label(picker, text="Tháng").pack(side="left")
-        _mk_spin(picker, 1, 12, self.var_s_month, 4).pack(side="left", padx=(4, 12))
-        ttk.Label(picker, text="Năm").pack(side="left")
-        _mk_spin(picker, d0.year, d0.year + 3, self.var_s_year, 6,
-                 fmt="%.0f").pack(side="left", padx=(4, 16))
-        ttk.Label(picker, text="lúc").pack(side="left")
-        _mk_spin(picker, 0, 23, self.var_s_hour, 4).pack(side="left", padx=(4, 2))
-        ttk.Label(picker, text=":").pack(side="left")
-        _mk_spin(picker, 0, 59, self.var_s_minute, 4, inc=5).pack(side="left", padx=(2, 0))
+        pd = ttk.Frame(c2)
+        pd.grid(row=12, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(pd, text="Ngày").pack(side="left")
+        _mk_spin(pd, 1, 31, self.var_s_day, 4).pack(side="left", padx=(4, 10))
+        ttk.Label(pd, text="Tháng").pack(side="left")
+        _mk_spin(pd, 1, 12, self.var_s_month, 4).pack(side="left", padx=(4, 10))
+        ttk.Label(pd, text="Năm").pack(side="left")
+        _mk_spin(pd, d0.year, d0.year + 3, self.var_s_year, 6, fmt="%.0f").pack(side="left", padx=(4, 0))
 
-        # Nút đặt nhanh — LUÔN bấm được (bấm là tự bật hẹn giờ + điền sẵn)
-        quick = ttk.Frame(sched)
-        quick.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(quick, text="Đặt nhanh:", style="Muted.TLabel").pack(side="left")
+        pt = ttk.Frame(c2)
+        pt.grid(row=13, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(pt, text="Giờ").pack(side="left")
+        _mk_spin(pt, 0, 23, self.var_s_hour, 4).pack(side="left", padx=(4, 2))
+        ttk.Label(pt, text=":").pack(side="left")
+        _mk_spin(pt, 0, 59, self.var_s_minute, 4, inc=5).pack(side="left", padx=(2, 0))
+
+        qk = ttk.Frame(c2)
+        qk.grid(row=14, column=0, sticky="w", pady=(8, 0))
         for _label, _kw in [("+1 giờ", dict(hours=1)),
                             ("Tối nay 20:00", dict(at=(20, 0))),
                             ("Sáng mai 08:00", dict(at=(8, 0), tomorrow=True))]:
-            ttk.Button(quick, text=_label, style="Chip.TButton",
-                       command=lambda k=_kw: self._sched_quick(**k)).pack(side="left", padx=(6, 0))
+            ttk.Button(qk, text=_label, style="Chip.TButton",
+                       command=lambda k=_kw: self._sched_quick(**k)).pack(side="left", padx=(0, 6))
 
-        self.lbl_sched = ttk.Label(sched, text="", style="Muted.TLabel")
-        self.lbl_sched.grid(row=3, column=0, sticky="w", pady=(6, 0))
-        r += 1
+        self.lbl_sched = ttk.Label(c2, text="", style="Muted.TLabel")
+        self.lbl_sched.grid(row=15, column=0, sticky="w", pady=(6, 0))
 
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=(14, 0))
-        r += 1
+        # ════════════ CỘT 3 — THAO TÁC & NHẬT KÝ ════════════
+        c3 = ttk.LabelFrame(outer, text="  Thao tác & Nhật ký  ",
+                            style="Card.TLabelframe", padding=12)
+        c3.grid(row=0, column=2, sticky="nsew", padx=(8, 0))
+        c3.columnconfigure(0, weight=1)
+        c3.rowconfigure(5, weight=1)   # ô nhật ký giãn ra
 
-        # Nút thao tác — hàng 1: đăng video + quy trình SEO/thumbnail
-        rowb = ttk.Frame(frm)
-        rowb.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-        self.btn_upload = ttk.Button(rowb, text="⬆  ĐĂNG VIDEO", style="Accent.TButton",
+        self.btn_upload = ttk.Button(c3, text="⬆  ĐĂNG VIDEO", style="Accent.TButton",
                                      command=self._on_upload)
-        self.btn_upload.pack(side="left")
-        self.btn_seo = ttk.Button(rowb, text="🤖 Lấy SEO + Thumbnail", style="Seo.TButton",
+        self.btn_upload.grid(row=0, column=0, sticky="ew")
+        self.btn_seo = ttk.Button(c3, text="🤖 Lấy SEO + Thumbnail", style="Seo.TButton",
                                   command=self._on_seo_pipeline)
-        self.btn_seo.pack(side="left", padx=8)
-        ttk.Button(rowb, text="📄 Đọc SEO sẵn", style="Soft.TButton",
-                   command=self._load_seo_from_docx).pack(side="left")
-        r += 1
+        self.btn_seo.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(c3, text="📄 Đọc SEO sẵn", style="Soft.TButton",
+                   command=self._load_seo_from_docx).grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-        # Hàng 2: tiện ích cấu hình
-        rowb2 = ttk.Frame(frm)
-        rowb2.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Button(rowb2, text="Mở thư mục cấu hình", style="Soft.TButton",
-                   command=self._open_cfg_dir).pack(side="left")
-        ttk.Button(rowb2, text="Hướng dẫn lấy quyền", style="Soft.TButton",
-                   command=self._open_help).pack(side="left", padx=6)
-        r += 1
+        self.pb = ttk.Progressbar(c3, mode="determinate", maximum=100)
+        self.pb.grid(row=3, column=0, sticky="ew", pady=(12, 2))
 
-        # Thanh tiến trình
-        self.pb = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.pb.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-
-    def _build_log(self):
-        wrap = ttk.Frame(self.body)
-        wrap.pack(fill="both", expand=True, padx=12, pady=(8, 12))
-        ttk.Label(wrap, text="NHẬT KÝ", style="Muted.TLabel").pack(anchor="w", pady=(0, 4))
+        ttk.Label(c3, text="NHẬT KÝ", style="Muted.TLabel").grid(
+            row=4, column=0, sticky="w", pady=(8, 4))
+        logwrap = ttk.Frame(c3)
+        logwrap.grid(row=5, column=0, sticky="nsew")
+        logwrap.columnconfigure(0, weight=1)
+        logwrap.rowconfigure(0, weight=1)
         self.log_widget = scrolledtext.ScrolledText(
-            wrap, height=6, wrap="word", state="disabled",
+            logwrap, height=8, wrap="word", state="disabled",
             bg=UI["log_bg"], fg=UI["log_info"], relief="flat", borderwidth=0,
             highlightthickness=1, highlightbackground=UI["border"],
             highlightcolor=UI["border"], padx=10, pady=8, font=("Consolas", 9))
-        self.log_widget.pack(fill="both", expand=True)
+        self.log_widget.grid(row=0, column=0, sticky="nsew")
         for tag, color in [("info", UI["log_info"]), ("warn", UI["log_warn"]),
                            ("err", UI["log_err"]), ("ok", UI["log_ok"])]:
             self.log_widget.tag_config(tag, foreground=color)
+
+        util = ttk.Frame(c3)
+        util.grid(row=6, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(util, text="Mở thư mục cấu hình", style="Soft.TButton",
+                   command=self._open_cfg_dir).pack(side="left")
+        ttk.Button(util, text="Hướng dẫn", style="Soft.TButton",
+                   command=self._open_help).pack(side="left", padx=6)
 
     # ---- helpers GUI ----
     def _find_latest_video(self):
