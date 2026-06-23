@@ -597,13 +597,13 @@ class App:
             log(f"❌ Không nạp được dich_gemini: {e}", "err")
             ui_queue.put(("gemini_done", None))
             return
+        out = KICHBAN_DIR / "gemini_result.docx"
         try:
             results = dich_gemini.send_chunks_to_gemini(
-                chunks, prefix=prefix,
+                chunks, prefix=prefix, out_path=out,   # lưu dần sau mỗi đoạn
                 on_log=lambda m: log(m),
                 on_result=lambda i, total, ans: ui_queue.put(("gemini", (i, total, ans))),
             )
-            out = KICHBAN_DIR / "gemini_result.docx"
             dich_gemini.save_results_docx(chunks, results, out)
             log(f"💾 Đã lưu kết quả Gemini: {out}", "ok")
             ui_queue.put(("gemini_done", str(out)))

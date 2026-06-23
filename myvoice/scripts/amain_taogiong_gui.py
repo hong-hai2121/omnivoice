@@ -1318,7 +1318,7 @@ class App(tk.Tk):
             prefix = load_prefix()
             logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini (mở Firefox)...")
             results = g.send_chunks_to_gemini(
-                chunks, prefix=prefix, on_log=logging.info,
+                chunks, prefix=prefix, on_log=logging.info, out_path=GEMINI_DOCX,
                 on_result=lambda i, total, ans: self.pipe_status.set(
                     f"🌐 Gemini: đoạn {i + 1}/{total}"))
             g.save_results_docx(chunks, results, GEMINI_DOCX)

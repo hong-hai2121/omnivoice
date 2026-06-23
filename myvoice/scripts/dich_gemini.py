@@ -318,7 +318,7 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
 
 # ── Gửi nhiều đoạn ───────────────────────────────────────────────────────────
 def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
-                          driver=None, profile=None, keep_open=True):
+                          driver=None, profile=None, keep_open=True, out_path=None):
     """Gửi lần lượt các đoạn tới Gemini, trả về list kết quả (cùng thứ tự).
 
     - prefix chỉ chèn vào ĐOẠN ĐẦU (Gemini nhớ ngữ cảnh các đoạn sau) — đúng như
@@ -326,26 +326,52 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
     - on_result(i, total, answer): callback sau mỗi đoạn (để cập nhật GUI).
     - driver: truyền driver có sẵn để tái dùng; None thì tự mở Firefox.
     - keep_open: True thì để Firefox mở sau khi xong (tiện xem/đối chiếu).
+    - out_path: nếu có, LƯU NGAY ra .docx sau MỖI đoạn nhận được kết quả. Nhờ vậy
+      nếu lỗi giữa chừng (timeout, mất mạng, Firefox đóng...) thì các đoạn đã xong
+      vẫn được giữ lại — chạy lại để dịch tiếp phần còn thiếu.
     """
     own_driver = driver is None
     results = []
+    total = len(chunks)
+
+    def _save_progress():
+        """Ghi tiến độ hiện tại ra out_path; đệm '(chưa dịch)' cho đoạn còn lại."""
+        if out_path is None:
+            return
+        try:
+            padded = results + ["(chưa dịch)"] * (total - len(results))
+            save_results_docx(chunks, padded, out_path)
+        except Exception as e:
+            on_log(f"⚠️ Không lưu được tiến độ: {e}")
+
     try:
         if driver is None:
             on_log("🌐 Đang mở Firefox + Gemini...")
             driver = init_firefox(profile=profile)
             on_log("✅ Đã mở Gemini. Bắt đầu gửi từng đoạn...")
 
-        total = len(chunks)
         for i, chunk in enumerate(chunks):
             p = prefix if i == 0 else ""
             on_log(f"📤 Gửi đoạn {i + 1}/{total} ({len(chunk)} ký tự)...")
-            ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
+            try:
+                ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
+            except Exception as e:
+                # ── LỖI GIỮA CHỪNG ──────────────────────────────────────────
+                # Lưu lại những đoạn ĐÃ XONG rồi báo lỗi để dừng sạch; phần đã
+                # dịch không bị mất. Chạy lại sẽ dịch tiếp từ đoạn bị lỗi.
+                on_log(f"❌ Lỗi khi gửi đoạn {i + 1}/{total}: {e}")
+                _save_progress()
+                if out_path is not None:
+                    on_log(f"💾 Đã lưu {len(results)}/{total} đoạn xong → {out_path}. "
+                           "Chạy lại để dịch tiếp phần còn thiếu.")
+                raise
             if ans:
                 on_log(f"✅ Đã nhận kết quả đoạn {i + 1}/{total}.")
             else:
                 on_log(f"⚠️ Đoạn {i + 1}/{total} không có kết quả.")
                 ans = ""
             results.append(ans)
+            _save_progress()          # ← LƯU NGAY sau mỗi đoạn nhận được kết quả
             if on_result:
                 on_result(i, total, ans)
         on_log("🎉 Đã gửi xong tất cả các đoạn cho Gemini.")
