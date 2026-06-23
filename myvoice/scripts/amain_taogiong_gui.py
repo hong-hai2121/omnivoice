@@ -38,6 +38,9 @@ GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemin
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
+PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
+# Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice)
+PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, model="medium", speed="0.7")
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -105,6 +108,26 @@ def save_favorites(favorites: set):
         )
     except Exception as e:
         logging.warning(f"Không lưu được danh sách yêu thích: {e}")
+
+
+def load_pipe_settings() -> dict:
+    """Cài đặt quy trình tạo kịch bản đã lưu (auto + model/tốc độ); thiếu thì dùng mặc định."""
+    data = dict(PIPE_DEFAULTS)
+    try:
+        import json
+        data.update(json.loads(PIPE_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return data
+
+
+def save_pipe_settings(data: dict):
+    import json
+    try:
+        PIPE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+    except Exception as e:
+        logging.warning(f"Không lưu được cài đặt quy trình: {e}")
 
 
 def load_prefix() -> str:
@@ -234,7 +257,28 @@ def unique_path(path: Path) -> Path:
         n += 1
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False):
+def _speedup_audio_for_doc(src, factor):
+    """Tăng tốc audio cho VIDEO DỌC bằng ffmpeg atempo (giữ cao độ, không bị 'chipmunk').
+
+    factor nằm trong khoảng atempo cho phép (0.5–2.0). Trả về file mới *_spedNNN.wav.
+    """
+    import shutil
+    import subprocess
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
+    src = Path(src)
+    tag = f"{factor:.2f}".replace(".", "")          # 1.07 -> "107"
+    out = src.with_name(f"{src.stem}_sped{tag}{src.suffix}")
+    cmd = [ffmpeg, "-y", "-i", str(src), "-filter:a", f"atempo={factor:.4f}",
+           "-vn", str(out)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0 or not out.exists():
+        raise RuntimeError(f"ffmpeg atempo lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+    return out
+
+
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -387,6 +431,14 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             else:
                 logging.warning("Chưa có bản cắt → video dọc dùng tạm audio full.")
                 doc_audio = output_path
+            # Tăng tốc audio (giữ cao độ) trước khi dựng — nếu chọn mức > 1.0
+            if doc_speed and doc_speed > 1.001:
+                status_var.set(f"Đang tăng tốc audio x{doc_speed:.2f} cho video dọc...")
+                try:
+                    doc_audio = _speedup_audio_for_doc(doc_audio, doc_speed)
+                    logging.info(f"⏩ Tăng tốc audio video dọc x{doc_speed:.2f} → {doc_audio.name}")
+                except Exception as e:
+                    logging.warning(f"Không tăng tốc được audio (giữ tốc độ gốc): {e}")
             status_var.set("Đang dựng video dọc...")
             logging.info(f"Bắt đầu dựng video dọc từ {doc_audio.name}...")
             try:
@@ -421,6 +473,7 @@ class App(tk.Tk):
         self._preview_after = None
         self._last_output = None
         self._pipe_busy = False
+        self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
         self._favorites = load_favorites()
         self._setup_logging()
         self._build_ui()
@@ -728,6 +781,13 @@ class App(tk.Tk):
         self.var_doc_full_audio = tk.BooleanVar(value=False)
         ttk.Checkbutton(vdoc_row, text="dùng audio không cắt",
                         variable=self.var_doc_full_audio).pack(side="left", padx=(12, 0))
+        ttk.Label(vdoc_row, text="Tăng tốc:").pack(side="left", padx=(12, 2))
+        self.var_doc_speed = tk.StringVar(value="1.0")
+        # Combobox để sửa tay được (vd 1.07), kèm các mức gợi ý sẵn.
+        ttk.Combobox(vdoc_row, textvariable=self.var_doc_speed, width=6,
+                     values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
+        ttk.Label(vdoc_row, text="x (giữ cao độ)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # ════════════════════════════════════════════════
         # CỘT 3 (PHẢI) — Hành động + tiến trình ở TRÊN, nhật ký (nhỏ) ở DƯỚI
@@ -1082,11 +1142,11 @@ class App(tk.Tk):
         orow = ttk.Frame(s1)
         orow.grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Label(orow, text="Model:").pack(side="left")
-        self.pipe_var_model = tk.StringVar(value="medium")
+        self.pipe_var_model = tk.StringVar(value=self._pipe_settings["model"])
         ttk.Combobox(orow, textvariable=self.pipe_var_model, width=9, state="readonly",
                      values=["tiny", "base", "small", "medium", "large-v3"]).pack(side="left", padx=(4, 12))
         ttk.Label(orow, text="Tốc độ:").pack(side="left")
-        self.pipe_var_speed = tk.StringVar(value="0.7")
+        self.pipe_var_speed = tk.StringVar(value=self._pipe_settings["speed"])
         ttk.Combobox(orow, textvariable=self.pipe_var_speed, width=5, state="readonly",
                      values=["0.6", "0.7", "0.8", "0.9", "1.0"]).pack(side="left", padx=(4, 0))
         self.btn_recog = ttk.Button(s1, text="🎙  Nhận diện → tiếng Trung",
@@ -1094,6 +1154,9 @@ class App(tk.Tk):
         self.btn_recog.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(s1, text="(→ tiengTrung.docx)", style="Hint.TLabel").grid(
             row=3, column=0, sticky="w", pady=(4, 0))
+        self.var_auto2 = tk.BooleanVar(value=self._pipe_settings["auto2"])
+        ttk.Checkbutton(s1, text="⛓  Tự động chạy bước ② sau khi xong",
+                        variable=self.var_auto2).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
         # ② Dịch Gemini
         s2 = ttk.LabelFrame(wrap, text="  ②  Dịch qua Gemini  ")
@@ -1104,6 +1167,9 @@ class App(tk.Tk):
         self.btn_gemini.grid(row=0, column=0, sticky="ew")
         ttk.Label(s2, text="(tiengTrung.docx → gemini_result.docx)",
                   style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.var_auto3 = tk.BooleanVar(value=self._pipe_settings["auto3"])
+        ttk.Checkbutton(s2, text="⛓  Tự động chạy bước ③ sau khi xong",
+                        variable=self.var_auto3).grid(row=2, column=0, sticky="w", pady=(6, 0))
 
         # ③ Chuẩn bị input.txt
         s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.txt  ")
@@ -1114,6 +1180,9 @@ class App(tk.Tk):
         self.btn_prep.grid(row=0, column=0, sticky="ew")
         ttk.Label(s3, text="(kiểm tra + gemini_result.docx → input.txt)",
                   style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.var_auto_tts = tk.BooleanVar(value=self._pipe_settings["auto_tts"])
+        ttk.Checkbutton(s3, text="⛓  Chạy tiếp tạo giọng (OmniVoice) sau khi xong",
+                        variable=self.var_auto_tts).grid(row=2, column=0, sticky="w", pady=(6, 0))
 
         # Tiến trình + trạng thái của quy trình
         pf = ttk.Frame(wrap)
@@ -1128,6 +1197,8 @@ class App(tk.Tk):
 
         ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
                    command=self._open_nhan_dien).grid(row=5, column=0, sticky="w", pady=(8, 0))
+        ttk.Button(wrap, text="↺  Reset cài đặt quy trình về gốc",
+                   command=self._reset_pipe_settings).grid(row=6, column=0, sticky="w", pady=(6, 0))
 
     def _pipe_pick_file(self):
         path = filedialog.askopenfilename(
@@ -1144,6 +1215,25 @@ class App(tk.Tk):
         for b in (self.btn_recog, self.btn_gemini, self.btn_prep):
             b.config(state=state)
 
+    def _save_pipe_settings(self):
+        """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
+        save_pipe_settings(dict(
+            auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
+            auto_tts=self.var_auto_tts.get(),
+            model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
+        ))
+
+    def _reset_pipe_settings(self):
+        """Đưa các tùy chọn quy trình về mặc định gốc và lưu lại."""
+        self.var_auto2.set(PIPE_DEFAULTS["auto2"])
+        self.var_auto3.set(PIPE_DEFAULTS["auto3"])
+        self.var_auto_tts.set(PIPE_DEFAULTS["auto_tts"])
+        self.pipe_var_model.set(PIPE_DEFAULTS["model"])
+        self.pipe_var_speed.set(PIPE_DEFAULTS["speed"])
+        self.pipe_var_file.set("")
+        self._save_pipe_settings()
+        self.pipe_status.set("↺ Đã reset cài đặt quy trình về mặc định.")
+
     def _pipe_recognize(self):
         if self._pipe_busy:
             return
@@ -1152,6 +1242,7 @@ class App(tk.Tk):
             messagebox.showwarning("Thiếu file",
                                    "Hãy chọn file audio/video cần nhận diện.")
             return
+        self._save_pipe_settings()   # ấn chạy → nhớ cài đặt cho lần sau
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
         self.pipe_status.set("🎙  Đang nhận diện...")
@@ -1161,6 +1252,7 @@ class App(tk.Tk):
             daemon=True).start()
 
     def _pipe_recognize_worker(self, media, model, speed):
+        ok = False
         try:
             import nhandien_giongnoi as recog
             logging.info(f"🎙  Nhận diện: {Path(media).name} (model={model}, tốc độ={speed})")
@@ -1176,33 +1268,46 @@ class App(tk.Tk):
             self.pipe_progress.set(100)
             logging.info(f"✅ Nhận diện xong: {len(transcript)} ký tự, {n} đoạn → {CHINESE_DOCX.name}")
             self.pipe_status.set(f"✅ Xong ({n} đoạn) → {CHINESE_DOCX.name}")
+            ok = True
         except Exception as e:
             logging.error(f"Lỗi nhận diện: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
             self._pipe_set_busy(False)
+            if ok and self.var_auto2.get():   # ⛓ tự động sang bước ②
+                self.after(600, lambda: self._pipe_send_gemini(auto=True))
 
-    def _pipe_send_gemini(self):
+    def _pipe_send_gemini(self, auto=False):
         if self._pipe_busy:
             return
+        if not auto:
+            self._save_pipe_settings()   # ấn chạy → nhớ cài đặt
         if not CHINESE_DOCX.exists():
+            if auto:
+                logging.error("⛓ Tự động dừng: chưa có tiengTrung.docx.")
+                self.pipe_status.set("❌ Chưa có tiengTrung.docx — dừng tự động.")
+                return
             messagebox.showwarning(
                 "Chưa có nội dung",
                 f"Chưa thấy {CHINESE_DOCX.name}.\nHãy bấm ① Nhận diện trước "
                 "(hoặc đặt file tiengTrung.docx vào thư mục kịch_bản).")
             return
-        if not messagebox.askyesno(
+        # Khi chạy tự động (chuỗi) thì bỏ qua hộp hỏi xác nhận cho liền mạch.
+        if not auto and not messagebox.askyesno(
                 "Gửi Gemini",
                 "Sẽ mở Firefox và gửi nội dung sang Gemini.\n\n"
                 "Hãy ĐÓNG Firefox đang mở (nếu có) và đảm bảo profile đã đăng nhập "
                 "Google.\n\nTiếp tục?"):
             return
+        if auto:
+            logging.info("⛓ Tự động: gửi Gemini (bỏ qua hỏi xác nhận).")
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
         self.pipe_status.set("🌐  Đang gửi Gemini...")
         threading.Thread(target=self._pipe_gemini_worker, daemon=True).start()
 
     def _pipe_gemini_worker(self):
+        ok = False
         try:
             chunks = read_chinese_docx_chunks(CHINESE_DOCX)
             if not chunks:
@@ -1217,26 +1322,36 @@ class App(tk.Tk):
                 on_result=lambda i, total, ans: self.pipe_status.set(
                     f"🌐 Gemini: đoạn {i + 1}/{total}"))
             g.save_results_docx(chunks, results, GEMINI_DOCX)
-            ok = sum(1 for r in results if r and r.strip())
-            logging.info(f"✅ Gemini xong: {ok}/{len(results)} đoạn → {GEMINI_DOCX.name}")
+            n_ok = sum(1 for r in results if r and r.strip())
+            logging.info(f"✅ Gemini xong: {n_ok}/{len(results)} đoạn → {GEMINI_DOCX.name}")
             self.pipe_status.set(f"✅ Gemini xong → {GEMINI_DOCX.name}")
+            ok = True
         except Exception as e:
             logging.error(f"Lỗi gửi Gemini: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
             self._pipe_set_busy(False)
+            if ok and self.var_auto3.get():   # ⛓ tự động sang bước ③
+                self.after(600, lambda: self._pipe_prepare_input(auto=True))
 
-    def _pipe_prepare_input(self):
+    def _pipe_prepare_input(self, auto=False):
         if self._pipe_busy:
             return
+        if not auto:
+            self._save_pipe_settings()   # ấn chạy → nhớ cài đặt
         if self._prepare_input_from_gemini():
             self.pipe_status.set("✅ Đã tạo input.txt từ Gemini.")
-            messagebox.showinfo(
-                "Xong",
-                "Đã tạo input.txt từ gemini_result.docx.\n"
-                "Giờ có thể bấm '▶ Chạy' để tạo audio.")
+            if self.var_auto_tts.get():   # ⛓ chạy tiếp tạo giọng (OmniVoice)
+                logging.info("⛓ Tự động: chạy tiếp tạo giọng (OmniVoice)...")
+                self.after(400, self._start)
+            elif not auto:
+                messagebox.showinfo(
+                    "Xong",
+                    "Đã tạo input.txt từ gemini_result.docx.\n"
+                    "Giờ có thể bấm '▶ Chạy' để tạo audio.")
 
     def _start(self):
+        self._save_pipe_settings()   # ấn ▶ Chạy → nhớ cài đặt quy trình cho lần sau
         mode = self.var_mode.get()
         if mode == "clone":
             voice_name = self._current_voice()
@@ -1287,9 +1402,16 @@ class App(tk.Tk):
                                        "Cần thỏa: 0 < phút 'Từ' ≤ phút 'Đến'.")
                 return
 
-        # Video dọc: bật/tắt + dùng audio cắt (mặc định) hay audio full
+        # Video dọc: bật/tắt + dùng audio cắt (mặc định) hay audio full + tốc độ
         make_video_doc = self.var_make_video_doc.get()
         doc_full_audio = self.var_doc_full_audio.get()
+        try:
+            doc_speed = float(str(self.var_doc_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            doc_speed = 1.0
+        doc_speed = max(0.5, min(doc_speed, 2.0))   # atempo chỉ nhận 0.5–2.0
+        if make_video_doc and doc_speed > 1.001:
+            logging.info(f"Video dọc sẽ tăng tốc audio x{doc_speed:.2f} (giữ cao độ).")
 
         preview_path = text_file.parent / (text_file.stem + "_preview.txt")
         if preview_path.exists():
@@ -1330,7 +1452,7 @@ class App(tk.Tk):
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
                   self.var_make_video.get(), effect_path,
                   cut_audio, cut_target, cut_min, cut_max,
-                  make_video_doc, doc_full_audio),
+                  make_video_doc, doc_full_audio, doc_speed),
             daemon=True,
         ).start()
 

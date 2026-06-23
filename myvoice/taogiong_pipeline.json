@@ -1,0 +1,7 @@
+{
+  "auto2": true,
+  "auto3": true,
+  "auto_tts": false,
+  "model": "large-v3",
+  "speed": "0.7"
+}
