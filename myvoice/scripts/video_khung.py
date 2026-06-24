@@ -342,6 +342,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
             ]
         cmd = [
             "ffmpeg", "-y",
+            "-stream_loop", "-1",                       # lặp video nền: không hết frame trước audio
             "-f", "concat", "-safe", "0", "-i", str(concat_list),
             "-loop", "1", "-i", str(KHUNG0),
             "-loop", "1", "-i", str(KHUNG1),

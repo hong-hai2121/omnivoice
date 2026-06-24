@@ -116,7 +116,8 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None) -> Path:
                 "-crf", str(X264_CRF), "-profile:v", "high",
             ]
         # Inputs: 0=video(ghép)  [1=hiệu ứng]  cuối=audio
-        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list)]
+        cmd = ["ffmpeg", "-y", "-stream_loop", "-1",     # lặp video nền: không hết frame trước audio
+               "-f", "concat", "-safe", "0", "-i", str(concat_list)]
         if effect:
             cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 1
         cmd += ["-i", str(audio_file)]                          # audio
