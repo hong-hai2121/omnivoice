@@ -38,7 +38,9 @@ GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemin
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
+EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
 PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
+OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài đặt" (nhớ lần chạy trước)
 # Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice)
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, model="medium", speed="0.7")
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
@@ -49,6 +51,15 @@ EFFECTS_DIR = Path(__file__).resolve().parent / "hieuung"
 EFFECT_EXTS = {".mov", ".mp4", ".webm", ".mkv", ".avi", ".gif"}
 EFFECT_NONE = "Không (mặc định)"                       # mục "không thêm hiệu ứng"
 DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn sẵn nếu có trong hieuung/
+
+# Mặc định mục "Cài đặt" (dùng khi chưa có taogiong_options.json) — sau đó được
+# ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
+OPTS_DEFAULTS = dict(
+    from_gemini=True, chunk=300,
+    make_video=True, ngang_speed="1.0", effect=DEFAULT_EFFECT,
+    cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
+    make_video_doc=True, doc_full_audio=False, doc_speed="1.0",
+)
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
 UI = dict(
@@ -110,6 +121,25 @@ def save_favorites(favorites: set):
         logging.warning(f"Không lưu được danh sách yêu thích: {e}")
 
 
+def load_effect_favorites() -> set:
+    try:
+        import json
+        return set(json.loads(EFFECT_FAV_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def save_effect_favorites(favorites: set):
+    import json
+    try:
+        EFFECT_FAV_FILE.write_text(
+            json.dumps(sorted(favorites), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logging.warning(f"Không lưu được hiệu ứng yêu thích: {e}")
+
+
 def load_pipe_settings() -> dict:
     """Cài đặt quy trình tạo kịch bản đã lưu (auto + model/tốc độ); thiếu thì dùng mặc định."""
     data = dict(PIPE_DEFAULTS)
@@ -128,6 +158,26 @@ def save_pipe_settings(data: dict):
                              encoding="utf-8")
     except Exception as e:
         logging.warning(f"Không lưu được cài đặt quy trình: {e}")
+
+
+def load_opt_settings() -> dict:
+    """Cài đặt mục 'Cài đặt' đã lưu (mặc định dựa vào lần chạy trước); thiếu thì dùng mặc định."""
+    data = dict(OPTS_DEFAULTS)
+    try:
+        import json
+        data.update(json.loads(OPTS_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return data
+
+
+def save_opt_settings(data: dict):
+    import json
+    try:
+        OPTS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+    except Exception as e:
+        logging.warning(f"Không lưu được cài đặt: {e}")
 
 
 def load_prefix() -> str:
@@ -278,7 +328,7 @@ def _speedup_audio_for_doc(src, factor):
     return out
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -388,11 +438,34 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         logging.info(f"Đã lưu → {output}")
         btn_preview.config(state="normal")   # cho phép nghe thử kết quả
 
-        # ── (TÙY CHỌN) CẮT THÊM BẢN 10–15 PHÚT TỪ AUDIO FULL ───────────────
-        # Dựa trên video_timclip: dò khoảng lặng cuối câu gần mốc đích, cắt
-        # tại đó. Audio full ở trên KHÔNG đổi — đây chỉ là file phụ output_cut.wav.
+        # ── (TÙY CHỌN) CẮT BẢN NGẮN TỪ AUDIO FULL — nguồn cho video dọc ────
+        # Audio full ở trên KHÔNG đổi; đây là file phụ. Hai kiểu LOẠI TRỪ nhau:
+        #   • "Cắt 1/2" được ƯU TIÊN: cắt ≈ nửa tổng thời lượng (output_half.wav)
+        #     và THAY luôn bản 10–15 phút.
+        #   • Nếu không bật 1/2 thì mới cắt bản 10–15 phút (output_cut.wav).
+        # Cả hai đều cắt tại khoảng lặng cuối câu gần mốc đích để không cụt giữa câu.
         cut_path = None
-        if cut_audio:
+        if cut_half:
+            status_var.set("Đang cắt bản ~1/2 audio gốc...")
+            try:
+                from video_timclip import (cut_audio_at_sentence_end,
+                                           probe_audio_duration)
+                total_sec = probe_audio_duration(output_path)
+                half_min = (total_sec / 2.0) / 60.0
+                tol = max(0.5, half_min * 0.2)              # dung sai ±20% (≥0.5 phút)
+                hp = output_path.with_name(output_path.stem + "_half" + output_path.suffix)
+                half_seconds, _ = cut_audio_at_sentence_end(
+                    output_path, hp,
+                    target_minutes=half_min,
+                    min_minutes=max(0.1, half_min - tol),
+                    max_minutes=min(total_sec / 60.0, half_min + tol),
+                    silence_db=-35.0, min_silence=0.5)
+                cut_path = hp                                # thay bản 10–15 phút làm nguồn video dọc
+                m, s = divmod(half_seconds, 60)
+                logging.info(f"✂ Đã cắt bản ~1/2 tại {int(m)}:{s:05.2f} → {hp.name}")
+            except Exception as e:
+                logging.warning(f"Không cắt được bản 1/2: {e}")
+        elif cut_audio:
             status_var.set("Đang cắt bản 10–15 phút...")
             try:
                 from video_timclip import cut_audio_at_sentence_end
@@ -409,11 +482,21 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         if make_video:
+            # Tăng tốc audio (giữ cao độ) trước khi dựng — nếu chọn mức > 1.0
+            ngang_audio = output_path
+            if ngang_speed and ngang_speed > 1.001:
+                status_var.set(f"Đang tăng tốc audio x{ngang_speed:.2f} cho video ngang...")
+                try:
+                    ngang_audio = _speedup_audio_for_doc(output_path, ngang_speed)
+                    logging.info(f"⏩ Tăng tốc audio video ngang x{ngang_speed:.2f} → {ngang_audio.name}")
+                except Exception as e:
+                    logging.warning(f"Không tăng tốc được audio video ngang (giữ tốc độ gốc): {e}")
+                    ngang_audio = output_path
             status_var.set("Đang dựng video...")
             logging.info("Bắt đầu dựng video từ audio vừa tạo...")
             try:
                 from video_khung import build_video
-                video_out = build_video(Path(output), log=logging.info, effect=effect)
+                video_out = build_video(ngang_audio, log=logging.info, effect=effect)
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
             except Exception as e:
@@ -421,8 +504,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 status_var.set(f"Audio xong, lỗi dựng video: {e}")
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
-        # Mặc định lấy AUDIO BẢN CẮT (output_cut.wav). Nếu chọn "dùng audio không
-        # cắt" thì lấy audio full → video dọc có tiếng giống video ngang.
+        # Mặc định lấy AUDIO BẢN CẮT (cut_path = bản 1/2 nếu bật, không thì bản
+        # 10–15 phút). Nếu chọn "dùng audio không cắt" thì lấy audio full →
+        # video dọc có tiếng giống video ngang.
         if make_video_doc:
             if doc_full_audio:
                 doc_audio = output_path
@@ -474,7 +558,9 @@ class App(tk.Tk):
         self._last_output = None
         self._pipe_busy = False
         self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
+        self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
+        self._effect_favorites = load_effect_favorites()
         self._setup_logging()
         self._build_ui()
         self._poll_log()
@@ -713,7 +799,7 @@ class App(tk.Tk):
         # Nguồn nội dung: lấy từ Gemini (gemini_result.docx) + kiểm tra trước khi tạo
         gem_row = ttk.Frame(sec_opt)
         gem_row.pack(anchor="w", fill="x", pady=(0, 8))
-        self.var_from_gemini = tk.BooleanVar(value=True)
+        self.var_from_gemini = tk.BooleanVar(value=self._opt_settings["from_gemini"])
         ttk.Checkbutton(gem_row,
                         text="🌐  Lấy nội dung từ Gemini + kiểm tra trước khi tạo",
                         variable=self.var_from_gemini).pack(side="left")
@@ -723,7 +809,7 @@ class App(tk.Tk):
         chunk_row = ttk.Frame(sec_opt)
         chunk_row.pack(anchor="w", fill="x")
         ttk.Label(chunk_row, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
-        self.var_chunk = tk.IntVar(value=300)
+        self.var_chunk = tk.IntVar(value=self._opt_settings["chunk"])
         ttk.Spinbox(chunk_row, from_=100, to=1000, increment=50,
                     textvariable=self.var_chunk, width=7).pack(side="left")
         ttk.Label(chunk_row, text="nhỏ hơn = nhẹ RAM GPU hơn",
@@ -731,63 +817,65 @@ class App(tk.Tk):
 
         video_row = ttk.Frame(sec_opt)
         video_row.pack(anchor="w", fill="x", pady=(8, 0))
-        self.var_make_video = tk.BooleanVar(value=True)
-        ttk.Checkbutton(video_row, text="🎬  Tự dựng video sau khi tạo audio",
+        self.var_make_video = tk.BooleanVar(value=self._opt_settings["make_video"])
+        ttk.Checkbutton(video_row, text="🎬  Tự dựng video (ngang)",
                         variable=self.var_make_video).pack(side="left")
-        ttk.Label(video_row, text="(ghép video nền + khung)",
-                  style="Hint.TLabel").pack(side="left", padx=8)
+        ttk.Label(video_row, text="Tăng tốc:").pack(side="left", padx=(12, 2))
+        self.var_ngang_speed = tk.StringVar(value=self._opt_settings["ngang_speed"])
+        ttk.Combobox(video_row, textvariable=self.var_ngang_speed, width=6,
+                     values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
+        ttk.Label(video_row, text="x (giữ cao độ)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
         fx_row = ttk.Frame(sec_opt)
         fx_row.pack(anchor="w", fill="x", pady=(8, 0))
         ttk.Label(fx_row, text="✨  Hiệu ứng:").pack(side="left", padx=(0, 8))
-        _effects = list_effect_files()
-        self.var_effect = tk.StringVar(
-            value=DEFAULT_EFFECT if DEFAULT_EFFECT in _effects else EFFECT_NONE)
+        self.var_effect = tk.StringVar(value=EFFECT_NONE)
         self.cb_effect = ttk.Combobox(fx_row, textvariable=self.var_effect,
-                                      values=[EFFECT_NONE] + _effects,
-                                      width=26, state="readonly")
+                                      values=[EFFECT_NONE], width=24, state="readonly")
         self.cb_effect.pack(side="left")
+        self.cb_effect.bind("<<ComboboxSelected>>",
+                            lambda e: self._update_effect_fav_button())
+        self.btn_effect_fav = ttk.Button(fx_row, text="☆", width=3,
+                                         command=self._toggle_effect_favorite)
+        self.btn_effect_fav.pack(side="left", padx=(6, 0))
         ttk.Button(fx_row, text="↻", width=3,
                    command=self._refresh_effects).pack(side="left", padx=(6, 0))
         ttk.Label(fx_row, text="(phủ lên toàn video)",
                   style="Hint.TLabel").pack(side="left", padx=8)
+        # Nạp danh sách (yêu thích ★ lên đầu) + chọn lại hiệu ứng của lần chạy trước
+        self._reload_effect_combo(keep=self._opt_settings.get("effect", EFFECT_NONE))
 
         # Cắt bản 10–15 phút (file phụ output_cut.wav) — gộp 1 dòng cho gọn chiều cao
         cut_row = ttk.Frame(sec_opt)
         cut_row.pack(anchor="w", fill="x", pady=(8, 0))
-        self.var_cut_audio = tk.BooleanVar(value=True)
+        self.var_cut_audio = tk.BooleanVar(value=self._opt_settings["cut_audio"])
         ttk.Checkbutton(cut_row, text="✂️  Cắt 10–15 phút",
                         variable=self.var_cut_audio).pack(side="left")
         ttk.Label(cut_row, text="Đích:").pack(side="left", padx=(10, 2))
-        self.var_cut_target = tk.DoubleVar(value=12.0)
+        self.var_cut_target = tk.DoubleVar(value=self._opt_settings["cut_target"])
         ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
                     textvariable=self.var_cut_target, width=4).pack(side="left")
         ttk.Label(cut_row, text="Từ:").pack(side="left", padx=(8, 2))
-        self.var_cut_min = tk.DoubleVar(value=10.0)
+        self.var_cut_min = tk.DoubleVar(value=self._opt_settings["cut_min"])
         ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
                     textvariable=self.var_cut_min, width=4).pack(side="left")
         ttk.Label(cut_row, text="Đến:").pack(side="left", padx=(8, 2))
-        self.var_cut_max = tk.DoubleVar(value=15.0)
+        self.var_cut_max = tk.DoubleVar(value=self._opt_settings["cut_max"])
         ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
                     textvariable=self.var_cut_max, width=4).pack(side="left")
 
-        # Video dọc (1080x1920, KHÔNG khung) — 2 lựa chọn chung 1 dòng cho gọn
-        vdoc_row = ttk.Frame(sec_opt)
-        vdoc_row.pack(anchor="w", fill="x", pady=(8, 0))
-        self.var_make_video_doc = tk.BooleanVar(value=True)
-        ttk.Checkbutton(vdoc_row, text="📱  Video dọc (từ bản cắt)",
-                        variable=self.var_make_video_doc).pack(side="left")
-        self.var_doc_full_audio = tk.BooleanVar(value=False)
-        ttk.Checkbutton(vdoc_row, text="dùng audio không cắt",
-                        variable=self.var_doc_full_audio).pack(side="left", padx=(12, 0))
-        ttk.Label(vdoc_row, text="Tăng tốc:").pack(side="left", padx=(12, 2))
-        self.var_doc_speed = tk.StringVar(value="1.0")
-        # Combobox để sửa tay được (vd 1.07), kèm các mức gợi ý sẵn.
-        ttk.Combobox(vdoc_row, textvariable=self.var_doc_speed, width=6,
-                     values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
-        ttk.Label(vdoc_row, text="x (giữ cao độ)",
-                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
+        # Cắt ~1/2 audio gốc (file riêng output_half.wav) — độc lập bản 10–15 phút
+        cuthalf_row = ttk.Frame(sec_opt)
+        cuthalf_row.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_cut_half = tk.BooleanVar(value=self._opt_settings["cut_half"])
+        ttk.Checkbutton(cuthalf_row, text="✂️  Cắt 1/2 (≈ nửa audio gốc)",
+                        variable=self.var_cut_half).pack(side="left")
+        ttk.Label(cuthalf_row, text="(thay bản 10–15 phút → output_half.wav)",
+                  style="Hint.TLabel").pack(side="left", padx=8)
+
+        # (Khối "Video dọc" đã chuyển sang CỘT 3 bên phải cho đỡ chật.)
 
         # ════════════════════════════════════════════════
         # CỘT 3 (PHẢI) — Hành động + tiến trình ở TRÊN, nhật ký (nhỏ) ở DƯỚI
@@ -795,11 +883,30 @@ class App(tk.Tk):
         right = ttk.Frame(root)
         right.grid(row=0, column=2, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(2, weight=1)   # chỉ ô nhật ký giãn ra theo chiều cao
+        right.rowconfigure(4, weight=1)   # chỉ ô nhật ký giãn ra theo chiều cao
 
-        # ── Hành động ──
+        # ── Video dọc (chuyển từ cột giữa sang cho đỡ chật) ──
+        vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
+        vdoc.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.var_make_video_doc = tk.BooleanVar(value=self._opt_settings["make_video_doc"])
+        ttk.Checkbutton(vdoc, text="Dựng video dọc (từ bản cắt)",
+                        variable=self.var_make_video_doc).pack(anchor="w")
+        vdoc_opts = ttk.Frame(vdoc)
+        vdoc_opts.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_doc_full_audio = tk.BooleanVar(value=self._opt_settings["doc_full_audio"])
+        ttk.Checkbutton(vdoc_opts, text="dùng audio không cắt",
+                        variable=self.var_doc_full_audio).pack(side="left")
+        ttk.Label(vdoc_opts, text="Tăng tốc:").pack(side="left", padx=(12, 2))
+        self.var_doc_speed = tk.StringVar(value=self._opt_settings["doc_speed"])
+        # Combobox để sửa tay được (vd 1.07), kèm các mức gợi ý sẵn.
+        ttk.Combobox(vdoc_opts, textvariable=self.var_doc_speed, width=6,
+                     values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
+        ttk.Label(vdoc_opts, text="x (giữ cao độ)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
+
+        # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
         act = ttk.Frame(right)
-        act.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        act.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
                                   style="Accent.TButton")
         self.btn_run.pack(side="left", padx=(0, 8))
@@ -808,12 +915,16 @@ class App(tk.Tk):
         self.btn_pause.pack(side="left", padx=(0, 8))
         self.btn_preview = ttk.Button(act, text="🔊  Nghe thử", command=self._toggle_preview,
                                       state="disabled")
-        self.btn_preview.pack(side="left", padx=(0, 8))
-        ttk.Button(act, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
+        self.btn_preview.pack(side="left")
+
+        # ── Xóa output — xuống hàng riêng cho khỏi bị khuất ──
+        act2 = ttk.Frame(right)
+        act2.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        ttk.Button(act2, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
 
         # ── Tiến trình ──
         prog_frame = ttk.Frame(right)
-        prog_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        prog_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -825,7 +936,7 @@ class App(tk.Tk):
 
         # ── Nhật ký (nhỏ lại — chỉ để theo dõi, không quan trọng) ──
         log_frame = ttk.LabelFrame(right, text="  Nhật ký  ")
-        log_frame.grid(row=2, column=0, sticky="nsew")
+        log_frame.grid(row=4, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self.log_box = scrolledtext.ScrolledText(
@@ -971,14 +1082,75 @@ class App(tk.Tk):
         self._reload_voice_combo()
         logging.info(f"Tìm thấy {len(list_voice_files())} file giọng trong {VOICE_DIR}")
 
-    def _refresh_effects(self):
-        """Nạp lại danh sách hiệu ứng trong scripts/hieuung/."""
-        cur = self.var_effect.get()
-        effects = list_effect_files()
-        self.cb_effect["values"] = [EFFECT_NONE] + effects
-        if cur not in ([EFFECT_NONE] + effects):
+    def _current_effect(self) -> str:
+        """Tên file hiệu ứng thật đang chọn (đã bỏ tiền tố ★); EFFECT_NONE nếu không chọn."""
+        return strip_star(self.var_effect.get())
+
+    def _reload_effect_combo(self, keep: str | None = None):
+        """Dựng lại danh sách hiệu ứng: yêu thích (★) lên đầu, kèm mục 'Không'.
+
+        keep = tên file thật muốn giữ chọn; mặc định giữ mục đang chọn.
+        """
+        files = list_effect_files()
+        favs = [f for f in files if f in self._effect_favorites]
+        rest = [f for f in files if f not in self._effect_favorites]
+        ordered = favs + rest
+        display = [EFFECT_NONE] + [
+            (STAR + f if f in self._effect_favorites else f) for f in ordered]
+        self.cb_effect["values"] = display
+
+        want = keep if keep is not None else self._current_effect()
+        if want in ordered:
+            self.var_effect.set(STAR + want if want in self._effect_favorites else want)
+        else:
             self.var_effect.set(EFFECT_NONE)
-        logging.info(f"Tìm thấy {len(effects)} hiệu ứng trong {EFFECTS_DIR}")
+        self._update_effect_fav_button()
+
+    def _update_effect_fav_button(self):
+        cur = self._current_effect()
+        is_file = cur in list_effect_files()
+        fav = cur in self._effect_favorites
+        self.btn_effect_fav.config(text="★" if fav else "☆",
+                                   state="normal" if is_file else "disabled")
+
+    def _toggle_effect_favorite(self):
+        name = self._current_effect()
+        if not name or name == EFFECT_NONE or name not in list_effect_files():
+            return
+        if name in self._effect_favorites:
+            self._effect_favorites.discard(name)
+            logging.info(f"☆ Bỏ yêu thích hiệu ứng: {name}")
+        else:
+            self._effect_favorites.add(name)
+            logging.info(f"★ Đã thêm yêu thích hiệu ứng: {name}")
+        save_effect_favorites(self._effect_favorites)
+        self._reload_effect_combo(keep=name)
+
+    def _refresh_effects(self):
+        """Nạp lại danh sách hiệu ứng trong scripts/hieuung/ (giữ mục đang chọn)."""
+        self._reload_effect_combo(keep=self._current_effect())
+        logging.info(f"Tìm thấy {len(list_effect_files())} hiệu ứng trong {EFFECTS_DIR}")
+
+    def _save_opt_settings(self):
+        """Lưu cài đặt mục 'Cài đặt' hiện tại để lần sau mở lại dùng làm mặc định."""
+        try:
+            save_opt_settings(dict(
+                from_gemini=self.var_from_gemini.get(),
+                chunk=int(self.var_chunk.get()),
+                make_video=self.var_make_video.get(),
+                ngang_speed=self.var_ngang_speed.get(),
+                effect=self._current_effect(),
+                cut_audio=self.var_cut_audio.get(),
+                cut_target=float(self.var_cut_target.get()),
+                cut_min=float(self.var_cut_min.get()),
+                cut_max=float(self.var_cut_max.get()),
+                cut_half=self.var_cut_half.get(),
+                make_video_doc=self.var_make_video_doc.get(),
+                doc_full_audio=self.var_doc_full_audio.get(),
+                doc_speed=self.var_doc_speed.get(),
+            ))
+        except Exception as e:
+            logging.warning(f"Không lưu được cài đặt: {e}")
 
     def _clear_output(self):
         """Xóa toàn bộ trong output/ VÀ làm rỗng các file trong kịch_bản/.
@@ -1319,6 +1491,7 @@ class App(tk.Tk):
             logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini (mở Firefox)...")
             results = g.send_chunks_to_gemini(
                 chunks, prefix=prefix, on_log=logging.info, out_path=GEMINI_DOCX,
+                keep_open=False,        # gửi xong (hoặc lỗi) → tự đóng Firefox
                 on_result=lambda i, total, ans: self.pipe_status.set(
                     f"🌐 Gemini: đoạn {i + 1}/{total}"))
             g.save_results_docx(chunks, results, GEMINI_DOCX)
@@ -1352,6 +1525,7 @@ class App(tk.Tk):
 
     def _start(self):
         self._save_pipe_settings()   # ấn ▶ Chạy → nhớ cài đặt quy trình cho lần sau
+        self._save_opt_settings()    # nhớ cả mục "Cài đặt" để lần sau làm mặc định
         mode = self.var_mode.get()
         if mode == "clone":
             voice_name = self._current_voice()
@@ -1386,6 +1560,9 @@ class App(tk.Tk):
             messagebox.showwarning("File trống", "File văn bản không có nội dung.")
             return
 
+        # Cắt ~1/2 audio gốc (file riêng) — độc lập bản 10–15 phút
+        cut_half = self.var_cut_half.get()
+
         # Tham số cắt bản 10–15 phút (đọc + kiểm tra TRƯỚC khi khóa nút)
         cut_audio = self.var_cut_audio.get()
         cut_target = cut_min = cut_max = 0.0
@@ -1413,6 +1590,15 @@ class App(tk.Tk):
         if make_video_doc and doc_speed > 1.001:
             logging.info(f"Video dọc sẽ tăng tốc audio x{doc_speed:.2f} (giữ cao độ).")
 
+        # Tốc độ audio cho VIDEO NGANG (audio full) — atempo, giữ cao độ
+        try:
+            ngang_speed = float(str(self.var_ngang_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            ngang_speed = 1.0
+        ngang_speed = max(0.5, min(ngang_speed, 2.0))
+        if self.var_make_video.get() and ngang_speed > 1.001:
+            logging.info(f"Video ngang sẽ tăng tốc audio x{ngang_speed:.2f} (giữ cao độ).")
+
         preview_path = text_file.parent / (text_file.stem + "_preview.txt")
         if preview_path.exists():
             preview_path.unlink()
@@ -1434,8 +1620,8 @@ class App(tk.Tk):
         self._pause_event.set()
         self.btn_run.config(state="disabled")
         self.btn_pause.config(state="normal", text="⏸  Tạm dừng")
-        # Hiệu ứng phủ video (nếu chọn) — chuyển thành đường dẫn đầy đủ
-        effect_name = self.var_effect.get()
+        # Hiệu ứng phủ video (nếu chọn) — bỏ tiền tố ★ rồi chuyển thành đường dẫn đầy đủ
+        effect_name = self._current_effect()
         effect_path = None
         if effect_name and effect_name != EFFECT_NONE:
             p = EFFECTS_DIR / effect_name
@@ -1452,7 +1638,8 @@ class App(tk.Tk):
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
                   self.var_make_video.get(), effect_path,
                   cut_audio, cut_target, cut_min, cut_max,
-                  make_video_doc, doc_full_audio, doc_speed),
+                  make_video_doc, doc_full_audio, doc_speed,
+                  ngang_speed, cut_half),
             daemon=True,
         ).start()
 
