@@ -197,14 +197,40 @@ def detect_inner_box(im, pink):
     return x, y, w, h
 
 
-def build_mask(pink, out_path: Path):
+def prepare_static_layers(pink, target_size: tuple[int, int]):
+    """Pre-scale các lớp khung tĩnh về đúng cw×ch MỘT LẦN bằng PIL.
+
+    Trước đây ffmpeg phải scale (lanczos) khung0/khung1/khung2/mask trên TỪNG frame
+    rồi overlay 3 lần — rất tốn CPU với video dài. Ở đây ta:
+      - resize sẵn 3 ảnh khung + mask đúng kích thước canvas một lần,
+      - gộp khung1+khung2 (đều nằm trên video) thành 1 lớp phủ trên,
+    nên filter graph chỉ còn overlay (không scale mỗi frame) và bớt 1 overlay.
+
+    Mask trắng = vùng bên trong khung (kể cả góc bo tròn) nhờ binary_fill_holes lấp
+    kín phần trong vòng viền hồng. Trả về (bg_path, top_path, mask_path).
     """
-    Tạo mặt nạ trắng = vùng bên trong khung (kể cả góc bo tròn), đen = bên ngoài.
-    binary_fill_holes lấp kín phần trong vòng viền hồng -> ra đúng hình bo góc
-    của khung (gồm cả viền, viền sẽ bị khung phủ lên sau).
-    """
+    cw, ch = target_size
+    resample = Image.Resampling.LANCZOS
+    tmp = Path(tempfile.gettempdir())
+
+    with Image.open(KHUNG0) as src:
+        src.convert("RGBA").resize((cw, ch), resample).save(tmp / "khung0_scaled.png")
+    bg_path = tmp / "khung0_scaled.png"
+
+    # khung2 nằm trên khung1 -> gộp thành một lớp phủ trên cùng.
+    with Image.open(KHUNG1) as src1, Image.open(KHUNG2) as src2:
+        top = src1.convert("RGBA").resize((cw, ch), resample)
+        k2 = src2.convert("RGBA").resize((cw, ch), resample)
+    top = Image.alpha_composite(top, k2)
+    top_path = tmp / "khung_top.png"
+    top.save(top_path)
+
     show = ndimage.binary_fill_holes(pink)
-    Image.fromarray(np.where(show, 255, 0).astype("uint8"), "L").save(out_path)
+    mask_img = Image.fromarray(np.where(show, 255, 0).astype("uint8"), "L").resize((cw, ch), resample)
+    mask_path = tmp / "khung_mask.png"
+    mask_img.save(mask_path)
+
+    return bg_path, top_path, mask_path
 
 
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -> Path:
@@ -247,8 +273,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     ix, iy, iw, ih = scale_box(
         ix, iy, iw, ih, source_w, source_h, cw, ch
     )
-    mask_path = Path(tempfile.gettempdir()) / "khung_mask.png"
-    build_mask(pink, mask_path)
+    bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch))
 
     # Ghép random tới khi đủ thời lượng audio
     durations = {v: get_duration(v) for v in videos}
@@ -278,7 +303,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     if effect:
         vw, vh = get_resolution(seq[0])   # các clip đã chuẩn hoá cùng độ phân giải
         pre = (
-            f"[6:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
+            f"[5:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
             f"crop={vw}:{vh},format=rgba[fx];"
             f"[0:v][fx]overlay=0:0:shortest=0[srcfx];"
         )
@@ -308,27 +333,25 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
             f"pad={cw}:{ch}:{ix}+({iw}-iw)/2:{iy}+({ih}-ih)/2:black[vid];"
         )
 
-    # ── Bước 3: xếp lớp khung — nền khung0 -> video (cắt bo góc) -> khung1 -> khung2
-    # Hiệu ứng đã nằm sẵn trong [vid] (cắt bo góc cùng video), nên khung1/khung2 phủ
+    # ── Bước 3: xếp lớp khung — nền khung0 -> video (cắt bo góc) -> khung1+khung2
+    # Hiệu ứng đã nằm sẵn trong [vid] (cắt bo góc cùng video), nên lớp khung phủ
     # bình thường lên trên; phần hiệu ứng dư ra ngoài khung1 đã bị mask cắt bỏ.
-    # Inputs: 0=video(ghép) 1=khung0 2=khung1 3=khung2 4=mask 5=audio [6=hiệu ứng]
+    # Các lớp khung tĩnh đã được pre-scale đúng cw×ch (xem prepare_static_layers),
+    # nên KHÔNG scale lại mỗi frame; khung1+khung2 đã gộp sẵn thành 1 lớp phủ trên.
+    # Inputs: 0=video(ghép) 1=khung0 2=khung_top 3=mask 4=audio [5=hiệu ứng]
     filt = (
         pre + place +
-        f"[4:v]scale={cw}:{ch}:flags=lanczos,format=gray[mask];"
+        f"[3:v]format=gray[mask];"
         f"[vid][mask]alphamerge[va];"
-        f"[1:v]scale={cw}:{ch}[bg];"
-        f"[bg][va]overlay=0:0[b1];"
-        f"[2:v]scale={cw}:{ch}:flags=lanczos[frame1];"
-        f"[b1][frame1]overlay=0:0[b2];"
-        f"[3:v]scale={cw}:{ch}:flags=lanczos[frame2];"
-        f"[b2][frame2]overlay=0:0[out]"
+        f"[1:v][va]overlay=0:0[b1];"
+        f"[b1][2:v]overlay=0:0[out]"
     )
 
     def build_cmd(gpu):
         if gpu:
             codec = [
                 "-c:v", "h264_nvenc",
-                "-preset", "p7",        # chất lượng cao nhất của NVENC
+                "-preset", "p5",        # cân bằng tốc độ/chất lượng (p7 chậm nhất; p5 nhanh hơn nhiều, mắt thường gần như không phân biệt)
                 "-tune", "hq",
                 "-rc", "vbr",
                 "-cq", str(NVENC_CQ),
@@ -343,20 +366,19 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
         cmd = [
             "ffmpeg", "-y",
             "-stream_loop", "-1",                       # lặp video nền: không hết frame trước audio
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-loop", "1", "-i", str(KHUNG0),
-            "-loop", "1", "-i", str(KHUNG1),
-            "-loop", "1", "-i", str(KHUNG2),
-            "-loop", "1", "-i", str(mask_path),
-            "-i", str(audio_file),
+            "-f", "concat", "-safe", "0", "-i", str(concat_list),   # 0: video ghép
+            "-loop", "1", "-i", str(bg_path),    # 1: khung0 (nền) đã pre-scale
+            "-loop", "1", "-i", str(top_path),   # 2: khung1+khung2 gộp, đã pre-scale
+            "-loop", "1", "-i", str(mask_path),  # 3: mask bo góc đã pre-scale
+            "-i", str(audio_file),               # 4: audio
         ]
         if effect:
             # -stream_loop -1: lặp vô hạn input hiệu ứng (sẽ bị -t cắt đúng độ dài).
-            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 6
+            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 5
         cmd += [
             "-filter_complex", filt,
             "-map", "[out]",
-            "-map", "5:a",
+            "-map", "4:a",
             "-t", f"{audio_dur:.6f}",           # cắt video đúng bằng độ dài audio
             *codec,
             "-pix_fmt", "yuv420p",
@@ -374,8 +396,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
         log("GPU lỗi, chuyển sang CPU (libx264)...")
         result = subprocess.run(build_cmd(False), capture_output=True, text=True,
                                 encoding="utf-8", errors="replace")
-    concat_list.unlink(missing_ok=True)
-    mask_path.unlink(missing_ok=True)
+    # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
+    for tmp_path in (concat_list, bg_path, top_path, mask_path):
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg lỗi:\n{result.stderr[-1000:]}")
 

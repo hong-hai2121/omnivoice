@@ -39,6 +39,13 @@ TEXT_BOX = (65, 265, 1235, 885)
 TEXT_ANGLE = 6.7
 TEXT_PADDING = 34
 
+# Bảng màu tiêu đề: chữ tô gradient đỏ (sáng trên → sậm dưới) cho có chiều sâu,
+# bọc viền trắng dày và một rim tối rất mỏng ngoài cùng để tách hẳn khỏi nền giấy.
+TITLE_COLOR_TOP = (236, 64, 64)       # đỏ tươi phía trên
+TITLE_COLOR_BOTTOM = (150, 10, 24)    # đỏ sậm phía dưới
+TITLE_OUTLINE = (255, 255, 255)       # viền trắng
+TITLE_EDGE = (60, 0, 6)               # rim tối ngoài cùng
+
 # Vùng BÊN TRONG khung ảnh.png trên canvas 1920×1080. Ảnh mèo bị crop theo
 # đúng hình chữ nhật này, sau đó ảnh khung được phủ lên trên để che hoàn toàn phần dư.
 FRAME_INNER_BOX = (1225, 452, 1880, 855)
@@ -58,8 +65,14 @@ for stream in (sys.stdout, sys.stderr):
 
 @lru_cache(maxsize=128)
 def find_font(size: int) -> ImageFont.FreeTypeFont:
-    """Dùng font Windows đậm, có đầy đủ dấu tiếng Việt."""
+    """Dùng font Windows siêu đậm (ultra-bold), có đầy đủ dấu tiếng Việt.
+
+    Ưu tiên Segoe UI Black / Arial Black để chữ nổi khối, dày nét như thumbnail
+    chuyên nghiệp; vẫn lùi về Arial Bold nếu máy thiếu các font trên.
+    """
     candidates = (
+        Path("C:/Windows/Fonts/seguibl.ttf"),   # Segoe UI Black
+        Path("C:/Windows/Fonts/ariblk.ttf"),    # Arial Black
         Path("C:/Windows/Fonts/arialbd.ttf"),
         Path("C:/Windows/Fonts/tahomabd.ttf"),
         Path("C:/Windows/Fonts/calibrib.ttf"),
@@ -281,6 +294,62 @@ def add_number_to_tag(base: Image.Image, number: str, tag_path: Path) -> Image.I
     return Image.alpha_composite(result, text_layer)
 
 
+def vertical_gradient(
+    size: tuple[int, int],
+    top_color: tuple[int, int, int],
+    bottom_color: tuple[int, int, int],
+    y0: int,
+    y1: int,
+) -> Image.Image:
+    """Tạo lớp gradient dọc; màu chỉ chuyển trong khoảng [y0, y1] của chữ."""
+    width, height = size
+    grad = Image.new("RGBA", size)
+    draw = ImageDraw.Draw(grad)
+    span = max(y1 - y0, 1)
+    for y in range(height):
+        t = min(1.0, max(0.0, (y - y0) / span))
+        color = tuple(
+            round(top_color[index] + (bottom_color[index] - top_color[index]) * t)
+            for index in range(3)
+        )
+        draw.line([(0, y), (width, y)], fill=(*color, 255))
+    return grad
+
+
+def draw_title_text(
+    layer: Image.Image,
+    content: str,
+    font: ImageFont.FreeTypeFont,
+    center: tuple[int, int],
+    spacing: int,
+    scale_x: float,
+) -> None:
+    """Vẽ tiêu đề: rim tối ngoài cùng → viền trắng dày → lõi chữ tô gradient đỏ."""
+    draw = ImageDraw.Draw(layer)
+    common = dict(font=font, spacing=spacing, anchor="mm", align="center")
+    white_width = max(3, round(4 * scale_x))
+    edge_width = white_width + max(2, round(3 * scale_x))
+
+    # 1) Rim tối hơi loe ra ngoài viền trắng để chữ không bị "chìm" vào nền sáng.
+    draw.multiline_text(
+        center, content, fill=(*TITLE_EDGE, 255),
+        stroke_width=edge_width, stroke_fill=(*TITLE_EDGE, 255), **common,
+    )
+    # 2) Viền trắng dày bao quanh lõi chữ.
+    draw.multiline_text(
+        center, content, fill=(*TITLE_OUTLINE, 255),
+        stroke_width=white_width, stroke_fill=(*TITLE_OUTLINE, 255), **common,
+    )
+    # 3) Lõi chữ: tô gradient đỏ qua mask đúng hình glyph (không kèm viền).
+    bbox = draw.multiline_textbbox(center, content, stroke_width=0, **common)
+    mask = Image.new("L", layer.size, 0)
+    ImageDraw.Draw(mask).multiline_text(center, content, fill=255, stroke_width=0, **common)
+    grad = vertical_gradient(
+        layer.size, TITLE_COLOR_TOP, TITLE_COLOR_BOTTOM, bbox[1], bbox[3]
+    )
+    layer.paste(grad, (0, 0), mask)
+
+
 def add_title(
     source: Path,
     output: Path,
@@ -311,7 +380,6 @@ def add_title(
     font, content, spacing = fit_text(title, box_width, box_height, max_lines)
     text_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shadow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    text_draw = ImageDraw.Draw(text_layer)
     shadow_draw = ImageDraw.Draw(shadow_layer)
 
     # Bóng đen mềm tách chữ khỏi nền giấy, sau đó vẽ chữ đỏ có viền kem.
@@ -328,17 +396,7 @@ def add_title(
         stroke_fill=(0, 0, 0, 110),
     )
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=max(3, round(8 * scale_x))))
-    text_draw.multiline_text(
-        center,
-        content,
-        font=font,
-        fill=(193, 18, 31, 255),
-        spacing=spacing,
-        anchor="mm",
-        align="center",
-        stroke_width=max(2, round(3 * scale_x)),
-        stroke_fill=(255, 255, 255, 255),
-    )
+    draw_title_text(text_layer, content, font, center, spacing, scale_x)
 
     # Cả bóng và chữ cùng xoay nhẹ để theo góc của tờ giấy trong ảnh mẫu.
     shadow_layer = shadow_layer.rotate(TEXT_ANGLE, resample=Image.Resampling.BICUBIC, center=center)
