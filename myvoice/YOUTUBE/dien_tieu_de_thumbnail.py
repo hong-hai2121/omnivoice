@@ -45,8 +45,9 @@ FRAME_INNER_BOX = (1225, 452, 1880, 855)
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 # Vùng trắng bên trong thẻ Số.png (canvas 1920×1080). Góc âm làm số nghiêng
-# theo thẻ đang xuôi xuống về phía phải.
-NUMBER_TEXT_BOX = (1450, 85, 1790, 295)
+# theo thẻ đang xuôi xuống về phía phải. Thẻ số đã được dời sang trái 132px,
+# xuống 15px so với bản cũ nên hộp chữ dời theo cùng độ lệch.
+NUMBER_TEXT_BOX = (1318, 100, 1658, 310)
 NUMBER_ANGLE = -13.0
 
 
@@ -319,24 +320,24 @@ def add_title(
         shadow_position,
         content,
         font=font,
-        fill=(0, 0, 0, 185),
+        fill=(0, 0, 0, 120),
         spacing=spacing,
         anchor="mm",
         align="center",
         stroke_width=5,
-        stroke_fill=(0, 0, 0, 175),
+        stroke_fill=(0, 0, 0, 110),
     )
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=max(2, round(5 * scale_x))))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=max(3, round(8 * scale_x))))
     text_draw.multiline_text(
         center,
         content,
         font=font,
-        fill=(186, 27, 35, 255),
+        fill=(193, 18, 31, 255),
         spacing=spacing,
         anchor="mm",
         align="center",
         stroke_width=max(2, round(3 * scale_x)),
-        stroke_fill=(255, 247, 222, 255),
+        stroke_fill=(255, 255, 255, 255),
     )
 
     # Cả bóng và chữ cùng xoay nhẹ để theo góc của tờ giấy trong ảnh mẫu.
