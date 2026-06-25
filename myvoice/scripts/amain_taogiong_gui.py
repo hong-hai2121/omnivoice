@@ -328,10 +328,31 @@ def _speedup_audio_for_doc(src, factor):
     return out
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False):
+def _play_done_sound(success: bool = True) -> None:
+    """Phát âm báo khi chạy xong (async, không chặn; bỏ qua nếu không phát được)."""
+    try:
+        import winsound
+        # SystemAsterisk = báo nhẹ khi hoàn tất; SystemHand = âm báo lỗi.
+        alias = "SystemAsterisk" if success else "SystemHand"
+        winsound.PlaySound(alias, winsound.SND_ALIAS | winsound.SND_ASYNC)
+    except Exception:
+        pass
+
+
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
+
+    failed = False
+
+    # Bước dựng video báo tiến trình qua THANH (progress_var) + dòng trạng thái,
+    # KHÔNG spam % ra nhật ký. label đứng trước, % chạy trên thanh.
+    def _video_progress(label):
+        def _cb(pct, cur, total, speed):
+            progress_var.set(int(pct))
+            status_var.set(f"{label} {pct:.0f}%  ({cur:.0f}/{total:.0f}s · {speed})")
+        return _cb
 
     try:
         total = len(chunks)
@@ -339,104 +360,136 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         tmp_dir = chunks_dir_for(output_path)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        # Chữ ký cấu hình (giọng/chế độ/văn bản). Nếu khác lần trước → xóa chunk
-        # cũ để tạo lại, tránh ghép nhầm giọng/đoạn của lần chạy trước.
+        # Chữ ký cấu hình (giọng/chế độ/văn bản) — quyết định có thể DÙNG LẠI
+        # audio cũ hay phải tạo lại (text/giọng đổi → chữ ký khác → tạo lại).
         sig = hashlib.sha1("|".join([mode, str(voice_param), *chunks])
                            .encode("utf-8")).hexdigest()
         sig_file = tmp_dir / "_signature.txt"
         old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
-        if old_sig != sig:
-            stale = list(tmp_dir.glob("*.wav"))
-            for w in stale:
-                w.unlink()
-            if stale:
-                logging.warning(
-                    f"Cấu hình đổi (giọng/chế độ/văn bản) → xóa {len(stale)} "
-                    "chunk cũ, tạo lại từ đầu."
-                )
-            sig_file.write_text(sig, encoding="utf-8")
 
-        logging.info(f"Tổng {total} đoạn — tải model...")
-        status_var.set("Đang tải model...")
+        # ♻ Dùng lại: chỉ tái dùng khi audio đã có VÀ chữ ký khớp (cùng văn bản/giọng).
+        # Nếu văn bản/giọng đã đổi thì vẫn tạo lại để không ghép nhầm bản cũ.
+        audio_ready = output_path.exists() and output_path.stat().st_size > 4096
+        reuse_audio = reuse and audio_ready and old_sig == sig
 
-        device = get_best_device()
-        model = OmniVoice.from_pretrained(
-            "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
-        )
-        sr = model.sampling_rate
-
-        for i, chunk in enumerate(chunks):
-            # Chờ nếu đang tạm dừng
-            if not pause_event.is_set():
-                status_var.set(f"⏸  Đã tạm dừng (đoạn {i+1}/{total})")
-                logging.info("Tạm dừng...")
-                pause_event.wait()
-                status_var.set(f"Đoạn {i+1}/{total}...")
-                logging.info("Tiếp tục.")
-
-            tmp_file = tmp_dir / f"{i:04d}.wav"
-            pct = int((i / total) * 100)
-            progress_var.set(pct)
-            status_var.set(f"Đoạn {i+1}/{total}...")
-
-            if tmp_file.exists() and tmp_file.stat().st_size > 4096:
-                logging.info(f"[{i+1}/{total}] bỏ qua (đã có)")
-                continue
-            elif tmp_file.exists():
-                logging.warning(f"[{i+1}/{total}] file cũ bị lỗi/cụt → generate lại")
-                tmp_file.unlink()
-
-            logging.info(f"[{i+1}/{total}] {chunk[:60]!r}")
-            result = _generate_chunk(model, mode, voice_param, chunk)
-            sf.write(str(tmp_file), result[0], sr)
-
-        # ── KIỂM TRA SPIKE SAU KHI GENERATE XONG ────────────────────────────
-        status_var.set("Kiểm tra chất lượng audio...")
-        logging.info("Kiểm tra spike toàn bộ chunks...")
-        bad_chunks = []
-        for i in range(total):
-            f = tmp_dir / f"{i:04d}.wav"
-            spikes = detect_spike(f, sr)
-            if spikes:
-                bad_chunks.append(i)
-                logging.warning(f"  [SPIKE] {f.name} tại {spikes[:3]}s → render lại")
-
-        if bad_chunks:
-            logging.info(f"Render lại {len(bad_chunks)} chunk lỗi: {bad_chunks}")
-            for idx, i in enumerate(bad_chunks):
-                status_var.set(f"Render lại chunk lỗi {idx+1}/{len(bad_chunks)}...")
-                tmp_file = tmp_dir / f"{i:04d}.wav"
-                tmp_file.unlink(missing_ok=True)
-                result = _generate_chunk(model, mode, voice_param, chunks[i])
-                sf.write(str(tmp_file), result[0], sr)
-                logging.info(f"  [{i:04d}] render lại xong")
+        if reuse_audio:
+            logging.info(f"♻ Dùng lại audio đã có (bỏ qua tạo giọng): {output_path.name}")
+            status_var.set(f"♻ Dùng audio đã có → {output_path.name}")
+            progress_var.set(100)
+            btn_preview.config(state="normal")
         else:
-            logging.info("Không phát hiện spike — tất cả chunk OK.")
+            if reuse and not audio_ready:
+                logging.info("♻ Chưa có audio để dùng lại → tạo giọng từ đầu.")
+            elif reuse and old_sig != sig:
+                logging.info("♻ Văn bản/giọng đã đổi → tạo lại giọng (không dùng bản cũ).")
 
-        status_var.set("Đang ghép file...")
-        logging.info("Ghép tất cả đoạn...")
-        parts = [
-            sf.read(str(tmp_dir / f"{i:04d}.wav"), dtype="float32")[0]
-            for i in range(total)
-        ]
+            # Chữ ký khác lần trước → xóa chunk cũ để tạo lại, tránh ghép nhầm.
+            if old_sig != sig:
+                stale = list(tmp_dir.glob("*.wav"))
+                for w in stale:
+                    w.unlink()
+                if stale:
+                    logging.warning(
+                        f"Cấu hình đổi (giọng/chế độ/văn bản) → xóa {len(stale)} "
+                        "chunk cũ, tạo lại từ đầu."
+                    )
+                sig_file.write_text(sig, encoding="utf-8")
 
-        # Crossfade ngắn giữa các chunk để tránh click/vấp tại ranh giới
-        fade = min(256, min(len(p) for p in parts) // 2)
-        fade_in  = np.linspace(0, 1, fade, dtype="float32")
-        fade_out = np.linspace(1, 0, fade, dtype="float32")
-        merged = parts[0].copy()
-        merged[-fade:] *= fade_out
-        for p in parts[1:]:
-            p = p.copy()
-            p[:fade] *= fade_in
-            merged[-fade:] += p[:fade]
-            merged = np.concatenate([merged, p[fade:]])
+            logging.info(f"Tổng {total} đoạn — tải model...")
+            status_var.set("Đang tải model...")
 
-        sf.write(output, merged, sr)
-        progress_var.set(100)
-        status_var.set(f"Xong!  →  {output}")
-        logging.info(f"Đã lưu → {output}")
-        btn_preview.config(state="normal")   # cho phép nghe thử kết quả
+            device = get_best_device()
+            model = OmniVoice.from_pretrained(
+                "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
+            )
+            sr = model.sampling_rate
+
+            for i, chunk in enumerate(chunks):
+                # Chờ nếu đang tạm dừng
+                if not pause_event.is_set():
+                    status_var.set(f"⏸  Đã tạm dừng (đoạn {i+1}/{total})")
+                    logging.info("Tạm dừng...")
+                    pause_event.wait()
+                    status_var.set(f"Đoạn {i+1}/{total}...")
+                    logging.info("Tiếp tục.")
+
+                tmp_file = tmp_dir / f"{i:04d}.wav"
+                pct = int((i / total) * 100)
+                progress_var.set(pct)
+                status_var.set(f"Đoạn {i+1}/{total}...")
+
+                if tmp_file.exists() and tmp_file.stat().st_size > 4096:
+                    logging.info(f"[{i+1}/{total}] bỏ qua (đã có)")
+                    continue
+                elif tmp_file.exists():
+                    logging.warning(f"[{i+1}/{total}] file cũ bị lỗi/cụt → generate lại")
+                    tmp_file.unlink()
+
+                logging.info(f"[{i+1}/{total}] {chunk[:60]!r}")
+                result = _generate_chunk(model, mode, voice_param, chunk)
+                sf.write(str(tmp_file), result[0], sr)
+
+            # ── KIỂM TRA SPIKE SAU KHI GENERATE XONG ────────────────────────
+            status_var.set("Kiểm tra chất lượng audio...")
+            logging.info("Kiểm tra spike toàn bộ chunks...")
+            bad_chunks = []
+            for i in range(total):
+                f = tmp_dir / f"{i:04d}.wav"
+                spikes = detect_spike(f, sr)
+                if spikes:
+                    bad_chunks.append(i)
+                    logging.warning(f"  [SPIKE] {f.name} tại {spikes[:3]}s → render lại")
+
+            if bad_chunks:
+                logging.info(f"Render lại {len(bad_chunks)} chunk lỗi: {bad_chunks}")
+                for idx, i in enumerate(bad_chunks):
+                    status_var.set(f"Render lại chunk lỗi {idx+1}/{len(bad_chunks)}...")
+                    tmp_file = tmp_dir / f"{i:04d}.wav"
+                    tmp_file.unlink(missing_ok=True)
+                    result = _generate_chunk(model, mode, voice_param, chunks[i])
+                    sf.write(str(tmp_file), result[0], sr)
+                    logging.info(f"  [{i:04d}] render lại xong")
+            else:
+                logging.info("Không phát hiện spike — tất cả chunk OK.")
+
+            status_var.set("Đang ghép file...")
+            logging.info("Ghép tất cả đoạn...")
+            parts = [
+                sf.read(str(tmp_dir / f"{i:04d}.wav"), dtype="float32")[0]
+                for i in range(total)
+            ]
+
+            # Crossfade ngắn giữa các chunk để tránh click/vấp tại ranh giới
+            fade = min(256, min(len(p) for p in parts) // 2)
+            fade_in  = np.linspace(0, 1, fade, dtype="float32")
+            fade_out = np.linspace(1, 0, fade, dtype="float32")
+            merged = parts[0].copy()
+            merged[-fade:] *= fade_out
+            for p in parts[1:]:
+                p = p.copy()
+                p[:fade] *= fade_in
+                merged[-fade:] += p[:fade]
+                merged = np.concatenate([merged, p[fade:]])
+
+            sf.write(output, merged, sr)
+            progress_var.set(100)
+            status_var.set(f"Xong!  →  {output}")
+            logging.info(f"Đã lưu → {output}")
+            btn_preview.config(state="normal")   # cho phép nghe thử kết quả
+
+            # ── GIẢI PHÓNG OMNIVOICE KHỎI VRAM ─────────────────────────────
+            # Audio đã tạo + ghép xong; các bước còn lại (cắt, dựng video bằng
+            # h264_nvenc) KHÔNG dùng tới OmniVoice. Model nạp mới mỗi lần chạy
+            # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC — tránh
+            # thiếu VRAM khiến dựng video rớt về CPU (libx264) chậm.
+            try:
+                import gc
+                del model
+                gc.collect()
+                torch.cuda.empty_cache()
+                logging.info("🧹 Đã giải phóng OmniVoice khỏi VRAM trước khi dựng video.")
+            except Exception as e:
+                logging.warning(f"Không giải phóng được OmniVoice: {e}")
 
         # ── (TÙY CHỌN) CẮT BẢN NGẮN TỪ AUDIO FULL — nguồn cho video dọc ────
         # Audio full ở trên KHÔNG đổi; đây là file phụ. Hai kiểu LOẠI TRỪ nhau:
@@ -446,39 +499,47 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # Cả hai đều cắt tại khoảng lặng cuối câu gần mốc đích để không cụt giữa câu.
         cut_path = None
         if cut_half:
-            status_var.set("Đang cắt bản ~1/2 audio gốc...")
-            try:
-                from video_timclip import (cut_audio_at_sentence_end,
-                                           probe_audio_duration)
-                total_sec = probe_audio_duration(output_path)
-                half_min = (total_sec / 2.0) / 60.0
-                tol = max(0.5, half_min * 0.2)              # dung sai ±20% (≥0.5 phút)
-                hp = output_path.with_name(output_path.stem + "_half" + output_path.suffix)
-                half_seconds, _ = cut_audio_at_sentence_end(
-                    output_path, hp,
-                    target_minutes=half_min,
-                    min_minutes=max(0.1, half_min - tol),
-                    max_minutes=min(total_sec / 60.0, half_min + tol),
-                    silence_db=-35.0, min_silence=0.5)
-                cut_path = hp                                # thay bản 10–15 phút làm nguồn video dọc
-                m, s = divmod(half_seconds, 60)
-                logging.info(f"✂ Đã cắt bản ~1/2 tại {int(m)}:{s:05.2f} → {hp.name}")
-            except Exception as e:
-                logging.warning(f"Không cắt được bản 1/2: {e}")
+            hp = output_path.with_name(output_path.stem + "_half" + output_path.suffix)
+            if reuse_audio and hp.exists() and hp.stat().st_size > 4096:
+                cut_path = hp
+                logging.info(f"♻ Dùng lại bản ~1/2 đã có: {hp.name}")
+            else:
+                status_var.set("Đang cắt bản ~1/2 audio gốc...")
+                try:
+                    from video_timclip import (cut_audio_at_sentence_end,
+                                               probe_audio_duration)
+                    total_sec = probe_audio_duration(output_path)
+                    half_min = (total_sec / 2.0) / 60.0
+                    tol = max(0.5, half_min * 0.2)              # dung sai ±20% (≥0.5 phút)
+                    half_seconds, _ = cut_audio_at_sentence_end(
+                        output_path, hp,
+                        target_minutes=half_min,
+                        min_minutes=max(0.1, half_min - tol),
+                        max_minutes=min(total_sec / 60.0, half_min + tol),
+                        silence_db=-35.0, min_silence=0.5)
+                    cut_path = hp                                # thay bản 10–15 phút làm nguồn video dọc
+                    m, s = divmod(half_seconds, 60)
+                    logging.info(f"✂ Đã cắt bản ~1/2 tại {int(m)}:{s:05.2f} → {hp.name}")
+                except Exception as e:
+                    logging.warning(f"Không cắt được bản 1/2: {e}")
         elif cut_audio:
-            status_var.set("Đang cắt bản 10–15 phút...")
-            try:
-                from video_timclip import cut_audio_at_sentence_end
-                cp = output_path.with_name(output_path.stem + "_cut" + output_path.suffix)
-                cut_seconds, _ = cut_audio_at_sentence_end(
-                    output_path, cp,
-                    target_minutes=cut_target, min_minutes=cut_min,
-                    max_minutes=cut_max, silence_db=-35.0, min_silence=0.5)
+            cp = output_path.with_name(output_path.stem + "_cut" + output_path.suffix)
+            if reuse_audio and cp.exists() and cp.stat().st_size > 4096:
                 cut_path = cp
-                m, s = divmod(cut_seconds, 60)
-                logging.info(f"✂ Đã cắt bản ngắn tại {int(m)}:{s:05.2f} → {cut_path.name}")
-            except Exception as e:
-                logging.warning(f"Không cắt được bản 10–15 phút: {e}")
+                logging.info(f"♻ Dùng lại bản 10–15 phút đã có: {cp.name}")
+            else:
+                status_var.set("Đang cắt bản 10–15 phút...")
+                try:
+                    from video_timclip import cut_audio_at_sentence_end
+                    cut_seconds, _ = cut_audio_at_sentence_end(
+                        output_path, cp,
+                        target_minutes=cut_target, min_minutes=cut_min,
+                        max_minutes=cut_max, silence_db=-35.0, min_silence=0.5)
+                    cut_path = cp
+                    m, s = divmod(cut_seconds, 60)
+                    logging.info(f"✂ Đã cắt bản ngắn tại {int(m)}:{s:05.2f} → {cut_path.name}")
+                except Exception as e:
+                    logging.warning(f"Không cắt được bản 10–15 phút: {e}")
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         if make_video:
@@ -496,7 +557,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             logging.info("Bắt đầu dựng video từ audio vừa tạo...")
             try:
                 from video_khung import build_video
-                video_out = build_video(ngang_audio, log=logging.info, effect=effect)
+                progress_var.set(0)
+                video_out = build_video(ngang_audio, log=logging.info, effect=effect,
+                                        progress=_video_progress("🎬 Dựng video ngang..."),
+                                        skip_existing=reuse_audio)
+                progress_var.set(100)
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
             except Exception as e:
@@ -527,7 +592,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             logging.info(f"Bắt đầu dựng video dọc từ {doc_audio.name}...")
             try:
                 from video_doc import build_video_doc
-                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=effect)
+                progress_var.set(0)
+                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=effect,
+                                           progress=_video_progress("📱 Dựng video dọc..."),
+                                           skip_existing=reuse_audio)
+                progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
             except Exception as e:
@@ -535,12 +604,14 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 status_var.set(f"Lỗi video dọc: {e}")
 
     except Exception as e:
+        failed = True
         logging.error(f"Lỗi: {e}")
         status_var.set(f"Lỗi: {e}")
     finally:
         pause_event.set()
         btn_run.config(state="normal")
         btn_pause.config(state="disabled", text="⏸  Tạm dừng")
+        _play_done_sound(success=not failed)   # âm báo khi chạy xong (hoặc lỗi)
 
 
 # ── GIAO DIỆN ────────────────────────────────────────────────────────────────
@@ -917,10 +988,16 @@ class App(tk.Tk):
                                       state="disabled")
         self.btn_preview.pack(side="left")
 
-        # ── Xóa output — xuống hàng riêng cho khỏi bị khuất ──
+        # ── Xóa output + chế độ dùng lại — xuống hàng riêng cho khỏi bị khuất ──
         act2 = ttk.Frame(right)
         act2.grid(row=2, column=0, sticky="ew", pady=(0, 10))
         ttk.Button(act2, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
+        # ♻ Dùng lại audio/video đã có: bỏ qua tạo giọng nếu output.wav còn đúng
+        # văn bản/giọng, và bỏ qua video nào đã dựng — chỉ dựng phần còn thiếu.
+        # Mặc định TẮT (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
+        self.var_reuse = tk.BooleanVar(value=False)
+        ttk.Checkbutton(act2, text="♻  Dùng lại audio/video đã có (chỉ dựng phần còn thiếu)",
+                        variable=self.var_reuse).pack(side="left", padx=(16, 0))
 
         # ── Tiến trình ──
         prog_frame = ttk.Frame(right)
@@ -1445,6 +1522,15 @@ class App(tk.Tk):
             logging.error(f"Lỗi nhận diện: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
+            # Nhận diện xong → KHÔNG còn dùng model Whisper nữa, giải phóng khỏi
+            # VRAM ngay để nhường chỗ cho OmniVoice ở bước tạo giọng (GPU 8GB dễ
+            # nghẽn nếu large-v3 ~3GB vẫn nằm lại trong VRAM khi nạp OmniVoice).
+            try:
+                import nhandien_giongnoi as recog
+                recog.free_model()
+                logging.info("🧹 Đã giải phóng model nhận diện khỏi VRAM.")
+            except Exception as e:
+                logging.warning(f"Không giải phóng được model nhận diện: {e}")
             self._pipe_set_busy(False)
             if ok and self.var_auto2.get():   # ⛓ tự động sang bước ②
                 self.after(600, lambda: self._pipe_send_gemini(auto=True))
@@ -1605,13 +1691,21 @@ class App(tk.Tk):
         preview_path.write_text("\n\n".join(chunks), encoding="utf-8")
         logging.info(f"Chia {len(chunks)} đoạn (chunk={self.var_chunk.get()} ký tự) → {preview_path.name}")
 
-        # Nếu file kết quả đã tồn tại → tự đặt tên mới (output.wav → output1.wav …),
-        # KHÔNG ghi đè bản cũ.
-        out_path = unique_path(Path(self.var_out.get()))
-        if str(out_path) != self.var_out.get():
-            logging.info(f"File kết quả đã có → dùng tên mới: {out_path.name}")
-            self.var_out.set(str(out_path))
-            self.status.set(f"Kết quả sẽ lưu thành: {out_path.name}")
+        # ♻ Dùng lại audio/video đã có (chỉ dựng phần còn thiếu).
+        reuse = self.var_reuse.get()
+
+        # Bình thường: nếu file kết quả đã có → tự đặt tên mới (output.wav →
+        # output1.wav…) để KHÔNG ghi đè bản cũ. Khi DÙNG LẠI thì GIỮ NGUYÊN tên
+        # để tái dùng audio/video cũ thay vì tạo bản mới.
+        if reuse:
+            out_path = Path(self.var_out.get())
+            logging.info(f"♻ Dùng lại: {out_path.name} (chỉ dựng phần còn thiếu).")
+        else:
+            out_path = unique_path(Path(self.var_out.get()))
+            if str(out_path) != self.var_out.get():
+                logging.info(f"File kết quả đã có → dùng tên mới: {out_path.name}")
+                self.status.set(f"Kết quả sẽ lưu thành: {out_path.name}")
+        self.var_out.set(str(out_path))
         self._last_output = self.var_out.get()
 
         self._stop_preview()                         # dừng audio đang nghe (nếu có)
@@ -1639,7 +1733,7 @@ class App(tk.Tk):
                   self.var_make_video.get(), effect_path,
                   cut_audio, cut_target, cut_min, cut_max,
                   make_video_doc, doc_full_audio, doc_speed,
-                  ngang_speed, cut_half),
+                  ngang_speed, cut_half, reuse),
             daemon=True,
         ).start()
 

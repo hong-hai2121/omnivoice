@@ -44,8 +44,12 @@ examples/exp*
 # Thư mục output sinh tự động (wav, mp4, srt, chunks, _signature.txt)
 /myvoice/kịch_bản/output/
 
-# State/preview sinh tự động của GUI (không cần đưa lên repo)
+# State/cài đặt GUI ghi nhớ tự động (không cần đưa lên repo)
 /myvoice/voice_favorites.json
+/myvoice/effect_favorites.json
+/myvoice/taogiong_options.json
+/myvoice/taogiong_pipeline.json
+/myvoice/YOUTUBE/thumbnail_gui_state.json
 /myvoice/kịch_bản/input_preview.txt
 /myvoice/kịch_bản/input.txt
 

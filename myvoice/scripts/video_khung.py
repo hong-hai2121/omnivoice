@@ -30,6 +30,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -98,6 +99,62 @@ def has_nvenc() -> bool:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return r.returncode == 0 and "h264_nvenc" in r.stdout
+
+
+def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng video",
+                        progress=None):
+    """Chạy ffmpeg và báo % theo thời lượng đích nhờ -progress.
+
+    KHÔNG làm chậm render: ffmpeg vẫn mã hóa như cũ, ta chỉ đọc dòng tiến trình
+    nó in ra (out_time_us, speed) rồi cập nhật mỗi ~2s. stderr ghi ra file tạm để
+    vừa tránh nghẽn pipe (deadlock), vừa lấy được thông báo lỗi khi ffmpeg thất bại.
+
+    progress: hàm tùy chọn nhận (pct, cur, total, speed) để cập nhật THANH tiến
+              trình trên GUI. Khi được truyền, KHÔNG ghi dòng % ra log nữa (tiến
+              trình hiện bằng thanh chứ không spam nhật ký), và cập nhật dày hơn
+              (~0.5s) cho thanh chạy mượt.
+
+    Trả về (returncode, stderr_tail).
+    """
+    # Chèn -progress pipe:1 -nostats ngay sau 'ffmpeg' để nhận tiến trình qua stdout.
+    cmd = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
+    err_path = Path(tempfile.gettempdir()) / "ffmpeg_progress_err.log"
+    cur, speed, last = 0.0, "?", 0.0
+    interval = 0.5 if progress is not None else 2.0   # thanh GUI cập nhật mượt hơn log
+    with open(err_path, "w", encoding="utf-8", errors="replace") as ef:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=ef,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+        )
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith("out_time_us="):
+                try:
+                    cur = max(0, int(line.split("=", 1)[1])) / 1_000_000
+                except ValueError:
+                    pass
+            elif line.startswith("speed="):
+                speed = line.split("=", 1)[1]
+            elif line.startswith("progress="):
+                now = time.monotonic()
+                done = line.endswith("end")
+                if done or now - last >= interval:
+                    last = now
+                    pct = min(100.0, cur / total_dur * 100) if total_dur > 0 else 0.0
+                    if progress is not None:
+                        progress(pct, cur, total_dur, speed)   # → thanh tiến trình GUI
+                    else:
+                        log(f"  {label}: {pct:5.1f}%  ({cur:.0f}/{total_dur:.0f}s, tốc độ {speed})")
+        proc.wait()
+    try:
+        tail = err_path.read_text(encoding="utf-8", errors="replace")[-1000:]
+    except OSError:
+        tail = ""
+    try:
+        err_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return proc.returncode, tail
 
 
 def get_duration(path: Path) -> float:
@@ -233,7 +290,8 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
     return bg_path, top_path, mask_path
 
 
-def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -> Path:
+def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
+                progress=None, skip_existing=False) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
@@ -241,10 +299,22 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
     ffmpeg lỗi (để bên gọi — ví dụ GUI — bắt và hiển thị). `log` là hàm nhận
     chuỗi để ghi tiến trình (mặc định print; GUI truyền logging.info).
 
+    progress: hàm tùy chọn (pct, cur, total, speed) để cập nhật thanh tiến trình
+              GUI thay cho việc spam % ra log (xem run_ffmpeg_progress).
+    skip_existing: nếu True và video kết quả đã tồn tại thì trả về luôn, KHÔNG
+                   dựng lại (chế độ ♻ "chỉ dựng phần còn thiếu").
+
     effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
             Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC, rồi mới đưa vào
             khung1 và cắt bo góc (lặp lại nếu ngắn hơn audio). None = không thêm.
     """
+    # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
+    audio_file = Path(audio_file)
+    output = audio_file.parent / (audio_file.stem + "_videodone.mp4")
+    if skip_existing and output.exists() and output.stat().st_size > 0:
+        log(f"♻ Video ngang đã có → bỏ qua dựng lại: {output.name}")
+        return output
+
     for f in (KHUNG0, KHUNG1, KHUNG2):
         if not f.exists():
             raise RuntimeError(f"Không tìm thấy khung: {f}")
@@ -389,21 +459,19 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None) -
 
     use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video... (GPU - h264_nvenc)" if use_gpu else "Đang dựng video... (CPU - libx264)")
-    result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
+    rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log, progress=progress)
     # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt dựng.
-    if result.returncode != 0 and use_gpu:
+    if rc != 0 and use_gpu:
         log("GPU lỗi, chuyển sang CPU (libx264)...")
-        result = subprocess.run(build_cmd(False), capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
+        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log, progress=progress)
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
     for tmp_path in (concat_list, bg_path, top_path, mask_path):
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg lỗi:\n{result.stderr[-1000:]}")
+    if rc != 0:
+        raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     final_dur = get_duration(output)
     size_mb   = output.stat().st_size / 1024 / 1024

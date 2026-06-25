@@ -18,7 +18,6 @@ Cách dùng:
 """
 
 import io
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -35,7 +34,8 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 # Tái dùng các tiện ích đã có của bản ngang (đọc thời lượng, dò NVENC, ghép playlist, tìm audio).
-from video_khung import get_duration, has_nvenc, build_playlist, find_audio
+from video_khung import (get_duration, has_nvenc, build_playlist, find_audio,
+                         run_ffmpeg_progress)
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VIDEO_DIR  = BASE_DIR / "videodoc"     # kho video DỌC để ghép random
@@ -49,23 +49,33 @@ NVENC_CQ = 18
 X264_CRF = 18
 
 
-def build_video_doc(audio_file: Path, *, log=print, effect=None) -> Path:
+def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
+                    skip_existing=False) -> Path:
     """Dựng video DỌC 1080x1920 (không khung) từ một file audio. Trả về đường dẫn output.
 
     Ném RuntimeError nếu thiếu tài nguyên hoặc ffmpeg lỗi. `log` là hàm nhận chuỗi
     để ghi tiến trình (mặc định print; GUI truyền logging.info).
 
     effect: đường dẫn file hiệu ứng (.mov alpha trong scripts/hieuung/). None = bỏ qua.
+    progress: hàm tùy chọn (pct, cur, total, speed) để cập nhật thanh tiến trình GUI
+              thay cho việc spam % ra log (xem run_ffmpeg_progress).
+    skip_existing: nếu True và video dọc đã tồn tại thì trả về luôn, KHÔNG dựng lại
+                   (chế độ ♻ "chỉ dựng phần còn thiếu").
     """
+    # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
+    audio_file = Path(audio_file)
+    output = audio_file.parent / (audio_file.stem + "_doc.mp4")
+    if skip_existing and output.exists() and output.stat().st_size > 0:
+        log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
+        return output
+
     videos = sorted(VIDEO_DIR.glob("*.mp4"))
     if not videos:
         raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
 
-    audio_file = Path(audio_file)
     if not audio_file.exists():
         raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur = get_duration(audio_file)
-    output = audio_file.parent / (audio_file.stem + "_doc.mp4")
 
     effect = Path(effect) if effect else None
     if effect and not effect.exists():
@@ -107,7 +117,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None) -> Path:
     def build_cmd(gpu):
         if gpu:
             codec = [
-                "-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq",
+                "-c:v", "h264_nvenc",
+                "-preset", "p5",        # cân bằng tốc độ/chất lượng (p7 chậm nhất; p5 nhanh hơn nhiều, mắt thường gần như không phân biệt)
+                "-tune", "hq",
                 "-rc", "vbr", "-cq", str(NVENC_CQ), "-b:v", "0", "-profile:v", "high",
             ]
         else:
@@ -137,15 +149,19 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None) -> Path:
     use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video dọc... (GPU - h264_nvenc)" if use_gpu
         else "Đang dựng video dọc... (CPU - libx264)")
-    result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
-                            encoding="utf-8", errors="replace")
-    if result.returncode != 0 and use_gpu:
+    rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log,
+                                       label="Dựng video dọc", progress=progress)
+    if rc != 0 and use_gpu:
         log("GPU lỗi, chuyển sang CPU (libx264)...")
-        result = subprocess.run(build_cmd(False), capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
-    concat_list.unlink(missing_ok=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg lỗi:\n{result.stderr[-1000:]}")
+        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
+                                           label="Dựng video dọc", progress=progress)
+    # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
+    try:
+        concat_list.unlink(missing_ok=True)
+    except OSError:
+        pass
+    if rc != 0:
+        raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     final_dur = get_duration(output)
     size_mb   = output.stat().st_size / 1024 / 1024
