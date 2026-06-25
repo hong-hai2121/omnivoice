@@ -50,7 +50,7 @@ X264_CRF = 18
 
 
 def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
-                    skip_existing=False) -> Path:
+                    skip_existing=False, source_video=None) -> Path:
     """Dựng video DỌC 1080x1920 (không khung) từ một file audio. Trả về đường dẫn output.
 
     Ném RuntimeError nếu thiếu tài nguyên hoặc ffmpeg lỗi. `log` là hàm nhận chuỗi
@@ -61,6 +61,10 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
               thay cho việc spam % ra log (xem run_ffmpeg_progress).
     skip_existing: nếu True và video dọc đã tồn tại thì trả về luôn, KHÔNG dựng lại
                    (chế độ ♻ "chỉ dựng phần còn thiếu").
+    source_video: nếu có → DÙNG LẠI video này (vd video ngang đã dựng) làm nguồn:
+                  phóng to "fill" cho khớp chiều cao khung dọc rồi cắt giữa, thay
+                  âm bằng audio_file. Khi đó BỎ QUA kho videodoc/ và hiệu ứng (video
+                  nguồn đã có sẵn khung/hiệu ứng).
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -69,50 +73,69 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
         return output
 
-    videos = sorted(VIDEO_DIR.glob("*.mp4"))
-    if not videos:
-        raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
-
     if not audio_file.exists():
         raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur = get_duration(audio_file)
 
-    effect = Path(effect) if effect else None
-    if effect and not effect.exists():
-        log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
-        effect = None
-
-    # Ghép random tới khi đủ thời lượng audio
-    durations = {v: get_duration(v) for v in videos}
-    seq, total = build_playlist(videos, durations, audio_dur)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
-                                     delete=False, encoding="utf-8") as f:
-        concat_list = Path(f.name)
-        for v in seq:
-            f.write(f"file '{v.as_posix()}'\n")
-
-    log(f"Khung dọc  : {OUT_W}x{OUT_H} (KHÔNG khung)")
-    log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
-    log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
-    log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
-    log(f"Đầu ra     : {output}")
-
-    # Scale "fill" + cắt giữa về đúng khung dọc (không méo, không viền đen).
-    base = (
-        f"[0:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
-        f"crop={OUT_W}:{OUT_H},setsar=1"
-    )
-    if effect:
-        # Hiệu ứng scale phủ kín khung dọc rồi overlay lên video nền.
+    reuse_ngang = source_video is not None
+    if reuse_ngang:
+        # ── DÙNG LẠI VIDEO NGANG: phóng to khớp chiều cao dọc + cắt giữa ──────
+        source_video = Path(source_video)
+        if not source_video.exists():
+            raise RuntimeError(f"Không tìm thấy video ngang để dùng lại: {source_video}")
+        if effect:
+            log("ℹ Dùng lại video ngang → bỏ qua hiệu ứng (video nguồn đã có sẵn).")
+        log(f"Khung dọc  : {OUT_W}x{OUT_H} (dùng lại video ngang, phóng to khớp chiều cao)")
+        log(f"Video nguồn: {source_video.name}")
+        log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
+        log(f"Đầu ra     : {output}")
+        # Scale "fill" cho khớp chiều cao 1920 rồi cắt giữa về 1080 (như bản random).
         filt = (
-            base + "[bg];"
-            f"[1:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
-            f"crop={OUT_W}:{OUT_H},format=rgba[fx];"
-            f"[bg][fx]overlay=0:0:shortest=0[out]"
+            f"[0:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
+            f"crop={OUT_W}:{OUT_H},setsar=1[out]"
         )
+        concat_list = None
     else:
-        filt = base + "[out]"
+        videos = sorted(VIDEO_DIR.glob("*.mp4"))
+        if not videos:
+            raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
+
+        effect = Path(effect) if effect else None
+        if effect and not effect.exists():
+            log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
+            effect = None
+
+        # Ghép random tới khi đủ thời lượng audio
+        durations = {v: get_duration(v) for v in videos}
+        seq, total = build_playlist(videos, durations, audio_dur)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
+                                         delete=False, encoding="utf-8") as f:
+            concat_list = Path(f.name)
+            for v in seq:
+                f.write(f"file '{v.as_posix()}'\n")
+
+        log(f"Khung dọc  : {OUT_W}x{OUT_H} (KHÔNG khung)")
+        log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
+        log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+        log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
+        log(f"Đầu ra     : {output}")
+
+        # Scale "fill" + cắt giữa về đúng khung dọc (không méo, không viền đen).
+        base = (
+            f"[0:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
+            f"crop={OUT_W}:{OUT_H},setsar=1"
+        )
+        if effect:
+            # Hiệu ứng scale phủ kín khung dọc rồi overlay lên video nền.
+            filt = (
+                base + "[bg];"
+                f"[1:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
+                f"crop={OUT_W}:{OUT_H},format=rgba[fx];"
+                f"[bg][fx]overlay=0:0:shortest=0[out]"
+            )
+        else:
+            filt = base + "[out]"
 
     def build_cmd(gpu):
         if gpu:
@@ -127,13 +150,19 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 "-c:v", "libx264", "-preset", "slow",
                 "-crf", str(X264_CRF), "-profile:v", "high",
             ]
-        # Inputs: 0=video(ghép)  [1=hiệu ứng]  cuối=audio
-        cmd = ["ffmpeg", "-y", "-stream_loop", "-1",     # lặp video nền: không hết frame trước audio
-               "-f", "concat", "-safe", "0", "-i", str(concat_list)]
-        if effect:
-            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 1
-        cmd += ["-i", str(audio_file)]                          # audio
-        audio_idx = 2 if effect else 1
+        if reuse_ngang:
+            # Inputs: 0=video ngang (lặp nếu ngắn hơn audio)  1=audio
+            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(source_video),
+                   "-i", str(audio_file)]
+            audio_idx = 1
+        else:
+            # Inputs: 0=video(ghép)  [1=hiệu ứng]  cuối=audio
+            cmd = ["ffmpeg", "-y", "-stream_loop", "-1",     # lặp video nền: không hết frame trước audio
+                   "-f", "concat", "-safe", "0", "-i", str(concat_list)]
+            if effect:
+                cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 1
+            cmd += ["-i", str(audio_file)]                          # audio
+            audio_idx = 2 if effect else 1
         cmd += [
             "-filter_complex", filt,
             "-map", "[out]",
@@ -156,10 +185,11 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
                                            label="Dựng video dọc", progress=progress)
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
-    try:
-        concat_list.unlink(missing_ok=True)
-    except OSError:
-        pass
+    if concat_list is not None:
+        try:
+            concat_list.unlink(missing_ok=True)
+        except OSError:
+            pass
     if rc != 0:
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 

@@ -58,7 +58,8 @@ OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=300,
     make_video=True, ngang_speed="1.0", effect=DEFAULT_EFFECT,
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
-    make_video_doc=True, doc_full_audio=False, doc_speed="1.0",
+    make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
+    doc_no_effect=False,
 )
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
@@ -281,6 +282,51 @@ def split_chunks(text: str, max_len: int):
     return chunks
 
 
+# ── THAY CÂU QUẢNG BÁ KÊNH THEO VỊ TRÍ ────────────────────────────────────────
+# Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi Truyện". Tùy vị
+# trí trong bài (mở đầu / thân bài / kết bài) ta thay bằng 3 câu khác nhau dưới
+# đây. SỬA 3 CÂU NÀY nếu muốn đổi lời.
+PROMO_OPENING = "lại là mimi truyện đây, mời bạn nghe câu truyện hôm nay."
+PROMO_BODY    = "bạn đang nghe tại mimi truyện."
+PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe truyện, đây là câu truyện không có thật "
+                 "ở trung quốc xin chào và hẹn gặp lại.")
+
+# Câu quảng bá luôn chứa tên kênh "Mimi Truyện" → dùng cả cụm làm dấu hiệu nhận
+# biết (tránh khớp nhầm từ "mimi" lẻ); cho phép biến thể "chuyện".
+_PROMO_MARKER = re.compile(r'mimi\s+(?:truyện|chuyện)', re.IGNORECASE)
+# Tách câu nhưng GIỮ dấu kết câu/xuống dòng ở cuối mỗi mảnh để ghép lại nguyên trạng.
+_PROMO_SENT_SPLIT = re.compile(r'(?<=[.!?。！？\n])')
+
+
+def replace_channel_promo(text: str) -> tuple[str, int]:
+    """Thay câu quảng bá kênh (chứa 'mimi') bằng 1 trong 3 câu theo vị trí:
+    xuất hiện ĐẦU TIÊN → mở đầu, CUỐI CÙNG → kết bài, Ở GIỮA → thân bài.
+    Nếu chỉ có 1 câu: nửa đầu văn bản → mở đầu, nửa cuối → kết bài.
+
+    Trả về (text_đã_thay, số_câu_đã_thay). Giữ nguyên khoảng trắng/xuống dòng quanh
+    câu để không phá cấu trúc đoạn.
+    """
+    sentences = _PROMO_SENT_SPLIT.split(text)
+    promo_idx = [i for i, s in enumerate(sentences) if _PROMO_MARKER.search(s)]
+    if not promo_idx:
+        return text, 0
+    first, last, n = promo_idx[0], promo_idx[-1], len(sentences)
+    for i in promo_idx:
+        orig = sentences[i]
+        lead = orig[:len(orig) - len(orig.lstrip())]   # khoảng trắng đầu câu
+        trail = orig[len(orig.rstrip()):]              # khoảng trắng/\n cuối câu
+        if len(promo_idx) == 1:
+            repl = PROMO_OPENING if i < n / 2 else PROMO_ENDING
+        elif i == first:
+            repl = PROMO_OPENING
+        elif i == last:
+            repl = PROMO_ENDING
+        else:
+            repl = PROMO_BODY
+        sentences[i] = lead + repl + trail
+    return "".join(sentences), len(promo_idx)
+
+
 def chunks_dir_for(output_path: Path) -> Path:
     """Thư mục chunks dùng chung cho mọi bản đánh số (output, output1, output2…).
 
@@ -339,7 +385,7 @@ def _play_done_sound(success: bool = True) -> None:
         pass
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -542,6 +588,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.warning(f"Không cắt được bản 10–15 phút: {e}")
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
+        ngang_video_path = None   # video ngang vừa dựng (để video dọc dùng lại nếu bật)
         if make_video:
             # Tăng tốc audio (giữ cao độ) trước khi dựng — nếu chọn mức > 1.0
             ngang_audio = output_path
@@ -562,6 +609,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                                         progress=_video_progress("🎬 Dựng video ngang..."),
                                         skip_existing=reuse_audio)
                 progress_var.set(100)
+                ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
             except Exception as e:
@@ -588,14 +636,35 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.info(f"⏩ Tăng tốc audio video dọc x{doc_speed:.2f} → {doc_audio.name}")
                 except Exception as e:
                     logging.warning(f"Không tăng tốc được audio (giữ tốc độ gốc): {e}")
+            # ♻ Dùng lại VIDEO NGANG đã dựng (phóng to khớp chiều cao dọc, thay
+            # âm bằng audio video dọc). Ưu tiên video ngang vừa dựng; nếu chưa có
+            # (vd không bật dựng video ngang) thì tìm file *_videodone.mp4 đã có.
+            ngang_src = None
+            if doc_from_ngang:
+                if ngang_video_path and ngang_video_path.exists():
+                    ngang_src = ngang_video_path
+                else:
+                    cands = sorted(
+                        output_path.parent.glob(output_path.stem + "*_videodone.mp4"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)
+                    ngang_src = cands[0] if cands else None
+                if ngang_src is None:
+                    logging.warning("Bật 'dùng lại video ngang' nhưng chưa có video "
+                                    "ngang → dựng video dọc bình thường.")
+                else:
+                    logging.info(f"♻ Video dọc dùng lại video ngang: {ngang_src.name}")
+
             status_var.set("Đang dựng video dọc...")
             logging.info(f"Bắt đầu dựng video dọc từ {doc_audio.name}...")
             try:
                 from video_doc import build_video_doc
                 progress_var.set(0)
-                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=effect,
+                # "Không áp hiệu ứng cho video dọc" → bỏ effect ở mọi trường hợp.
+                doc_effect = None if doc_no_effect else effect
+                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
                                            progress=_video_progress("📱 Dựng video dọc..."),
-                                           skip_existing=reuse_audio)
+                                           skip_existing=reuse_audio,
+                                           source_video=ngang_src)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
@@ -975,6 +1044,22 @@ class App(tk.Tk):
         ttk.Label(vdoc_opts, text="x (giữ cao độ)",
                   style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
+        # Dùng lại video ngang đã dựng (phóng to khớp chiều cao dọc + cắt giữa),
+        # thay âm bằng audio video dọc. Tắt → dựng từ kho videodoc/ như cũ.
+        vdoc_opts2 = ttk.Frame(vdoc)
+        vdoc_opts2.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_doc_from_ngang = tk.BooleanVar(value=self._opt_settings["doc_from_ngang"])
+        ttk.Checkbutton(vdoc_opts2,
+                        text="♻  Dùng lại video ngang (phóng to khớp chiều cao)",
+                        variable=self.var_doc_from_ngang).pack(side="left")
+
+        # Không phủ hiệu ứng lên video dọc (mọi trường hợp) — video dọc sạch hiệu ứng.
+        vdoc_opts3 = ttk.Frame(vdoc)
+        vdoc_opts3.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_doc_no_effect = tk.BooleanVar(value=self._opt_settings["doc_no_effect"])
+        ttk.Checkbutton(vdoc_opts3, text="🚫  Không áp hiệu ứng cho video dọc",
+                        variable=self.var_doc_no_effect).pack(side="left")
+
         # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
         act = ttk.Frame(right)
         act.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -1225,6 +1310,8 @@ class App(tk.Tk):
                 make_video_doc=self.var_make_video_doc.get(),
                 doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self.var_doc_speed.get(),
+                doc_from_ngang=self.var_doc_from_ngang.get(),
+                doc_no_effect=self.var_doc_no_effect.get(),
             ))
         except Exception as e:
             logging.warning(f"Không lưu được cài đặt: {e}")
@@ -1352,6 +1439,11 @@ class App(tk.Tk):
         if not content:
             messagebox.showerror("Trống", f"Không lấy được nội dung từ:\n{GEMINI_DOCX}")
             return False
+
+        # 2b) THAY CÂU QUẢNG BÁ KÊNH theo vị trí (mở đầu / thân bài / kết bài)
+        content, n_promo = replace_channel_promo(content)
+        if n_promo:
+            logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh (mở đầu/thân/kết).")
 
         # 3) GHI VÀO input.txt (đường dẫn ở ô 'Văn bản')
         try:
@@ -1668,6 +1760,8 @@ class App(tk.Tk):
         # Video dọc: bật/tắt + dùng audio cắt (mặc định) hay audio full + tốc độ
         make_video_doc = self.var_make_video_doc.get()
         doc_full_audio = self.var_doc_full_audio.get()
+        doc_from_ngang = self.var_doc_from_ngang.get()   # dùng lại video ngang cho dọc
+        doc_no_effect = self.var_doc_no_effect.get()     # không phủ hiệu ứng lên video dọc
         try:
             doc_speed = float(str(self.var_doc_speed.get()).replace(",", ".").strip())
         except (TypeError, ValueError):
@@ -1733,7 +1827,7 @@ class App(tk.Tk):
                   self.var_make_video.get(), effect_path,
                   cut_audio, cut_target, cut_min, cut_max,
                   make_video_doc, doc_full_audio, doc_speed,
-                  ngang_speed, cut_half, reuse),
+                  ngang_speed, cut_half, reuse, doc_from_ngang, doc_no_effect),
             daemon=True,
         ).start()
 
