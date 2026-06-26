@@ -35,14 +35,16 @@ VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
 GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemini → nguồn nội dung TTS
+SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) — chạy sau bước dịch
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
+YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
 PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
 OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài đặt" (nhớ lần chạy trước)
 # Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice)
-PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, model="medium", speed="0.7")
+PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7")
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -701,12 +703,13 @@ class App(tk.Tk):
         self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
         self._effect_favorites = load_effect_favorites()
+        self._log_boxes = []          # mọi ô nhật ký (panel video + tab kịch bản) — cùng nhận log
         self._setup_logging()
         self._build_ui()
         self._poll_log()
         self.update_idletasks()
-        self.minsize(1200, 620)
-        self._center(1420, 672)
+        self.minsize(1280, 680)
+        self._center(1560, 720)   # đủ rộng/cao cho Home + tab Thumbnail (các nút không bị che)
 
     def _apply_theme(self):
         """Theme nền trắng, phẳng, hiện đại (dựa trên 'clam' để tùy biến màu)."""
@@ -809,27 +812,75 @@ class App(tk.Tk):
         logging.getLogger().setLevel(logging.INFO)
 
     def _build_ui(self):
-        C = UI
         root = ttk.Frame(self, padding=18)
         root.grid(sticky="nsew")
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        # 3 cột: [quy trình tạo kịch bản] · [điều khiển TTS] · [log mở rộng]
-        root.columnconfigure(0, weight=0, minsize=330)
-        root.columnconfigure(1, weight=0, minsize=470)
-        root.columnconfigure(2, weight=1)
+        # 2 vùng: [nút nhỏ chuyển view] · [nội dung]  (Nhật ký nằm trong panel video)
+        root.columnconfigure(0, weight=0)   # sidebar nút nhỏ
+        root.columnconfigure(1, weight=1)   # nội dung view
         root.rowconfigure(0, weight=1)
 
-        # ════════════════════════════════════════════════
-        # CỘT 1 — Quy trình tạo kịch bản (nhận diện → Gemini → input.txt)
-        # ════════════════════════════════════════════════
-        self._build_pipeline_column(root, 0)
+        # ── Sidebar trái: 3 nút nhỏ — Home (đầy đủ) · Tạo kịch bản · Giọng nói ──
+        side = ttk.Frame(root)
+        side.grid(row=0, column=0, sticky="n", padx=(0, 14))
+        self._nav_buttons = {}
+        for key, label in [("home",   "🏠  Home\n(đầy đủ)"),
+                           ("script", "🛠  Tạo\nkịch bản"),
+                           ("voice",  "🎧  Giọng\nnói"),
+                           ("thumb",  "🖼  Thumb\nnail")]:
+            b = ttk.Button(side, text=label, width=11,
+                           command=lambda k=key: self._show_view(k))
+            b.pack(fill="x", pady=(0, 8))
+            self._nav_buttons[key] = b
+
+        # ── Vùng nội dung: 3 panel (pipeline · TTS · video) HIỆN/ẨN theo view ──
+        # Mỗi panel chỉ dựng MỘT lần (không trùng widget); nút chỉ bật/tắt hiển thị
+        # bằng grid()/grid_remove(). Home = hiện cả 3 → đúng giao diện gốc đầy đủ.
+        content = ttk.Frame(root)
+        content.grid(row=0, column=1, sticky="nsew", padx=(0, 16))
+        self._content = content
+        content.rowconfigure(0, weight=1)
+        content.columnconfigure(0, weight=0)   # pipeline
+        content.columnconfigure(1, weight=0)   # TTS
+        content.columnconfigure(2, weight=1)   # video/hành động (giãn)
+
+        frame_pipeline = ttk.Frame(content)
+        frame_pipeline.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+        frame_pipeline.columnconfigure(0, weight=1)
+        frame_pipeline.rowconfigure(0, weight=1)
+
+        frame_tts = ttk.Frame(content)
+        frame_tts.grid(row=0, column=1, sticky="nsew", padx=(0, 16))
+        frame_tts.columnconfigure(0, weight=1)
+        frame_tts.rowconfigure(0, weight=1)
+
+        frame_video = ttk.Frame(content)
+        frame_video.grid(row=0, column=2, sticky="nsew")
+        frame_video.columnconfigure(0, weight=1)
+        frame_video.rowconfigure(0, weight=1)
+
+        self._panels = {"pipeline": frame_pipeline, "tts": frame_tts,
+                        "video": frame_video}
+
+        # Panel Thumbnail — nhúng YOUTUBE/thumbnail_gui.py; phủ cả vùng nội dung khi chọn.
+        frame_thumb = ttk.Frame(content)
+        frame_thumb.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        frame_thumb.rowconfigure(0, weight=1)
+        frame_thumb.columnconfigure(0, weight=1)
+        self._panels["thumbnail"] = frame_thumb
+        self._build_thumbnail_panel(frame_thumb)
 
         # ════════════════════════════════════════════════
-        # CỘT 2 — toàn bộ điều khiển TTS
+        # PANEL pipeline — Quy trình tạo kịch bản (nhận diện → Gemini → SEO → input.txt)
         # ════════════════════════════════════════════════
-        left = ttk.Frame(root)
-        left.grid(row=0, column=1, sticky="nsew", padx=(0, 16))
+        self._build_pipeline_column(frame_pipeline, 0)
+
+        # ════════════════════════════════════════════════
+        # PANEL TTS — toàn bộ điều khiển TTS
+        # ════════════════════════════════════════════════
+        left = ttk.Frame(frame_tts)
+        left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
 
         # ── Header ──
@@ -1018,12 +1069,12 @@ class App(tk.Tk):
         # (Khối "Video dọc" đã chuyển sang CỘT 3 bên phải cho đỡ chật.)
 
         # ════════════════════════════════════════════════
-        # CỘT 3 (PHẢI) — Hành động + tiến trình ở TRÊN, nhật ký (nhỏ) ở DƯỚI
+        # PANEL video — Video dọc + Hành động + tiến trình
         # ════════════════════════════════════════════════
-        right = ttk.Frame(root)
-        right.grid(row=0, column=2, sticky="nsew")
+        right = ttk.Frame(frame_video)
+        right.grid(row=0, column=0, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(4, weight=1)   # chỉ ô nhật ký giãn ra theo chiều cao
+        right.rowconfigure(4, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
 
         # ── Video dọc (chuyển từ cột giữa sang cho đỡ chật) ──
         vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
@@ -1096,22 +1147,107 @@ class App(tk.Tk):
         ttk.Label(prog_frame, textvariable=self.status,
                   style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        # ── Nhật ký (nhỏ lại — chỉ để theo dõi, không quan trọng) ──
-        log_frame = ttk.LabelFrame(right, text="  Nhật ký  ")
-        log_frame.grid(row=4, column=0, sticky="nsew")
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self.log_box = scrolledtext.ScrolledText(
-            log_frame, width=46, height=10, state="disabled",
+        # ── Nhật ký: nằm DƯỚI dòng 'Sẵn sàng' trong panel video (giống gốc) ──
+        self._build_log_panel(right, 4)
+        self._show_view("home")   # mặc định mở Home (đầy đủ như giao diện gốc)
+
+    def _show_view(self, key):
+        """Hiện/ẩn 3 panel theo view và làm nổi nút đang chọn:
+        • home   → cả 3 panel (giống giao diện gốc đầy đủ)
+        • script → chỉ panel quy trình tạo kịch bản
+        • voice  → panel TTS + panel video/hành động
+        Ô nhật ký luôn hiển thị (nằm ngoài 3 panel)."""
+        show = {
+            "home":   ("pipeline", "tts", "video"),
+            "script": ("pipeline",),
+            "voice":  ("tts", "video"),
+            "thumb":  ("thumbnail",),
+        }[key]
+        for name, fr in self._panels.items():
+            if name in show:
+                fr.grid()
+            else:
+                fr.grid_remove()
+        # Riêng tab "Tạo kịch bản": dàn 3 bước theo NGANG + hiện nhật ký, lấp đầy
+        # chiều rộng. Ở Home/Giọng nói: pipeline là cột DỌC hẹp (như giao diện gốc).
+        is_script = (key == "script")
+        self._pipeline_set_layout(horizontal=is_script)
+        self._content.columnconfigure(0, weight=1 if is_script else 0)
+        for k, b in self._nav_buttons.items():
+            b.configure(style="Accent.TButton" if k == key else "TButton")
+
+    def _pipeline_set_layout(self, horizontal: bool):
+        """Sắp lại các bước ①②③ của 'Tạo kịch bản':
+        • horizontal=True  → 3 bước dàn ngang, nhật ký bên phải (tab xem riêng).
+        • horizontal=False → cột dọc hẹp, ẩn nhật ký (Home/Giọng nói)."""
+        w = self._pipe_wrap
+        s1, s2, s3 = self._pipe_steps
+        if horizontal:
+            for c, wt in ((0, 0), (1, 0), (2, 0), (3, 1)):
+                w.columnconfigure(c, weight=wt)
+            w.rowconfigure(1, weight=1)
+            self._pipe_hdr.grid_configure(row=0, column=0, columnspan=3, sticky="w")
+            s1.grid_configure(row=1, column=0, columnspan=1, sticky="new", padx=(0, 12))
+            s2.grid_configure(row=1, column=1, columnspan=1, sticky="new", padx=(0, 12))
+            s3.grid_configure(row=1, column=2, columnspan=1, sticky="new", padx=(0, 12))
+            self._pipe_pf.grid_configure(row=2, column=0, columnspan=3, sticky="ew")
+            self._pipe_btn_open.grid_configure(row=3, column=0, columnspan=3, sticky="w")
+            self._pipe_btn_reset.grid_configure(row=4, column=0, columnspan=3, sticky="w")
+            self._pipe_log_frame.grid()
+        else:
+            for c, wt in ((0, 1), (1, 0), (2, 0), (3, 0)):
+                w.columnconfigure(c, weight=wt)
+            w.rowconfigure(1, weight=0)
+            self._pipe_hdr.grid_configure(row=0, column=0, columnspan=1, sticky="ew")
+            s1.grid_configure(row=1, column=0, columnspan=1, sticky="ew", padx=0)
+            s2.grid_configure(row=2, column=0, columnspan=1, sticky="ew", padx=0)
+            s3.grid_configure(row=3, column=0, columnspan=1, sticky="ew", padx=0)
+            self._pipe_pf.grid_configure(row=4, column=0, columnspan=1, sticky="ew")
+            self._pipe_btn_open.grid_configure(row=5, column=0, columnspan=1, sticky="w")
+            self._pipe_btn_reset.grid_configure(row=6, column=0, columnspan=1, sticky="w")
+            self._pipe_log_frame.grid_remove()
+
+    def _build_thumbnail_panel(self, parent):
+        """Nhúng GUI tạo thumbnail (YOUTUBE/thumbnail_gui.py) vào 1 panel.
+        Lỗi (thiếu thư viện/ảnh nguồn) chỉ hiện thông báo, không làm hỏng app."""
+        try:
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import thumbnail_gui as tg
+            host = tk.Frame(parent, bg="#F4F6FB")
+            host.grid(row=0, column=0, sticky="nsew")
+            self._thumb_gui = tg.ThumbnailGUI(host, embed=True)
+        except Exception as e:
+            logging.error(f"Không tải được tab Thumbnail: {e}")
+            ttk.Label(parent, text=f"Không mở được Thumbnail Studio:\n{e}",
+                      style="Sub.TLabel").grid(row=0, column=0, padx=24, pady=24)
+
+    def _make_log_box(self, parent):
+        """Tạo 1 ô nhật ký (ScrolledText) đã set màu/tag và đăng ký vào danh sách
+        _log_boxes để _poll_log ghi log đồng thời ra mọi ô (panel video + tab kịch bản)."""
+        C = UI
+        box = scrolledtext.ScrolledText(
+            parent, width=46, height=10, state="disabled",
             font=("Consolas", 9), relief="flat", borderwidth=0,
             background=C["log_bg"], foreground=C["log_info"],
             insertbackground=C["fg"], selectbackground=C["accent_soft"],
             padx=10, pady=8, wrap="word",
         )
-        self.log_box.grid(row=0, column=0, sticky="nsew")
-        self.log_box.tag_config("info", foreground=C["log_info"])
-        self.log_box.tag_config("warn", foreground=C["log_warn"])
-        self.log_box.tag_config("err", foreground=C["log_err"])
+        box.grid(row=0, column=0, sticky="nsew")
+        box.tag_config("info", foreground=C["log_info"])
+        box.tag_config("warn", foreground=C["log_warn"])
+        box.tag_config("err", foreground=C["log_err"])
+        self._log_boxes.append(box)
+        return box
+
+    def _build_log_panel(self, parent, row):
+        """Ô nhật ký — đặt DƯỚI dòng trạng thái 'Sẵn sàng' trong panel video."""
+        log_frame = ttk.LabelFrame(parent, text="  Nhật ký  ")
+        log_frame.grid(row=row, column=0, sticky="nsew", pady=(10, 0))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log_box = self._make_log_box(log_frame)
 
     def _build_design_dropdowns(self):
         for w in self.design_attr_frame.winfo_children():
@@ -1462,9 +1598,11 @@ class App(tk.Tk):
         wrap = ttk.Frame(parent)
         wrap.grid(row=0, column=col, sticky="nsew", padx=(0, 16))
         wrap.columnconfigure(0, weight=1)
+        self._pipe_wrap = wrap
 
         hdr = ttk.Frame(wrap)
         hdr.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self._pipe_hdr = hdr
         ttk.Label(hdr, text="🛠  Tạo kịch bản", style="Header.TLabel").pack(anchor="w")
         ttk.Label(hdr, text="Audio/Video → 中文 → Gemini → input.txt",
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
@@ -1508,9 +1646,14 @@ class App(tk.Tk):
         self.btn_gemini.grid(row=0, column=0, sticky="ew")
         ttk.Label(s2, text="(tiengTrung.docx → gemini_result.docx)",
                   style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.var_seo = tk.BooleanVar(value=self._pipe_settings["seo"])
+        ttk.Checkbutton(s2, text="🔎  Tạo SEO YouTube (Gemini) sau khi xong",
+                        variable=self.var_seo).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(s2, text="(gemini_result.docx → seoYoutube.docx)",
+                  style="Hint.TLabel").grid(row=3, column=0, sticky="w", pady=(2, 0))
         self.var_auto3 = tk.BooleanVar(value=self._pipe_settings["auto3"])
         ttk.Checkbutton(s2, text="⛓  Tự động chạy bước ③ sau khi xong",
-                        variable=self.var_auto3).grid(row=2, column=0, sticky="w", pady=(6, 0))
+                        variable=self.var_auto3).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
         # ③ Chuẩn bị input.txt
         s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.txt  ")
@@ -1525,10 +1668,13 @@ class App(tk.Tk):
         ttk.Checkbutton(s3, text="⛓  Chạy tiếp tạo giọng (OmniVoice) sau khi xong",
                         variable=self.var_auto_tts).grid(row=2, column=0, sticky="w", pady=(6, 0))
 
+        self._pipe_steps = (s1, s2, s3)
+
         # Tiến trình + trạng thái của quy trình
         pf = ttk.Frame(wrap)
         pf.grid(row=4, column=0, sticky="ew", pady=(2, 0))
         pf.columnconfigure(0, weight=1)
+        self._pipe_pf = pf
         self.pipe_progress = tk.IntVar(value=0)
         ttk.Progressbar(pf, variable=self.pipe_progress, maximum=100).grid(
             row=0, column=0, sticky="ew")
@@ -1536,10 +1682,21 @@ class App(tk.Tk):
         ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
             row=1, column=0, sticky="w", pady=(4, 0))
 
-        ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
-                   command=self._open_nhan_dien).grid(row=5, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(wrap, text="↺  Reset cài đặt quy trình về gốc",
-                   command=self._reset_pipe_settings).grid(row=6, column=0, sticky="w", pady=(6, 0))
+        self._pipe_btn_open = ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
+                                         command=self._open_nhan_dien)
+        self._pipe_btn_open.grid(row=5, column=0, sticky="w", pady=(8, 0))
+        self._pipe_btn_reset = ttk.Button(wrap, text="↺  Reset cài đặt quy trình về gốc",
+                                          command=self._reset_pipe_settings)
+        self._pipe_btn_reset.grid(row=6, column=0, sticky="w", pady=(6, 0))
+
+        # Nhật ký riêng của tab "Tạo kịch bản" — chỉ hiện khi xem ngang (dàn 3 bước).
+        # Cùng nhận log với ô nhật ký ở panel video (qua _log_boxes).
+        self._pipe_log_frame = ttk.LabelFrame(wrap, text="  Nhật ký  ")
+        self._pipe_log_frame.columnconfigure(0, weight=1)
+        self._pipe_log_frame.rowconfigure(0, weight=1)
+        self._make_log_box(self._pipe_log_frame)
+        self._pipe_log_frame.grid(row=1, column=3, rowspan=4, sticky="nsew", padx=(12, 0))
+        self._pipe_log_frame.grid_remove()   # mặc định ẩn (dọc); _show_view bật khi cần
 
     def _pipe_pick_file(self):
         path = filedialog.askopenfilename(
@@ -1560,7 +1717,7 @@ class App(tk.Tk):
         """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
         save_pipe_settings(dict(
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
-            auto_tts=self.var_auto_tts.get(),
+            auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
         ))
 
@@ -1569,6 +1726,7 @@ class App(tk.Tk):
         self.var_auto2.set(PIPE_DEFAULTS["auto2"])
         self.var_auto3.set(PIPE_DEFAULTS["auto3"])
         self.var_auto_tts.set(PIPE_DEFAULTS["auto_tts"])
+        self.var_seo.set(PIPE_DEFAULTS["seo"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])
         self.pipe_var_speed.set(PIPE_DEFAULTS["speed"])
         self.pipe_var_file.set("")
@@ -1658,6 +1816,8 @@ class App(tk.Tk):
 
     def _pipe_gemini_worker(self):
         ok = False
+        seo_on = self.var_seo.get()
+        driver = None
         try:
             chunks = read_chinese_docx_chunks(CHINESE_DOCX)
             if not chunks:
@@ -1666,10 +1826,17 @@ class App(tk.Tk):
                 return
             import dich_gemini as g
             prefix = load_prefix()
-            logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini (mở Firefox)...")
+            # Nếu bật SEO: tự mở MỘT Firefox và DÙNG CHUNG cho cả dịch lẫn SEO. Tránh
+            # đóng Firefox sau khi dịch rồi mở lại cho SEO — lần mở thứ hai hay kẹt
+            # khóa profile khiến SEO không chạy được.
+            if seo_on:
+                logging.info("🌐 Mở Firefox (dùng chung cho dịch + SEO)...")
+                driver = g.init_firefox()
+            logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini...")
             results = g.send_chunks_to_gemini(
                 chunks, prefix=prefix, on_log=logging.info, out_path=GEMINI_DOCX,
-                keep_open=False,        # gửi xong (hoặc lỗi) → tự đóng Firefox
+                driver=driver,                 # None → tự mở; có driver → tái dùng
+                keep_open=(driver is not None),  # còn SEO ở sau thì giữ Firefox mở
                 on_result=lambda i, total, ans: self.pipe_status.set(
                     f"🌐 Gemini: đoạn {i + 1}/{total}"))
             g.save_results_docx(chunks, results, GEMINI_DOCX)
@@ -1677,13 +1844,45 @@ class App(tk.Tk):
             logging.info(f"✅ Gemini xong: {n_ok}/{len(results)} đoạn → {GEMINI_DOCX.name}")
             self.pipe_status.set(f"✅ Gemini xong → {GEMINI_DOCX.name}")
             ok = True
+            # Ngay sau khi có nội dung Gemini → tạo SEO YouTube (tiêu đề/mô tả/hashtag)
+            # nếu người dùng bật. SEO lỗi KHÔNG làm hỏng quy trình (ok đã True nên
+            # vẫn chạy tiếp bước ③).
+            if seo_on:
+                self._run_seo_youtube(driver=driver)
         except Exception as e:
             logging.error(f"Lỗi gửi Gemini: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
+            if driver is not None:          # đóng Firefox dùng chung sau khi xong/ lỗi
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
             self._pipe_set_busy(False)
             if ok and self.var_auto3.get():   # ⛓ tự động sang bước ③
                 self.after(600, lambda: self._pipe_prepare_input(auto=True))
+
+    def _run_seo_youtube(self, driver=None):
+        """Chạy SEO YouTube (Gemini) ngay sau bước lấy nội dung Gemini.
+
+        Lấy ĐOẠN ĐẦU của gemini_result.docx, gửi lên cuộc trò chuyện Gemini chuyên
+        SEO YouTube (đã có sẵn chỉ dẫn) rồi lưu seoYoutube.docx. driver: tái dùng
+        Firefox đang mở (do bước dịch mở) để khỏi mở lại. Mọi lỗi đều được nuốt để
+        không chặn các bước tiếp theo của quy trình."""
+        try:
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import seo_youtube_gemini as seo
+            self.pipe_status.set("🔎  Đang tạo SEO YouTube (Gemini)...")
+            logging.info("🔎 Tạo SEO YouTube từ gemini_result.docx...")
+            # Có driver → keep_open=True để seo KHÔNG tự đóng (worker đóng sau cùng).
+            seo.run(str(GEMINI_DOCX), str(SEO_DOCX),
+                    keep_open=(driver is not None), log=logging.info, driver=driver)
+            self.pipe_status.set(f"✅ SEO YouTube xong → {SEO_DOCX.name}")
+        except Exception as e:
+            logging.error(f"Lỗi tạo SEO YouTube (bỏ qua, tiếp tục quy trình): {e}")
+            self.pipe_status.set(f"⚠️ SEO YouTube lỗi: {e}")
 
     def _pipe_prepare_input(self, auto=False):
         if self._pipe_busy:
@@ -1891,10 +2090,11 @@ class App(tk.Tk):
             levelno, msg = log_queue.get_nowait()
             tag = ("err" if levelno >= logging.ERROR
                    else "warn" if levelno >= logging.WARNING else "info")
-            self.log_box.config(state="normal")
-            self.log_box.insert("end", msg + "\n", tag)
-            self.log_box.see("end")
-            self.log_box.config(state="disabled")
+            for box in self._log_boxes:   # ghi ra mọi ô nhật ký (video + tab kịch bản)
+                box.config(state="normal")
+                box.insert("end", msg + "\n", tag)
+                box.see("end")
+                box.config(state="disabled")
         self.after(200, self._poll_log)
 
 

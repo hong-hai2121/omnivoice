@@ -30,13 +30,17 @@ WINDOW_HEIGHT = 735
 
 
 class ThumbnailGUI:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root, embed: bool = False):
         self.root = root
-        self.root.title("Tạo thumbnail YouTube")
-        self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.root.minsize(920, 650)
+        # embed=True → nhúng vào 1 Frame của app khác (không gọi method của cửa sổ
+        # như title/geometry/protocol, và không tự căn giữa màn hình).
+        self.embed = embed
+        if not embed:
+            self.root.title("Tạo thumbnail YouTube")
+            self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
+            self.root.minsize(920, 650)
+            self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.configure(bg="#F4F6FB")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.events: queue.Queue[tuple[str, str]] = queue.Queue()
         self.photos = renderer.list_photo_files(renderer.CAT_IMAGE_DIR)
@@ -53,7 +57,8 @@ class ThumbnailGUI:
         self._autofill_title_from_seo()   # điền sẵn tiêu đề từ seoYoutube.docx (giống file đăng video)
         self._choose_random_photo()
         self.root.after(100, self._poll_events)
-        self.root.after(120, self._center_window)
+        if not embed:
+            self.root.after(120, self._center_window)
 
     @staticmethod
     def _load_episode_number() -> str:
@@ -89,14 +94,20 @@ class ThumbnailGUI:
 
     def _setup_style(self) -> None:
         style = ttk.Style(self.root)
-        style.theme_use("clam")
-        style.configure("TEntry", padding=8, font=("Segoe UI", 11))
-        style.configure("Accent.TButton", background="#6D5CE8", foreground="white", padding=(18, 11), font=("Segoe UI", 11, "bold"))
-        style.map("Accent.TButton", background=[("active", "#5946D8"), ("disabled", "#C9C3F4")])
-        style.configure("Soft.TButton", background="#EEEAFE", foreground="#5140C8", padding=(13, 8), font=("Segoe UI", 10, "bold"))
-        style.map("Soft.TButton", background=[("active", "#E0DBFB")])
-        style.configure("Stepper.TButton", background="#E7E3FC", foreground="#5140C8", padding=(7, 3), font=("Segoe UI", 13, "bold"))
-        style.map("Stepper.TButton", background=[("active", "#D8D1FA")])
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        # Khi nhúng (embed) thì KHÔNG ghi đè style dùng chung (TEntry) để không làm
+        # đổi giao diện của app chủ. Các nút dùng tên style riêng "Thumb*" cho an toàn.
+        if not self.embed:
+            style.configure("TEntry", padding=8, font=("Segoe UI", 11))
+        style.configure("Thumb.TButton", background="#6D5CE8", foreground="white", padding=(18, 11), font=("Segoe UI", 11, "bold"))
+        style.map("Thumb.TButton", background=[("active", "#5946D8"), ("disabled", "#C9C3F4")])
+        style.configure("ThumbSoft.TButton", background="#EEEAFE", foreground="#5140C8", padding=(13, 8), font=("Segoe UI", 10, "bold"))
+        style.map("ThumbSoft.TButton", background=[("active", "#E0DBFB")])
+        style.configure("ThumbStepper.TButton", background="#E7E3FC", foreground="#5140C8", padding=(7, 3), font=("Segoe UI", 13, "bold"))
+        style.map("ThumbStepper.TButton", background=[("active", "#D8D1FA")])
 
     @staticmethod
     def _card(parent: tk.Misc) -> tk.Frame:
@@ -112,7 +123,9 @@ class ThumbnailGUI:
     def _build_ui(self) -> None:
         self._setup_style()
 
-        header = tk.Frame(self.root, bg="#302B63", height=120)
+        # Khi nhúng (embed) thì làm gọn banner + lề để chừa chỗ cho các nút bên dưới
+        # không bị che/mất trong cửa sổ app chủ (vốn thấp hơn cửa sổ độc lập).
+        header = tk.Frame(self.root, bg="#302B63", height=70 if self.embed else 120)
         header.pack(fill="x")
         header.pack_propagate(False)
         tk.Label(
@@ -120,17 +133,17 @@ class ThumbnailGUI:
             text="THUMBNAIL STUDIO",
             bg="#302B63",
             fg="#FFFFFF",
-            font=("Segoe UI", 19, "bold"),
-        ).pack(anchor="w", padx=34, pady=(22, 2))
+            font=("Segoe UI", 15 if self.embed else 19, "bold"),
+        ).pack(anchor="w", padx=34, pady=((12 if self.embed else 22), 2))
         tk.Label(
             header,
             text="Nhập tiêu đề · đánh số tập · chọn ảnh mèo ngẫu nhiên · tạo thumbnail chỉ với một nút bấm",
             bg="#302B63",
             fg="#D9D4FF",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9 if self.embed else 10),
         ).pack(anchor="w", padx=34)
 
-        main = tk.Frame(self.root, bg="#F4F6FB", padx=24, pady=22)
+        main = tk.Frame(self.root, bg="#F4F6FB", padx=24, pady=12 if self.embed else 22)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=6, minsize=510)
         main.columnconfigure(1, weight=4, minsize=350)
@@ -156,7 +169,7 @@ class ThumbnailGUI:
         )
         self.title_text = tk.Text(
             input_card,
-            height=5,
+            height=4 if self.embed else 5,
             wrap="word",
             font=("Segoe UI", 13),
             bg="#FBFCFF",
@@ -183,10 +196,10 @@ class ThumbnailGUI:
         )
         stepper = tk.Frame(number_card, bg="#F8F7FF")
         stepper.grid(row=0, column=2, sticky="e", padx=(8, 0))
-        ttk.Button(stepper, text="−", style="Stepper.TButton", width=3, command=lambda: self._change_episode(-1)).pack(
+        ttk.Button(stepper, text="−", style="ThumbStepper.TButton", width=3, command=lambda: self._change_episode(-1)).pack(
             side="left", padx=(0, 4)
         )
-        ttk.Button(stepper, text="+", style="Stepper.TButton", width=3, command=lambda: self._change_episode(1)).pack(
+        ttk.Button(stepper, text="+", style="ThumbStepper.TButton", width=3, command=lambda: self._change_episode(1)).pack(
             side="left"
         )
         tk.Label(number_card, text="Ví dụ: 01, 02, 15", bg="#F8F7FF", fg="#77708E", font=("Segoe UI", 9)).grid(
@@ -202,7 +215,7 @@ class ThumbnailGUI:
         tk.Label(photo_header, text="Ảnh mèo ngẫu nhiên", bg="white", fg="#1F2440", font=("Segoe UI", 12, "bold")).grid(
             row=0, column=0, sticky="w"
         )
-        self.random_button = ttk.Button(photo_header, text="↻ Đổi ảnh", style="Soft.TButton", command=self._choose_random_photo)
+        self.random_button = ttk.Button(photo_header, text="↻ Đổi ảnh", style="ThumbSoft.TButton", command=self._choose_random_photo)
         self.random_button.grid(row=0, column=1, sticky="e")
         tk.Label(
             input_card,
@@ -217,7 +230,7 @@ class ThumbnailGUI:
         action = tk.Frame(input_card, bg="white")
         action.grid(row=8, column=0, sticky="ew")
         action.columnconfigure(1, weight=1)
-        self.create_button = ttk.Button(action, text="✦ Tạo thumbnail", style="Accent.TButton", command=self._start_render)
+        self.create_button = ttk.Button(action, text="✦ Tạo thumbnail", style="Thumb.TButton", command=self._start_render)
         self.create_button.grid(row=0, column=0, sticky="w")
         self.status_label = tk.Label(action, textvariable=self.status_var, bg="white", fg="#6D5CE8", font=("Segoe UI", 10, "bold"))
         self.status_label.grid(row=0, column=1, sticky="e")

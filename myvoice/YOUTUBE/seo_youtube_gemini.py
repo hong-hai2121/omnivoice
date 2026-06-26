@@ -88,7 +88,10 @@ def reset_docx(out_path):
     return out_path
 
 
-def run(input_path, output_path, max_chars=0, keep_open=True, log=print):
+def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=None):
+    """driver: truyền 1 Firefox/driver đang mở để TÁI DÙNG (chỉ điều hướng sang cuộc
+    trò chuyện SEO). Nhờ vậy không phải đóng rồi mở lại Firefox — tránh kẹt khóa
+    profile khiến lần mở thứ hai thất bại. None thì tự mở Firefox mới."""
     text = first_chunk(input_path)
     if not text:
         log(f"❌ Không đọc được đoạn đầu từ: {input_path}")
@@ -105,9 +108,15 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print):
 
     log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) — KHÔNG kèm câu lệnh — lên Gemini SEO...")
 
-    driver = None
+    own_driver = driver is None
     try:
-        driver = g.init_firefox(url=SEO_GEMINI_URL)
+        if driver is None:
+            driver = g.init_firefox(url=SEO_GEMINI_URL)
+        else:
+            # Tái dùng Firefox đang mở (đã đăng nhập) — chỉ mở cuộc trò chuyện SEO.
+            import time
+            driver.get(SEO_GEMINI_URL)
+            time.sleep(8)
         log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
         # prefix="" → chỉ gửi nguyên văn nội dung, không thêm yêu cầu gì.
         ans = g.send_to_gemini(driver, text, prefix="", on_log=log)
@@ -119,7 +128,7 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print):
         log(f"✅ XONG: đã lưu SEO → {output_path}")
         return ans
     finally:
-        if not keep_open and driver is not None:
+        if own_driver and not keep_open and driver is not None:
             try:
                 driver.quit()
             except Exception:
