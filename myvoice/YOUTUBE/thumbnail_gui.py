@@ -29,6 +29,52 @@ WINDOW_WIDTH = 1040
 WINDOW_HEIGHT = 735
 
 
+# ── Thêm "Số <tập>" / thẻ từ khóa theo số tập (khớp công cụ đăng video) ──────────
+def add_episode_to_title(title: str, ep: str) -> str:
+    """Chèn 'Số <ep>' ngay sau 'Mimi Truyện' trong tiêu đề (khớp số ở thumbnail).
+    Không có 'Mimi Truyện' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên."""
+    title = (title or "").strip()
+    if not ep or not title:
+        return title
+    marker = "mimi truyện"
+    idx = title.lower().rfind(marker)
+    if idx == -1:
+        return f"{title} Số {ep}"
+    end = idx + len(marker)
+    after = title[end:]
+    if after.lstrip().lower().startswith("số"):   # tránh nhân đôi khi chạy lại
+        return title
+    return f"{title[:end]} Số {ep}{after}".rstrip()
+
+
+def add_episode_to_description(description: str, ep: str) -> str:
+    """Thêm 'Số <ep>' vào dòng tiêu đề ĐẦU của mô tả (lần 'Mimi Truyện' xuất hiện
+    đầu tiên — thường là tiêu đề ở trên cùng), để mô tả khớp với tiêu đề."""
+    description = description or ""
+    if not ep or not description:
+        return description
+    marker = "mimi truyện"
+    idx = description.lower().find(marker)
+    if idx == -1:
+        return description
+    end = idx + len(marker)
+    after = description[end:]
+    if after.lstrip().lower().startswith("số"):
+        return description
+    return f"{description[:end]} Số {ep}{after}"
+
+
+def add_episode_tag(tags, ep: str):
+    """Thêm thẻ từ khóa 'mimi truyện số <ep>' vào cuối danh sách tag (nếu chưa có)."""
+    tags = list(tags or [])
+    if not ep:
+        return tags
+    extra = f"mimi truyện số {ep}"
+    if any((t or "").strip().lower() == extra for t in tags):
+        return tags
+    return tags + [extra]
+
+
 class ThumbnailGUI:
     def __init__(self, root, embed: bool = False):
         self.root = root
@@ -235,6 +281,21 @@ class ThumbnailGUI:
         self.status_label = tk.Label(action, textvariable=self.status_var, bg="white", fg="#6D5CE8", font=("Segoe UI", 10, "bold"))
         self.status_label.grid(row=0, column=1, sticky="e")
 
+        # 3 nút COPY nội dung đăng YouTube (lấy từ seoYoutube.docx + 'Số <tập>').
+        copy_row = tk.Frame(input_card, bg="white")
+        copy_row.grid(row=9, column=0, sticky="ew", pady=(16, 0))
+        ttk.Button(copy_row, text="📋 Tiêu đề", style="ThumbSoft.TButton",
+                   command=self._copy_title).pack(side="left")
+        ttk.Button(copy_row, text="📋 Mô tả", style="ThumbSoft.TButton",
+                   command=self._copy_description).pack(side="left", padx=(8, 0))
+        ttk.Button(copy_row, text="📋 Thẻ tag", style="ThumbSoft.TButton",
+                   command=self._copy_tags).pack(side="left", padx=(8, 0))
+        tk.Label(
+            input_card,
+            text="Tiêu đề & mô tả tự thêm “Số <tập>”; thẻ tag thêm “mimi truyện số <tập>”.",
+            bg="white", fg="#697386", font=("Segoe UI", 9), anchor="w", wraplength=430,
+        ).grid(row=10, column=0, sticky="w", pady=(6, 0))
+
         preview_card = self._card(main)
         preview_card.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         preview_card.columnconfigure(0, weight=1)
@@ -316,6 +377,44 @@ class ThumbnailGUI:
         next_number = max(0, int(current) + delta)
         self.number_var.set(str(next_number).zfill(width))
         self._save_episode_number()
+
+    # ── 3 nút COPY: tiêu đề / mô tả / thẻ tag (đã gắn 'Số <tập>') ───────────────
+    def _episode_number(self) -> str:
+        ep = self.number_var.get().strip()
+        return ep if ep.isdecimal() else ""
+
+    def _read_seo(self) -> dict:
+        """Đọc seoYoutube.docx → {title, description, tags}. Lỗi thì trả rỗng + báo."""
+        try:
+            from seo_docx_parser import parse_seo_docx
+            return parse_seo_docx(SEO_DOCX_FILE)
+        except Exception as e:
+            self.status_var.set(f"Lỗi đọc SEO: {e}")
+            return {"title": "", "description": "", "tags": []}
+
+    def _copy_text(self, text: str, what: str) -> None:
+        text = text or ""
+        if not text.strip():
+            self.status_var.set(f"Không có {what} để copy (kiểm tra seoYoutube.docx).")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set(f"✓ Đã copy {what} ({len(text)} ký tự)")
+
+    def _copy_title(self) -> None:
+        # Ưu tiên tiêu đề đang hiển thị (đã render thumbnail); thiếu thì lấy từ SEO.
+        title = self.title_text.get("1.0", "end").strip() or self._read_seo().get("title", "")
+        self._copy_text(add_episode_to_title(title, self._episode_number()), "tiêu đề")
+
+    def _copy_description(self) -> None:
+        seo = self._read_seo()
+        desc = add_episode_to_description(seo.get("description", ""), self._episode_number())
+        self._copy_text(desc, "mô tả")
+
+    def _copy_tags(self) -> None:
+        seo = self._read_seo()
+        tags = add_episode_tag(seo.get("tags", []), self._episode_number())
+        self._copy_text(", ".join(tags), "thẻ tag")
 
     def _start_render(self) -> None:
         if self.running:
