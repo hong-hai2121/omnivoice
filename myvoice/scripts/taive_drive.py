@@ -44,6 +44,7 @@ if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.a
     sys.exit()
 
 import io
+import mimetypes
 import re
 import subprocess
 from pathlib import Path
@@ -178,12 +179,51 @@ def get_credentials(log=_log):
     return creds
 
 
+def _drive_query_literal(value) -> str:
+    """Escape chuỗi dùng trong Drive query."""
+    return str(value).replace("\\", "\\\\").replace("'", "\\'")
+
+
+def find_drive_file(name, folder_id=DEFAULT_FOLDER_ID, log=_log, creds=None):
+    """Tìm file chưa bị xóa theo đúng tên trong thư mục Drive. Trả dict hoặc None."""
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    folder_id = extract_folder_id(folder_id)
+    if creds is None:
+        creds = get_credentials(log)
+    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    q = (
+        f"name = '{_drive_query_literal(name)}' "
+        f"and '{_drive_query_literal(folder_id)}' in parents "
+        "and trashed = false"
+    )
+    try:
+        response = service.files().list(
+            q=q,
+            spaces="drive",
+            pageSize=1,
+            orderBy="modifiedTime desc",
+            fields="files(id, name, webViewLink, modifiedTime)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+    except HttpError as e:
+        raise RuntimeError(f"Lỗi Drive API khi kiểm tra trùng file: {e}")
+    files = response.get("files", [])
+    return files[0] if files else None
+
+
 # ── Tải 1 file lên Drive ─────────────────────────────────────────────────────
 def upload_to_drive(file_path, folder_id=DEFAULT_FOLDER_ID, log=_log,
-                    progress_cb=None, creds=None):
+                    progress_cb=None, creds=None, drive_name=None,
+                    mimetype=None):
     """Tải MỘT file lên thư mục Drive. Trả về dict {'id', 'name', 'webViewLink'}.
 
     creds: truyền credentials có sẵn để tái dùng (tránh xác thực lại từng file).
+    drive_name: tên file hiển thị trên Drive; mặc định dùng tên file gốc.
+    mimetype: MIME type khi upload; mặc định tự đoán theo tên file.
     """
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -198,14 +238,18 @@ def upload_to_drive(file_path, folder_id=DEFAULT_FOLDER_ID, log=_log,
         creds = get_credentials(log)
     service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
-    metadata = {"name": file_path.name, "parents": [folder_id]}
-    media = MediaFileUpload(str(file_path), mimetype="video/mp4",
+    drive_name = drive_name or file_path.name
+    mimetype = mimetype or mimetypes.guess_type(drive_name)[0] or "application/octet-stream"
+
+    metadata = {"name": drive_name, "parents": [folder_id]}
+    media = MediaFileUpload(str(file_path), mimetype=mimetype,
                             chunksize=8 * 1024 * 1024, resumable=True)
     request = service.files().create(
         body=metadata, media_body=media,
         fields="id, name, webViewLink", supportsAllDrives=True)
 
-    log(f"⬆ Đang tải: {file_path.name} ({file_path.stat().st_size / 1024 / 1024:.1f} MB)...")
+    shown_name = file_path.name if drive_name == file_path.name else f"{file_path.name} → {drive_name}"
+    log(f"⬆ Đang tải: {shown_name} ({file_path.stat().st_size / 1024 / 1024:.1f} MB)...")
     response = None
     last_pct = -1
     while response is None:

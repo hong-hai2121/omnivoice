@@ -38,6 +38,7 @@ GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemin
 SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) — chạy sau bước dịch
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
+DRIVE_SCRIPT_FOLDER_ID = "1LU1gRtZJRRpIjedxUGSa_V_zW8L1q8PQ"  # thư mục Drive "kịch bản"
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
@@ -1217,11 +1218,97 @@ class App(tk.Tk):
             import thumbnail_gui as tg
             host = tk.Frame(parent, bg="#F4F6FB")
             host.grid(row=0, column=0, sticky="nsew")
-            self._thumb_gui = tg.ThumbnailGUI(host, embed=True)
+            self._thumb_gui = tg.ThumbnailGUI(host, embed=True, on_done=self._on_thumbnail_done)
         except Exception as e:
             logging.error(f"Không tải được tab Thumbnail: {e}")
             ttk.Label(parent, text=f"Không mở được Thumbnail Studio:\n{e}",
                       style="Sub.TLabel").grid(row=0, column=0, padx=24, pady=24)
+
+    @staticmethod
+    def _drive_script_name(number: str) -> str:
+        number = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(number or "").strip())
+        return f"{number or 'input'}.txt"
+
+    @staticmethod
+    def _drive_log(msg, level="info"):
+        if level == "err":
+            logging.error(msg)
+        elif level == "warn":
+            logging.warning(msg)
+        else:
+            logging.info(msg)
+
+    def _set_thumbnail_upload_status(self, text: str, ok: bool = True):
+        def _apply():
+            gui = getattr(self, "_thumb_gui", None)
+            if not gui:
+                return
+            try:
+                gui.status_var.set(text)
+                gui.status_label.configure(fg="#15803D" if ok else "#DC2626")
+            except Exception:
+                pass
+        self.after(0, _apply)
+
+    def _on_thumbnail_done(self, output_path: Path, title: str, number: str):
+        """Sau khi tạo thumbnail, upload kịch_bản/input.txt lên Drive theo số tập."""
+        episode = str(number or "").strip()
+        if not episode:
+            logging.warning("Không tải input.txt lên Drive: thiếu số tập thumbnail.")
+            return
+        threading.Thread(
+            target=self._upload_input_script_to_drive,
+            args=(SCRIPT_DIR / "input.txt", episode),
+            daemon=True,
+        ).start()
+
+    def _upload_input_script_to_drive(self, input_path: Path, episode: str):
+        drive_name = self._drive_script_name(episode)
+        try:
+            if not input_path.exists():
+                raise FileNotFoundError(f"Không tìm thấy {input_path}")
+            if input_path.stat().st_size == 0:
+                raise RuntimeError(f"{input_path.name} đang rỗng, chưa tải lên Drive.")
+
+            import taive_drive
+
+            missing = taive_drive._check_deps()
+            if missing:
+                logging.info(f"Thiếu thư viện Google API ({missing}). Đang cài...")
+                taive_drive.install_deps(self._drive_log)
+                if taive_drive._check_deps():
+                    raise RuntimeError("Không cài được thư viện Google API.")
+
+            self._set_thumbnail_upload_status(f"Đang kiểm tra {drive_name} trên Drive...", ok=True)
+            creds = taive_drive.get_credentials(self._drive_log)
+            existing = taive_drive.find_drive_file(
+                drive_name,
+                folder_id=DRIVE_SCRIPT_FOLDER_ID,
+                log=self._drive_log,
+                creds=creds,
+            )
+            if existing:
+                link = existing.get("webViewLink") or existing.get("id", "")
+                logging.info(f"↪ Drive đã có {drive_name}, bỏ qua upload: {link}")
+                self._set_thumbnail_upload_status(f"Drive đã có {drive_name}, bỏ qua", ok=True)
+                return
+
+            self._set_thumbnail_upload_status(f"Đang tải {drive_name} lên Drive...", ok=True)
+            logging.info(f"⬆ Tải {input_path.name} lên Drive/kịch bản với tên {drive_name}...")
+            result = taive_drive.upload_to_drive(
+                input_path,
+                folder_id=DRIVE_SCRIPT_FOLDER_ID,
+                log=self._drive_log,
+                creds=creds,
+                drive_name=drive_name,
+                mimetype="text/plain",
+            )
+            link = result.get("webViewLink") or result.get("id", "")
+            logging.info(f"✅ Đã tải kịch bản lên Drive: {drive_name} → {link}")
+            self._set_thumbnail_upload_status(f"Đã tải {drive_name} lên Drive", ok=True)
+        except Exception as e:
+            logging.error(f"Lỗi tải input.txt lên Drive: {e}")
+            self._set_thumbnail_upload_status("Lỗi tải input.txt lên Drive", ok=False)
 
     def _make_log_box(self, parent):
         """Tạo 1 ô nhật ký (ScrolledText) đã set màu/tag và đăng ký vào danh sách

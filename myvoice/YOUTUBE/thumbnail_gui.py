@@ -76,8 +76,9 @@ def add_episode_tag(tags, ep: str):
 
 
 class ThumbnailGUI:
-    def __init__(self, root, embed: bool = False):
+    def __init__(self, root, embed: bool = False, on_done=None):
         self.root = root
+        self.on_done = on_done
         # embed=True → nhúng vào 1 Frame của app khác (không gọi method của cửa sổ
         # như title/geometry/protocol, và không tự căn giữa màn hình).
         self.embed = embed
@@ -88,7 +89,7 @@ class ThumbnailGUI:
             self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.configure(bg="#F4F6FB")
 
-        self.events: queue.Queue[tuple[str, str]] = queue.Queue()
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.photos = renderer.list_photo_files(renderer.CAT_IMAGE_DIR)
         self.selected_photo: Path | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
@@ -98,6 +99,7 @@ class ThumbnailGUI:
         self.photo_name_var = tk.StringVar(value="Chưa chọn ảnh")
         self.status_var = tk.StringVar(value="Sẵn sàng")
         self.output_var = tk.StringVar(value="")
+        self.upload_drive_var = tk.BooleanVar(value=bool(on_done))
 
         self._build_ui()
         self._autofill_title_from_seo()   # điền sẵn tiêu đề từ seoYoutube.docx (giống file đăng video)
@@ -275,11 +277,20 @@ class ThumbnailGUI:
 
         action = tk.Frame(input_card, bg="white")
         action.grid(row=8, column=0, sticky="ew")
-        action.columnconfigure(1, weight=1)
+        status_col = 2 if self.on_done else 1
+        action.columnconfigure(status_col, weight=1)
         self.create_button = ttk.Button(action, text="✦ Tạo thumbnail", style="Thumb.TButton", command=self._start_render)
         self.create_button.grid(row=0, column=0, sticky="w")
+        self.upload_drive_check = None
+        if self.on_done:
+            self.upload_drive_check = ttk.Checkbutton(
+                action,
+                text="Tải kịch bản lên Drive",
+                variable=self.upload_drive_var,
+            )
+            self.upload_drive_check.grid(row=0, column=1, sticky="w", padx=(10, 0))
         self.status_label = tk.Label(action, textvariable=self.status_var, bg="white", fg="#6D5CE8", font=("Segoe UI", 10, "bold"))
-        self.status_label.grid(row=0, column=1, sticky="e")
+        self.status_label.grid(row=0, column=status_col, sticky="e")
 
         # 3 nút COPY nội dung đăng YouTube (lấy từ seoYoutube.docx + 'Số <tập>').
         copy_row = tk.Frame(input_card, bg="white")
@@ -434,16 +445,19 @@ class ThumbnailGUI:
         self.running = True
         self.create_button.configure(state="disabled")
         self.random_button.configure(state="disabled")
+        if self.upload_drive_check is not None:
+            self.upload_drive_check.configure(state="disabled")
         self.status_var.set("Đang tạo...")
         self.status_label.configure(fg="#D97706")
         self.output_var.set("")
+        upload_drive = bool(self.on_done and self.upload_drive_var.get())
         threading.Thread(
             target=self._render_worker,
-            args=(title, number, self.selected_photo),
+            args=(title, number, self.selected_photo, upload_drive),
             daemon=True,
         ).start()
 
-    def _render_worker(self, title: str, number: str, photo_path: Path) -> None:
+    def _render_worker(self, title: str, number: str, photo_path: Path, upload_drive: bool) -> None:
         try:
             output = renderer.add_title(
                 renderer.SOURCE_IMAGE,
@@ -454,7 +468,12 @@ class ThumbnailGUI:
                 number,
                 renderer.NUMBER_FRAME_IMAGE,
             )
-            self.events.put(("done", str(output)))
+            self.events.put(("done", {
+                "output": str(output),
+                "title": title,
+                "number": number,
+                "upload_drive": upload_drive,
+            }))
         except BaseException:
             self.events.put(("error", traceback.format_exc()))
 
@@ -463,17 +482,32 @@ class ThumbnailGUI:
             while True:
                 kind, value = self.events.get_nowait()
                 if kind == "done":
+                    info = value if isinstance(value, dict) else {"output": str(value)}
+                    output = str(info.get("output", ""))
                     self.running = False
                     self.create_button.configure(state="normal")
                     self.random_button.configure(state="normal")
+                    if self.upload_drive_check is not None:
+                        self.upload_drive_check.configure(state="normal")
                     self.status_var.set("Hoàn tất")
                     self.status_label.configure(fg="#15803D")
-                    self.output_var.set(value)
-                    messagebox.showinfo("Hoàn tất", f"Đã tạo thumbnail:\n{value}", parent=self.root)
+                    self.output_var.set(output)
+                    messagebox.showinfo("Hoàn tất", f"Đã tạo thumbnail:\n{output}", parent=self.root)
+                    if self.on_done and info.get("upload_drive"):
+                        try:
+                            self.on_done(
+                                output_path=Path(output),
+                                title=str(info.get("title", "")),
+                                number=str(info.get("number", "")),
+                            )
+                        except Exception as e:
+                            self.status_var.set(f"Thumbnail xong, lỗi bước sau: {e}")
                 elif kind == "error":
                     self.running = False
                     self.create_button.configure(state="normal")
                     self.random_button.configure(state="normal")
+                    if self.upload_drive_check is not None:
+                        self.upload_drive_check.configure(state="normal")
                     self.status_var.set("Có lỗi")
                     self.status_label.configure(fg="#DC2626")
                     self.output_var.set(value)
