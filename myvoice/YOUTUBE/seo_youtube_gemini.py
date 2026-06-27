@@ -22,9 +22,16 @@ import sys
 import os
 
 # ── Tự chuyển sang python của venv (giống các script khác trong thư mục này) ──
+# CHỈ làm khi CHẠY THẲNG file này (python seo_youtube_gemini.py). Khi được GUI
+# import (import seo_youtube_gemini), TUYỆT ĐỐI không tự chuyển: lúc đó sys.argv[0]
+# là amain_taogiong_gui.py nên subprocess.run sẽ MỞ LẠI GUI (GUI bật 2 lần) rồi
+# sys.exit() giết luôn thread SEO → SEO YouTube không chạy. Dùng normcase để tránh
+# lệch hoa/thường ổ đĩa ("d:" vs "D:") gây tự chuyển nhầm.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 _VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
-if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
+if __name__ == "__main__" and os.path.exists(_VENV_PYTHON) and \
+        os.path.normcase(os.path.abspath(sys.executable)) != \
+        os.path.normcase(os.path.abspath(_VENV_PYTHON)):
     import subprocess
     subprocess.run([_VENV_PYTHON] + sys.argv)
     sys.exit()

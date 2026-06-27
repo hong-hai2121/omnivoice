@@ -24,7 +24,9 @@ import os
 # ── Tự chuyển sang python của venv (giống các script khác trong thư mục) ──────
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 _VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
-if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
+if __name__ == "__main__" and os.path.exists(_VENV_PYTHON) and \
+        os.path.normcase(os.path.abspath(sys.executable)) != \
+        os.path.normcase(os.path.abspath(_VENV_PYTHON)):
     import subprocess
     subprocess.run([_VENV_PYTHON] + sys.argv)
     sys.exit()

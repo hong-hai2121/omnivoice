@@ -16,7 +16,9 @@ import os
 _HERE = os.path.dirname(os.path.abspath(__file__))                      # myvoice/voice
 _REPO_ROOT = os.path.abspath(os.path.join(_HERE, os.pardir, os.pardir))  # OmniVoice (gốc repo)
 _VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
-if os.path.exists(_VENV_PYTHON) and os.path.abspath(sys.executable) != os.path.abspath(_VENV_PYTHON):
+if __name__ == "__main__" and os.path.exists(_VENV_PYTHON) and \
+        os.path.normcase(os.path.abspath(sys.executable)) != \
+        os.path.normcase(os.path.abspath(_VENV_PYTHON)):
     import subprocess
     subprocess.run([_VENV_PYTHON] + sys.argv)
     sys.exit()
