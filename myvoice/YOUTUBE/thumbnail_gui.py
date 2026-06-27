@@ -64,6 +64,15 @@ def add_episode_to_description(description: str, ep: str) -> str:
     return f"{description[:end]} Số {ep}{after}"
 
 
+def ensure_brand_suffix(title: str) -> str:
+    """Đảm bảo tiêu đề kết thúc bằng '| Mimi Truyện' (dùng cho phần COPY đăng
+    YouTube). Ô nhập tiêu đề đã bỏ hậu tố này nên copy phải gắn lại."""
+    title = (title or "").strip()
+    if not title or title.lower().endswith("mimi truyện"):
+        return title
+    return f"{title} | Mimi Truyện"
+
+
 def add_episode_tag(tags, ep: str):
     """Thêm thẻ từ khóa 'mimi truyện số <ep>' vào cuối danh sách tag (nếu chưa có)."""
     tags = list(tags or [])
@@ -354,7 +363,9 @@ class ThumbnailGUI:
             seo = parse_seo_docx(SEO_DOCX_FILE)
         except Exception:
             return
-        title = (seo.get("title") or "").strip()
+        # Ô nhập (và chữ trên thumbnail) bỏ hậu tố '| Mimi Truyện'; nút Copy tiêu
+        # đề sẽ tự gắn lại hậu tố này khi đăng YouTube.
+        title = renderer.strip_brand_suffix((seo.get("title") or "").strip())
         if title:
             self.title_text.insert("1.0", title)
             self.status_var.set(f"Đã điền tiêu đề từ {SEO_DOCX_FILE.name}")
@@ -413,8 +424,10 @@ class ThumbnailGUI:
         self.status_var.set(f"✓ Đã copy {what} ({len(text)} ký tự)")
 
     def _copy_title(self) -> None:
-        # Ưu tiên tiêu đề đang hiển thị (đã render thumbnail); thiếu thì lấy từ SEO.
-        title = self.title_text.get("1.0", "end").strip() or self._read_seo().get("title", "")
+        # Tiêu đề copy LẤY THẲNG TỪ tài liệu SEO (seoYoutube.docx) + số tập — KHÔNG
+        # lấy từ ô nhập (ô nhập đã bỏ '| Mimi Truyện' cho thumbnail). SEO đã có sẵn
+        # '| Mimi Truyện'; ensure_brand_suffix chỉ phòng khi SEO thiếu hậu tố.
+        title = ensure_brand_suffix(self._read_seo().get("title", ""))
         self._copy_text(add_episode_to_title(title, self._episode_number()), "tiêu đề")
 
     def _copy_description(self) -> None:

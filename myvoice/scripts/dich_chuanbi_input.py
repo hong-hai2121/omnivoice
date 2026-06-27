@@ -48,6 +48,30 @@ DEFAULT_INPUT = KICHBAN_DIR / "input.txt"
 # Dòng cấu trúc cần bỏ (kể cả khi không phải Heading): tiêu đề tổng + "Đoạn k ..."
 _SKIP_RE = re.compile(r"^(kết quả dịch từ gemini.*|đoạn\s*\d+.*|doan\s*\d+.*)$", re.IGNORECASE)
 
+# Chú thích trong ngoặc cần bỏ: () và [] (kèm cả ngoặc full-width của bản gốc
+# tiếng Trung: （）【】［］). Mỗi mẫu chỉ khớp 1 lớp ngoặc; main() lặp để xử lý
+# ngoặc lồng nhau.
+_ANNOTATION_RE = re.compile(
+    r"\([^()]*\)|\[[^\[\]]*\]|（[^（）]*）|【[^【】]*】|［[^［］]*］"
+)
+
+
+def remove_annotations(text):
+    """Bỏ các chú thích nằm trong dấu () và [] (kể cả ngoặc lồng nhau), rồi dọn
+    khoảng trắng thừa do việc bỏ ngoặc để lại. Trả về nội dung đã làm sạch."""
+    prev = None
+    while prev != text:                 # lặp tới khi không còn ngoặc nào (xử lý lồng nhau)
+        prev = text
+        text = _ANNOTATION_RE.sub("", text)
+    cleaned = []
+    for line in text.split("\n"):
+        line = re.sub(r"[ \t]{2,}", " ", line)         # gộp nhiều khoảng trắng
+        line = re.sub(r"\s+([,.;:!?…])", r"\1", line)  # bỏ space trước dấu câu
+        line = line.strip()
+        if line:                        # bỏ dòng rỗng còn lại (vd dòng chỉ có chú thích)
+            cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
 
 def extract_content(path):
     """Lấy toàn bộ nội dung, bỏ tiêu đề 'Kết quả dịch từ Gemini' và các 'Đoạn k',
@@ -101,6 +125,13 @@ def main(argv=None):
     content = extract_content(docx_path)
     if not content:
         print(f"❌ Không lấy được nội dung nào từ: {docx_path}")
+        sys.exit(2)
+
+    # ── Bỏ chú thích trong () và [] — áp dụng SAU các bước chuẩn bị ở trên ─────
+    print("🧽 BƯỚC 2b — Bỏ chú thích trong dấu () và []...")
+    content = remove_annotations(content)
+    if not content:
+        print(f"❌ Sau khi bỏ chú thích không còn nội dung nào từ: {docx_path}")
         sys.exit(2)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

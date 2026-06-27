@@ -40,6 +40,7 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+import re
 import time
 from pathlib import Path
 
@@ -99,6 +100,21 @@ RESPONSE_SELECTORS = [
     ".model-response-text",
     "model-response",
 ]
+
+# ── Kiểm tra tiếng Trung trong bản dịch ──────────────────────────────────────
+# Bản dịch ra tiếng Việt KHÔNG được còn ký tự Hán. Nếu còn → Gemini chưa dịch
+# hết, ta gửi lại chính đoạn đó kèm câu yêu cầu chỉ trả về nội dung dịch.
+# Khoảng: CJK Unified Ideographs + Extension A (đủ phủ chữ Hán phồn/giản thể).
+_CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+# Số lần gửi lại tối đa khi bản dịch còn dính tiếng Trung.
+MAX_CHINESE_RETRIES = int(os.environ.get("OMNI_GEMINI_RETRY_CHINESE", "3"))
+# Câu yêu cầu chèn lên đầu khi gửi lại đoạn còn tiếng Trung.
+RETRY_CHINESE_PREFIX = "chỉ trả về nội dung dịch không giao tiếp gì thêm :"
+
+
+def has_chinese(text):
+    """True nếu text còn chứa ký tự tiếng Trung (Hán)."""
+    return bool(text) and _CHINESE_RE.search(text) is not None
 
 
 def _ensure_selenium():
@@ -357,6 +373,19 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             on_log(f"📤 Gửi đoạn {i + 1}/{total} ({len(chunk)} ký tự)...")
             try:
                 ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
+                # ── Kiểm tra tiếng Trung: bản dịch còn ký tự Hán nghĩa là Gemini
+                #    chưa dịch hết → GỬI LẠI chính đoạn đó kèm câu yêu cầu chỉ trả
+                #    về nội dung dịch. Lặp tối đa MAX_CHINESE_RETRIES lần rồi mới lưu.
+                retry = 0
+                while ans and has_chinese(ans) and retry < MAX_CHINESE_RETRIES:
+                    retry += 1
+                    on_log(f"🈶 Đoạn {i + 1}/{total} còn tiếng Trung — gửi lại "
+                           f"(lần {retry}/{MAX_CHINESE_RETRIES})...")
+                    ans = send_to_gemini(driver, chunk,
+                                         prefix=RETRY_CHINESE_PREFIX, on_log=on_log)
+                if ans and has_chinese(ans):
+                    on_log(f"⚠️ Đoạn {i + 1}/{total} VẪN còn tiếng Trung sau "
+                           f"{MAX_CHINESE_RETRIES} lần gửi lại — vẫn lưu tạm để xem lại.")
             except Exception as e:
                 # ── LỖI GIỮA CHỪNG ──────────────────────────────────────────
                 # Lưu lại những đoạn ĐÃ XONG rồi báo lỗi để dừng sạch; phần đã

@@ -33,6 +33,15 @@ OUTPUT_DIR = HERE.parent / "kịch_bản" / "output"
 DEFAULT_TITLE = "Bữa Tiệc Toàn Ngỗng 388 Tệ Và Sự Thật Đau Đớn Sau Nhiều Năm."
 DEFAULT_NUMBER = "01"
 
+# Hậu tố thương hiệu "| Mimi Truyện" CHỈ bỏ khi VẼ chữ lên thumbnail. Tiêu đề để
+# COPY (đăng YouTube) đi đường khác (thumbnail_gui._copy_title) nên vẫn giữ nguyên.
+_BRAND_SUFFIX_RE = re.compile(r"\s*\|\s*mimi\s*truyện\s*$", re.IGNORECASE)
+
+
+def strip_brand_suffix(title: str) -> str:
+    """Bỏ phần '| Mimi Truyện' ở CUỐI tiêu đề (chỉ dùng cho chữ trên thumbnail)."""
+    return _BRAND_SUFFIX_RE.sub("", title or "").rstrip()
+
 # Phần giấy có dòng kẻ trong ảnh mẫu. Góc dương giúp chữ nghiêng theo mặt giấy.
 # Dùng gần hết phần giấy có dòng kẻ để tiêu đề nổi bật như thumbnail YouTube.
 TEXT_BOX = (65, 265, 1235, 885)
@@ -360,6 +369,7 @@ def add_title(
     number_frame_path: Path,
     max_lines: int = 4,
 ) -> Path:
+    title = strip_brand_suffix(title)   # bỏ '| Mimi Truyện' khỏi chữ trên thumbnail
     paper = Image.open(source).convert("RGBA")
     # Thứ tự lớp: nền hoa → tờ giấy/ảnh/nội dung → khung trang trí trên cùng.
     background = load_canvas_layer(BACKGROUND_IMAGE, paper.size)
