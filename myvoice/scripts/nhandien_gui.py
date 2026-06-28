@@ -49,7 +49,8 @@ DEFAULT_MODEL = "medium"
 # Tốc độ phát audio khi nhận diện (0.7 = chậm lại cho dễ bắt chữ với giọng đọc nhanh)
 SPEEDS = ["0.6", "0.7", "0.8", "0.9", "1.0"]
 DEFAULT_SPEED = "0.7"
-PLACEHOLDER = "Chọn file hoặc dán đường dẫn file (mp3/mp4/wav...) — hoặc link video"
+PLACEHOLDER = ("Mỗi dòng 1 link hoặc 1 file (mp3/mp4/wav...). "
+               "Nhiều dòng = xử lý lần lượt, mỗi link tạo 1 thư mục kịch bản.")
 
 # Câu hướng dẫn MẶC ĐỊNH được chèn lên ĐẦU mỗi lần bấm "Sao chép kết quả".
 # Người dùng có thể sửa ngay trên GUI (tab "Câu mở đầu"); bản đã sửa lưu ở PREFIX_FILE.
@@ -272,6 +273,123 @@ def worker(source: str, model_name: str, speed: float, on_seg, on_prog, on_done)
         on_done(transcript)
 
 
+# ── Tạo input.txt từ bản dịch Gemini (bỏ cấu trúc + bỏ chú thích () []) ──────
+def _prepare_input_txt(gemini_docx, out_txt) -> bool:
+    try:
+        import dich_chuanbi_input as prep
+        content = prep.remove_annotations(prep.extract_content(gemini_docx))
+        if not content:
+            log("⚠️ Bản dịch rỗng sau khi xử lý — không tạo được input.txt.", "warn")
+            return False
+        Path(out_txt).write_text(content, encoding="utf-8")
+        return True
+    except Exception as e:
+        log(f"⚠️ Lỗi tạo input.txt: {e}", "warn")
+        return False
+
+
+# ── Worker NHIỀU LINK: mỗi link 1 thư mục kịch_bản/NN, chạy full pipeline ────
+# (nhận diện → dịch Gemini → input.txt → SEO YouTube), tuần tự theo thứ tự.
+# Tái dùng MỘT Firefox cho cả dịch + SEO của mọi link (điều hướng giữa 2 URL).
+def batch_worker(sources, model_name, speed, prefix, on_seg, on_prog, on_done):
+    import time
+    old_stdout = sys.stdout
+    sys.stdout = _StdoutToLog(mirror=old_stdout)
+    driver = None
+    total = len(sources)
+    ok_count = 0
+    try:
+        import dich_gemini
+        # seo_youtube_gemini nằm ở myvoice/YOUTUBE — thêm vào sys.path để import được.
+        _youtube_dir = str(BASE_DIR.parent / "YOUTUBE")
+        if _youtube_dir not in sys.path:
+            sys.path.insert(0, _youtube_dir)
+        import seo_youtube_gemini as seo
+        log(f"📚 CHẾ ĐỘ NHIỀU LINK: {total} link — mỗi link 1 thư mục trong kịch_bản/.", "ok")
+        log(f"📦 Model: {model_name}  •  Tốc độ: {speed}x")
+
+        for i, src in enumerate(sources, 1):
+            folder = KICHBAN_DIR / f"{i:02d}"
+            folder.mkdir(parents=True, exist_ok=True)
+            log(f"\n════════ 🔗 LINK {i}/{total} → {folder.name}/ ════════", "ok")
+            on_seg(f"\n\n═════ Link {i}/{total} ({folder.name}) ═════\n")
+            try:
+                s = src.strip().strip('"').strip("'")
+                # 1) File có sẵn → dùng trực tiếp; link → tải MP3.
+                if os.path.isfile(s):
+                    media_path = s
+                    log(f"📁 File local: {media_path}")
+                elif s.lower().startswith(("http://", "https://")):
+                    log(f"🌐 Tải từ link: {s}")
+                    media_path = download_mp3(s, DOWNLOAD_DIR)
+                    if not media_path:
+                        log(f"❌ Link {i}: không tải được audio — bỏ qua.", "err")
+                        continue
+                else:
+                    log(f"❌ Link {i}: không hợp lệ — bỏ qua.", "err")
+                    continue
+
+                # 2) Nhận diện tiếng Trung → lưu _zh.docx vào thư mục của link.
+                log("📝 Nhận diện giọng nói tiếng Trung...")
+                partial = os.path.splitext(media_path)[0] + "_zh.partial.txt"
+                transcript = recog.transcribe_chinese(
+                    media_path, model_name=model_name, speed=speed,
+                    on_segment=on_seg, on_progress=on_prog, partial_path=partial,
+                )
+                if not transcript:
+                    log(f"❌ Link {i}: không nhận diện được nội dung — bỏ qua.", "err")
+                    continue
+                zh_docx = folder / f"{Path(media_path).stem}_zh.docx"
+                recog.save_docx(transcript, str(zh_docx), title=os.path.basename(media_path))
+                log(f"💾 Đã lưu bản nhận diện: {zh_docx}", "ok")
+
+                chunks = recog.split_into_chunks(transcript)
+                if not chunks:
+                    log(f"⚠️ Link {i}: không tách được đoạn — bỏ qua dịch/SEO.", "warn")
+                    continue
+
+                # 3) Dịch Gemini (tái dùng Firefox; điều hướng về chat dịch).
+                if driver is None:
+                    log("🌐 Mở Firefox + Gemini (chat dịch)...")
+                    driver = dich_gemini.init_firefox()
+                else:
+                    driver.get(dich_gemini.GEMINI_URL)   # chat mới cho link này
+                    time.sleep(8)
+                log(f"🤖 Gửi {len(chunks)} đoạn sang Gemini để dịch...")
+                gemini_docx = folder / "gemini_result.docx"
+                dich_gemini.send_chunks_to_gemini(
+                    chunks, prefix=prefix, driver=driver, out_path=gemini_docx,
+                    on_log=lambda m: log(m),
+                )
+                log(f"💾 Đã lưu bản dịch: {gemini_docx}", "ok")
+
+                # 4) input.txt (bỏ cấu trúc + chú thích).
+                if _prepare_input_txt(gemini_docx, folder / "input.txt"):
+                    log(f"💾 Đã tạo: {folder / 'input.txt'}", "ok")
+
+                # 5) SEO YouTube (tái dùng Firefox; điều hướng sang chat SEO).
+                log("🔎 Tạo SEO YouTube...")
+                seo.run(str(gemini_docx), str(folder / "seoYoutube.docx"),
+                        driver=driver, keep_open=True, log=lambda m: log(m))
+                log(f"💾 Đã tạo: {folder / 'seoYoutube.docx'}", "ok")
+
+                ok_count += 1
+                log(f"✅ Link {i}/{total} HOÀN TẤT.", "ok")
+            except Exception as e:
+                # Một link lỗi không làm hỏng cả batch — ghi log rồi sang link kế.
+                log(f"❌ Lỗi ở link {i}/{total}: {e}", "err")
+                log(traceback.format_exc(), "err")
+                continue
+
+        log(f"\n🎉 XONG: {ok_count}/{total} link hoàn tất.", "ok")
+    except Exception as e:
+        log(f"❌ Lỗi batch: {e}", "err")
+        log(traceback.format_exc(), "err")
+    finally:
+        sys.stdout = old_stdout
+        on_done(ok_count, total)
+
+
 # ── GIAO DIỆN ────────────────────────────────────────────────────────────────
 class App:
     def __init__(self, root: tk.Tk):
@@ -341,18 +459,18 @@ class App:
         # Hàng nhập: ô đường dẫn + nút Chọn file
         in_row = tk.Frame(self.root, bg=UI["bg"])
         in_row.pack(fill="x", **pad)
-        self.url_var = tk.StringVar()
-        self.entry = tk.Entry(in_row, textvariable=self.url_var, font=("Segoe UI", 11),
-                              bg=UI["field"], fg=UI["muted"], relief="solid", bd=1,
-                              highlightthickness=1, highlightcolor=UI["accent"],
-                              insertbackground=UI["fg"])
-        self.entry.pack(side="left", fill="x", expand=True, ipady=7)
-        self.entry.insert(0, PLACEHOLDER)
+        # Ô nhập NHIỀU DÒNG: mỗi dòng 1 link/file. 1 dòng → xử lý như cũ; nhiều
+        # dòng → chạy lần lượt, mỗi link 1 thư mục kịch bản (01, 02, ...).
+        self.entry = tk.Text(in_row, height=3, font=("Segoe UI", 11),
+                             bg=UI["field"], fg=UI["muted"], relief="solid", bd=1,
+                             highlightthickness=1, highlightcolor=UI["accent"],
+                             insertbackground=UI["fg"], wrap="word", padx=8, pady=6)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.entry.insert("1.0", PLACEHOLDER)
         self.entry.bind("<FocusIn>", self._clear_placeholder)
         self.entry.bind("<FocusOut>", self._restore_placeholder)
-        self.entry.bind("<Return>", lambda e: self.start())
         ttk.Button(in_row, text="📁 Chọn file", style="Ghost.TButton",
-                   command=self._pick_file).pack(side="left", padx=(8, 0))
+                   command=self._pick_file).pack(side="left", padx=(8, 0), anchor="n")
 
         # Hàng điều khiển: model + nút
         row = tk.Frame(self.root, bg=UI["bg"])
@@ -453,16 +571,34 @@ class App:
 
         self.nb = nb
 
-    # ── Placeholder helpers ──
+    # ── Placeholder helpers (ô nhập là Text nhiều dòng) ──
+    def _entry_text(self) -> str:
+        return self.entry.get("1.0", "end")
+
+    def _is_placeholder(self) -> bool:
+        return self._entry_text().strip() == PLACEHOLDER
+
     def _clear_placeholder(self, _=None):
-        if self.entry.get() == PLACEHOLDER:
-            self.entry.delete(0, "end")
+        if self._is_placeholder():
+            self.entry.delete("1.0", "end")
             self.entry.config(fg=UI["fg"])
 
     def _restore_placeholder(self, _=None):
-        if not self.entry.get().strip():
-            self.entry.insert(0, PLACEHOLDER)
+        if not self._entry_text().strip():
+            self.entry.delete("1.0", "end")
+            self.entry.insert("1.0", PLACEHOLDER)
             self.entry.config(fg=UI["muted"])
+
+    def _sources(self) -> list:
+        """Danh sách link/file hợp lệ từ ô nhập (mỗi dòng 1 mục), giữ thứ tự."""
+        if self._is_placeholder():
+            return []
+        out = []
+        for line in self._entry_text().splitlines():
+            s = line.strip().strip('"').strip("'")
+            if s and (os.path.isfile(s) or s.lower().startswith(("http://", "https://"))):
+                out.append(s)
+        return out
 
     def _pick_file(self):
         path = filedialog.askopenfilename(
@@ -474,7 +610,10 @@ class App:
             ],
         )
         if path:
-            self.url_var.set(path)
+            if self._is_placeholder():
+                self.entry.delete("1.0", "end")
+            cur = self._entry_text().strip()
+            self.entry.insert("end", ("\n" if cur else "") + path)  # thêm 1 dòng mới
             self.entry.config(fg=UI["fg"])
 
     def _copy_result(self):
@@ -628,17 +767,26 @@ class App:
     def start(self):
         if self._busy:
             return
-        src = self.url_var.get().strip().strip('"').strip("'")
-        is_file = os.path.isfile(src)
-        is_link = src.lower().startswith(("http://", "https://"))
-        if not src or src == PLACEHOLDER or not (is_file or is_link):
+        sources = self._sources()
+        if not sources:
             messagebox.showwarning(
                 "Đầu vào không hợp lệ",
-                "Hãy chọn một file có sẵn trên máy (mp3/mp4/wav...) "
-                "hoặc dán một link video (bắt đầu bằng http).",
+                "Hãy nhập (mỗi dòng một) file có sẵn trên máy (mp3/mp4/wav...) "
+                "hoặc link video (bắt đầu bằng http).",
             )
             return
 
+        try:
+            speed = float(self.speed_var.get())
+        except (TypeError, ValueError):
+            speed = float(DEFAULT_SPEED)
+
+        # ≥2 link → chế độ batch (tạo thư mục + full pipeline). 1 link → như cũ.
+        if len(sources) >= 2:
+            self._start_batch(sources, speed)
+            return
+
+        src = sources[0]
         self._busy = True
         self.btn_run.config(state="disabled")
         self.status.set("⏳ Đang tải model / chuẩn bị...")
@@ -654,13 +802,44 @@ class App:
         on_prog = lambda frac: ui_queue.put(("prog", frac))
         on_done = lambda transcript: ui_queue.put(("done", transcript))
 
-        try:
-            speed = float(self.speed_var.get())
-        except (TypeError, ValueError):
-            speed = float(DEFAULT_SPEED)
         threading.Thread(
             target=worker,
             args=(src, self.model_var.get(), speed, on_seg, on_prog, on_done),
+            daemon=True,
+        ).start()
+
+    def _start_batch(self, sources, speed):
+        """Xử lý nhiều link lần lượt: mỗi link 1 thư mục kịch_bản/NN, chạy full
+        pipeline (nhận diện → dịch Gemini → input.txt → SEO YouTube)."""
+        if not messagebox.askyesno(
+            "Xử lý nhiều link",
+            f"Sẽ xử lý {len(sources)} link THEO THỨ TỰ. Mỗi link tạo một thư mục "
+            "(01, 02, ...) trong kịch_bản, chứa bản nhận diện, bản dịch Gemini, "
+            "input.txt và seoYoutube.docx.\n\n"
+            "Bước dịch & SEO dùng Firefox — hãy ĐÓNG Firefox đang mở (profile bị "
+            "khoá khi đang chạy) và đảm bảo profile đã đăng nhập Google.\n\nTiếp tục?",
+        ):
+            return
+
+        self._busy = True
+        self.btn_run.config(state="disabled")
+        self.result.delete("1.0", "end")
+        self._clear_chunk_buttons()
+        self._clear_log()
+        self.progress["value"] = 0
+        self.nb.select(0)
+        self.status.set(f"⏳ Bắt đầu xử lý {len(sources)} link...")
+
+        prefix = self.prefix_box.get("1.0", "end").strip()
+        save_prefix(prefix)  # nhớ câu mở đầu (dùng làm hướng dẫn dịch) cho lần sau
+
+        on_seg = lambda text, _frac=None: ui_queue.put(("seg", text))
+        on_prog = lambda frac: ui_queue.put(("prog", frac))
+        on_done = lambda ok, total: ui_queue.put(("batch_done", (ok, total)))
+
+        threading.Thread(
+            target=batch_worker,
+            args=(sources, self.model_var.get(), speed, prefix, on_seg, on_prog, on_done),
             daemon=True,
         ).start()
 
@@ -720,6 +899,15 @@ class App:
                     self.status.set(f"📝 Đang nhận diện... {pct:.0f}%")
                 elif kind == "done":
                     self._finish(payload)
+                elif kind == "batch_done":
+                    ok, total = payload
+                    self._busy = False
+                    self.btn_run.config(state="normal")
+                    self.progress["value"] = 100
+                    self.status.set(
+                        f"✅ Xong {ok}/{total} link. Mỗi link 1 thư mục trong kịch_bản."
+                    )
+                    self._play_done_sound(ok=(ok > 0))
                 elif kind == "gemini":
                     i, total, ans = payload
                     self.gemini_box.insert("end", f"───── Đoạn {i + 1}/{total} ─────\n")

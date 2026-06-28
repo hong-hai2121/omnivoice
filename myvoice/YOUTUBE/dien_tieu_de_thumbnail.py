@@ -26,7 +26,8 @@ THUMBNAIL_DIR = HERE / "thumbnail"
 SOURCE_IMAGE = THUMBNAIL_DIR / "tiêu đề.png"
 BACKGROUND_IMAGE = THUMBNAIL_DIR / "khung nên.png"
 FOREGROUND_FRAME_IMAGE = THUMBNAIL_DIR / "khung trên.png"
-FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"
+FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"              # khung ảnh NGANG (mèo nằm ngang)
+FRAME_IMAGE_VERTICAL = THUMBNAIL_DIR / "anhdoc.png"  # khung ảnh DỌC (mèo dọc/đứng)
 NUMBER_FRAME_IMAGE = THUMBNAIL_DIR / "Số.png"
 CAT_IMAGE_DIR = HERE.parent / "Anh"
 OUTPUT_DIR = HERE.parent / "kịch_bản" / "output"
@@ -58,6 +59,11 @@ TITLE_EDGE = (60, 0, 6)               # rim tối ngoài cùng
 # Vùng BÊN TRONG khung ảnh.png trên canvas 1920×1080. Ảnh mèo bị crop theo
 # đúng hình chữ nhật này, sau đó ảnh khung được phủ lên trên để che hoàn toàn phần dư.
 FRAME_INNER_BOX = (1225, 452, 1880, 855)
+# Lỗ của khung DỌC (anhdoc.png) — dò từ vùng trong suốt bên trong + nới nhẹ để ảnh
+# phủ kín dưới viền khung (không hở mép trong suốt).
+FRAME_INNER_BOX_VERTICAL = (1285, 159, 1898, 1078)
+# Bán kính bo góc ảnh khi dùng khung DỌC (theo hệ 1920x1080).
+PHOTO_CORNER_RADIUS = 45
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 # Vùng trắng bên trong thẻ Số.png (canvas 1920×1080). Góc âm làm số nghiêng
@@ -211,8 +217,14 @@ def select_default_photo(photo_dir: Path) -> Path:
     return photos[0]
 
 
-def add_photo_to_frame(base: Image.Image, photo_path: Path, frame_path: Path) -> Image.Image:
-    """Ghép ảnh theo kiểu cover vào lòng khung và xóa mọi phần nằm ngoài khung."""
+def add_photo_to_frame(base: Image.Image, photo_path: Path, frame_path: Path,
+                       inner_box_ref: tuple = FRAME_INNER_BOX,
+                       round_corners: bool = False) -> Image.Image:
+    """Ghép ảnh theo kiểu cover vào lòng khung và xóa mọi phần nằm ngoài khung.
+
+    inner_box_ref: toạ độ "lỗ" của khung (ngang hay dọc) theo hệ 1920x1080.
+    round_corners: True thì bo góc ảnh (dùng cho khung dọc cho đẹp).
+    """
     if not photo_path.is_file():
         raise FileNotFoundError(f"Không tìm thấy ảnh mèo: {photo_path}")
     if not frame_path.is_file():
@@ -220,7 +232,7 @@ def add_photo_to_frame(base: Image.Image, photo_path: Path, frame_path: Path) ->
 
     width, height = base.size
     scale_x, scale_y = width / 1920, height / 1080
-    x0, y0, x1, y1 = FRAME_INNER_BOX
+    x0, y0, x1, y1 = inner_box_ref
     inner_box = (
         round(x0 * scale_x), round(y0 * scale_y),
         round(x1 * scale_x), round(y1 * scale_y),
@@ -230,6 +242,13 @@ def add_photo_to_frame(base: Image.Image, photo_path: Path, frame_path: Path) ->
     # ImageOps.fit thực hiện crop cover: không méo ảnh, phần thừa ngoài khung bị bỏ.
     photo = Image.open(photo_path).convert("RGBA")
     photo = ImageOps.fit(photo, inner_size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+    if round_corners:
+        # Bo góc ảnh: vẽ mặt nạ chữ nhật bo góc rồi gán làm alpha của ảnh.
+        radius = max(1, round(PHOTO_CORNER_RADIUS * scale_x))
+        mask = Image.new("L", inner_size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, inner_size[0] - 1, inner_size[1] - 1), radius=radius, fill=255)
+        photo.putalpha(mask)
     clipped_photo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     clipped_photo.alpha_composite(photo, dest=(inner_box[0], inner_box[1]))
 
@@ -413,7 +432,19 @@ def add_title(
     text_layer = text_layer.rotate(TEXT_ANGLE, resample=Image.Resampling.BICUBIC, center=center)
     result = Image.alpha_composite(base, shadow_layer)
     result = Image.alpha_composite(result, text_layer)
-    result = add_photo_to_frame(result, photo_path, frame_path)
+    # Chọn khung theo HƯỚNG ảnh mèo: ảnh DỌC (cao > rộng) → anhdoc.png; ảnh NGANG
+    # → ảnh.png. Chỉ dùng MỘT khung, không chồng cả hai. Thiếu khung dọc thì lùi
+    # về khung ngang cho an toàn.
+    with Image.open(photo_path) as _p:
+        is_portrait = _p.height > _p.width
+    use_vertical = is_portrait and FRAME_IMAGE_VERTICAL.is_file()
+    if use_vertical:
+        chosen_frame, chosen_box = FRAME_IMAGE_VERTICAL, FRAME_INNER_BOX_VERTICAL
+    else:
+        chosen_frame, chosen_box = frame_path, FRAME_INNER_BOX
+    # Khung dọc → bo góc ảnh cho đẹp.
+    result = add_photo_to_frame(result, photo_path, chosen_frame, chosen_box,
+                                round_corners=use_vertical)
     if number:
         result = add_number_to_tag(result, number, number_frame_path)
     result = Image.alpha_composite(result, load_canvas_layer(FOREGROUND_FRAME_IMAGE, result.size))

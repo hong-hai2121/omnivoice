@@ -24,7 +24,6 @@ Cách dùng:
     python video_khung.py
 """
 
-import io
 import json
 import random
 import subprocess
@@ -37,12 +36,16 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-# Khi chạy độc lập cần ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt).
-# Guard hasattr vì khi import vào GUI (pythonw/no-console) stdout có thể không có .buffer.
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "buffer"):
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+# Ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt). Dùng reconfigure() để đổi
+# encoding TẠI CHỖ — KHÔNG bọc TextIOWrapper mới. Nếu bọc wrapper mới, khi module
+# khác (video_doc) cũng bọc lần nữa thì wrapper trung gian mất tham chiếu, bị GC và
+# ĐÓNG luôn buffer dùng chung → "I/O operation on closed file" ở lần ghi sau.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if _stream is not None:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 BG_DIR     = BASE_DIR / "Backbround"

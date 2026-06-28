@@ -71,6 +71,9 @@ FIREFOX_PROFILE_PATH = os.environ.get(
 # Thời gian chờ Gemini trả lời mỗi đoạn (giây) và thời gian "đứng yên" để coi là xong.
 RESPONSE_TIMEOUT = int(os.environ.get("OMNI_GEMINI_TIMEOUT", "300"))
 RESPONSE_SETTLE = float(os.environ.get("OMNI_GEMINI_SETTLE", "6"))
+# Số lần ĐÓNG HẲN Firefox → mở lại (chat mới) → gửi lại đoạn khi Gemini treo/không
+# trả lời gì sau RESPONSE_TIMEOUT giây (mặc định 5 phút). 0 = không tự mở lại.
+MAX_TIMEOUT_RESTARTS = int(os.environ.get("OMNI_GEMINI_RESTART", "2"))
 
 # ── Selector cho Gemini (đã dò trên Gemini thật 2026-06; chỉnh nếu DOM đổi) ───
 # Ô nhập lệnh: Gemini dùng trình soạn thảo Quill (div.ql-editor contenteditable,
@@ -164,6 +167,23 @@ def is_driver_alive(driver):
         return True
     except Exception:
         return False
+
+
+def restart_firefox(driver=None, profile=None, url=GEMINI_URL, wait=8, on_log=print):
+    """Đóng HẲN Firefox hiện tại (nếu có) rồi mở lại + vào Gemini → trả về driver mới.
+
+    Dùng khi Gemini treo/không phản hồi: đóng trình duyệt để bỏ phiên kẹt, mở chat
+    mới rồi gửi lại đoạn. Luôn cố đóng cũ trước (nuốt lỗi) và chờ vài giây cho hệ
+    điều hành nhả khóa profile trước khi mở lại.
+    """
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        time.sleep(3)   # nhả khóa profile trước khi mở lại
+    on_log("🦊 Đã đóng Firefox — đang mở lại...")
+    return init_firefox(profile=profile, url=url, wait=wait)
 
 
 # ── Helper thao tác DOM ──────────────────────────────────────────────────────
@@ -289,9 +309,16 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     def _norm(s):
         return " ".join((s or "").split())
 
-    # Ghi nhớ các câu trả lời ĐÃ CÓ trước khi gửi, và nội dung mình sắp gửi, để
-    # tuyệt đối không bắt nhầm câu cũ hoặc chính tin nhắn mình vừa gửi (echo).
-    before_texts = {_norm(e.text) for e in _get_responses(driver)}
+    # Ghi nhớ các câu trả lời ĐÃ CÓ trước khi gửi. Dùng SỐ LƯỢNG phần tử trả lời
+    # làm dấu hiệu chính để nhận biết câu MỚI: <message-content> chỉ có ở câu trả
+    # lời của model, nên sau khi gửi, phần tử MỚI NHẤT chắc chắn là câu trả lời vừa
+    # nhận. So khớp theo TEXT (before_texts) không đáng tin khi TÁI DÙNG cuộc trò
+    # chuyện cũ (vd chat SEO): câu trả lời mới có thể TRÙNG y hệt câu cũ → bị bỏ
+    # nhầm thành "câu cũ" → tưởng Gemini không trả lời. Chỉ dùng before_texts làm
+    # dự phòng khi số lượng phần tử CHƯA tăng.
+    before = _get_responses(driver)
+    before_count = len(before)
+    before_texts = {_norm(e.text) for e in before}
     sent_norm = _norm(prompt)
     sent_head = sent_norm[:60]   # phòng khi Gemini hiển thị tin người dùng hơi khác
 
@@ -301,16 +328,22 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     deadline = time.time() + timeout
 
     def _candidate():
-        """Câu trả lời MỚI của Gemini: khác tin mình gửi, khác câu cũ, không rỗng."""
-        for e in reversed(_get_responses(driver)):
+        """Câu trả lời MỚI của Gemini: phần tử mới nhất sau khi số lượng tăng."""
+        els = _get_responses(driver)
+        # Đã có THÊM phần tử trả lời → câu mới nhất chính là câu trả lời (kể cả khi
+        # nội dung trùng câu cũ). Bỏ qua phần tử rỗng (đang stream) và echo tin gửi.
+        grew = len(els) > before_count
+        for e in reversed(els):
             t = (e.text or "").strip()
             if not t:
                 continue
             nt = _norm(t)
             if nt == sent_norm or nt.startswith(sent_head):
                 continue   # đây là tin nhắn của chính mình (echo)
+            if grew:
+                return t   # số lượng đã tăng → đây là câu trả lời mới nhất
             if nt in before_texts:
-                continue   # câu trả lời cũ từ lượt trước
+                continue   # chưa có thêm phần tử → bỏ câu cũ từ lượt trước
             return t
         return None
 
@@ -336,7 +369,9 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
 
 # ── Gửi nhiều đoạn ───────────────────────────────────────────────────────────
 def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
-                          driver=None, profile=None, keep_open=True, out_path=None):
+                          driver=None, profile=None, keep_open=True, out_path=None,
+                          on_driver=None, restart_on_timeout=True,
+                          max_restarts=MAX_TIMEOUT_RESTARTS):
     """Gửi lần lượt các đoạn tới Gemini, trả về list kết quả (cùng thứ tự).
 
     - prefix chỉ chèn vào ĐOẠN ĐẦU (Gemini nhớ ngữ cảnh các đoạn sau) — đúng như
@@ -347,6 +382,12 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
     - out_path: nếu có, LƯU NGAY ra .docx sau MỖI đoạn nhận được kết quả. Nhờ vậy
       nếu lỗi giữa chừng (timeout, mất mạng, Firefox đóng...) thì các đoạn đã xong
       vẫn được giữ lại — chạy lại để dịch tiếp phần còn thiếu.
+    - restart_on_timeout / max_restarts: nếu Gemini KHÔNG trả về nội dung sau
+      RESPONSE_TIMEOUT giây (mặc định 5 phút) thì ĐÓNG HẲN Firefox, mở lại (chat
+      mới) rồi GỬI LẠI đoạn đó, tối đa `max_restarts` lần.
+    - on_driver(driver): gọi mỗi khi PHẢI thay driver (sau khi mở lại Firefox) để
+      bên gọi cập nhật tham chiếu của họ — nhờ vậy bước SEO sau đó dùng đúng
+      Firefox đang mở, không phải driver đã đóng.
     """
     own_driver = driver is None
     results = []
@@ -373,6 +414,25 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             on_log(f"📤 Gửi đoạn {i + 1}/{total} ({len(chunk)} ký tự)...")
             try:
                 ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
+                # ── KHÔNG NHẬN ĐƯỢC NỘI DUNG (Gemini treo/hết 5 phút chờ) ──────
+                #    Đóng hẳn Firefox → mở lại (chat mới) → GỬI LẠI đoạn này. Chat
+                #    mới mất ngữ cảnh nên gửi kèm câu hướng dẫn dịch (prefix gốc).
+                restarts = 0
+                while not ans and restart_on_timeout and restarts < max_restarts:
+                    restarts += 1
+                    on_log(f"🔄 Đoạn {i + 1}/{total} không nhận được nội dung sau "
+                           f"{RESPONSE_TIMEOUT // 60} phút — đóng Firefox & mở lại "
+                           f"(lần {restarts}/{max_restarts})...")
+                    driver = restart_firefox(driver, profile=profile, on_log=on_log)
+                    if on_driver:
+                        try:
+                            on_driver(driver)
+                        except Exception:
+                            pass
+                    resend_prefix = prefix or RETRY_CHINESE_PREFIX
+                    on_log(f"📤 Gửi lại đoạn {i + 1}/{total} sau khi mở lại Firefox...")
+                    ans = send_to_gemini(driver, chunk, prefix=resend_prefix,
+                                         on_log=on_log)
                 # ── Kiểm tra tiếng Trung: bản dịch còn ký tự Hán nghĩa là Gemini
                 #    chưa dịch hết → GỬI LẠI chính đoạn đó kèm câu yêu cầu chỉ trả
                 #    về nội dung dịch. Lặp tối đa MAX_CHINESE_RETRIES lần rồi mới lưu.

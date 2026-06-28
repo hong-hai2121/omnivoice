@@ -40,6 +40,7 @@ GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemin
 SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) — chạy sau bước dịch
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
+DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải từ link
 DRIVE_SCRIPT_FOLDER_ID = "1LU1gRtZJRRpIjedxUGSa_V_zW8L1q8PQ"  # thư mục Drive "kịch bản"
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
@@ -204,6 +205,83 @@ def read_chinese_docx_chunks(path) -> list[str]:
     parts = [p.text.strip() for p in doc.paragraphs
              if p.text.strip() and not (p.style.name or "").startswith(("Heading", "Title"))]
     return recog.split_into_chunks("".join(parts))
+
+
+def download_audio_mp3(url: str, out_dir: Path):
+    """Tải audio từ link video (yt-dlp) → trả về đường dẫn .mp3 (None nếu lỗi).
+
+    Dùng cho bước ① nhận diện khi đầu vào là LINK thay vì file có sẵn.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        logging.error("❌ Chưa cài yt-dlp. Chạy: pip install yt-dlp")
+        return None
+    import nhandien_giongnoi as recog
+    ffmpeg_dir = os.path.dirname(recog.FFMPEG_PATH) if getattr(recog, "FFMPEG_PATH", None) else None
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def hook(d):
+        if d.get("status") == "downloading":
+            pct = d.get("_percent_str", "").strip()
+            if pct:
+                logging.info(f"⬇️  Tải... {pct} {d.get('_speed_str', '').strip()}")
+        elif d.get("status") == "finished":
+            logging.info("✅ Tải xong, đang chuyển sang MP3...")
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        # %(id)s tránh tên file có ký tự đặc biệt / tiếng Trung
+        "outtmpl": os.path.join(str(out_dir), "%(id)s.%(ext)s"),
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}
+        ],
+        "quiet": True, "no_warnings": True, "noprogress": True, "progress_hooks": [hook],
+    }
+    if ffmpeg_dir:
+        ydl_opts["ffmpeg_location"] = ffmpeg_dir
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            logging.info(f"🎬 Tiêu đề: {info.get('title', '')}")
+            mp3_path = os.path.splitext(ydl.prepare_filename(info))[0] + ".mp3"
+            if os.path.exists(mp3_path):
+                return mp3_path
+    except Exception as e:
+        logging.error(f"❌ Lỗi khi tải video: {e}")
+        return None
+    # Phòng khi prepare_filename không khớp: lấy mp3 mới nhất trong thư mục.
+    mp3s = sorted(out_dir.glob("*.mp3"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return str(mp3s[0]) if mp3s else None
+
+
+# Số tập ĐÃ TẠO gần nhất — dùng chung với GUI thumbnail (thumbnail_gui_state.json).
+THUMB_STATE_FILE = YOUTUBE_DIR / "thumbnail_gui_state.json"
+
+
+def load_episode_number() -> int:
+    """Số tập đã tạo gần nhất (thumbnail_gui_state.json); chưa có → 0."""
+    try:
+        import json
+        d = json.loads(THUMB_STATE_FILE.read_text(encoding="utf-8"))
+        n = str(d.get("episode_number", "")).strip()
+        if n.isdecimal():
+            return int(n)
+    except Exception:
+        pass
+    return 0
+
+
+def save_episode_number(n: int) -> None:
+    """Lưu số tập vừa tạo để lần/ link sau tăng tiếp (đồng bộ với GUI thumbnail)."""
+    try:
+        import json
+        THUMB_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        THUMB_STATE_FILE.write_text(
+            json.dumps({"episode_number": str(n).zfill(2)}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    except Exception:
+        pass
 
 
 # ── QUEUE ĐỂ TRUYỀN LOG TỪ THREAD VỀ GUI ───────────────────────────────────
@@ -388,6 +466,13 @@ def _play_done_sound(success: bool = True) -> None:
         winsound.PlaySound(alias, winsound.SND_ALIAS | winsound.SND_ASYNC)
     except Exception:
         pass
+
+
+class _NullWidget:
+    """Nút giả cho run_tts khi chạy ở chế độ batch (không có nút thật để bật/tắt)."""
+    def config(self, *args, **kwargs):
+        pass
+    configure = config
 
 
 def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False):
@@ -1703,10 +1788,15 @@ class App(tk.Tk):
         frow = ttk.Frame(s1)
         frow.grid(row=0, column=0, sticky="ew")
         frow.columnconfigure(0, weight=1)
-        self.pipe_var_file = tk.StringVar()
-        ttk.Entry(frow, textvariable=self.pipe_var_file).grid(row=0, column=0, sticky="ew")
+        # Nhiều dòng: mỗi dòng 1 link hoặc 1 file. 1 dòng → xử lý như cũ; ≥2 dòng
+        # → mỗi link tạo 1 thư mục kịch bản (01, 02, ...) chạy full pipeline.
+        # width nhỏ (mặc định Text là 80 ký tự → phình ngang); sticky="ew" vẫn cho
+        # ô giãn vừa theo cột nên không cần để rộng.
+        self.pipe_txt_sources = tk.Text(frow, height=2, width=20, wrap="none",
+                                        font=("Segoe UI", 10), relief="solid", bd=1)
+        self.pipe_txt_sources.grid(row=0, column=0, sticky="ew")
         ttk.Button(frow, text="Chọn…", width=8,
-                   command=self._pipe_pick_file).grid(row=0, column=1, padx=(8, 0))
+                   command=self._pipe_pick_file).grid(row=0, column=1, padx=(8, 0), sticky="n")
         orow = ttk.Frame(s1)
         orow.grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Label(orow, text="Model:").pack(side="left")
@@ -1720,8 +1810,8 @@ class App(tk.Tk):
         self.btn_recog = ttk.Button(s1, text="🎙  Nhận diện → tiếng Trung",
                                     style="Accent.TButton", command=self._pipe_recognize)
         self.btn_recog.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        ttk.Label(s1, text="(→ tiengTrung.docx)", style="Hint.TLabel").grid(
-            row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(s1, text="(mỗi dòng 1 link/file)",
+                  style="Hint.TLabel").grid(row=3, column=0, sticky="w", pady=(4, 0))
         self.var_auto2 = tk.BooleanVar(value=self._pipe_settings["auto2"])
         ttk.Checkbutton(s1, text="⛓  Tự động chạy bước ② sau khi xong",
                         variable=self.var_auto2).grid(row=4, column=0, sticky="w", pady=(6, 0))
@@ -1788,13 +1878,17 @@ class App(tk.Tk):
         self._pipe_log_frame.grid_remove()   # mặc định ẩn (dọc); _show_view bật khi cần
 
     def _pipe_pick_file(self):
-        path = filedialog.askopenfilename(
-            title="Chọn file audio/video tiếng Trung",
+        # askopenfilenames (số nhiều) → chọn được NHIỀU file 1 lần (Ctrl/Shift để
+        # quét khối). Mỗi file thêm thành 1 dòng trong ô nhập.
+        paths = filedialog.askopenfilenames(
+            title="Chọn file audio/video tiếng Trung (có thể chọn nhiều)",
             filetypes=[("Audio/Video", "*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma "
                                        "*.mp4 *.mkv *.mov *.avi *.webm *.flv"),
                        ("Tất cả", "*.*")])
-        if path:
-            self.pipe_var_file.set(path)
+        if paths:
+            cur = self.pipe_txt_sources.get("1.0", "end").strip()
+            block = "\n".join(paths)
+            self.pipe_txt_sources.insert("end", ("\n" if cur else "") + block)
 
     def _pipe_set_busy(self, busy: bool):
         self._pipe_busy = busy
@@ -1818,31 +1912,56 @@ class App(tk.Tk):
         self.var_seo.set(PIPE_DEFAULTS["seo"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])
         self.pipe_var_speed.set(PIPE_DEFAULTS["speed"])
-        self.pipe_var_file.set("")
+        self.pipe_txt_sources.delete("1.0", "end")
         self._save_pipe_settings()
         self.pipe_status.set("↺ Đã reset cài đặt quy trình về mặc định.")
+
+    def _pipe_sources(self) -> list:
+        """Danh sách link/file hợp lệ từ ô nhập ① (mỗi dòng 1 mục), giữ thứ tự."""
+        out = []
+        for line in self.pipe_txt_sources.get("1.0", "end").splitlines():
+            s = line.strip().strip('"').strip("'")
+            if s and (os.path.isfile(s) or s.lower().startswith(("http://", "https://"))):
+                out.append(s)
+        return out
 
     def _pipe_recognize(self):
         if self._pipe_busy:
             return
-        media = self.pipe_var_file.get().strip()
-        if not media or not os.path.isfile(media):
-            messagebox.showwarning("Thiếu file",
-                                   "Hãy chọn file audio/video cần nhận diện.")
+        sources = self._pipe_sources()
+        if not sources:
+            messagebox.showwarning("Thiếu đầu vào",
+                                   "Hãy nhập link video hoặc chọn file (mỗi dòng 1 mục).")
             return
         self._save_pipe_settings()   # ấn chạy → nhớ cài đặt cho lần sau
+
+        # ≥2 link → chế độ NHIỀU LINK: mỗi link 1 thư mục + full pipeline.
+        if len(sources) >= 2:
+            self._pipe_start_batch(sources)
+            return
+
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
-        self.pipe_status.set("🎙  Đang nhận diện...")
+        self.pipe_status.set("🎙  Đang chuẩn bị...")
         threading.Thread(
             target=self._pipe_recognize_worker,
-            args=(media, self.pipe_var_model.get(), self.pipe_var_speed.get()),
+            args=(sources[0], self.pipe_var_model.get(), self.pipe_var_speed.get()),
             daemon=True).start()
 
     def _pipe_recognize_worker(self, media, model, speed):
         ok = False
         try:
             import nhandien_giongnoi as recog
+            # Đầu vào là LINK → tải MP3 trước; file có sẵn → dùng trực tiếp.
+            if not os.path.isfile(media) and str(media).lower().startswith(("http://", "https://")):
+                logging.info(f"🌐 Tải audio từ link: {media}")
+                self.pipe_status.set("🌐  Đang tải audio từ link...")
+                media = download_audio_mp3(media, DOWNLOAD_DIR)
+                if not media:
+                    logging.error("❌ Không tải được audio từ link.")
+                    self.pipe_status.set("❌ Tải link thất bại.")
+                    return
+            self.pipe_status.set("🎙  Đang nhận diện...")
             logging.info(f"🎙  Nhận diện: {Path(media).name} (model={model}, tốc độ={speed})")
             transcript = recog.transcribe_chinese(
                 media, model_name=model, speed=float(speed),
@@ -1873,6 +1992,412 @@ class App(tk.Tk):
             self._pipe_set_busy(False)
             if ok and self.var_auto2.get():   # ⛓ tự động sang bước ②
                 self.after(600, lambda: self._pipe_send_gemini(auto=True))
+
+    def _collect_tts_settings(self):
+        """Thu thập cài đặt TTS hiện tại (phải gọi trên MAIN THREAD vì đọc các tk.Var)
+        để chế độ NHIỀU LINK tạo giọng cho mỗi tập y như khi chạy 1 link.
+
+        Trả về dict cài đặt, hoặc None nếu cấu hình sai (đã hiện cảnh báo)."""
+        mode = self.var_mode.get()
+        if mode == "clone":
+            voice_name = self._current_voice()
+            if not voice_name:
+                messagebox.showwarning("Thiếu giọng mẫu",
+                                       f"Không tìm thấy file audio trong:\n{VOICE_DIR}")
+                return None
+            voice_param = str(VOICE_DIR / voice_name)
+        elif mode == "design":
+            voice_param = self.var_instruct.get().strip()
+            if not voice_param:
+                messagebox.showwarning("Thiếu mô tả", "Vui lòng nhập mô tả giọng đọc.")
+                return None
+        else:
+            voice_param = None
+
+        cut_half = self.var_cut_half.get()
+        cut_audio = self.var_cut_audio.get()
+        cut_target = cut_min = cut_max = 0.0
+        if cut_audio:
+            try:
+                cut_target = float(self.var_cut_target.get())
+                cut_min = float(self.var_cut_min.get())
+                cut_max = float(self.var_cut_max.get())
+            except Exception:
+                messagebox.showwarning("Cấu hình cắt sai", "Số phút không hợp lệ.")
+                return None
+            if not (0 < cut_min <= cut_max):
+                messagebox.showwarning("Cấu hình cắt sai",
+                                       "Cần thỏa: 0 < phút 'Từ' ≤ phút 'Đến'.")
+                return None
+
+        try:
+            doc_speed = float(str(self.var_doc_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            doc_speed = 1.0
+        doc_speed = max(0.5, min(doc_speed, 2.0))
+        try:
+            ngang_speed = float(str(self.var_ngang_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            ngang_speed = 1.0
+        ngang_speed = max(0.5, min(ngang_speed, 2.0))
+
+        effect_name = self._current_effect()
+        effect_path = None
+        if effect_name and effect_name != EFFECT_NONE:
+            p = EFFECTS_DIR / effect_name
+            effect_path = str(p) if p.exists() else None
+
+        return dict(
+            mode=mode, voice_param=voice_param, chunk=self.var_chunk.get(),
+            make_video=self.var_make_video.get(), effect=effect_path,
+            cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
+            make_video_doc=self.var_make_video_doc.get(),
+            doc_full_audio=self.var_doc_full_audio.get(), doc_speed=doc_speed,
+            ngang_speed=ngang_speed, cut_half=cut_half,
+            doc_from_ngang=self.var_doc_from_ngang.get(),
+            doc_no_effect=self.var_doc_no_effect.get(),
+        )
+
+    # ── CHẾ ĐỘ NHIỀU LINK: mỗi link 1 thư mục kịch_bản/NN, full pipeline ───────
+    def _pipe_start_batch(self, sources):
+        """Xử lý nhiều link lần lượt: mỗi link 1 thư mục (01, 02, ...) trong
+        kịch_bản, chạy full pipeline (nhận diện → Gemini → input.txt → SEO → giọng)."""
+        # Nếu bật "⛓ Chạy tiếp tạo giọng" thì thu thập cài đặt TTS NGAY BÂY GIỜ trên
+        # main thread (worker chạy thread khác, không nên đọc tk.Var). Cấu hình sai
+        # (vd clone mà chưa chọn giọng) → dừng trước khi bắt đầu cả batch.
+        tts_settings = None
+        if self.var_auto_tts.get():
+            tts_settings = self._collect_tts_settings()
+            if tts_settings is None:
+                return
+        if not messagebox.askyesno(
+            "Xử lý nhiều link",
+            f"Sẽ xử lý {len(sources)} link THEO THỨ TỰ. Mỗi link là MỘT TẬP MỚI "
+            "(số tập tăng dần từ số đã lưu ở thumbnail); TÊN THƯ MỤC = số tập, chứa "
+            "bản nhận diện, bản dịch Gemini, input.txt, seoYoutube.docx và thumbnail. "
+            "input.txt còn được tải lên Drive theo số tập.\n\n"
+            + ("Cũng sẽ TẠO GIỌNG (OmniVoice) cho mỗi tập → output.wav trong thư mục.\n\n"
+               if tts_settings else "")
+            + "Bước dịch & SEO dùng Firefox — hãy ĐÓNG Firefox đang mở (profile bị "
+            "khoá khi đang chạy) và đảm bảo profile đã đăng nhập Google.\n\nTiếp tục?",
+        ):
+            return
+        self._pipe_set_busy(True)
+        self.pipe_progress.set(0)
+        self.pipe_status.set(f"⏳ Bắt đầu xử lý {len(sources)} link...")
+        threading.Thread(
+            target=self._pipe_batch_worker,
+            args=(sources, self.pipe_var_model.get(), self.pipe_var_speed.get(),
+                  tts_settings),
+            daemon=True).start()
+
+    def _batch_prepare_input(self, gemini_docx, out_txt) -> bool:
+        """Tạo input.txt cho 1 link: bỏ cấu trúc + thay câu quảng bá kênh + bỏ chú
+        thích () []. (Bản batch không hỏi/không dừng như bước ③ thủ công.)"""
+        try:
+            import dich_kiemtra as cg
+            findings = cg.check_docx(gemini_docx, on_log=logging.info)
+            if findings:
+                logging.warning(f"⚠️ {gemini_docx.parent.name}: gemini_result.docx còn "
+                                f"{len(findings)} đoạn có câu dẫn nhập/thừa — vẫn ghi input.txt.")
+            chunks = cg.read_docx_chunks(gemini_docx)
+            content = "\n".join(t for _, t in chunks).strip()
+            if not content:
+                return False
+            content, n_promo = replace_channel_promo(content)
+            if n_promo:
+                logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh.")
+            try:
+                import dich_chuanbi_input as prep
+                content = prep.remove_annotations(content)   # bỏ chú thích () []
+            except Exception:
+                pass
+            Path(out_txt).write_text(content, encoding="utf-8")
+            return True
+        except Exception as e:
+            logging.error(f"⚠️ Lỗi tạo input.txt: {e}")
+            return False
+
+    def _batch_run_tts(self, folder, ts) -> bool:
+        """Tạo giọng OmniVoice cho 1 tập: đọc folder/input.txt → folder/output.wav
+        (kèm cắt/dựng video theo cài đặt ts). Chạy ĐỒNG BỘ trong thread batch."""
+        input_txt = folder / "input.txt"
+        if not input_txt.exists():
+            logging.warning(f"⚠️ {folder.name}: chưa có input.txt → bỏ qua tạo giọng.")
+            return False
+        try:
+            full_text = clean_text(input_txt.read_text(encoding="utf-8"))
+        except Exception as e:
+            logging.error(f"⚠️ {folder.name}: không đọc được input.txt: {e}")
+            return False
+        chunks = split_chunks(full_text.lower(), ts["chunk"])
+        if not chunks:
+            logging.warning(f"⚠️ {folder.name}: input.txt trống → bỏ qua tạo giọng.")
+            return False
+
+        # Whisper đã được giải phóng ở lượt gọi (sau khi đóng Firefox) nên ở đây
+        # chỉ cần nạp OmniVoice để tạo giọng.
+        output = folder / "output.wav"
+        stub = _NullWidget()
+        pause_event = threading.Event()
+        pause_event.set()
+        logging.info(f"🎧 Tạo giọng OmniVoice cho tập {folder.name} ({len(chunks)} đoạn)...")
+        # Tiến trình chi tiết (tạo giọng + dựng video) hiện ở THANH TTS (self.progress/
+        # self.status); thanh "Tạo kịch bản" để hiển thị tiến độ tổng theo số tập.
+        run_tts(
+            ts["mode"], ts["voice_param"], chunks, str(output),
+            self.progress, self.status,
+            stub, stub, stub, pause_event,
+            ts["make_video"], ts["effect"],
+            ts["cut_audio"], ts["cut_target"], ts["cut_min"], ts["cut_max"],
+            ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
+            ts["ngang_speed"], ts["cut_half"], False,
+            ts["doc_from_ngang"], ts["doc_no_effect"],
+        )
+        logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
+        return True
+
+    def _make_thumbnail_for_folder(self, folder, episode: str) -> bool:
+        """Render thumbnail cho 1 tập: tiêu đề lấy từ folder/seoYoutube.docx, ảnh
+        mèo ngẫu nhiên, số tập = episode. Lưu thumbnail<episode>.png vào thư mục."""
+        try:
+            import random
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import dien_tieu_de_thumbnail as renderer
+            from seo_docx_parser import parse_seo_docx
+
+            seo_docx = folder / "seoYoutube.docx"
+            title = ""
+            if seo_docx.exists():
+                try:
+                    title = (parse_seo_docx(seo_docx).get("title") or "").strip()
+                except Exception as e:
+                    logging.warning(f"Không đọc được tiêu đề SEO: {e}")
+            if not title:
+                logging.warning(f"⚠️ {folder.name}: không có tiêu đề SEO — bỏ qua thumbnail.")
+                return False
+
+            photos = renderer.list_photo_files(renderer.CAT_IMAGE_DIR)
+            if not photos:
+                logging.warning(f"⚠️ Không có ảnh mèo trong {renderer.CAT_IMAGE_DIR} — bỏ qua thumbnail.")
+                return False
+
+            out_png = folder / f"thumbnail{episode}.png"
+            renderer.add_title(
+                renderer.SOURCE_IMAGE, out_png, title, random.choice(photos),
+                renderer.FRAME_IMAGE, episode, renderer.NUMBER_FRAME_IMAGE)
+            logging.info(f"🖼  Đã tạo thumbnail: {out_png}")
+            return True
+        except Exception as e:
+            logging.error(f"Lỗi tạo thumbnail {folder.name}: {e}")
+            return False
+
+    def _save_youtube_seo_copy(self, seo_docx, out_path, episode: str) -> bool:
+        """Lưu sẵn nội dung 3 nút Copy của tab Thumbnail (tiêu đề · mô tả · thẻ tag)
+        ra 1 file .txt để dán nhanh khi đăng YouTube.
+
+        Tab Thumbnail chỉ đọc seoYoutube.docx CHUNG (kịch_bản/) nên khi chạy NHIỀU
+        LINK không copy được nội dung từng tập. File này ghi đúng nội dung 3 nút đó
+        (đã gắn 'Số <tập>' + hậu tố '| Mimi Truyện') cho file SEO của riêng tập.
+        """
+        try:
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            from seo_docx_parser import parse_seo_docx
+            import thumbnail_gui as tg   # dùng đúng hàm của 3 nút để khớp tuyệt đối
+
+            seo = parse_seo_docx(str(seo_docx))
+            ep = episode if str(episode).strip().isdecimal() else ""
+            title = tg.add_episode_to_title(
+                tg.ensure_brand_suffix(seo.get("title", "")), ep)
+            desc = tg.add_episode_to_description(seo.get("description", ""), ep)
+            tags = ", ".join(tg.add_episode_tag(seo.get("tags", []), ep))
+
+            content = (
+                "===== TIÊU ĐỀ =====\n" + (title or "") + "\n\n"
+                "===== MÔ TẢ =====\n" + (desc or "") + "\n\n"
+                "===== THẺ TAG =====\n" + (tags or "") + "\n"
+            )
+            Path(out_path).write_text(content, encoding="utf-8")
+            logging.info(f"💾 Đã lưu nội dung copy YouTube (tiêu đề/mô tả/thẻ tag) "
+                         f"→ {Path(out_path).name}")
+            return True
+        except Exception as e:
+            logging.warning(f"Không lưu được file copy YouTube SEO: {e}")
+            return False
+
+    def _pipe_batch_worker(self, sources, model, speed, tts_settings=None):
+        import time
+        driver = None
+        total = len(sources)
+        ok_count = 0
+        pending_tts = []   # (folder, episode) chờ tạo giọng SAU khi đã đóng Firefox
+
+        # Gemini treo → dịch_gemini đóng & mở lại Firefox; cập nhật tham chiếu để
+        # SEO và link kế (driver.get / driver.quit) dùng đúng trình duyệt đang mở.
+        def _on_driver(d):
+            nonlocal driver
+            driver = d
+        try:
+            import nhandien_giongnoi as recog
+            import dich_gemini as g
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import seo_youtube_gemini as seo
+            prefix = load_prefix()
+            logging.info(f"📚 NHIỀU LINK: {total} link — mỗi link 1 tập, tên thư mục = số tập.")
+            logging.info(f"📦 Model: {model}  •  Tốc độ: {speed}x")
+            base_episode = load_episode_number()   # số tập đã tạo gần nhất
+            logging.info(f"🔢 Tập đã tạo gần nhất: {base_episode} → bắt đầu từ tập {base_episode + 1}.")
+
+            for i, src in enumerate(sources, 1):
+                episode_num = base_episode + i          # tăng 1 trước khi tạo
+                episode = str(episode_num).zfill(2)
+                folder = SCRIPT_DIR / episode            # tên thư mục = số tập
+                folder.mkdir(parents=True, exist_ok=True)
+                self.pipe_status.set(f"🔗 Link {i}/{total} → tập {episode}/")
+                logging.info(f"════════ 🔗 LINK {i}/{total} → TẬP {episode}/ ════════")
+                try:
+                    s = src.strip().strip('"').strip("'")
+                    # 1) File có sẵn → dùng trực tiếp; link → tải MP3.
+                    if os.path.isfile(s):
+                        media = s
+                        logging.info(f"📁 File local: {media}")
+                    elif s.lower().startswith(("http://", "https://")):
+                        logging.info(f"🌐 Tải từ link: {s}")
+                        media = download_audio_mp3(s, DOWNLOAD_DIR)
+                        if not media:
+                            logging.error(f"❌ Link {i}: không tải được audio — bỏ qua.")
+                            continue
+                    else:
+                        logging.error(f"❌ Link {i}: không hợp lệ — bỏ qua.")
+                        continue
+
+                    # 2) Nhận diện → _zh.docx vào thư mục của link.
+                    self.pipe_progress.set(0)
+                    transcript = recog.transcribe_chinese(
+                        media, model_name=model, speed=float(speed),
+                        on_progress=lambda f: self.pipe_progress.set(int(f * 100)))
+                    if not transcript:
+                        logging.error(f"❌ Link {i}: không nhận diện được — bỏ qua.")
+                        continue
+                    zh_docx = folder / f"{Path(media).stem}_zh.docx"
+                    recog.save_docx(transcript, str(zh_docx), title=Path(media).name)
+                    logging.info(f"💾 Đã lưu bản nhận diện: {zh_docx}")
+
+                    chunks = recog.split_into_chunks(transcript)
+                    if not chunks:
+                        logging.warning(f"⚠️ Link {i}: không tách được đoạn — bỏ qua dịch/SEO.")
+                        continue
+
+                    # 3) Dịch Gemini (tái dùng MỘT Firefox; điều hướng về chat dịch).
+                    if driver is None:
+                        logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
+                        driver = g.init_firefox()
+                    else:
+                        driver.get(g.GEMINI_URL)   # chat mới cho link này
+                        time.sleep(8)
+                    gemini_docx = folder / "gemini_result.docx"
+                    logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini để dịch...")
+                    results = g.send_chunks_to_gemini(
+                        chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                        driver=driver, keep_open=True, on_driver=_on_driver,
+                        on_result=lambda i2, t2, _a: self.pipe_status.set(
+                            f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
+                    g.save_results_docx(chunks, results, gemini_docx)
+                    logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+
+                    # 4) input.txt
+                    if self._batch_prepare_input(gemini_docx, folder / "input.txt"):
+                        logging.info(f"💾 Đã tạo: {folder / 'input.txt'}")
+
+                    # 5) SEO YouTube (tái dùng Firefox; điều hướng sang chat SEO).
+                    logging.info("🔎 Tạo SEO YouTube...")
+                    seo.run(str(gemini_docx), str(folder / "seoYoutube.docx"),
+                            keep_open=True, log=logging.info, driver=driver)
+                    logging.info(f"💾 Đã tạo: {folder / 'seoYoutube.docx'}")
+                    # 5b) Lưu sẵn nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt
+                    # để chạy nhiều link khỏi phải mở tab Thumbnail copy từng cái.
+                    self._save_youtube_seo_copy(
+                        folder / "seoYoutube.docx", folder / "youtube_seo.txt", episode)
+
+                    # 6) Thumbnail (tiêu đề SEO + ảnh mèo + số tập) → lưu trong thư mục.
+                    self._make_thumbnail_for_folder(folder, episode)
+                    # 7) Tải input.txt lên Drive, đặt tên theo số tập (<episode>.txt).
+                    self._upload_input_script_to_drive(folder / "input.txt", episode)
+                    # Lưu số tập vừa tạo để link/lần sau tăng tiếp.
+                    save_episode_number(episode_num)
+                    # 8) HOÃN tạo giọng: gom lại để chạy SAU khi đã đóng Firefox
+                    # (xong toàn bộ dịch Gemini + SEO của mọi link). Không để Firefox
+                    # mở trong lúc render TTS/video.
+                    if tts_settings:
+                        pending_tts.append((folder, episode))
+
+                    ok_count += 1
+                    logging.info(f"✅ Link {i}/{total} (tập {episode}) dịch + SEO xong.")
+                except Exception as e:
+                    # Một link lỗi không làm hỏng cả batch — ghi log (kèm traceback để
+                    # dễ tìm nguyên nhân) rồi sang link kế.
+                    import traceback
+                    logging.error(f"❌ Lỗi ở link {i}/{total}: {e}")
+                    logging.error(traceback.format_exc())
+                    continue
+
+            # ── ĐÃ XONG DỊCH GEMINI + SEO TOÀN BỘ → ĐÓNG FIREFOX NGAY ─────────
+            # Giải phóng RAM/khóa-profile trước khi tạo giọng; KHÔNG để Firefox mở
+            # trong lúc render TTS/video (chỉ dùng GPU, không cần trình duyệt).
+            if driver is not None:
+                try:
+                    driver.quit()
+                    logging.info("🦊 Đã đóng Firefox sau khi dịch Gemini + SEO xong.")
+                except Exception:
+                    pass
+                driver = None
+
+            # ── LƯỢT TẠO GIỌNG (OmniVoice) cho từng tập — không cần Firefox ────
+            if pending_tts:
+                # Giải phóng Whisper trước khi nạp OmniVoice (GPU 8GB).
+                try:
+                    recog.free_model()
+                    logging.info("🧹 Giải phóng Whisper trước khi tạo giọng.")
+                except Exception:
+                    pass
+                n_tts = len(pending_tts)
+                logging.info(f"🎧 Bắt đầu tạo giọng cho {n_tts} tập...")
+                for idx, (folder, episode) in enumerate(pending_tts, 1):
+                    # Thanh pipeline = tiến độ TỔNG theo số tập; thanh TTS = chi tiết.
+                    self.pipe_progress.set(int((idx - 1) / n_tts * 100))
+                    self.pipe_status.set(f"🎧 Tập {episode} ({idx}/{n_tts}): đang tạo giọng...")
+                    try:
+                        self._batch_run_tts(folder, tts_settings)
+                    except Exception as e:
+                        import traceback
+                        logging.error(f"❌ Lỗi tạo giọng tập {episode}: {e}")
+                        logging.error(traceback.format_exc())
+
+            self.pipe_progress.set(100)
+            self.pipe_status.set(f"✅ Xong {ok_count}/{total} link → thư mục trong kịch_bản.")
+            logging.info(f"🎉 XONG: {ok_count}/{total} link hoàn tất.")
+        except Exception as e:
+            logging.error(f"Lỗi batch nhiều link: {e}")
+            self.pipe_status.set(f"Lỗi batch: {e}")
+        finally:
+            if driver is not None:          # đóng Firefox dùng chung sau khi xong/lỗi
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            try:
+                import nhandien_giongnoi as recog
+                recog.free_model()
+                logging.info("🧹 Đã giải phóng model nhận diện khỏi VRAM.")
+            except Exception:
+                pass
+            self._pipe_set_busy(False)
 
     def _pipe_send_gemini(self, auto=False):
         if self._pipe_busy:
@@ -1907,6 +2432,13 @@ class App(tk.Tk):
         ok = False
         seo_on = self.var_seo.get()
         driver = None
+
+        # Khi dịch_gemini phải đóng & mở lại Firefox (Gemini treo) thì cập nhật lại
+        # tham chiếu driver ở đây để bước SEO dùng đúng Firefox đang mở.
+        def _on_driver(d):
+            nonlocal driver
+            driver = d
+
         try:
             chunks = read_chinese_docx_chunks(CHINESE_DOCX)
             if not chunks:
@@ -1926,6 +2458,7 @@ class App(tk.Tk):
                 chunks, prefix=prefix, on_log=logging.info, out_path=GEMINI_DOCX,
                 driver=driver,                 # None → tự mở; có driver → tái dùng
                 keep_open=(driver is not None),  # còn SEO ở sau thì giữ Firefox mở
+                on_driver=_on_driver,          # đóng/mở lại Firefox → cập nhật driver
                 on_result=lambda i, total, ans: self.pipe_status.set(
                     f"🌐 Gemini: đoạn {i + 1}/{total}"))
             g.save_results_docx(chunks, results, GEMINI_DOCX)
