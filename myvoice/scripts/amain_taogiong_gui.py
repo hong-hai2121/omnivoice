@@ -207,6 +207,25 @@ def read_chinese_docx_chunks(path) -> list[str]:
     return recog.split_into_chunks("".join(parts))
 
 
+def read_zh_docx_chunks(path) -> list[str]:
+    """Đọc lại các ĐOẠN từ file *_zh.docx (do recog.save_docx tạo: mỗi đoạn 1 đoạn
+    văn dưới tiêu đề 'ĐOẠN k'). Mỗi đoạn văn = 1 chunk → tái dùng để TIẾP TỤC dịch
+    mà KHÔNG cần nhận diện lại. Trả [] nếu đọc lỗi/không có đoạn nào."""
+    try:
+        from docx import Document
+        doc = Document(str(path))
+    except Exception:
+        return []
+    chunks = []
+    for p in doc.paragraphs:
+        if not p.text.strip():
+            continue
+        if (p.style.name or "").startswith(("Heading", "Title")):
+            continue   # bỏ tiêu đề 'ĐOẠN k' và tiêu đề file
+        chunks.append(p.text.strip())
+    return chunks
+
+
 def download_audio_mp3(url: str, out_dir: Path):
     """Tải audio từ link video (yt-dlp) → trả về đường dẫn .mp3 (None nếu lỗi).
 
@@ -282,6 +301,38 @@ def save_episode_number(n: int) -> None:
             encoding="utf-8")
     except Exception:
         pass
+
+
+# ── MANIFEST: nhớ link nào ↔ thư mục tập nào + tiến độ (để chạy tiếp/báo cáo) ──
+# File tổng đặt trong kịch_bản/ (đã gitignore). Mỗi lần chạy ghi nguồn (link/file)
+# kèm số tập + bước đã xong. Lần sau chạy CÙNG link → tái dùng ĐÚNG thư mục cũ và
+# bỏ qua phần đã làm; dù NHẬP KHÁC THỨ TỰ / thiếu link vẫn đúng tập.
+MANIFEST_FILE = SCRIPT_DIR / "batch_manifest.json"
+
+
+def norm_source(src: str) -> str:
+    """Chuẩn hoá chuỗi nguồn (bỏ khoảng trắng + nháy) để làm khoá manifest ổn định."""
+    return (src or "").strip().strip('"').strip("'")
+
+
+def load_manifest() -> dict:
+    """Đọc manifest (nguồn→{episode, steps, done, updated}); lỗi/thiếu → {}."""
+    try:
+        import json
+        d = json.loads(MANIFEST_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_manifest(data: dict) -> None:
+    try:
+        import json
+        MANIFEST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MANIFEST_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                                 encoding="utf-8")
+    except Exception as e:
+        logging.warning(f"Không lưu được manifest: {e}")
 
 
 # ── QUEUE ĐỂ TRUYỀN LOG TỪ THREAD VỀ GUI ───────────────────────────────────
@@ -916,7 +967,8 @@ class App(tk.Tk):
         for key, label in [("home",   "🏠  Home\n(đầy đủ)"),
                            ("script", "🛠  Tạo\nkịch bản"),
                            ("voice",  "🎧  Giọng\nnói"),
-                           ("thumb",  "🖼  Thumb\nnail")]:
+                           ("thumb",  "🖼  Thumb\nnail"),
+                           ("report", "📋  Tiến\nđộ")]:
             b = ttk.Button(side, text=label, width=11,
                            command=lambda k=key: self._show_view(k))
             b.pack(fill="x", pady=(0, 8))
@@ -958,6 +1010,14 @@ class App(tk.Tk):
         frame_thumb.columnconfigure(0, weight=1)
         self._panels["thumbnail"] = frame_thumb
         self._build_thumbnail_panel(frame_thumb)
+
+        # Panel Tiến độ — bảng các link đã gửi (manifest) + đã làm tới đâu.
+        frame_report = ttk.Frame(content)
+        frame_report.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        frame_report.rowconfigure(0, weight=1)
+        frame_report.columnconfigure(0, weight=1)
+        self._panels["report"] = frame_report
+        self._build_report_panel(frame_report)
 
         # ════════════════════════════════════════════════
         # PANEL pipeline — Quy trình tạo kịch bản (nhận diện → Gemini → SEO → input.txt)
@@ -1250,12 +1310,15 @@ class App(tk.Tk):
             "script": ("pipeline",),
             "voice":  ("tts", "video"),
             "thumb":  ("thumbnail",),
+            "report": ("report",),
         }[key]
         for name, fr in self._panels.items():
             if name in show:
                 fr.grid()
             else:
                 fr.grid_remove()
+        if key == "report":
+            self._refresh_report()   # cập nhật bảng tiến độ mỗi khi mở tab
         # Riêng tab "Tạo kịch bản": dàn 3 bước theo NGANG + hiện nhật ký, lấp đầy
         # chiều rộng. Ở Home/Giọng nói: pipeline là cột DỌC hẹp (như giao diện gốc).
         is_script = (key == "script")
@@ -1294,6 +1357,252 @@ class App(tk.Tk):
             self._pipe_btn_open.grid_configure(row=5, column=0, columnspan=1, sticky="w")
             self._pipe_btn_reset.grid_configure(row=6, column=0, columnspan=1, sticky="w")
             self._pipe_log_frame.grid_remove()
+
+    # ── TAB TIẾN ĐỘ: bảng các link đã gửi (manifest) + đã làm tới đâu ────────────
+    # Thứ tự bước hiển thị trong cột "Tiến độ" (nhãn ngắn + khoá trong steps dict).
+    _REPORT_STEPS = (("Dịch", "translate"), ("SEO", "seo"), ("Thumb", "thumbnail"),
+                     ("Giọng", "audio"), ("Vid ngang", "video_ngang"),
+                     ("Vid dọc", "video_doc"))
+
+    def _build_report_panel(self, parent):
+        wrap = ttk.Frame(parent, padding=4)
+        wrap.grid(row=0, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(2, weight=1)
+
+        hdr = ttk.Frame(wrap)
+        hdr.grid(row=0, column=0, sticky="ew")
+        ttk.Label(hdr, text="📋  Tiến độ các link đã gửi", style="Header.TLabel").pack(side="left")
+        ttk.Label(wrap, text="Mỗi link nhớ ĐÚNG số tập của nó. Chạy lại (chưa xóa output) "
+                  "sẽ tiếp tục đúng tập còn dở. ✅ = xong · 🟡 = đang dở · 🔴 = chưa làm.",
+                  style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 8))
+
+        bar = ttk.Frame(wrap)
+        bar.grid(row=2, column=0, sticky="ew")
+        bar.columnconfigure(0, weight=1)
+        # Bảng
+        table = ttk.Frame(bar)
+        table.grid(row=0, column=0, sticky="nsew")
+        bar.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+        cols = ("st", "episode", "progress", "source", "updated")
+        tv = ttk.Treeview(table, columns=cols, show="headings")
+        for c, t, w, anchor in (("st", "", 34, "center"), ("episode", "Tập", 50, "center"),
+                                ("progress", "Tiến độ", 360, "w"),
+                                ("source", "Nguồn (link/file)", 380, "w"),
+                                ("updated", "Cập nhật", 140, "w")):
+            tv.heading(c, text=t)
+            tv.column(c, width=w, anchor=anchor, stretch=(c == "source"))
+        tv.grid(row=0, column=0, sticky="nsew")
+        vs = ttk.Scrollbar(table, orient="vertical", command=tv.yview)
+        vs.grid(row=0, column=1, sticky="ns")
+        tv.configure(yscrollcommand=vs.set)
+        self._report_tv = tv
+
+        foot = ttk.Frame(wrap)
+        foot.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(foot, text="🔄  Làm mới", command=self._refresh_report).pack(side="left")
+        ttk.Button(foot, text="▶  Chạy tiếp tập đang chọn", style="Accent.TButton",
+                   command=self._resume_selected_folder).pack(side="left", padx=(12, 0))
+        self.report_summary = tk.StringVar(value="")
+        ttk.Label(foot, textvariable=self.report_summary,
+                  style="Sub.TLabel").pack(side="left", padx=(12, 0))
+        # Nhấp đúp 1 dòng = chạy tiếp tập đó.
+        tv.bind("<Double-1>", lambda e: self._resume_selected_folder())
+
+    def _refresh_report(self):
+        """Đổ lại bảng tiến độ từ manifest + quét cả thư mục tập chưa có trong manifest."""
+        tv = getattr(self, "_report_tv", None)
+        if tv is None:
+            return
+        tv.delete(*tv.get_children())
+        m = load_manifest()
+        # Gộp: mục manifest (theo episode) + thư mục tập rời chưa có trong manifest.
+        rows = {}   # episode(int) -> (source, entry|None)
+        for src, e in m.items():
+            ep = e.get("episode", "")
+            if str(ep).isdecimal():
+                rows[int(ep)] = (e.get("source", src), e)
+        if SCRIPT_DIR.exists():
+            for p in sorted(SCRIPT_DIR.iterdir()):
+                if p.is_dir() and p.name.isdecimal() and int(p.name) not in rows:
+                    rows[int(p.name)] = ("(không rõ — tạo trước khi có manifest)", None)
+
+        n_done = 0
+        for ep in sorted(rows):
+            src, e = rows[ep]
+            episode = str(ep).zfill(2)
+            steps = (e or {}).get("steps") or self._folder_steps(SCRIPT_DIR / episode, episode)
+            done = bool((e or {}).get("done")) if e else all(
+                steps.get(k) for _, k in self._REPORT_STEPS if k != "video_doc")
+            prog = "  ".join(("✅" if steps.get(k) else "⬜") + lbl
+                             for lbl, k in self._REPORT_STEPS)
+            mark = "✅" if done else ("🟡" if any(steps.values()) else "🔴")
+            if done:
+                n_done += 1
+            updated = (e or {}).get("updated", "")
+            tv.insert("", "end", values=(mark, episode, prog, src[:90], updated))
+        self.report_summary.set(
+            f"{len(rows)} tập • {n_done} hoàn tất • manifest: {MANIFEST_FILE}")
+
+    def _resume_selected_folder(self):
+        """Chạy TIẾP 1 tập đang chọn trong bảng — KHÔNG cần link gốc nếu đã có
+        bản nhận diện (*_zh.docx). Chỉ làm các bước còn thiếu (vd chỉ còn video)."""
+        if self._pipe_busy:
+            messagebox.showinfo("Đang bận", "Đang có tác vụ chạy — đợi xong đã nhé.")
+            return
+        tv = getattr(self, "_report_tv", None)
+        sel = tv.selection() if tv else None
+        if not sel:
+            messagebox.showinfo("Chọn tập", "Hãy chọn 1 tập trong bảng rồi bấm 'Chạy tiếp'.")
+            return
+        episode = str(tv.item(sel[0], "values")[1]).strip().zfill(2)
+        folder = SCRIPT_DIR / episode
+        if not folder.exists():
+            messagebox.showwarning("Không có thư mục", f"Không thấy thư mục tập {episode}.")
+            return
+        # Không có link gốc vẫn chạy tiếp được MIỄN LÀ đã nhận diện (có *_zh.docx).
+        if not next(iter(folder.glob("*_zh.docx")), None):
+            messagebox.showwarning(
+                "Thiếu bản nhận diện",
+                f"Tập {episode} chưa có *_zh.docx nên KHÔNG thể chạy tiếp mà thiếu link "
+                "gốc (cần nhận diện lại). Hãy chạy lại link đó ở tab 'Tạo kịch bản'.")
+            return
+        tts_settings = self._collect_tts_settings()   # main thread (đọc tk.Var)
+        if tts_settings is None:
+            return   # cấu hình giọng sai → đã cảnh báo
+        self._pipe_set_busy(True)
+        self.pipe_progress.set(0)
+        self.pipe_link_status.set(f"▶ Chuẩn bị chạy tiếp tập {episode}...")
+        self._show_view("script")   # chuyển sang tab có thanh tiến trình + nhật ký
+        threading.Thread(target=self._resume_folder_worker,
+                         args=(folder, episode, tts_settings), daemon=True).start()
+
+    def _resume_folder_worker(self, folder, episode, tts_settings):
+        """Chạy tiếp 1 thư mục tập đã có sẵn (bỏ qua bước đã xong, làm phần còn thiếu).
+        Dùng lại toàn bộ logic resume/bỏ-qua như batch nhưng cho ĐÚNG 1 tập."""
+        import datetime as _dt
+        driver = None
+        file_handler = None
+        try:
+            import nhandien_giongnoi as recog
+            import dich_gemini as g
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import seo_youtube_gemini as seo
+            prefix = load_prefix()
+            try:
+                file_handler = logging.FileHandler(SCRIPT_DIR / "batch_log.txt", encoding="utf-8")
+                file_handler.setFormatter(
+                    logging.Formatter("%(asctime)s  %(message)s", "%Y-%m-%d %H:%M:%S"))
+                logging.getLogger().addHandler(file_handler)
+                logging.info("\n" + "═" * 12 + f" CHẠY TIẾP TẬP {episode} "
+                             f"({_dt.datetime.now():%Y-%m-%d %H:%M:%S}) " + "═" * 12)
+            except Exception:
+                pass
+
+            # Nguồn (lấy từ manifest nếu có) — chỉ để ghi log/manifest, KHÔNG cần để chạy.
+            m = load_manifest()
+            src = next((s for s, e in m.items()
+                        if str(e.get("episode", "")).zfill(2) == episode), str(folder))
+
+            gemini_docx = folder / "gemini_result.docx"
+            input_txt = folder / "input.txt"
+            seo_docx = folder / "seoYoutube.docx"
+
+            # 1+2) Nhận diện: dùng lại *_zh.docx (đã kiểm tra có ở nút bấm).
+            existing_zh = next(iter(sorted(folder.glob("*_zh.docx"))), None)
+            chunks = read_zh_docx_chunks(existing_zh) if existing_zh else []
+            if not chunks:
+                logging.error(f"❌ Tập {episode}: không đọc được đoạn từ *_zh.docx.")
+                self.pipe_status.set(f"❌ Tập {episode}: lỗi đọc nhận diện.")
+                return
+            logging.info(f"♻ Dùng lại nhận diện ({existing_zh.name}, {len(chunks)} đoạn).")
+
+            # 3) Dịch Gemini — đủ thì bỏ qua; thiếu thì tiếp tục.
+            prior = (g.read_results_docx(gemini_docx, len(chunks))
+                     if gemini_docx.exists() else [None] * len(chunks))
+            n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+            if n_todo == 0:
+                logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+            else:
+                logging.info(f"🌐 Mở Firefox dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
+                driver = g.init_firefox()
+                results = g.send_chunks_to_gemini(
+                    chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                    driver=driver, keep_open=True, resume=True)
+                g.save_results_docx(chunks, results, gemini_docx)
+
+            # 4) input.txt
+            if not (input_txt.exists() and input_txt.stat().st_size > 0):
+                self._batch_prepare_input(gemini_docx, input_txt)
+
+            # 5) SEO
+            if not self._seo_docx_valid(seo_docx):
+                if driver is None:
+                    driver = g.init_firefox()
+                logging.info("🔎 Tạo SEO YouTube...")
+                seo.run(str(gemini_docx), str(seo_docx),
+                        keep_open=True, log=logging.info, driver=driver)
+            else:
+                logging.info("♻ Bỏ qua SEO (đã có).")
+            self._save_youtube_seo_copy(seo_docx, folder / "youtube_seo.txt", episode)
+
+            # 6) Thumbnail + cập nhật số tập
+            if not (folder / f"thumbnail{episode}.png").exists():
+                self._make_thumbnail_for_folder(folder, episode)
+            save_episode_number(max(load_episode_number(), int(episode)))
+            # 7) Drive (idempotent)
+            self._upload_input_script_to_drive(input_txt, episode)
+
+            # Đóng Firefox trước khi render video (nhả RAM).
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+                driver = None
+
+            # 8) Tạo giọng + video (reuse=True → chỉ render phần còn thiếu, vd video dọc).
+            if tts_settings:
+                try:
+                    recog.free_model()
+                except Exception:
+                    pass
+                self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
+                self._batch_run_tts(folder, tts_settings)
+
+            self._manifest_update(src, episode, folder, done=True)
+            self.pipe_progress.set(100)
+            self.pipe_link_status.set(f"✅ Tập {episode} đã chạy tiếp xong.")
+            self.pipe_status.set(f"✅ Tập {episode} hoàn tất.")
+            logging.info(f"🎉 Tập {episode} chạy tiếp xong.")
+        except Exception as e:
+            import traceback
+            logging.error(f"❌ Lỗi chạy tiếp tập {episode}: {e}")
+            logging.error(traceback.format_exc())
+            self.pipe_link_status.set(f"❌ Lỗi chạy tiếp tập {episode}.")
+            self.pipe_status.set(f"Lỗi: {e}")
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            try:
+                import nhandien_giongnoi as recog
+                recog.free_model()
+            except Exception:
+                pass
+            if file_handler is not None:
+                try:
+                    logging.getLogger().removeHandler(file_handler)
+                    file_handler.close()
+                except Exception:
+                    pass
+            self._pipe_set_busy(False)
 
     def _build_thumbnail_panel(self, parent):
         """Nhúng GUI tạo thumbnail (YOUTUBE/thumbnail_gui.py) vào 1 panel.
@@ -1627,32 +1936,28 @@ class App(tk.Tk):
             logging.warning(f"Không lưu được cài đặt: {e}")
 
     def _clear_output(self):
-        """Xóa toàn bộ trong output/ VÀ làm rỗng các file trong kịch_bản/.
+        """Xóa output/, XÓA HẲN các thư mục tập VÀ làm rỗng các file trong kịch_bản/.
 
         - output/ (kịch_bản/output): xóa hẳn mọi file + thư mục con (wav, video, chunks).
+        - Thư mục tập (tên toàn chữ số: 01, 02, 17...): XÓA HẲN cả thư mục — mỗi tập
+          gồm audio/video, docx dịch/SEO, input.txt, youtube_seo.txt, thumbnail...
+          (KHÔNG đụng tới output/ vì tên không phải số.)
         - kịch_bản/: LÀM RỖNG các file nằm trực tiếp ở đây (input.txt, tiengTrung.docx,
           gemini_result.docx, seoYoutube.docx...) — giữ tên file, xóa sạch nội dung.
           Riêng .docx ghi lại thành docx RỖNG HỢP LỆ để code đọc sau không lỗi.
-          Thư mục con (output/) không bị coi là file nên không bị đụng ở bước này.
         """
         import shutil
         out_items = list(OUTPUT_DIR.iterdir()) if OUTPUT_DIR.exists() else []
         kb_files = [p for p in SCRIPT_DIR.iterdir() if p.is_file()] if SCRIPT_DIR.exists() else []
+        # Thư mục tập = thư mục con của kịch_bản có tên TOÀN CHỮ SỐ (01, 02, 17...).
+        ep_dirs = ([p for p in SCRIPT_DIR.iterdir() if p.is_dir() and p.name.isdecimal()]
+                   if SCRIPT_DIR.exists() else [])
 
-        if not out_items and not kb_files:
-            messagebox.showinfo("Thông báo", "Không có gì để xóa hay làm rỗng.")
+        if not out_items and not kb_files and not ep_dirs:
+            self.status.set("Không có gì để xóa hay làm rỗng.")
             return
 
-        n_files = sum(1 for p in out_items if p.is_file())
-        n_dirs  = sum(1 for p in out_items if p.is_dir())
-        if not messagebox.askyesno(
-                "Xác nhận",
-                f"• XÓA HẾT trong:\n   {OUTPUT_DIR}\n"
-                f"   ({n_files} file + {n_dirs} thư mục — wav, video, chunks)\n\n"
-                f"• LÀM RỖNG {len(kb_files)} file trong:\n   {SCRIPT_DIR}\n"
-                f"   (input.txt, tiengTrung.docx, gemini_result.docx, seoYoutube.docx...)\n\n"
-                "Không thể hoàn tác!"):
-            return
+        # Xóa ngay, KHÔNG hỏi xác nhận (theo yêu cầu chạy nhanh).
         self._stop_preview()   # nhả file đang nghe (nếu có) để xóa được
 
         # 1) Xóa hẳn mọi thứ trong output/
@@ -1662,7 +1967,16 @@ class App(tk.Tk):
             else:
                 p.unlink(missing_ok=True)
 
-        # 2) Làm rỗng các file trong kịch_bản/ (giữ tên, xóa nội dung)
+        # 2) Xóa hẳn các thư mục tập (01, 02, 17...) — cả audio/video/docx bên trong
+        removed_dirs = 0
+        for d in ep_dirs:
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_dirs += 1
+            except Exception as e:
+                logging.warning(f"Không xóa được thư mục tập {d.name}: {e}")
+
+        # 3) Làm rỗng các file trong kịch_bản/ (giữ tên, xóa nội dung)
         emptied = 0
         for p in kb_files:
             try:
@@ -1679,8 +1993,9 @@ class App(tk.Tk):
         self.var_out.set(str(OUTPUT_DIR / "output.wav"))
         self._last_output = None
         self.btn_preview.config(state="disabled")
-        logging.info(f"Đã xóa output trong {OUTPUT_DIR} và làm rỗng {emptied} file trong {SCRIPT_DIR}")
-        self.status.set("Đã xóa output + làm rỗng kịch_bản.")
+        logging.info(f"Đã xóa output trong {OUTPUT_DIR}, xóa {removed_dirs} thư mục tập, "
+                     f"và làm rỗng {emptied} file trong {SCRIPT_DIR}")
+        self.status.set("Đã xóa output + thư mục tập + làm rỗng kịch_bản.")
 
     def _pick_file(self, var, filetypes):
         path = filedialog.askopenfilename(filetypes=filetypes)
@@ -1857,9 +2172,15 @@ class App(tk.Tk):
         self.pipe_progress = tk.IntVar(value=0)
         ttk.Progressbar(pf, variable=self.pipe_progress, maximum=100).grid(
             row=0, column=0, sticky="ew")
+        # Dòng ĐANG CHẠY LINK MẤY — luôn hiển thị (không bị các thông báo bước con
+        # ghi đè) ngay dưới thanh tiến trình.
+        self.pipe_link_status = tk.StringVar(value="")
+        ttk.Label(pf, textvariable=self.pipe_link_status,
+                  font=("Segoe UI", 10, "bold"), foreground=UI["accent"]).grid(
+            row=1, column=0, sticky="w", pady=(4, 0))
         self.pipe_status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(4, 0))
+            row=2, column=0, sticky="w", pady=(2, 0))
 
         self._pipe_btn_open = ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
                                          command=self._open_nhan_dien)
@@ -1930,8 +2251,8 @@ class App(tk.Tk):
             return
         sources = self._pipe_sources()
         if not sources:
-            messagebox.showwarning("Thiếu đầu vào",
-                                   "Hãy nhập link video hoặc chọn file (mỗi dòng 1 mục).")
+            self.pipe_status.set("⚠️ Chưa có link/file — hãy nhập đầu vào (mỗi dòng 1 mục).")
+            logging.warning("Chưa có link video / file để nhận diện.")
             return
         self._save_pipe_settings()   # ấn chạy → nhớ cài đặt cho lần sau
 
@@ -1942,6 +2263,7 @@ class App(tk.Tk):
 
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
+        self.pipe_link_status.set("")   # 1 link đơn → không hiển thị "đang chạy link mấy"
         self.pipe_status.set("🎙  Đang chuẩn bị...")
         threading.Thread(
             target=self._pipe_recognize_worker,
@@ -2070,20 +2392,13 @@ class App(tk.Tk):
             tts_settings = self._collect_tts_settings()
             if tts_settings is None:
                 return
-        if not messagebox.askyesno(
-            "Xử lý nhiều link",
-            f"Sẽ xử lý {len(sources)} link THEO THỨ TỰ. Mỗi link là MỘT TẬP MỚI "
-            "(số tập tăng dần từ số đã lưu ở thumbnail); TÊN THƯ MỤC = số tập, chứa "
-            "bản nhận diện, bản dịch Gemini, input.txt, seoYoutube.docx và thumbnail. "
-            "input.txt còn được tải lên Drive theo số tập.\n\n"
-            + ("Cũng sẽ TẠO GIỌNG (OmniVoice) cho mỗi tập → output.wav trong thư mục.\n\n"
-               if tts_settings else "")
-            + "Bước dịch & SEO dùng Firefox — hãy ĐÓNG Firefox đang mở (profile bị "
-            "khoá khi đang chạy) và đảm bảo profile đã đăng nhập Google.\n\nTiếp tục?",
-        ):
-            return
+        # Chạy ngay, KHÔNG hỏi xác nhận. Lưu ý: bước dịch & SEO dùng Firefox — hãy
+        # ĐÓNG Firefox đang mở (profile bị khoá khi đang chạy) và đảm bảo đã đăng nhập.
+        logging.info(f"⛓ Xử lý {len(sources)} link theo thứ tự (mỗi link 1 tập)"
+                     + (" + tạo giọng." if tts_settings else "."))
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
+        self.pipe_link_status.set(f"⏳ Chuẩn bị xử lý {len(sources)} link...")
         self.pipe_status.set(f"⏳ Bắt đầu xử lý {len(sources)} link...")
         threading.Thread(
             target=self._pipe_batch_worker,
@@ -2151,9 +2466,9 @@ class App(tk.Tk):
             ts["make_video"], ts["effect"],
             ts["cut_audio"], ts["cut_target"], ts["cut_min"], ts["cut_max"],
             ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
-            ts["ngang_speed"], ts["cut_half"], False,
-            ts["doc_from_ngang"], ts["doc_no_effect"],
-        )
+            ts["ngang_speed"], ts["cut_half"], True,   # reuse=True → TIẾP TỤC: dùng
+            ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
+        )                                               # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         return True
 
@@ -2214,7 +2529,20 @@ class App(tk.Tk):
             title = tg.add_episode_to_title(
                 tg.ensure_brand_suffix(seo.get("title", "")), ep)
             desc = tg.add_episode_to_description(seo.get("description", ""), ep)
-            tags = ", ".join(tg.add_episode_tag(seo.get("tags", []), ep))
+
+            # Thẻ tag: gắn tag tập rồi cắt bớt cho tổng (nối bằng ', ') ≤ 500 ký tự
+            # (giới hạn YouTube) — nhưng LUÔN GIỮ tag tập 'mimi truyện số <ep>'.
+            tag_list = tg.add_episode_tag(seo.get("tags", []), ep)
+            ep_tag = f"mimi truyện số {ep}" if ep else None
+            keep = [t for t in tag_list if ep_tag and t == ep_tag]
+            others = [t for t in tag_list if not (ep_tag and t == ep_tag)]
+            while others and len(", ".join(others + keep)) > 500:
+                others.pop()        # bỏ tag thường ở cuối, KHÔNG đụng tag tập
+            dropped = len(tag_list) - len(others + keep)
+            if dropped:
+                logging.info(f"✂ Thẻ tag >500 ký tự → bỏ {dropped} tag cuối "
+                             + (f"(giữ '{ep_tag}')." if ep_tag else "."))
+            tags = ", ".join(others + keep)
 
             content = (
                 "===== TIÊU ĐỀ =====\n" + (title or "") + "\n\n"
@@ -2229,18 +2557,111 @@ class App(tk.Tk):
             logging.warning(f"Không lưu được file copy YouTube SEO: {e}")
             return False
 
+    def _seo_docx_valid(self, seo_docx) -> bool:
+        """True nếu seoYoutube.docx đã có nội dung SEO thật (tiêu đề khác rỗng).
+
+        Dùng để TIẾP TỤC: file rỗng/chỉ có tiêu đề (do reset) → coi như chưa làm SEO.
+        """
+        try:
+            if not Path(seo_docx).exists():
+                return False
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            from seo_docx_parser import parse_seo_docx
+            return bool((parse_seo_docx(str(seo_docx)).get("title") or "").strip())
+        except Exception:
+            return False
+
+    # ── MANIFEST: tiến độ + map nguồn↔tập (để chạy tiếp & báo cáo) ──────────────
+    def _folder_steps(self, folder, episode: str) -> dict:
+        """Bước ĐÃ XONG của 1 tập, suy từ file thực tế trong thư mục."""
+        folder = Path(folder)
+        zh = next(iter(folder.glob("*_zh.docx")), None)
+        gem = folder / "gemini_result.docx"
+        inp = folder / "input.txt"
+        translate_done = False
+        if gem.exists():
+            try:
+                import dich_gemini as g
+                chunks = read_zh_docx_chunks(zh) if zh else []
+                if chunks:
+                    prior = g.read_results_docx(gem, len(chunks))
+                    translate_done = all(g.is_translation_done(r) for r in prior)
+                else:
+                    translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
+            except Exception:
+                translate_done = True
+        return {
+            "recognize": bool(zh),
+            "translate": translate_done,
+            "input": inp.exists() and inp.stat().st_size > 0,
+            "seo": self._seo_docx_valid(folder / "seoYoutube.docx"),
+            "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
+            "audio": (folder / "output.wav").exists(),
+            "video_ngang": bool(list(folder.glob("*_videodone.mp4"))),
+            "video_doc": bool(list(folder.glob("*_doc.mp4"))),
+        }
+
+    def _manifest_update(self, source, episode, folder, done=None) -> None:
+        """Ghi/cập nhật 1 mục manifest (nguồn→tập + tiến độ) rồi lưu ngay."""
+        import datetime as _dt
+        m = load_manifest()
+        key = norm_source(source)
+        entry = m.get(key, {})
+        entry["source"] = key
+        entry["episode"] = str(episode)
+        entry["folder"] = str(folder)
+        entry["steps"] = self._folder_steps(folder, episode)
+        if done is not None:
+            entry["done"] = bool(done)
+        entry["updated"] = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        m[key] = entry
+        save_manifest(m)
+
+    def _allocate_episode(self, source):
+        """(episode, is_new). Nguồn đã có trong manifest → ĐÚNG tập cũ; nguồn mới →
+        số tập kế tiếp (không trùng manifest / thư mục đã có / số đã lưu)."""
+        m = load_manifest()
+        key = norm_source(source)
+        if key in m and str(m[key].get("episode", "")).isdecimal():
+            return str(m[key]["episode"]).zfill(2), False
+        used = {int(v["episode"]) for v in m.values()
+                if str(v.get("episode", "")).isdecimal()}
+        if SCRIPT_DIR.exists():
+            for p in SCRIPT_DIR.iterdir():
+                if p.is_dir() and p.name.isdecimal():
+                    used.add(int(p.name))
+        used.add(load_episode_number())
+        nxt = (max(used) + 1) if used else 1
+        return str(nxt).zfill(2), True
+
     def _pipe_batch_worker(self, sources, model, speed, tts_settings=None):
         import time
         driver = None
         total = len(sources)
         ok_count = 0
-        pending_tts = []   # (folder, episode) chờ tạo giọng SAU khi đã đóng Firefox
 
         # Gemini treo → dịch_gemini đóng & mở lại Firefox; cập nhật tham chiếu để
         # SEO và link kế (driver.get / driver.quit) dùng đúng trình duyệt đang mở.
         def _on_driver(d):
             nonlocal driver
             driver = d
+
+        # ④ Ghi nhật ký batch ra kịch_bản/batch_log.txt (append, giữ lịch sử) để sau
+        # sự cố mở file là biết dừng ở link/bước nào.
+        file_handler = None
+        try:
+            import datetime as _dt
+            file_handler = logging.FileHandler(SCRIPT_DIR / "batch_log.txt", encoding="utf-8")
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s  %(message)s", "%Y-%m-%d %H:%M:%S"))
+            logging.getLogger().addHandler(file_handler)
+            logging.info("\n" + "═" * 12 + f" BẮT ĐẦU BATCH {total} link "
+                         f"({_dt.datetime.now():%Y-%m-%d %H:%M:%S}) " + "═" * 12)
+        except Exception as e:
+            logging.warning(f"Không mở được batch_log.txt: {e}")
+
         try:
             import nhandien_giongnoi as recog
             import dich_gemini as g
@@ -2249,96 +2670,150 @@ class App(tk.Tk):
                 sys.path.insert(0, youtube_dir)
             import seo_youtube_gemini as seo
             prefix = load_prefix()
-            logging.info(f"📚 NHIỀU LINK: {total} link — mỗi link 1 tập, tên thư mục = số tập.")
+            logging.info(f"📚 NHIỀU LINK: {total} link — mỗi link 1 tập (theo manifest).")
             logging.info(f"📦 Model: {model}  •  Tốc độ: {speed}x")
-            base_episode = load_episode_number()   # số tập đã tạo gần nhất
-            logging.info(f"🔢 Tập đã tạo gần nhất: {base_episode} → bắt đầu từ tập {base_episode + 1}.")
 
             for i, src in enumerate(sources, 1):
-                episode_num = base_episode + i          # tăng 1 trước khi tạo
-                episode = str(episode_num).zfill(2)
+                # Số tập theo MANIFEST: nguồn cũ → đúng tập cũ (chạy tiếp); nguồn mới
+                # → cấp số kế tiếp. Nhờ vậy nhập khác thứ tự / thiếu link vẫn đúng tập.
+                episode, is_new = self._allocate_episode(src)
+                episode_num = int(episode)
                 folder = SCRIPT_DIR / episode            # tên thư mục = số tập
                 folder.mkdir(parents=True, exist_ok=True)
+                # Ghi nguồn↔tập vào manifest NGAY (kể cả lỗi sau đó vẫn biết link→tập).
+                self._manifest_update(src, episode, folder, done=False)
+                logging.info(f"🔖 {'Tập MỚI' if is_new else 'Tiếp tục tập'} {episode} "
+                             f"← {norm_source(src)[:70]}")
+                # Dòng ĐANG CHẠY (luôn hiển thị dưới thanh tiến trình) — giữ nguyên
+                # suốt link, không bị thông báo bước con (Gemini/giọng/video) ghi đè.
+                self.pipe_link_status.set(f"🔗 Đang chạy: Link {i}/{total} — tập {episode}")
                 self.pipe_status.set(f"🔗 Link {i}/{total} → tập {episode}/")
                 logging.info(f"════════ 🔗 LINK {i}/{total} → TẬP {episode}/ ════════")
                 try:
                     s = src.strip().strip('"').strip("'")
-                    # 1) File có sẵn → dùng trực tiếp; link → tải MP3.
-                    if os.path.isfile(s):
-                        media = s
-                        logging.info(f"📁 File local: {media}")
-                    elif s.lower().startswith(("http://", "https://")):
-                        logging.info(f"🌐 Tải từ link: {s}")
-                        media = download_audio_mp3(s, DOWNLOAD_DIR)
-                        if not media:
-                            logging.error(f"❌ Link {i}: không tải được audio — bỏ qua.")
-                            continue
-                    else:
-                        logging.error(f"❌ Link {i}: không hợp lệ — bỏ qua.")
-                        continue
-
-                    # 2) Nhận diện → _zh.docx vào thư mục của link.
-                    self.pipe_progress.set(0)
-                    transcript = recog.transcribe_chinese(
-                        media, model_name=model, speed=float(speed),
-                        on_progress=lambda f: self.pipe_progress.set(int(f * 100)))
-                    if not transcript:
-                        logging.error(f"❌ Link {i}: không nhận diện được — bỏ qua.")
-                        continue
-                    zh_docx = folder / f"{Path(media).stem}_zh.docx"
-                    recog.save_docx(transcript, str(zh_docx), title=Path(media).name)
-                    logging.info(f"💾 Đã lưu bản nhận diện: {zh_docx}")
-
-                    chunks = recog.split_into_chunks(transcript)
-                    if not chunks:
-                        logging.warning(f"⚠️ Link {i}: không tách được đoạn — bỏ qua dịch/SEO.")
-                        continue
-
-                    # 3) Dịch Gemini (tái dùng MỘT Firefox; điều hướng về chat dịch).
-                    if driver is None:
-                        logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
-                        driver = g.init_firefox()
-                    else:
-                        driver.get(g.GEMINI_URL)   # chat mới cho link này
-                        time.sleep(8)
                     gemini_docx = folder / "gemini_result.docx"
-                    logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini để dịch...")
-                    results = g.send_chunks_to_gemini(
-                        chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                        driver=driver, keep_open=True, on_driver=_on_driver,
-                        on_result=lambda i2, t2, _a: self.pipe_status.set(
-                            f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
-                    g.save_results_docx(chunks, results, gemini_docx)
-                    logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+                    input_txt = folder / "input.txt"
+                    seo_docx = folder / "seoYoutube.docx"
 
-                    # 4) input.txt
-                    if self._batch_prepare_input(gemini_docx, folder / "input.txt"):
-                        logging.info(f"💾 Đã tạo: {folder / 'input.txt'}")
+                    # ── 1+2) NHẬN DIỆN — bỏ qua nếu đã có *_zh.docx hợp lệ ──────
+                    # (chỉ tải MP3 + chạy Whisper khi THỰC SỰ cần nhận diện lại).
+                    existing_zh = next(iter(sorted(folder.glob("*_zh.docx"))), None)
+                    chunks = read_zh_docx_chunks(existing_zh) if existing_zh else []
+                    if chunks:
+                        logging.info(f"♻ Bỏ qua tải + nhận diện (đã có {existing_zh.name}, "
+                                     f"{len(chunks)} đoạn).")
+                    else:
+                        if os.path.isfile(s):
+                            media = s
+                            logging.info(f"📁 File local: {media}")
+                        elif s.lower().startswith(("http://", "https://")):
+                            logging.info(f"🌐 Tải từ link: {s}")
+                            media = download_audio_mp3(s, DOWNLOAD_DIR)
+                            if not media:
+                                logging.error(f"❌ Link {i}: không tải được audio — bỏ qua.")
+                                continue
+                        else:
+                            logging.error(f"❌ Link {i}: không hợp lệ — bỏ qua.")
+                            continue
+                        self.pipe_progress.set(0)
+                        transcript = recog.transcribe_chinese(
+                            media, model_name=model, speed=float(speed),
+                            on_progress=lambda f: self.pipe_progress.set(int(f * 100)))
+                        if not transcript:
+                            logging.error(f"❌ Link {i}: không nhận diện được — bỏ qua.")
+                            continue
+                        zh_docx = folder / f"{Path(media).stem}_zh.docx"
+                        recog.save_docx(transcript, str(zh_docx), title=Path(media).name)
+                        logging.info(f"💾 Đã lưu bản nhận diện: {zh_docx}")
+                        chunks = recog.split_into_chunks(transcript)
+                    if not chunks:
+                        logging.warning(f"⚠️ Link {i}: không có đoạn nào — bỏ qua dịch/SEO.")
+                        continue
 
-                    # 5) SEO YouTube (tái dùng Firefox; điều hướng sang chat SEO).
-                    logging.info("🔎 Tạo SEO YouTube...")
-                    seo.run(str(gemini_docx), str(folder / "seoYoutube.docx"),
-                            keep_open=True, log=logging.info, driver=driver)
-                    logging.info(f"💾 Đã tạo: {folder / 'seoYoutube.docx'}")
-                    # 5b) Lưu sẵn nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt
-                    # để chạy nhiều link khỏi phải mở tab Thumbnail copy từng cái.
+                    # ── 3) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì TIẾP TỤC dịch ──
+                    prior = (g.read_results_docx(gemini_docx, len(chunks))
+                             if gemini_docx.exists() else [None] * len(chunks))
+                    n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+                    if n_todo == 0:
+                        logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+                    else:
+                        if driver is None:
+                            logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
+                            driver = g.init_firefox()
+                        else:
+                            driver.get(g.GEMINI_URL)   # chat mới cho link này
+                            time.sleep(8)
+                        logging.info(f"🌐 Dịch {n_todo}/{len(chunks)} đoạn còn thiếu sang Gemini...")
+                        results = g.send_chunks_to_gemini(
+                            chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                            driver=driver, keep_open=True, on_driver=_on_driver, resume=True,
+                            on_result=lambda i2, t2, _a: self.pipe_status.set(
+                                f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
+                        g.save_results_docx(chunks, results, gemini_docx)
+                        logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+                    self._manifest_update(src, episode, folder)   # ghi tiến độ sau dịch
+
+                    # ── 4) input.txt — bỏ qua nếu đã có & không rỗng ────────────
+                    if input_txt.exists() and input_txt.stat().st_size > 0:
+                        logging.info("♻ Bỏ qua tạo input.txt (đã có).")
+                    elif self._batch_prepare_input(gemini_docx, input_txt):
+                        logging.info(f"💾 Đã tạo: {input_txt}")
+
+                    # ── 5) SEO YouTube — bỏ qua nếu seoYoutube.docx đã có tiêu đề ─
+                    if self._seo_docx_valid(seo_docx):
+                        logging.info("♻ Bỏ qua SEO (đã có seoYoutube.docx hợp lệ).")
+                    else:
+                        if driver is None:        # dịch đã bỏ qua → mở Firefox cho SEO
+                            logging.info("🌐 Mở Firefox cho SEO...")
+                            driver = g.init_firefox()
+                        logging.info("🔎 Tạo SEO YouTube...")
+                        seo.run(str(gemini_docx), str(seo_docx),
+                                keep_open=True, log=logging.info, driver=driver)
+                        logging.info(f"💾 Đã tạo: {seo_docx}")
+
+                    # 5b) Nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt — LUÔN
+                    # tạo lại (nhẹ, suy ra từ seoYoutube.docx) để áp dụng logic mới nhất
+                    # (vd cắt thẻ tag ≤500 ký tự) kể cả khi các bước khác đã bỏ qua.
                     self._save_youtube_seo_copy(
-                        folder / "seoYoutube.docx", folder / "youtube_seo.txt", episode)
+                        seo_docx, folder / "youtube_seo.txt", episode)
 
-                    # 6) Thumbnail (tiêu đề SEO + ảnh mèo + số tập) → lưu trong thư mục.
-                    self._make_thumbnail_for_folder(folder, episode)
-                    # 7) Tải input.txt lên Drive, đặt tên theo số tập (<episode>.txt).
-                    self._upload_input_script_to_drive(folder / "input.txt", episode)
-                    # Lưu số tập vừa tạo để link/lần sau tăng tiếp.
-                    save_episode_number(episode_num)
-                    # 8) HOÃN tạo giọng: gom lại để chạy SAU khi đã đóng Firefox
-                    # (xong toàn bộ dịch Gemini + SEO của mọi link). Không để Firefox
-                    # mở trong lúc render TTS/video.
+                    # ── 6) Thumbnail — bỏ qua nếu đã có ─────────────────────────
+                    if (folder / f"thumbnail{episode}.png").exists():
+                        logging.info("♻ Bỏ qua thumbnail (đã có).")
+                    else:
+                        self._make_thumbnail_for_folder(folder, episode)
+                    # Xong thumbnail → cập nhật SỐ TẬP (không lùi) + ghi tiến độ manifest.
+                    save_episode_number(max(load_episode_number(), episode_num))
+                    self._manifest_update(src, episode, folder)
+
+                    # 7) Tải input.txt lên Drive (tự bỏ qua nếu Drive đã có cùng tên).
+                    self._upload_input_script_to_drive(input_txt, episode)
+
+                    # ── 8) TẠO GIỌNG + VIDEO NGAY cho link này (tuần tự từng link) ──
+                    # Mỗi link chạy ĐẦY ĐỦ: dịch → SEO → video xong mới sang link kế.
+                    # Đóng Firefox trước khi render để nhả RAM (video chỉ dùng GPU);
+                    # link sau tự mở lại Firefox cho bước dịch.
                     if tts_settings:
-                        pending_tts.append((folder, episode))
+                        if driver is not None:
+                            try:
+                                driver.quit()
+                                logging.info("🦊 Đã đóng Firefox trước khi tạo video.")
+                            except Exception:
+                                pass
+                            driver = None
+                        # Nhả Whisper trước khi nạp OmniVoice (GPU 8GB không chứa cả 2).
+                        try:
+                            recog.free_model()
+                            logging.info("🧹 Giải phóng Whisper trước khi tạo giọng.")
+                        except Exception:
+                            pass
+                        self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
+                        self._batch_run_tts(folder, tts_settings)
 
+                    self._manifest_update(src, episode, folder, done=True)  # link XONG
                     ok_count += 1
-                    logging.info(f"✅ Link {i}/{total} (tập {episode}) dịch + SEO xong.")
+                    done_what = "dịch + SEO + video" if tts_settings else "dịch + SEO"
+                    logging.info(f"✅ Link {i}/{total} (tập {episode}) HOÀN TẤT ({done_what}).")
                 except Exception as e:
                     # Một link lỗi không làm hỏng cả batch — ghi log (kèm traceback để
                     # dễ tìm nguyên nhân) rồi sang link kế.
@@ -2347,43 +2822,19 @@ class App(tk.Tk):
                     logging.error(traceback.format_exc())
                     continue
 
-            # ── ĐÃ XONG DỊCH GEMINI + SEO TOÀN BỘ → ĐÓNG FIREFOX NGAY ─────────
-            # Giải phóng RAM/khóa-profile trước khi tạo giọng; KHÔNG để Firefox mở
-            # trong lúc render TTS/video (chỉ dùng GPU, không cần trình duyệt).
-            if driver is not None:
-                try:
-                    driver.quit()
-                    logging.info("🦊 Đã đóng Firefox sau khi dịch Gemini + SEO xong.")
-                except Exception:
-                    pass
-                driver = None
+            # Số tập đã cập nhật theo TỪNG link (sau thumbnail). Manifest giữ map
+            # nguồn↔tập + tiến độ → chạy lại (chưa xóa output) sẽ TIẾP TỤC đúng tập,
+            # kể cả khi nhập khác thứ tự / thiếu link.
+            logging.info(f"🔢 Xong vòng batch: {ok_count}/{total} link hoàn tất.")
 
-            # ── LƯỢT TẠO GIỌNG (OmniVoice) cho từng tập — không cần Firefox ────
-            if pending_tts:
-                # Giải phóng Whisper trước khi nạp OmniVoice (GPU 8GB).
-                try:
-                    recog.free_model()
-                    logging.info("🧹 Giải phóng Whisper trước khi tạo giọng.")
-                except Exception:
-                    pass
-                n_tts = len(pending_tts)
-                logging.info(f"🎧 Bắt đầu tạo giọng cho {n_tts} tập...")
-                for idx, (folder, episode) in enumerate(pending_tts, 1):
-                    # Thanh pipeline = tiến độ TỔNG theo số tập; thanh TTS = chi tiết.
-                    self.pipe_progress.set(int((idx - 1) / n_tts * 100))
-                    self.pipe_status.set(f"🎧 Tập {episode} ({idx}/{n_tts}): đang tạo giọng...")
-                    try:
-                        self._batch_run_tts(folder, tts_settings)
-                    except Exception as e:
-                        import traceback
-                        logging.error(f"❌ Lỗi tạo giọng tập {episode}: {e}")
-                        logging.error(traceback.format_exc())
-
+            # Mọi link đã chạy ĐẦY ĐỦ TUẦN TỰ (dịch → SEO → video) ngay trong vòng lặp.
             self.pipe_progress.set(100)
+            self.pipe_link_status.set(f"✅ Hoàn tất {ok_count}/{total} link.")
             self.pipe_status.set(f"✅ Xong {ok_count}/{total} link → thư mục trong kịch_bản.")
             logging.info(f"🎉 XONG: {ok_count}/{total} link hoàn tất.")
         except Exception as e:
             logging.error(f"Lỗi batch nhiều link: {e}")
+            self.pipe_link_status.set(f"❌ Lỗi batch (đã xong {ok_count}/{total} link).")
             self.pipe_status.set(f"Lỗi batch: {e}")
         finally:
             if driver is not None:          # đóng Firefox dùng chung sau khi xong/lỗi
@@ -2397,6 +2848,13 @@ class App(tk.Tk):
                 logging.info("🧹 Đã giải phóng model nhận diện khỏi VRAM.")
             except Exception:
                 pass
+            if file_handler is not None:        # ngừng ghi nhật ký batch ra file
+                try:
+                    logging.info("──────── KẾT THÚC BATCH ────────")
+                    logging.getLogger().removeHandler(file_handler)
+                    file_handler.close()
+                except Exception:
+                    pass
             self._pipe_set_busy(False)
 
     def _pipe_send_gemini(self, auto=False):

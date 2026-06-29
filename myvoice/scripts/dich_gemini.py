@@ -120,6 +120,51 @@ def has_chinese(text):
     return bool(text) and _CHINESE_RE.search(text) is not None
 
 
+# Chuỗi đánh dấu đoạn CHƯA dịch xong trong gemini_result.docx (để TIẾP TỤC dịch).
+_NOT_TRANSLATED = {"", "(chưa dịch)", "(trống)"}
+
+
+def is_translation_done(text):
+    """True nếu đoạn đã dịch xong: có nội dung, không phải chuỗi đánh dấu, hết chữ Hán."""
+    t = (text or "").strip()
+    if t.lower() in _NOT_TRANSLATED:
+        return False
+    return not has_chinese(t)
+
+
+def read_results_docx(path, total):
+    """Đọc lại gemini_result.docx → list dài `total` (None nếu đoạn còn thiếu).
+
+    Dùng để TIẾP TỤC dịch khi chạy lại: đoạn đã dịch được giữ nguyên, chỉ gửi lại
+    các đoạn còn thiếu. File sai cấu trúc / đọc lỗi → trả list toàn None (dịch lại).
+    """
+    out = [None] * total
+    try:
+        from docx import Document
+        doc = Document(str(path))
+    except Exception:
+        return out
+    cur, buf = None, []
+
+    def _flush():
+        if cur is not None and 1 <= cur <= total:
+            out[cur - 1] = "\n".join(buf).strip()
+
+    for p in doc.paragraphs:
+        style = (p.style.name or "")
+        txt = p.text or ""
+        m = re.match(r"\s*Đoạn\s+(\d+)\s*$", txt.strip())
+        if style.startswith("Heading") and m:
+            _flush()
+            cur, buf = int(m.group(1)), []
+        elif style.startswith(("Heading", "Title")):
+            continue   # tiêu đề cấp 1 "Kết quả dịch từ Gemini"
+        elif cur is not None and txt.strip():
+            buf.append(txt)
+    _flush()
+    return out
+
+
 def _ensure_selenium():
     """Import selenium, báo lỗi rõ ràng nếu chưa cài."""
     try:
@@ -371,11 +416,11 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
 def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                           driver=None, profile=None, keep_open=True, out_path=None,
                           on_driver=None, restart_on_timeout=True,
-                          max_restarts=MAX_TIMEOUT_RESTARTS):
+                          max_restarts=MAX_TIMEOUT_RESTARTS, resume=False):
     """Gửi lần lượt các đoạn tới Gemini, trả về list kết quả (cùng thứ tự).
 
-    - prefix chỉ chèn vào ĐOẠN ĐẦU (Gemini nhớ ngữ cảnh các đoạn sau) — đúng như
-      cách GUI nhận diện chèn "Câu mở đầu" cho đoạn 1 khi sao chép.
+    - prefix chỉ chèn vào ĐOẠN ĐẦU ĐƯỢC GỬI (Gemini nhớ ngữ cảnh các đoạn sau) —
+      đúng như cách GUI nhận diện chèn "Câu mở đầu" cho đoạn 1 khi sao chép.
     - on_result(i, total, answer): callback sau mỗi đoạn (để cập nhật GUI).
     - driver: truyền driver có sẵn để tái dùng; None thì tự mở Firefox.
     - keep_open: True thì để Firefox mở sau khi xong (tiện xem/đối chiếu).
@@ -388,10 +433,18 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
     - on_driver(driver): gọi mỗi khi PHẢI thay driver (sau khi mở lại Firefox) để
       bên gọi cập nhật tham chiếu của họ — nhờ vậy bước SEO sau đó dùng đúng
       Firefox đang mở, không phải driver đã đóng.
+    - resume: nếu True và out_path đã có, đọc lại các đoạn ĐÃ DỊCH và BỎ QUA chúng,
+      chỉ gửi các đoạn còn thiếu (TIẾP TỤC dịch). prefix (chỉ dẫn dịch) được gửi
+      kèm đoạn ĐẦU TIÊN thực sự gửi trong phiên — vì chat mới chưa có ngữ cảnh.
     """
     own_driver = driver is None
-    results = []
     total = len(chunks)
+    # TIẾP TỤC: nạp các đoạn đã dịch (None = còn thiếu, cần gửi lại).
+    prior = (read_results_docx(out_path, total)
+             if resume and out_path is not None and Path(out_path).exists()
+             else [None] * total)
+    results = []
+    sent_any = False   # đoạn đầu tiên THỰC SỰ gửi mới gắn prefix (chỉ dẫn dịch)
 
     def _save_progress():
         """Ghi tiến độ hiện tại ra out_path; đệm '(chưa dịch)' cho đoạn còn lại."""
@@ -404,13 +457,31 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             on_log(f"⚠️ Không lưu được tiến độ: {e}")
 
     try:
-        if driver is None:
-            on_log("🌐 Đang mở Firefox + Gemini...")
-            driver = init_firefox(profile=profile)
-            on_log("✅ Đã mở Gemini. Bắt đầu gửi từng đoạn...")
-
         for i, chunk in enumerate(chunks):
-            p = prefix if i == 0 else ""
+            # ── TIẾP TỤC: đoạn đã dịch xong thì giữ nguyên, khỏi gửi lại ──────
+            if resume and is_translation_done(prior[i]):
+                on_log(f"♻ Đoạn {i + 1}/{total} đã dịch — bỏ qua.")
+                results.append(prior[i])
+                _save_progress()
+                if on_result:
+                    on_result(i, total, prior[i])
+                continue
+
+            # Cần gửi đoạn này → đảm bảo có Firefox (mở muộn: nếu mọi đoạn đã xong
+            # thì không phải mở trình duyệt).
+            if driver is None:
+                on_log("🌐 Đang mở Firefox + Gemini...")
+                driver = init_firefox(profile=profile)
+                if on_driver:
+                    try:
+                        on_driver(driver)
+                    except Exception:
+                        pass
+                on_log("✅ Đã mở Gemini. Bắt đầu gửi từng đoạn...")
+
+            # prefix chỉ gắn vào đoạn ĐẦU TIÊN thực sự gửi trong phiên này.
+            p = prefix if not sent_any else ""
+            sent_any = True
             on_log(f"📤 Gửi đoạn {i + 1}/{total} ({len(chunk)} ký tự)...")
             try:
                 ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
