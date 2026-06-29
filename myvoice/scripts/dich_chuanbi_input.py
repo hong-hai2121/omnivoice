@@ -56,6 +56,35 @@ _ANNOTATION_RE = re.compile(
 )
 
 
+# Sửa từ/cụm cố định để TTS đọc né bộ lọc: (từ_gốc, từ_thay). Áp dụng KHI tạo
+# input.txt. Khớp được cả cụm nhiều từ (vd "sát hại").
+_WORD_FIXES = [
+    ("giết", "giớt"),
+    ("chết", "chớt"),
+    ("sát hại", "giới hại"),
+    ("máu", "máo"),
+    ("ma túy", "mai thúy"),
+    ("cưỡng hiếp", "cưỡng híp"),
+]
+
+
+def apply_word_fixes(text):
+    """Thay một số từ/cụm cố định (vd 'giết'→'giớt', 'sát hại'→'giới hại') để TTS
+    đọc né bộ lọc. Khớp nguyên từ (word boundary), giữ nguyên kiểu viết hoa, và ưu
+    tiên cụm DÀI trước để tránh thay nhầm phần trùng."""
+    def _match_case(src, new):
+        if src.isupper():
+            return new.upper()
+        if src[:1].isupper():
+            return new[:1].upper() + new[1:]
+        return new
+
+    for old, new in sorted(_WORD_FIXES, key=lambda p: len(p[0]), reverse=True):
+        pattern = re.compile(r"\b" + re.escape(old) + r"\b", re.IGNORECASE)
+        text = pattern.sub(lambda m, n=new: _match_case(m.group(0), n), text)
+    return text
+
+
 def remove_annotations(text):
     """Bỏ các chú thích nằm trong dấu () và [] (kể cả ngoặc lồng nhau), rồi dọn
     khoảng trắng thừa do việc bỏ ngoặc để lại. Trả về nội dung đã làm sạch."""
@@ -133,6 +162,10 @@ def main(argv=None):
     if not content:
         print(f"❌ Sau khi bỏ chú thích không còn nội dung nào từ: {docx_path}")
         sys.exit(2)
+
+    # ── Sửa từ cố định để TTS đọc đúng (vd 'giết' → 'giớt') ───────────────────
+    print(f"✏️  BƯỚC 2c — Sửa {len(_WORD_FIXES)} từ/cụm cố định cho TTS (giết→giớt, chết→chớt, ...)...")
+    content = apply_word_fixes(content)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(content, encoding="utf-8")

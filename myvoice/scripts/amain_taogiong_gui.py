@@ -1525,6 +1525,7 @@ class App(tk.Tk):
             prior = (g.read_results_docx(gemini_docx, len(chunks))
                      if gemini_docx.exists() else [None] * len(chunks))
             n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+            translated_now = n_todo > 0
             if n_todo == 0:
                 logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
             else:
@@ -1535,8 +1536,14 @@ class App(tk.Tk):
                     driver=driver, keep_open=True, resume=True)
                 g.save_results_docx(chunks, results, gemini_docx)
 
-            # 4) input.txt
-            if not (input_txt.exists() and input_txt.stat().st_size > 0):
+            # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video.
+            if not self._translation_complete(gemini_docx, chunks, episode):
+                self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — dừng.")
+                self._manifest_update(src, episode, folder, done=False)
+                return
+
+            # 4) input.txt — tạo lại nếu vừa dịch (bản cũ có thể dở) hoặc chưa có.
+            if translated_now or not (input_txt.exists() and input_txt.stat().st_size > 0):
                 self._batch_prepare_input(gemini_docx, input_txt)
 
             # 5) SEO
@@ -2573,6 +2580,22 @@ class App(tk.Tk):
         except Exception:
             return False
 
+    def _translation_complete(self, gemini_docx, chunks, episode) -> bool:
+        """True nếu MỌI đoạn trong gemini_result.docx đã dịch xong (không rỗng, không
+        '(chưa dịch)', hết chữ Hán). Thiếu đoạn nào thì ghi log rõ để biết mà sửa."""
+        import dich_gemini as g
+        n = len(chunks)
+        check = g.read_results_docx(gemini_docx, n) if Path(gemini_docx).exists() else [None] * n
+        missing = [j + 1 for j, r in enumerate(check) if not g.is_translation_done(r)]
+        if not missing:
+            return True
+        head = ", ".join(map(str, missing[:10])) + ("..." if len(missing) > 10 else "")
+        logging.error(
+            f"⛔ Tập {episode}: CHƯA dịch xong {len(missing)}/{n} đoạn (đoạn {head}) → "
+            "DỪNG, KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
+            "đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
+        return False
+
     # ── MANIFEST: tiến độ + map nguồn↔tập (để chạy tiếp & báo cáo) ──────────────
     def _folder_steps(self, folder, episode: str) -> dict:
         """Bước ĐÃ XONG của 1 tập, suy từ file thực tế trong thư mục."""
@@ -2734,6 +2757,7 @@ class App(tk.Tk):
                     prior = (g.read_results_docx(gemini_docx, len(chunks))
                              if gemini_docx.exists() else [None] * len(chunks))
                     n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+                    translated_now = n_todo > 0   # có gửi dịch trong lượt này không
                     if n_todo == 0:
                         logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
                     else:
@@ -2753,8 +2777,16 @@ class App(tk.Tk):
                         logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
                     self._manifest_update(src, episode, folder)   # ghi tiến độ sau dịch
 
-                    # ── 4) input.txt — bỏ qua nếu đã có & không rỗng ────────────
-                    if input_txt.exists() and input_txt.stat().st_size > 0:
+                    # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh
+                    # tình trạng như tập 29: dịch dở vẫn ra audio/video). Lần sau chạy
+                    # lại sẽ dịch tiếp các đoạn còn thiếu.
+                    if not self._translation_complete(gemini_docx, chunks, episode):
+                        self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — bỏ qua.")
+                        continue
+
+                    # ── 4) input.txt — TẠO LẠI nếu vừa dịch (bản cũ có thể dở), hoặc
+                    # chưa có. Tạo lại → chữ ký đổi → audio/video tự render lại đúng.
+                    if not translated_now and input_txt.exists() and input_txt.stat().st_size > 0:
                         logging.info("♻ Bỏ qua tạo input.txt (đã có).")
                     elif self._batch_prepare_input(gemini_docx, input_txt):
                         logging.info(f"💾 Đã tạo: {input_txt}")
