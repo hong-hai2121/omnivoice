@@ -29,6 +29,7 @@ FOREGROUND_FRAME_IMAGE = THUMBNAIL_DIR / "khung trên.png"
 FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"              # khung ảnh NGANG (mèo nằm ngang)
 FRAME_IMAGE_VERTICAL = THUMBNAIL_DIR / "anhdoc.png"  # khung ảnh DỌC (mèo dọc/đứng)
 NUMBER_FRAME_IMAGE = THUMBNAIL_DIR / "Số.png"
+LOGO_IMAGE = THUMBNAIL_DIR / "logo.png"  # logo Mimi Truyện (tách từ khung trên.png) cho bản DỌC
 CAT_IMAGE_DIR = HERE.parent / "Anh"
 OUTPUT_DIR = HERE.parent / "kịch_bản" / "output"
 DEFAULT_TITLE = "Bữa Tiệc Toàn Ngỗng 388 Tệ Và Sự Thật Đau Đớn Sau Nhiều Năm."
@@ -71,6 +72,18 @@ PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 # xuống 15px so với bản cũ nên hộp chữ dời theo cùng độ lệch.
 NUMBER_TEXT_BOX = (1318, 100, 1658, 310)
 NUMBER_ANGLE = -13.0
+
+# ── Thumbnail DỌC (1080×1920, chuẩn YouTube Shorts) ─────────────────────────────
+# Ảnh trong thư mục Anh được phủ kín toàn khung làm nền; logo ở trên-trái, huy hiệu
+# số tập ở trên-phải, tiêu đề nằm trên panel giấy kem ở phần dưới.
+VERTICAL_CANVAS = (1080, 1920)
+V_MARGIN = 46                       # lề ngoài panel giấy
+V_PANEL_CENTER_RATIO = 0.5          # tâm panel tiêu đề theo chiều dọc (0.5 = chính giữa khung)
+V_PANEL_HEIGHT = 700                # chiều cao panel giấy kem
+V_PANEL_PAD = 50                    # đệm trong panel quanh chữ
+V_LOGO_WIDTH = 360                  # bề ngang logo
+V_BADGE_DIAMETER = 250             # đường kính huy hiệu số tập
+V_TITLE_STROKE_RATIO = 0.06         # độ dày viền trắng theo cỡ chữ (đã giảm 1/2 cho bớt nổi)
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -376,6 +389,163 @@ def draw_title_text(
         layer.size, TITLE_COLOR_TOP, TITLE_COLOR_BOTTOM, bbox[1], bbox[3]
     )
     layer.paste(grad, (0, 0), mask)
+
+
+def _fit_vertical_title(
+    title: str, box_width: int, box_height: int, max_lines: int = 4
+) -> tuple[ImageFont.FreeTypeFont, str, int, int]:
+    """Tìm cỡ font + cách ngắt dòng lớn nhất vừa panel tiêu đề bản dọc.
+
+    Trả về (font, nội_dung_đã_ngắt_dòng, spacing, stroke) — stroke là độ dày viền
+    trắng; đo bằng viền ngoài cùng (dày hơn) để chữ chắc chắn không tràn panel.
+    """
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    maximum_size = max(60, round(min(box_width * 0.26, box_height * 0.5)))
+    for size in range(maximum_size, 40, -2):
+        font = find_font(size)
+        lines = balanced_wrap(measure, title, font, box_width, max_lines)
+        if lines is None:
+            continue
+        content = "\n".join(lines)
+        spacing = max(8, round(size * 0.16))
+        stroke = max(3, round(size * V_TITLE_STROKE_RATIO))
+        edge = stroke + max(2, round(stroke * 0.35))   # viền ngoài cùng — dày nhất
+        left, top, right, bottom = measure.multiline_textbbox(
+            (0, 0), content, font=font, spacing=spacing, stroke_width=edge
+        )
+        if right - left <= box_width and bottom - top <= box_height:
+            return font, content, spacing, stroke
+    raise ValueError("Tiêu đề quá dài để đặt lên thumbnail dọc.")
+
+
+def _draw_vertical_title(
+    layer: Image.Image,
+    content: str,
+    font: ImageFont.FreeTypeFont,
+    center: tuple[int, int],
+    spacing: int,
+    stroke: int,
+) -> None:
+    """Vẽ tiêu đề bản dọc: rim tối ngoài cùng → viền trắng dày → lõi gradient đỏ."""
+    draw = ImageDraw.Draw(layer)
+    common = dict(font=font, spacing=spacing, anchor="mm", align="center")
+    edge = stroke + max(2, round(stroke * 0.35))
+    draw.multiline_text(center, content, fill=(*TITLE_EDGE, 255),
+                        stroke_width=edge, stroke_fill=(*TITLE_EDGE, 255), **common)
+    draw.multiline_text(center, content, fill=(*TITLE_OUTLINE, 255),
+                        stroke_width=stroke, stroke_fill=(*TITLE_OUTLINE, 255), **common)
+    bbox = draw.multiline_textbbox(center, content, stroke_width=0, **common)
+    mask = Image.new("L", layer.size, 0)
+    ImageDraw.Draw(mask).multiline_text(center, content, fill=255, stroke_width=0, **common)
+    grad = vertical_gradient(layer.size, TITLE_COLOR_TOP, TITLE_COLOR_BOTTOM, bbox[1], bbox[3])
+    layer.paste(grad, (0, 0), mask)
+
+
+def _add_vertical_episode_badge(base: Image.Image, number: str) -> Image.Image:
+    """Vẽ huy hiệu tròn trắng 'SỐ <n>' ở góc trên-phải (tông đỏ thương hiệu)."""
+    width = base.size[0]
+    diameter = V_BADGE_DIAMETER
+    x0 = width - V_MARGIN - diameter
+    y0 = 52
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    draw.ellipse((x0, y0, x0 + diameter, y0 + diameter), fill=(255, 255, 255, 252),
+                 outline=(195, 28, 41, 255), width=10)
+    cx, cy = x0 + diameter // 2, y0 + diameter // 2
+    red, cream = (195, 28, 41, 255), (255, 247, 222, 255)
+    draw.text((cx, cy - round(diameter * 0.25)), "SỐ", font=find_font(round(diameter * 0.23)),
+              anchor="mm", fill=red, stroke_width=4, stroke_fill=cream)
+    # Tự co cỡ số để 1–3 chữ số luôn nằm gọn trong vòng tròn.
+    inner = round(diameter * 0.74)
+    for size in range(round(diameter * 0.55), 30, -4):
+        font = find_font(size)
+        left, top, right, bottom = draw.textbbox((0, 0), number, font=font, stroke_width=6)
+        if right - left <= inner:
+            break
+    draw.text((cx, cy + round(diameter * 0.11)), number, font=font, anchor="mm",
+              fill=red, stroke_width=6, stroke_fill=cream)
+    return Image.alpha_composite(base, layer)
+
+
+def add_title_vertical(
+    output: Path,
+    title: str,
+    photo_path: Path,
+    number: str,
+    logo_path: Path = LOGO_IMAGE,
+    max_lines: int = 4,
+) -> Path:
+    """Tạo thumbnail DỌC 1080×1920: ảnh Anh làm nền + logo + tiêu đề + số tập.
+
+    Dùng chung ảnh/tiêu đề/số tập với bản ngang. File lưu cùng thư mục output,
+    không ghi đè bản cũ (unique_path).
+    """
+    if not photo_path.is_file():
+        raise FileNotFoundError(f"Không tìm thấy ảnh nền: {photo_path}")
+    title = strip_brand_suffix(title)   # bỏ '| Mimi Truyện' khỏi chữ trên thumbnail
+    width, height = VERTICAL_CANVAS
+
+    # 1) Nền: ảnh Anh phủ kín khung dọc (cover, lệch lên trên một chút cho thấy mặt).
+    background = Image.open(photo_path).convert("RGBA")
+    background = ImageOps.fit(background, VERTICAL_CANVAS,
+                             method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+
+    # 2) Scrim tối nhẹ ở trên (cho logo/số) và dưới (cho tiêu đề) để tăng độ đọc.
+    scrim = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    scrim_draw = ImageDraw.Draw(scrim)
+    bottom_start = height * 0.52
+    for y in range(height):
+        alpha = 0
+        if y < 360:
+            alpha = round(120 * (1 - y / 360))
+        if y > bottom_start:
+            t = (y - bottom_start) / (height - bottom_start)
+            alpha = max(alpha, round(150 * min(1.0, t)))
+        scrim_draw.line([(0, y), (width, y)], fill=(20, 8, 30, alpha))
+    base = Image.alpha_composite(background, scrim)
+
+    # 3) Panel giấy kem cho tiêu đề — căn GIỮA theo chiều dọc + bóng đổ mềm.
+    panel_cy = round(height * V_PANEL_CENTER_RATIO)
+    panel_top = panel_cy - V_PANEL_HEIGHT // 2
+    panel_bottom = panel_cy + V_PANEL_HEIGHT // 2
+    panel_rect = (V_MARGIN, panel_top, width - V_MARGIN, panel_bottom)
+    shadow = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (panel_rect[0], panel_rect[1] + 14, panel_rect[2], panel_rect[3] + 14),
+        radius=58, fill=(0, 0, 0, 120))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+    panel = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    ImageDraw.Draw(panel).rounded_rectangle(
+        panel_rect, radius=58, fill=(255, 250, 240, 248),
+        outline=(255, 173, 64, 255), width=8)
+    base = Image.alpha_composite(base, shadow)
+    base = Image.alpha_composite(base, panel)
+
+    # 4) Tiêu đề trong panel.
+    box = (panel_rect[0] + V_PANEL_PAD, panel_rect[1] + V_PANEL_PAD,
+           panel_rect[2] - V_PANEL_PAD, panel_rect[3] - V_PANEL_PAD)
+    box_width, box_height = box[2] - box[0], box[3] - box[1]
+    center = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
+    font, content, spacing, stroke = _fit_vertical_title(title, box_width, box_height, max_lines)
+    title_layer = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    _draw_vertical_title(title_layer, content, font, center, spacing, stroke)
+    base = Image.alpha_composite(base, title_layer)
+
+    # 5) Logo Mimi Truyện ở góc trên-trái.
+    if logo_path.is_file():
+        logo = Image.open(logo_path).convert("RGBA")
+        logo = ImageOps.contain(logo, (V_LOGO_WIDTH, V_LOGO_WIDTH),
+                               method=Image.Resampling.LANCZOS)
+        base.alpha_composite(logo, (44, 40))
+
+    # 6) Số tập: huy hiệu tròn ở góc trên-phải.
+    if number:
+        base = _add_vertical_episode_badge(base, number)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output = unique_path(output)
+    base.convert("RGB").save(output, format="PNG")
+    return output
 
 
 def add_title(

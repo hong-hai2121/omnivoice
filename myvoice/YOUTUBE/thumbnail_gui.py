@@ -481,8 +481,22 @@ class ThumbnailGUI:
                 number,
                 renderer.NUMBER_FRAME_IMAGE,
             )
+            # Bản DỌC (1080×1920): cùng ảnh + tiêu đề + số tập, tên thêm hậu tố _doc.
+            # Lỗi bản dọc không chặn bản ngang — ghi lại để báo nhẹ trong trạng thái.
+            output_doc, doc_error = "", ""
+            try:
+                output_doc = str(renderer.add_title_vertical(
+                    output.with_name(f"{output.stem}_doc{output.suffix}"),
+                    title,
+                    photo_path,
+                    number,
+                ))
+            except Exception as exc:
+                doc_error = str(exc)
             self.events.put(("done", {
                 "output": str(output),
+                "output_doc": output_doc,
+                "doc_error": doc_error,
                 "title": title,
                 "number": number,
                 "upload_drive": upload_drive,
@@ -497,15 +511,22 @@ class ThumbnailGUI:
                 if kind == "done":
                     info = value if isinstance(value, dict) else {"output": str(value)}
                     output = str(info.get("output", ""))
+                    output_doc = str(info.get("output_doc", ""))
+                    doc_error = str(info.get("doc_error", ""))
                     self.running = False
                     self.create_button.configure(state="normal")
                     self.random_button.configure(state="normal")
                     if self.upload_drive_check is not None:
                         self.upload_drive_check.configure(state="normal")
-                    self.status_var.set("Hoàn tất")
-                    self.status_label.configure(fg="#15803D")
-                    self.output_var.set(output)
-                    messagebox.showinfo("Hoàn tất", f"Đã tạo thumbnail:\n{output}", parent=self.root)
+                    self.status_var.set("Hoàn tất" if not doc_error else "Xong bản ngang (bản dọc lỗi)")
+                    self.status_label.configure(fg="#15803D" if not doc_error else "#D97706")
+                    self.output_var.set(output + (f"\n{output_doc}" if output_doc else ""))
+                    lines = [f"Thumbnail ngang:\n{output}"]
+                    if output_doc:
+                        lines.append(f"Thumbnail dọc:\n{output_doc}")
+                    if doc_error:
+                        lines.append(f"(Bản dọc lỗi: {doc_error})")
+                    messagebox.showinfo("Hoàn tất", "\n\n".join(lines), parent=self.root)
                     if self.on_done and info.get("upload_drive"):
                         try:
                             self.on_done(

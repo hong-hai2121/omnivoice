@@ -65,7 +65,7 @@ OPTS_DEFAULTS = dict(
     make_video=True, ngang_speed="1.0", effect=DEFAULT_EFFECT,
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
     make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
-    doc_no_effect=False,
+    doc_no_effect=False, bring_front=True,
 )
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
@@ -944,6 +944,29 @@ class App(tk.Tk):
         x, y = (sw - w) // 2, (sh - h) // 3
         self.geometry(f"{w}x{h}+{max(x,0)}+{max(y,0)}")
 
+    def _bring_to_front(self):
+        """Đưa cửa sổ GUI lên trên cùng + lấy focus (vd khi đang làm việc ở VS Code).
+
+        Dùng để bật lên ở bước tạo giọng. Gọi được TỪ THREAD batch: thực thi qua
+        self.after(0, ...) cho chạy trên main thread (Tk không an toàn đa luồng).
+        Mẹo topmost True→False để cửa sổ bật lên trước mà KHÔNG kẹt 'luôn trên cùng'.
+        """
+        def _do():
+            try:
+                if self.state() == "iconic":
+                    self.deiconify()             # phòng khi đang thu nhỏ
+                self.lift()
+                self.attributes("-topmost", True)
+                self.update_idletasks()
+                self.attributes("-topmost", False)
+                self.focus_force()
+            except Exception:
+                pass
+        try:
+            self.after(0, _do)
+        except Exception:
+            pass
+
     def _setup_logging(self):
         handler = QueueHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s  %(message)s", "%H:%M:%S"))
@@ -1222,7 +1245,7 @@ class App(tk.Tk):
         right = ttk.Frame(frame_video)
         right.grid(row=0, column=0, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(4, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
+        right.rowconfigure(5, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
 
         # ── Video dọc (chuyển từ cột giữa sang cho đỡ chật) ──
         vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
@@ -1283,9 +1306,19 @@ class App(tk.Tk):
         ttk.Checkbutton(act2, text="♻  Dùng lại audio/video đã có (chỉ dựng phần còn thiếu)",
                         variable=self.var_reuse).pack(side="left", padx=(16, 0))
 
+        # ── Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần) ──
+        # Hữu ích khi chạy nền: tới bước clone giọng thì GUI tự bật lên trên (vd
+        # đang làm việc ở VS Code) để dễ theo dõi / ưu tiên CPU+GPU cho app.
+        act3 = ttk.Frame(right)
+        act3.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        self.var_bring_front = tk.BooleanVar(value=self._opt_settings["bring_front"])
+        ttk.Checkbutton(act3,
+                        text="⬆️  Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần)",
+                        variable=self.var_bring_front).pack(side="left")
+
         # ── Tiến trình ──
         prog_frame = ttk.Frame(right)
-        prog_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        prog_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -1296,7 +1329,7 @@ class App(tk.Tk):
                   style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         # ── Nhật ký: nằm DƯỚI dòng 'Sẵn sàng' trong panel video (giống gốc) ──
-        self._build_log_panel(right, 4)
+        self._build_log_panel(right, 5)
         self._show_view("home")   # mặc định mở Home (đầy đủ như giao diện gốc)
 
     def _show_view(self, key):
@@ -1938,6 +1971,7 @@ class App(tk.Tk):
                 doc_speed=self.var_doc_speed.get(),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
                 doc_no_effect=self.var_doc_no_effect.get(),
+                bring_front=self.var_bring_front.get(),
             ))
         except Exception as e:
             logging.warning(f"Không lưu được cài đặt: {e}")
@@ -2385,6 +2419,7 @@ class App(tk.Tk):
             ngang_speed=ngang_speed, cut_half=cut_half,
             doc_from_ngang=self.var_doc_from_ngang.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
+            bring_front=self.var_bring_front.get(),
         )
 
     # ── CHẾ ĐỘ NHIỀU LINK: mỗi link 1 thư mục kịch_bản/NN, full pipeline ───────
@@ -2463,6 +2498,9 @@ class App(tk.Tk):
         stub = _NullWidget()
         pause_event = threading.Event()
         pause_event.set()
+        # Tới bước clone giọng cho link này → (tùy chọn) bật cửa sổ GUI lên trên cùng.
+        if ts.get("bring_front"):
+            self._bring_to_front()
         logging.info(f"🎧 Tạo giọng OmniVoice cho tập {folder.name} ({len(chunks)} đoạn)...")
         # Tiến trình chi tiết (tạo giọng + dựng video) hiện ở THANH TTS (self.progress/
         # self.status); thanh "Tạo kịch bản" để hiển thị tiến độ tổng theo số tập.
