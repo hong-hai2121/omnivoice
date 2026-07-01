@@ -84,6 +84,44 @@ def add_episode_tag(tags, ep: str):
     return tags + [extra]
 
 
+# ── Quy ước cố định khi COPY đăng YouTube ───────────────────────────────────────
+FULL_TITLE_PREFIX = "[FULL]"            # luôn mở đầu tiêu đề
+FULL_HASHTAGS = ("#truyenfull", "#full")  # luôn có trong mô tả
+MAX_TAGS_LEN = 499                      # tổng ký tự thẻ tag (nối ', ') PHẢI < giá trị này
+
+
+def add_full_prefix(title: str) -> str:
+    """Thêm '[FULL]' vào ĐẦU tiêu đề (bỏ qua nếu đã có sẵn)."""
+    title = (title or "").strip()
+    if not title or title.lower().startswith(FULL_TITLE_PREFIX.lower()):
+        return title
+    return f"{FULL_TITLE_PREFIX} {title}"
+
+
+def add_full_hashtags(description: str) -> str:
+    """Bổ sung hashtag '#truyenfull #full' vào CUỐI mô tả (bỏ cái đã có)."""
+    description = description or ""
+    low = description.lower()
+    extra = [h for h in FULL_HASHTAGS if h.lower() not in low]
+    if not extra:
+        return description
+    joined = " ".join(extra)
+    if not description.strip():
+        return joined
+    return f"{description.rstrip()}\n{joined}"
+
+
+def cap_tags(tags, ep: str, limit: int = MAX_TAGS_LEN) -> str:
+    """Nối thẻ tag bằng ', ' và CẮT bớt cho tổng ký tự < limit; LUÔN giữ tag tập."""
+    tag_list = add_episode_tag(tags, ep)
+    ep_tag = f"mimi truyện số {ep}" if ep else None
+    keep = [t for t in tag_list if ep_tag and t == ep_tag]
+    others = [t for t in tag_list if not (ep_tag and t == ep_tag)]
+    while others and len(", ".join(others + keep)) >= limit:
+        others.pop()        # bỏ tag thường ở cuối, KHÔNG đụng tag tập
+    return ", ".join(others + keep)
+
+
 class ThumbnailGUI:
     def __init__(self, root, embed: bool = False, on_done=None):
         self.root = root
@@ -428,17 +466,17 @@ class ThumbnailGUI:
         # lấy từ ô nhập (ô nhập đã bỏ '| Mimi Truyện' cho thumbnail). SEO đã có sẵn
         # '| Mimi Truyện'; ensure_brand_suffix chỉ phòng khi SEO thiếu hậu tố.
         title = ensure_brand_suffix(self._read_seo().get("title", ""))
-        self._copy_text(add_episode_to_title(title, self._episode_number()), "tiêu đề")
+        title = add_episode_to_title(title, self._episode_number())
+        self._copy_text(add_full_prefix(title), "tiêu đề")
 
     def _copy_description(self) -> None:
         seo = self._read_seo()
         desc = add_episode_to_description(seo.get("description", ""), self._episode_number())
-        self._copy_text(desc, "mô tả")
+        self._copy_text(add_full_hashtags(desc), "mô tả")
 
     def _copy_tags(self) -> None:
         seo = self._read_seo()
-        tags = add_episode_tag(seo.get("tags", []), self._episode_number())
-        self._copy_text(", ".join(tags), "thẻ tag")
+        self._copy_text(cap_tags(seo.get("tags", []), self._episode_number()), "thẻ tag")
 
     def _start_render(self) -> None:
         if self.running:

@@ -113,6 +113,11 @@ _CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 MAX_CHINESE_RETRIES = int(os.environ.get("OMNI_GEMINI_RETRY_CHINESE", "3"))
 # Câu yêu cầu chèn lên đầu khi gửi lại đoạn còn tiếng Trung.
 RETRY_CHINESE_PREFIX = "chỉ trả về nội dung dịch không giao tiếp gì thêm :"
+# Tỉ lệ chữ Hán còn sót TỐI ĐA mà vẫn coi đoạn là ĐÃ DỊCH. Bản dịch tốt đôi khi
+# còn vài chữ Hán (tên riêng Gemini giữ nguyên) → đừng coi là chưa dịch. Chỉ coi
+# CHƯA dịch khi đoạn còn nguyên/đa phần tiếng Trung. Đặt 0 để quay lại kiểu nghiêm
+# ngặt "còn 1 chữ Hán là chưa xong".
+CHINESE_DONE_MAX_RATIO = float(os.environ.get("OMNI_GEMINI_CHINESE_RATIO", "0.05"))
 
 
 def has_chinese(text):
@@ -120,16 +125,24 @@ def has_chinese(text):
     return bool(text) and _CHINESE_RE.search(text) is not None
 
 
+def chinese_ratio(text):
+    """Tỉ lệ chữ Hán trên tổng ký tự KHÔNG phải khoảng trắng (0..1)."""
+    non_space = sum(1 for c in (text or "") if not c.isspace())
+    return (len(_CHINESE_RE.findall(text or "")) / non_space) if non_space else 0.0
+
+
 # Chuỗi đánh dấu đoạn CHƯA dịch xong trong gemini_result.docx (để TIẾP TỤC dịch).
 _NOT_TRANSLATED = {"", "(chưa dịch)", "(trống)"}
 
 
 def is_translation_done(text):
-    """True nếu đoạn đã dịch xong: có nội dung, không phải chuỗi đánh dấu, hết chữ Hán."""
+    """True nếu đoạn đã dịch xong: có nội dung, không phải chuỗi đánh dấu, và chữ
+    Hán còn sót KHÔNG vượt ngưỡng (cho phép vài chữ Hán như tên riêng). Chỉ coi là
+    CHƯA dịch khi đoạn còn nguyên/đa phần tiếng Trung (xem CHINESE_DONE_MAX_RATIO)."""
     t = (text or "").strip()
     if t.lower() in _NOT_TRANSLATED:
         return False
-    return not has_chinese(t)
+    return chinese_ratio(t) <= CHINESE_DONE_MAX_RATIO
 
 
 def read_results_docx(path, total):
@@ -504,19 +517,34 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     on_log(f"📤 Gửi lại đoạn {i + 1}/{total} sau khi mở lại Firefox...")
                     ans = send_to_gemini(driver, chunk, prefix=resend_prefix,
                                          on_log=on_log)
-                # ── Kiểm tra tiếng Trung: bản dịch còn ký tự Hán nghĩa là Gemini
-                #    chưa dịch hết → GỬI LẠI chính đoạn đó kèm câu yêu cầu chỉ trả
-                #    về nội dung dịch. Lặp tối đa MAX_CHINESE_RETRIES lần rồi mới lưu.
-                retry = 0
-                while ans and has_chinese(ans) and retry < MAX_CHINESE_RETRIES:
-                    retry += 1
-                    on_log(f"🈶 Đoạn {i + 1}/{total} còn tiếng Trung — gửi lại "
-                           f"(lần {retry}/{MAX_CHINESE_RETRIES})...")
-                    ans = send_to_gemini(driver, chunk,
-                                         prefix=RETRY_CHINESE_PREFIX, on_log=on_log)
-                if ans and has_chinese(ans):
-                    on_log(f"⚠️ Đoạn {i + 1}/{total} VẪN còn tiếng Trung sau "
-                           f"{MAX_CHINESE_RETRIES} lần gửi lại — vẫn lưu tạm để xem lại.")
+                # ── Kiểm tra tiếng Trung: đoạn còn QUÁ NHIỀU chữ Hán (vượt ngưỡng,
+                #    is_translation_done=False) nghĩa là Gemini chưa dịch hết → GỬI LẠI
+                #    chính đoạn đó kèm câu yêu cầu chỉ trả về nội dung dịch, tối đa
+                #    MAX_CHINESE_RETRIES lần. Vài chữ Hán sót (vd tên riêng) thì coi như
+                #    XONG, không gửi lại.
+                #    ƯU TIÊN BẢN ĐẦU: chỉ thay bằng lần gửi lại nếu lần đó đã dịch đủ;
+                #    nếu mọi lần gửi lại vẫn còn nhiều tiếng Trung (hoặc trả rỗng) thì
+                #    GIỮ bản đầu để lưu — vì lời nhắc 'chỉ trả về nội dung dịch' đôi khi
+                #    khiến Gemini rút gọn/đổi nội dung, kém đầy đủ hơn bản đầu.
+                if ans and not is_translation_done(ans):
+                    first_ans = ans               # bản ĐẦU (còn nhiều tiếng Trung)
+                    retry = 0
+                    while not is_translation_done(ans) and retry < MAX_CHINESE_RETRIES:
+                        retry += 1
+                        on_log(f"🈶 Đoạn {i + 1}/{total} còn nhiều tiếng Trung — gửi lại "
+                               f"(lần {retry}/{MAX_CHINESE_RETRIES})...")
+                        ans = send_to_gemini(driver, chunk,
+                                             prefix=RETRY_CHINESE_PREFIX, on_log=on_log)
+                        if not ans:               # gửi lại rỗng → quay về bản đầu
+                            ans = first_ans
+                            break
+                    if not is_translation_done(ans):
+                        ans = first_ans           # không lần nào đủ → giữ bản ĐẦU
+                        on_log(f"⚠️ Đoạn {i + 1}/{total} VẪN còn nhiều tiếng Trung sau "
+                               f"{MAX_CHINESE_RETRIES} lần gửi lại — GIỮ bản đầu để lưu.")
+                    else:
+                        on_log(f"✅ Đoạn {i + 1}/{total} đã dịch đủ sau "
+                               f"{retry} lần gửi lại.")
             except Exception as e:
                 # ── LỖI GIỮA CHỪNG ──────────────────────────────────────────
                 # Lưu lại những đoạn ĐÃ XONG rồi báo lỗi để dừng sạch; phần đã

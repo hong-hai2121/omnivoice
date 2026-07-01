@@ -44,6 +44,7 @@ for _p in (_THIS_DIR, _SCRIPTS_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import time
 import argparse
 from pathlib import Path
 
@@ -51,15 +52,39 @@ import dich_gemini as g
 from dich_docx import read_chunks
 
 # ── Link cuộc trò chuyện Gemini chuyên SEO YouTube (đã có sẵn chỉ dẫn) ─────────
+# CHỈ giữ phần /app/<id> — KHÔNG kèm tham số quảng cáo (gclid, utm_*, campaign_id,
+# is_sa...). Link 1 cuộc trò chuyện CỤ THỂ mà còn dính tham số chiến dịch thì Gemini
+# hay BỎ id rồi mở CHAT MỚI → SEO gửi nhầm vào trò chuyện trống (mất ngữ cảnh đã
+# huấn luyện). Vì vậy luôn cắt bỏ phần query (kể cả khi đặt qua biến môi trường).
 SEO_GEMINI_URL = os.environ.get(
     "OMNI_SEO_GEMINI_URL",
-    "https://gemini.google.com/app/e1a7ace4a71c48b2?is_sa=1&is_sa=1"
-    "&android-min-version=301356232&ios-min-version=322.0&campaign_id=bkws"
-    "&utm_source=sem&utm_medium=paid-media&utm_campaign=bkws&pt=9008&mt=8"
-    "&ct=p-growth-sem-bkws&gclsrc=aw.ds&gad_source=1&gad_campaignid=22165684207"
-    "&gbraid=0AAAAApk5BhlAGVEaouhBwUbsMM3XYJIlr"
-    "&gclid=CjwKCAjw0dPRBhAPEiwAE5vTTiQwe0DnA-Gqs0gZrpcA0Bn0KiLcRqrSG-SAFggRkHJoRJ6Lb_wKDhoCkCAQAvD_BwE",
-)
+    "https://gemini.google.com/app/e1a7ace4a71c48b2",
+).split("?", 1)[0].strip()
+
+
+def _seo_conversation_id():
+    """ID cuộc trò chuyện trong SEO_GEMINI_URL (phần sau '/app/'); '' nếu không có."""
+    if "/app/" not in SEO_GEMINI_URL:
+        return ""
+    return SEO_GEMINI_URL.split("/app/", 1)[-1].split("/", 1)[0].strip()
+
+
+def _open_seo_chat(driver, log, wait=8):
+    """Điều hướng Firefox sang ĐÚNG cuộc trò chuyện SEO và XÁC NHẬN Gemini không
+    đẩy sang chat mới. Thử lại 1 lần nếu bị mở chat mới. True nếu đang ở đúng chat."""
+    conv_id = _seo_conversation_id()
+    last = ""
+    for attempt in (1, 2):
+        driver.get(SEO_GEMINI_URL)
+        time.sleep(wait)
+        last = driver.current_url or ""
+        if not conv_id or conv_id in last:
+            return True
+        log(f"⚠️ Lần {attempt}: Gemini mở CHAT MỚI ({last}) thay vì cuộc trò chuyện "
+            f"SEO ({conv_id}) — thử lại...")
+    log(f"❗ KHÔNG vào được cuộc trò chuyện SEO (đang ở {last}). KHÔNG gửi để tránh "
+        "tạo SEO sai. Kiểm tra lại link OMNI_SEO_GEMINI_URL và đăng nhập Gemini.")
+    return False
 
 # ── Đường dẫn mặc định ───────────────────────────────────────────────────────
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
@@ -119,11 +144,11 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     try:
         if driver is None:
             driver = g.init_firefox(url=SEO_GEMINI_URL)
-        else:
-            # Tái dùng Firefox đang mở (đã đăng nhập) — chỉ mở cuộc trò chuyện SEO.
-            import time
-            driver.get(SEO_GEMINI_URL)
-            time.sleep(8)
+        # Luôn điều hướng + XÁC NHẬN đang ở đúng cuộc trò chuyện SEO (kể cả khi tái
+        # dùng Firefox đang ở chat dịch). Sai chat → DỪNG, không gửi nhầm ra chat mới.
+        if not _open_seo_chat(driver, log):
+            save_seo_docx("", output_path)   # giữ file rỗng để lần sau chạy lại SEO
+            return ""
         log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
         # prefix="" → chỉ gửi nguyên văn nội dung, không thêm yêu cầu gì.
         ans = g.send_to_gemini(driver, text, prefix="", on_log=log)

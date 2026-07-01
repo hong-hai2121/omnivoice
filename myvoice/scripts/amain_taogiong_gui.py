@@ -991,6 +991,7 @@ class App(tk.Tk):
                            ("script", "🛠  Tạo\nkịch bản"),
                            ("voice",  "🎧  Giọng\nnói"),
                            ("thumb",  "🖼  Thumb\nnail"),
+                           ("copy",   "📑  Copy\nSEO"),
                            ("report", "📋  Tiến\nđộ")]:
             b = ttk.Button(side, text=label, width=11,
                            command=lambda k=key: self._show_view(k))
@@ -1041,6 +1042,14 @@ class App(tk.Tk):
         frame_report.columnconfigure(0, weight=1)
         self._panels["report"] = frame_report
         self._build_report_panel(frame_report)
+
+        # Panel Copy SEO — danh sách tập (thư mục số trong kịch_bản) + copy tiêu đề/mô tả/thẻ tag.
+        frame_copyseo = ttk.Frame(content)
+        frame_copyseo.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        frame_copyseo.rowconfigure(0, weight=1)
+        frame_copyseo.columnconfigure(0, weight=1)
+        self._panels["copyseo"] = frame_copyseo
+        self._build_copyseo_panel(frame_copyseo)
 
         # ════════════════════════════════════════════════
         # PANEL pipeline — Quy trình tạo kịch bản (nhận diện → Gemini → SEO → input.txt)
@@ -1343,6 +1352,7 @@ class App(tk.Tk):
             "script": ("pipeline",),
             "voice":  ("tts", "video"),
             "thumb":  ("thumbnail",),
+            "copy":   ("copyseo",),
             "report": ("report",),
         }[key]
         for name, fr in self._panels.items():
@@ -1352,6 +1362,8 @@ class App(tk.Tk):
                 fr.grid_remove()
         if key == "report":
             self._refresh_report()   # cập nhật bảng tiến độ mỗi khi mở tab
+        elif key == "copy":
+            self._refresh_copyseo()  # quét lại danh sách tập mỗi khi mở tab
         # Riêng tab "Tạo kịch bản": dàn 3 bước theo NGANG + hiện nhật ký, lấp đầy
         # chiều rộng. Ở Home/Giọng nói: pipeline là cột DỌC hẹp (như giao diện gốc).
         is_script = (key == "script")
@@ -1643,6 +1655,156 @@ class App(tk.Tk):
                 except Exception:
                     pass
             self._pipe_set_busy(False)
+
+    # ── TAB COPY SEO: chọn 1 tập (thư mục số) → copy tiêu đề/mô tả/thẻ tag ───────
+    def _build_copyseo_panel(self, parent):
+        wrap = ttk.Frame(parent, padding=4)
+        wrap.grid(row=0, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(2, weight=1)
+
+        hdr = ttk.Frame(wrap)
+        hdr.grid(row=0, column=0, sticky="ew")
+        ttk.Label(hdr, text="📑  Copy SEO theo tập", style="Header.TLabel").pack(side="left")
+        ttk.Label(wrap, text="Chọn 1 tập (thư mục số trong kịch_bản) rồi copy Tiêu đề · Mô tả · Thẻ tag. "
+                  "Tiêu đề mở đầu [FULL]; mô tả có #truyenfull #full; thẻ tag < 499 ký tự.",
+                  style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 8))
+
+        body = ttk.Frame(wrap)
+        body.grid(row=2, column=0, sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        # Cột trái: danh sách tập có SEO.
+        left = ttk.Frame(body)
+        left.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        left.rowconfigure(0, weight=1)
+        lst = tk.Listbox(left, width=12, exportselection=False, activestyle="dotbox",
+                         font=("Segoe UI", 10))
+        lst.grid(row=0, column=0, sticky="ns")
+        lsb = ttk.Scrollbar(left, orient="vertical", command=lst.yview)
+        lsb.grid(row=0, column=1, sticky="ns")
+        lst.configure(yscrollcommand=lsb.set)
+        lst.bind("<<ListboxSelect>>", lambda e: self._copyseo_load_selected())
+        self._copyseo_list = lst
+
+        # Cột phải: 4 nút copy + xem trước nội dung.
+        right = ttk.Frame(body)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+
+        btns = ttk.Frame(right)
+        btns.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(btns, text="📋  Tiêu đề", command=lambda: self._copyseo_copy("title")).pack(side="left")
+        ttk.Button(btns, text="📋  Mô tả", command=lambda: self._copyseo_copy("desc")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="📋  Thẻ tag", command=lambda: self._copyseo_copy("tags")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="📋  Cả 3", style="Accent.TButton",
+                   command=lambda: self._copyseo_copy("all")).pack(side="left", padx=(8, 0))
+
+        txt = tk.Text(right, wrap="word", height=18, font=("Consolas", 10),
+                      bg="white", relief="solid", borderwidth=1)
+        txt.grid(row=1, column=0, sticky="nsew")
+        tsb = ttk.Scrollbar(right, orient="vertical", command=txt.yview)
+        tsb.grid(row=1, column=1, sticky="ns")
+        txt.configure(yscrollcommand=tsb.set, state="disabled")
+        self._copyseo_text = txt
+
+        foot = ttk.Frame(wrap)
+        foot.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ttk.Button(foot, text="🔄  Làm mới", command=self._refresh_copyseo).pack(side="left")
+        self._copyseo_status = tk.StringVar(value="")
+        ttk.Label(foot, textvariable=self._copyseo_status,
+                  style="Sub.TLabel").pack(side="left", padx=(12, 0))
+
+        self._copyseo_episodes = []       # các số tập đang hiển thị (khớp index listbox)
+        self._copyseo_blocks = {}         # cache: episode -> {'title','desc','tags'}
+
+    def _copyseo_selected_episode(self):
+        lst = getattr(self, "_copyseo_list", None)
+        sel = lst.curselection() if lst else ()
+        eps = getattr(self, "_copyseo_episodes", [])
+        if sel and sel[0] < len(eps):
+            return eps[sel[0]]
+        return None
+
+    def _refresh_copyseo(self):
+        """Quét các thư mục số trong kịch_bản CÓ seoYoutube.docx → đổ vào danh sách."""
+        lst = getattr(self, "_copyseo_list", None)
+        if lst is None:
+            return
+        prev = self._copyseo_selected_episode()
+        self._copyseo_blocks = {}        # SEO có thể đã đổi → đọc lại khi chọn
+        eps = []
+        if SCRIPT_DIR.exists():
+            for p in sorted(SCRIPT_DIR.iterdir()):
+                if p.is_dir() and p.name.isdecimal() and (p / "seoYoutube.docx").exists():
+                    eps.append(p.name)
+        self._copyseo_episodes = eps
+        lst.delete(0, tk.END)
+        for ep in eps:
+            lst.insert(tk.END, f"  Tập {ep}")
+        self._copyseo_status.set(f"{len(eps)} tập có SEO trong kịch_bản")
+        if prev in eps:                  # giữ nguyên tập đang chọn nếu còn
+            i = eps.index(prev)
+            lst.selection_set(i)
+            lst.see(i)
+            self._copyseo_load_selected()
+        else:
+            self._set_copyseo_preview("← Chọn một tập ở cột trái để xem và copy.")
+
+    def _set_copyseo_preview(self, text: str):
+        txt = getattr(self, "_copyseo_text", None)
+        if txt is None:
+            return
+        txt.configure(state="normal")
+        txt.delete("1.0", tk.END)
+        txt.insert("1.0", text or "")
+        txt.configure(state="disabled")
+
+    def _copyseo_load_selected(self):
+        """Đọc SEO của tập đang chọn (có cache) rồi hiện xem trước 3 phần."""
+        ep = self._copyseo_selected_episode()
+        if not ep:
+            return
+        blocks = self._copyseo_blocks.get(ep)
+        if blocks is None:
+            blocks = self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx", ep)
+            self._copyseo_blocks[ep] = blocks
+        if not blocks:
+            self._set_copyseo_preview(f"(Không đọc được SEO của tập {ep}.)")
+            self._copyseo_status.set(f"Tập {ep}: lỗi đọc SEO")
+            return
+        self._set_copyseo_preview(
+            "===== TIÊU ĐỀ =====\n" + blocks["title"] + "\n\n"
+            "===== MÔ TẢ =====\n" + blocks["desc"] + "\n\n"
+            "===== THẺ TAG =====\n" + blocks["tags"])
+        self._copyseo_status.set(f"Tập {ep} • thẻ tag {len(blocks['tags'])} ký tự")
+
+    def _copyseo_copy(self, which: str):
+        """Copy 1 phần (title/desc/tags) hoặc 'all' của tập đang chọn vào clipboard."""
+        ep = self._copyseo_selected_episode()
+        if not ep:
+            messagebox.showinfo("Chọn tập", "Hãy chọn 1 tập trong danh sách bên trái.")
+            return
+        blocks = self._copyseo_blocks.get(ep) or \
+            self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx", ep)
+        if not blocks:
+            messagebox.showwarning("Không có SEO", f"Tập {ep} chưa đọc được nội dung SEO.")
+            return
+        self._copyseo_blocks[ep] = blocks
+        label = {"title": "tiêu đề", "desc": "mô tả",
+                 "tags": "thẻ tag", "all": "cả 3 phần"}[which]
+        if which == "all":
+            text = blocks["title"] + "\n\n" + blocks["desc"] + "\n\n" + blocks["tags"]
+        else:
+            text = blocks[which]
+        if not text.strip():
+            self._copyseo_status.set(f"Tập {ep}: không có {label} để copy.")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._copyseo_status.set(f"✓ Đã copy {label} tập {ep} ({len(text)} ký tự)")
 
     def _build_thumbnail_panel(self, parent):
         """Nhúng GUI tạo thumbnail (YOUTUBE/thumbnail_gui.py) vào 1 panel.
@@ -2554,14 +2716,11 @@ class App(tk.Tk):
             logging.error(f"Lỗi tạo thumbnail {folder.name}: {e}")
             return False
 
-    def _save_youtube_seo_copy(self, seo_docx, out_path, episode: str) -> bool:
-        """Lưu sẵn nội dung 3 nút Copy của tab Thumbnail (tiêu đề · mô tả · thẻ tag)
-        ra 1 file .txt để dán nhanh khi đăng YouTube.
-
-        Tab Thumbnail chỉ đọc seoYoutube.docx CHUNG (kịch_bản/) nên khi chạy NHIỀU
-        LINK không copy được nội dung từng tập. File này ghi đúng nội dung 3 nút đó
-        (đã gắn 'Số <tập>' + hậu tố '| Mimi Truyện') cho file SEO của riêng tập.
-        """
+    def _seo_copy_blocks(self, seo_docx, episode: str):
+        """Đọc seoYoutube.docx → {'title','desc','tags'} đã chuẩn hóa cho 1 tập
+        (None nếu lỗi). Khớp tuyệt đối với 3 nút Copy của tab Thumbnail:
+        tiêu đề mở đầu [FULL] + 'Số <tập>' + '| Mimi Truyện'; mô tả thêm hashtag
+        #truyenfull #full; thẻ tag gắn tag tập rồi cắt cho tổng < 499 ký tự."""
         try:
             youtube_dir = str(YOUTUBE_DIR)
             if youtube_dir not in sys.path:
@@ -2571,28 +2730,42 @@ class App(tk.Tk):
 
             seo = parse_seo_docx(str(seo_docx))
             ep = episode if str(episode).strip().isdecimal() else ""
-            title = tg.add_episode_to_title(
-                tg.ensure_brand_suffix(seo.get("title", "")), ep)
-            desc = tg.add_episode_to_description(seo.get("description", ""), ep)
+            # Tiêu đề mở đầu [FULL]; mô tả thêm hashtag #truyenfull #full.
+            title = tg.add_full_prefix(
+                tg.add_episode_to_title(tg.ensure_brand_suffix(seo.get("title", "")), ep))
+            desc = tg.add_full_hashtags(
+                tg.add_episode_to_description(seo.get("description", ""), ep))
 
-            # Thẻ tag: gắn tag tập rồi cắt bớt cho tổng (nối bằng ', ') ≤ 500 ký tự
+            # Thẻ tag: gắn tag tập rồi cắt bớt cho tổng (nối bằng ', ') < 499 ký tự
             # (giới hạn YouTube) — nhưng LUÔN GIỮ tag tập 'mimi truyện số <ep>'.
             tag_list = tg.add_episode_tag(seo.get("tags", []), ep)
-            ep_tag = f"mimi truyện số {ep}" if ep else None
-            keep = [t for t in tag_list if ep_tag and t == ep_tag]
-            others = [t for t in tag_list if not (ep_tag and t == ep_tag)]
-            while others and len(", ".join(others + keep)) > 500:
-                others.pop()        # bỏ tag thường ở cuối, KHÔNG đụng tag tập
-            dropped = len(tag_list) - len(others + keep)
+            tags = tg.cap_tags(seo.get("tags", []), ep)
+            dropped = len(tag_list) - len([t for t in tags.split(", ") if t])
             if dropped:
-                logging.info(f"✂ Thẻ tag >500 ký tự → bỏ {dropped} tag cuối "
+                ep_tag = f"mimi truyện số {ep}" if ep else None
+                logging.info(f"✂ Thẻ tag ≥{tg.MAX_TAGS_LEN} ký tự → bỏ {dropped} tag cuối "
                              + (f"(giữ '{ep_tag}')." if ep_tag else "."))
-            tags = ", ".join(others + keep)
+            return {"title": title or "", "desc": desc or "", "tags": tags or ""}
+        except Exception as e:
+            logging.warning(f"Không đọc được nội dung SEO copy: {e}")
+            return None
 
+    def _save_youtube_seo_copy(self, seo_docx, out_path, episode: str) -> bool:
+        """Lưu sẵn nội dung 3 nút Copy của tab Thumbnail (tiêu đề · mô tả · thẻ tag)
+        ra 1 file .txt để dán nhanh khi đăng YouTube.
+
+        Tab Thumbnail chỉ đọc seoYoutube.docx CHUNG (kịch_bản/) nên khi chạy NHIỀU
+        LINK không copy được nội dung từng tập. File này ghi đúng nội dung 3 nút đó
+        (đã gắn 'Số <tập>' + hậu tố '| Mimi Truyện') cho file SEO của riêng tập.
+        """
+        blocks = self._seo_copy_blocks(seo_docx, episode)
+        if not blocks:
+            return False
+        try:
             content = (
-                "===== TIÊU ĐỀ =====\n" + (title or "") + "\n\n"
-                "===== MÔ TẢ =====\n" + (desc or "") + "\n\n"
-                "===== THẺ TAG =====\n" + (tags or "") + "\n"
+                "===== TIÊU ĐỀ =====\n" + blocks["title"] + "\n\n"
+                "===== MÔ TẢ =====\n" + blocks["desc"] + "\n\n"
+                "===== THẺ TAG =====\n" + blocks["tags"] + "\n"
             )
             Path(out_path).write_text(content, encoding="utf-8")
             logging.info(f"💾 Đã lưu nội dung copy YouTube (tiêu đề/mô tả/thẻ tag) "
