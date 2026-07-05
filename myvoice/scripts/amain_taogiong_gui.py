@@ -309,10 +309,32 @@ def save_episode_number(n: int) -> None:
 # bỏ qua phần đã làm; dù NHẬP KHÁC THỨ TỰ / thiếu link vẫn đúng tập.
 MANIFEST_FILE = SCRIPT_DIR / "batch_manifest.json"
 
+# [TẠM] Tắt kiểm CHI TIẾT từng đoạn dịch khi chạy batch: nếu gemini_result.docx đã
+# TỒN TẠI thì coi như DỊCH XONG, KHÔNG dò từng đoạn is_translation_done nữa. Lý do:
+# check chi tiết hay báo nhầm "chưa xong" → gửi LẠI đoạn đã dịch lên Gemini. Đổi về
+# False để bật lại kiểm từng đoạn (chặt chẽ hơn nhưng có thể gửi lại đoạn đã dịch).
+SKIP_TRANSLATE_DETAIL_CHECK = True
+
 
 def norm_source(src: str) -> str:
-    """Chuẩn hoá chuỗi nguồn (bỏ khoảng trắng + nháy) để làm khoá manifest ổn định."""
-    return (src or "").strip().strip('"').strip("'")
+    """Chuẩn hoá chuỗi nguồn để làm khoá manifest ổn định.
+
+    - Bỏ khoảng trắng + nháy bao quanh.
+    - FILE LOCAL: đưa về đường dẫn TUYỆT ĐỐI + normcase (trên Windows: hạ hoa/thường,
+      đổi '/'→'\\'). Nhờ vậy cùng một file gõ khác kiểu — hoa/thường ổ đĩa (D:\\ vs d:\\),
+      gạch chéo (\\ vs /), tương đối vs tuyệt đối — vẫn ra CÙNG khoá → không nhận diện lại.
+    - URL (http/https): giữ NGUYÊN (đường dẫn mạng phân biệt hoa/thường).
+    Chỉ ảnh hưởng KHOÁ manifest; thao tác đọc file vẫn dùng chuỗi gốc.
+    """
+    s = (src or "").strip().strip('"').strip("'").strip()
+    if not s:
+        return ""
+    if s.lower().startswith(("http://", "https://")):
+        return s
+    try:
+        return os.path.normcase(os.path.abspath(s))
+    except Exception:
+        return s
 
 
 def load_manifest() -> dict:
@@ -1390,6 +1412,7 @@ class App(tk.Tk):
             self._pipe_btn_open.grid_configure(row=3, column=0, columnspan=3, sticky="w")
             self._pipe_btn_reset.grid_configure(row=4, column=0, columnspan=3, sticky="w")
             self._pipe_log_frame.grid()
+            self._batch_ctrl_frame.grid()        # nút Tạm dừng/Dừng: hiện ở tab Tạo kịch bản
         else:
             for c, wt in ((0, 1), (1, 0), (2, 0), (3, 0)):
                 w.columnconfigure(c, weight=wt)
@@ -1402,6 +1425,7 @@ class App(tk.Tk):
             self._pipe_btn_open.grid_configure(row=5, column=0, columnspan=1, sticky="w")
             self._pipe_btn_reset.grid_configure(row=6, column=0, columnspan=1, sticky="w")
             self._pipe_log_frame.grid_remove()
+            self._batch_ctrl_frame.grid_remove()  # ẩn nút Tạm dừng/Dừng ở Home/Giọng nói
 
     # ── TAB TIẾN ĐỘ: bảng các link đã gửi (manifest) + đã làm tới đâu ────────────
     # Thứ tự bước hiển thị trong cột "Tiến độ" (nhãn ngắn + khoá trong steps dict).
@@ -1567,22 +1591,31 @@ class App(tk.Tk):
             logging.info(f"♻ Dùng lại nhận diện ({existing_zh.name}, {len(chunks)} đoạn).")
 
             # 3) Dịch Gemini — đủ thì bỏ qua; thiếu thì tiếp tục.
-            prior = (g.read_results_docx(gemini_docx, len(chunks))
-                     if gemini_docx.exists() else [None] * len(chunks))
-            n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-            translated_now = n_todo > 0
-            if n_todo == 0:
-                logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+            if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
+                # [TẠM] Đã có gemini_result.docx → coi như DỊCH XONG, không dò từng đoạn
+                # (tránh gửi lại đoạn đã dịch). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
+                translated_now = False
+                translation_ok = True
+                logging.info(f"♻ Bỏ qua dịch Gemini — đã có {gemini_docx.name} "
+                             f"(TẠM tắt kiểm từng đoạn).")
             else:
-                logging.info(f"🌐 Mở Firefox dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
-                driver = g.init_firefox()
-                results = g.send_chunks_to_gemini(
-                    chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                    driver=driver, keep_open=True, resume=True)
-                g.save_results_docx(chunks, results, gemini_docx)
+                prior = (g.read_results_docx(gemini_docx, len(chunks))
+                         if gemini_docx.exists() else [None] * len(chunks))
+                n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+                translated_now = n_todo > 0
+                if n_todo == 0:
+                    logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+                else:
+                    logging.info(f"🌐 Mở Firefox dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
+                    driver = g.init_firefox()
+                    results = g.send_chunks_to_gemini(
+                        chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                        driver=driver, keep_open=True, resume=True)
+                    g.save_results_docx(chunks, results, gemini_docx)
+                # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video.
+                translation_ok = self._translation_complete(gemini_docx, chunks, episode)
 
-            # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video.
-            if not self._translation_complete(gemini_docx, chunks, episode):
+            if not translation_ok:
                 self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — dừng.")
                 self._manifest_update(src, episode, folder, done=False)
                 return
@@ -2385,6 +2418,25 @@ class App(tk.Tk):
         ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
             row=2, column=0, sticky="w", pady=(2, 0))
 
+        # ── Điều khiển batch NHIỀU LINK: Tạm dừng/Tiếp tục + Xong link này rồi dừng ──
+        # CHỈ hiện ở tab "Tạo kịch bản" (view script) — ẩn ở Home cho đỡ chật (do
+        # _pipeline_set_layout ẩn/hiện). Chỉ BẬT khi đang chạy batch. Tác dụng ở ĐIỂM
+        # AN TOÀN (ranh giới bước/link), KHÔNG cắt ngang thao tác đang chạy (Whisper/
+        # Gemini/tạo giọng) — nên có thể trễ tới khi bước hiện tại xong.
+        self._batch_pause_evt = threading.Event()   # set = đang TẠM DỪNG
+        self._batch_stop_evt = threading.Event()    # set = DỪNG sau khi xong link hiện tại
+        self._batch_running = False
+        self._batch_ctrl_frame = bctl = ttk.Frame(pf)
+        bctl.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        self.btn_batch_pause = ttk.Button(
+            bctl, text="⏸  Tạm dừng", width=15, state="disabled",
+            command=self._batch_toggle_pause)
+        self.btn_batch_pause.pack(side="left")
+        self.btn_batch_stop = ttk.Button(
+            bctl, text="⏹  Xong link này rồi dừng", width=24, state="disabled",
+            command=self._batch_request_stop)
+        self.btn_batch_stop.pack(side="left", padx=(8, 0))
+
         self._pipe_btn_open = ttk.Button(wrap, text="↗  Mở cửa sổ nhận diện đầy đủ",
                                          command=self._open_nhan_dien)
         self._pipe_btn_open.grid(row=5, column=0, sticky="w", pady=(8, 0))
@@ -2601,6 +2653,12 @@ class App(tk.Tk):
         logging.info(f"⛓ Xử lý {len(sources)} link theo thứ tự (mỗi link 1 tập)"
                      + (" + tạo giọng." if tts_settings else "."))
         self._pipe_set_busy(True)
+        # Bật điều khiển batch: xoá cờ cũ + cho phép 2 nút Tạm dừng / Dừng-sau-link.
+        self._batch_pause_evt.clear()
+        self._batch_stop_evt.clear()
+        self._batch_running = True
+        self.btn_batch_pause.config(state="normal", text="⏸  Tạm dừng")
+        self.btn_batch_stop.config(state="normal")
         self.pipe_progress.set(0)
         self.pipe_link_status.set(f"⏳ Chuẩn bị xử lý {len(sources)} link...")
         self.pipe_status.set(f"⏳ Bắt đầu xử lý {len(sources)} link...")
@@ -2609,6 +2667,56 @@ class App(tk.Tk):
             args=(sources, self.pipe_var_model.get(), self.pipe_var_speed.get(),
                   tts_settings),
             daemon=True).start()
+
+    # ── Điều khiển batch nhiều link: tạm dừng / dừng-sau-link ──────────────────
+    def _batch_toggle_pause(self):
+        """Tạm dừng ↔ cho chạy tiếp batch. Áp dụng ở điểm an toàn kế tiếp (giữa bước/link),
+        không cắt ngang thao tác đang chạy."""
+        if not self._batch_running:
+            return
+        if self._batch_pause_evt.is_set():
+            self._batch_pause_evt.clear()
+            self.btn_batch_pause.config(text="⏸  Tạm dừng")
+            self.pipe_link_status.set("▶  Cho chạy tiếp...")
+            logging.info("▶ Người dùng cho CHẠY TIẾP batch.")
+        else:
+            self._batch_pause_evt.set()
+            self.btn_batch_pause.config(text="▶  Tiếp tục")
+            self.pipe_link_status.set("⏸  Sẽ tạm dừng ở điểm an toàn kế tiếp (giữa bước/link)...")
+            logging.info("⏸ Người dùng yêu cầu TẠM DỪNG batch.")
+
+    def _batch_request_stop(self):
+        """Đánh dấu DỪNG: link đang chạy sẽ hoàn tất RỒI batch dừng (không bắt đầu link kế)."""
+        if not self._batch_running:
+            return
+        self._batch_stop_evt.set()
+        # Nếu đang tạm dừng thì bỏ cờ tạm dừng để link hiện tại chạy nốt rồi mới dừng.
+        self._batch_pause_evt.clear()
+        self.btn_batch_pause.config(state="disabled", text="⏸  Tạm dừng")
+        self.btn_batch_stop.config(state="disabled")
+        self.pipe_link_status.set("⏹  Sẽ dừng sau khi xong link đang chạy...")
+        logging.info("⏹ Người dùng yêu cầu DỪNG sau khi xong link hiện tại.")
+
+    def _batch_pause_wait(self):
+        """Chặn (chờ) tại điểm an toàn khi đang TẠM DỪNG; nhả khi bấm Tiếp tục HOẶC khi
+        đã bấm Dừng (để link hiện tại chạy nốt rồi dừng ở đầu vòng kế)."""
+        if not self._batch_pause_evt.is_set():
+            return
+        import time
+        self.pipe_status.set("⏸ Đã tạm dừng — bấm Tiếp tục để chạy tiếp.")
+        while self._batch_pause_evt.is_set() and not self._batch_stop_evt.is_set():
+            time.sleep(0.3)
+
+    def _batch_controls_reset(self):
+        """Về trạng thái KHÔNG chạy: xoá cờ + tắt 2 nút điều khiển batch."""
+        self._batch_running = False
+        self._batch_pause_evt.clear()
+        self._batch_stop_evt.clear()
+        try:
+            self.btn_batch_pause.config(state="disabled", text="⏸  Tạm dừng")
+            self.btn_batch_stop.config(state="disabled")
+        except Exception:
+            pass
 
     def _batch_prepare_input(self, gemini_docx, out_txt) -> bool:
         """Tạo input.txt cho 1 link: bỏ cấu trúc + thay câu quảng bá kênh + bỏ chú
@@ -2699,6 +2807,15 @@ class App(tk.Tk):
                     logging.warning(f"Không đọc được tiêu đề SEO: {e}")
             if not title:
                 logging.warning(f"⚠️ {folder.name}: không có tiêu đề SEO — bỏ qua thumbnail.")
+                return False
+            # Tiêu đề hợp lệ luôn NGẮN (1 câu đã chọn). Nếu parse SEO lấy nhầm cả đoạn
+            # (vd câu mở đầu Gemini "Dưới đây là 5 tiêu đề...") thì title rất dài → BỎ QUA
+            # thumbnail thay vì nhồi vào renderer (tránh treo CPU + thumbnail xấu).
+            if len(title) > 120 or len(title.split()) > 18:
+                logging.warning(
+                    f"⚠️ {folder.name}: tiêu đề SEO BẤT THƯỜNG ({len(title.split())} từ, "
+                    f"{len(title)} ký tự) — có thể parse nhầm câu mở đầu. BỎ QUA thumbnail. "
+                    f"Tiêu đề: {title[:80]}…")
                 return False
 
             photos = renderer.list_photo_files(renderer.CAT_IMAGE_DIR)
@@ -2858,8 +2975,20 @@ class App(tk.Tk):
         số tập kế tiếp (không trùng manifest / thư mục đã có / số đã lưu)."""
         m = load_manifest()
         key = norm_source(source)
-        if key in m and str(m[key].get("episode", "")).isdecimal():
-            return str(m[key]["episode"]).zfill(2), False
+        entry = m.get(key)
+        if entry is None:
+            # Manifest CŨ khoá theo chuỗi THÔ (trước khi norm_source chuẩn hoá path).
+            # Dò mục nào re-chuẩn-hoá ra CÙNG khoá → coi là cùng nguồn; dời sang khoá
+            # mới cho gọn (tự vá dần). Nhờ vậy file local đã làm trước đây, dù gõ khác
+            # kiểu, vẫn map về ĐÚNG tập cũ thay vì bị cấp tập mới + làm lại.
+            for old_key in list(m):
+                if old_key != key and norm_source(old_key) == key:
+                    entry = m.pop(old_key)
+                    m[key] = entry
+                    save_manifest(m)
+                    break
+        if entry is not None and str(entry.get("episode", "")).isdecimal():
+            return str(entry["episode"]).zfill(2), False
         used = {int(v["episode"]) for v in m.values()
                 if str(v.get("episode", "")).isdecimal()}
         if SCRIPT_DIR.exists():
@@ -2908,6 +3037,15 @@ class App(tk.Tk):
             logging.info(f"📦 Model: {model}  •  Tốc độ: {speed}x")
 
             for i, src in enumerate(sources, 1):
+                # ⏸/⏹ ĐIỂM AN TOÀN GIỮA CÁC LINK: đang tạm dừng thì CHỜ tại đây; đã bấm
+                # dừng thì THOÁT vòng (link trước đã hoàn tất, không bắt đầu link mới).
+                self._batch_pause_wait()
+                if self._batch_stop_evt.is_set():
+                    logging.info(f"⏹ ĐÃ DỪNG theo yêu cầu — xong {ok_count}/{total} link, "
+                                 f"còn {total - i + 1} link chưa chạy.")
+                    self.pipe_link_status.set(
+                        f"⏹ Đã dừng — xong {ok_count}/{total} link (còn {total - i + 1}).")
+                    break
                 # Số tập theo MANIFEST: nguồn cũ → đúng tập cũ (chạy tiếp); nguồn mới
                 # → cấp số kế tiếp. Nhờ vậy nhập khác thứ tự / thiếu link vẫn đúng tập.
                 episode, is_new = self._allocate_episode(src)
@@ -2964,34 +3102,44 @@ class App(tk.Tk):
                         logging.warning(f"⚠️ Link {i}: không có đoạn nào — bỏ qua dịch/SEO.")
                         continue
 
+                    self._batch_pause_wait()          # ⏸ điểm tạm dừng trước khi dịch
                     # ── 3) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì TIẾP TỤC dịch ──
-                    prior = (g.read_results_docx(gemini_docx, len(chunks))
-                             if gemini_docx.exists() else [None] * len(chunks))
-                    n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-                    translated_now = n_todo > 0   # có gửi dịch trong lượt này không
-                    if n_todo == 0:
-                        logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+                    if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
+                        # [TẠM] Đã có gemini_result.docx → coi như DỊCH XONG, KHÔNG dò
+                        # từng đoạn (tránh gửi lại đoạn đã dịch). Xem cờ ở đầu file.
+                        translated_now = False
+                        translation_ok = True
+                        logging.info(f"♻ Bỏ qua dịch Gemini — đã có {gemini_docx.name} "
+                                     f"(TẠM tắt kiểm từng đoạn).")
                     else:
-                        if driver is None:
-                            logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
-                            driver = g.init_firefox()
+                        prior = (g.read_results_docx(gemini_docx, len(chunks))
+                                 if gemini_docx.exists() else [None] * len(chunks))
+                        n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+                        translated_now = n_todo > 0   # có gửi dịch trong lượt này không
+                        if n_todo == 0:
+                            logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
                         else:
-                            driver.get(g.GEMINI_URL)   # chat mới cho link này
-                            time.sleep(8)
-                        logging.info(f"🌐 Dịch {n_todo}/{len(chunks)} đoạn còn thiếu sang Gemini...")
-                        results = g.send_chunks_to_gemini(
-                            chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                            driver=driver, keep_open=True, on_driver=_on_driver, resume=True,
-                            on_result=lambda i2, t2, _a: self.pipe_status.set(
-                                f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
-                        g.save_results_docx(chunks, results, gemini_docx)
-                        logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+                            if driver is None:
+                                logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
+                                driver = g.init_firefox()
+                            else:
+                                driver.get(g.GEMINI_URL)   # chat mới cho link này
+                                time.sleep(8)
+                            logging.info(f"🌐 Dịch {n_todo}/{len(chunks)} đoạn còn thiếu sang Gemini...")
+                            results = g.send_chunks_to_gemini(
+                                chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                                driver=driver, keep_open=True, on_driver=_on_driver, resume=True,
+                                on_result=lambda i2, t2, _a: self.pipe_status.set(
+                                    f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
+                            g.save_results_docx(chunks, results, gemini_docx)
+                            logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+                        # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh
+                        # tình trạng như tập 29: dịch dở vẫn ra audio/video). Lần sau chạy
+                        # lại sẽ dịch tiếp các đoạn còn thiếu.
+                        translation_ok = self._translation_complete(gemini_docx, chunks, episode)
                     self._manifest_update(src, episode, folder)   # ghi tiến độ sau dịch
 
-                    # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh
-                    # tình trạng như tập 29: dịch dở vẫn ra audio/video). Lần sau chạy
-                    # lại sẽ dịch tiếp các đoạn còn thiếu.
-                    if not self._translation_complete(gemini_docx, chunks, episode):
+                    if not translation_ok:
                         self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — bỏ qua.")
                         continue
 
@@ -3002,6 +3150,7 @@ class App(tk.Tk):
                     elif self._batch_prepare_input(gemini_docx, input_txt):
                         logging.info(f"💾 Đã tạo: {input_txt}")
 
+                    self._batch_pause_wait()          # ⏸ điểm tạm dừng trước khi SEO
                     # ── 5) SEO YouTube — bỏ qua nếu seoYoutube.docx đã có tiêu đề ─
                     if self._seo_docx_valid(seo_docx):
                         logging.info("♻ Bỏ qua SEO (đã có seoYoutube.docx hợp lệ).")
@@ -3036,6 +3185,7 @@ class App(tk.Tk):
                     # Mỗi link chạy ĐẦY ĐỦ: dịch → SEO → video xong mới sang link kế.
                     # Đóng Firefox trước khi render để nhả RAM (video chỉ dùng GPU);
                     # link sau tự mở lại Firefox cho bước dịch.
+                    self._batch_pause_wait()          # ⏸ điểm tạm dừng trước khi tạo giọng/video
                     if tts_settings:
                         if driver is not None:
                             try:
@@ -3099,6 +3249,7 @@ class App(tk.Tk):
                 except Exception:
                     pass
             self._pipe_set_busy(False)
+            self._batch_controls_reset()   # tắt nút Tạm dừng/Dừng khi batch kết thúc
 
     def _pipe_send_gemini(self, auto=False):
         if self._pipe_busy:

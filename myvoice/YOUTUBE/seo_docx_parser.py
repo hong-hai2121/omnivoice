@@ -44,6 +44,21 @@ def _is_note(text):
     return core.endswith(")") or core.endswith("）")
 
 
+def _looks_like_title(text):
+    """Dòng TIÊU ĐỀ thật: ngắn gọn, không phải chú thích/câu dẫn.
+
+    Loại bỏ: dòng chú thích '(...)'; dòng MỐC kết thúc bằng ':' (vd 'Tiêu đề quán
+    quân tốt nhất:'); và CÂU MỞ ĐẦU dài dòng của Gemini (vd 'Dưới đây là 5 tiêu đề
+    được thiết kế chuẩn SEO...') — vốn hay bị lấy nhầm làm tiêu đề.
+    """
+    t = (text or "").strip()
+    if not t or _is_note(t):
+        return False
+    if t.endswith(":") or t.endswith("："):
+        return False
+    return len(t) <= 110 and len(t.split()) <= 18
+
+
 # Nhãn rác do Gemini chèn khi xuất khối code (không phải nội dung thật).
 _CODE_LABELS = {"PLAINTEXT", "PLAIN TEXT", "TEXT", "CODE", "MARKDOWN"}
 
@@ -82,7 +97,13 @@ def parse_seo_docx(path):
                 return i
         return -1
 
+    # Mốc "tiêu đề tốt nhất": khớp nhiều cách Gemini diễn đạt — "TIÊU ĐỀ TỐT NHẤT
+    # ĐƯỢC CHỌN" hoặc "Tiêu đề QUÁN QUÂN tốt nhất" (có 'quán quân' chen giữa).
     i_best = find("TIÊU ĐỀ TỐT NHẤT")
+    if i_best < 0:
+        i_best = find("QUÁN QUÂN")
+    if i_best < 0:
+        i_best = find("TỐT NHẤT")
     i_tag = find("THẺ TAG")
     i_desc = find("MÔ TẢ VIDEO")
     if i_desc < 0:
@@ -92,15 +113,16 @@ def parse_seo_docx(path):
     title = ""
     if i_best >= 0:
         for t in paras[i_best + 1:]:
-            if t and not _is_note(t):
+            if _looks_like_title(t):
                 title = t
                 break
-    # Dự phòng: chưa có mốc "tốt nhất" thì lấy ứng viên đầu trong mục chọn tiêu đề.
+    # Dự phòng: chưa có mốc "tốt nhất" thì lấy ứng viên đầu trong mục chọn tiêu đề
+    # (bỏ qua câu mở đầu dài dòng nhờ _looks_like_title).
     if not title:
         i_pick = find("CHỌN TIÊU ĐỀ")
         if i_pick >= 0:
             for t in paras[i_pick + 1:]:
-                if t and not _is_note(t):
+                if _looks_like_title(t):
                     title = t
                     break
 

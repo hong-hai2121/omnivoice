@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 seo_youtube_gemini.py — Lấy ĐOẠN ĐẦU của nội dung đã dịch (gemini_result.docx),
-gửi NGUYÊN VĂN (KHÔNG kèm câu lệnh / yêu cầu nào) lên một cuộc trò chuyện Gemini
-đã được tạo sẵn cho việc SEO YouTube, rồi lưu kết quả ra seoYoutube.docx.
+CHÈN TRỌN BỘ YÊU CẦU SEO (SEO_PROMPT) lên trước rồi gửi kèm đoạn truyện lên
+Gemini, rồi lưu kết quả ra seoYoutube.docx.
 
 Ý tưởng:
-• Cuộc trò chuyện Gemini ở link bên dưới ĐÃ ĐƯỢC HUẤN LUYỆN/RA ĐỀ trước (đã có
-  sẵn chỉ dẫn "viết tiêu đề + mô tả + hashtag SEO cho YouTube"). Vì vậy script
-  này chỉ cần DÁN đoạn đầu của truyện vào là Gemini tự trả về phần SEO.
-• Không chèn prefix/câu lệnh — đúng yêu cầu "chỉ gửi nội dung".
+• Trước đây script dựa vào 1 cuộc trò chuyện Gemini "đã ra đề sẵn"; khi Gemini bỏ
+  id rồi mở CHAT MỚI thì mất ngữ cảnh → SEO lỗi hoặc không gửi được. Nay TIN NHẮN
+  TỰ CHỨA đầy đủ yêu cầu (SEO_PROMPT) nên gửi vào chat nào — kể cả chat mới trống —
+  cũng ra đúng định dạng.
+• Vẫn cố mở đúng cuộc trò chuyện SEO cho tiện, nhưng KHÔNG bắt buộc: vào không được
+  thì vẫn gửi (kèm nguyên yêu cầu) thay vì dừng.
 
 Chạy:
     python seo_youtube_gemini.py                          # dùng gemini_result.docx mặc định
@@ -60,6 +62,54 @@ SEO_GEMINI_URL = os.environ.get(
     "OMNI_SEO_GEMINI_URL",
     "https://gemini.google.com/app/e1a7ace4a71c48b2",
 ).split("?", 1)[0].strip()
+
+
+# ── Trọn bộ yêu cầu SEO chèn LÊN TRƯỚC đoạn truyện khi gửi Gemini ──────────────
+# Nhờ tin nhắn tự chứa đủ yêu cầu này, không còn phụ thuộc cuộc trò chuyện "đã ra
+# đề sẵn": gửi vào chat mới trống vẫn ra đúng định dạng. Đặt qua biến môi trường
+# OMNI_SEO_PROMPT nếu muốn đổi mà không sửa code.
+SEO_PROMPT = os.environ.get("OMNI_SEO_PROMPT", "").strip() or """\
+Tôi là kênh "Mimi Truyện" (chuyên về truyện audio, truyện full, audio dài kỳ, nội dung kịch tính, nghẹt thở, KHÔNG PHẢI truyện dễ ngủ). Hãy đóng vai một chuyên gia nội dung và SEO YouTube để giúp tôi xử lý các đoạn trích từ truyện thành các tài nguyên đăng tải theo đúng quy trình và định dạng bắt buộc sau:
+
+---
+
+### 🎯 BƯỚC 2: CHỌN TIÊU ĐỀ VIDEO
+Chọn 5 tiêu đề hay, độ dài từ 60 – 75 ký tự (bao gồm cả phần "| Mimi Truyện" ở cuối). Sau đó chọn ra 1 tiêu đề tốt nhất làm quán quân.
+*Yêu cầu nghiêm ngặt:*
+- Tiêu đề số 1: Luôn bắt đầu bằng cụm từ "Sự Thật Đằng Sau...".
+- Tiêu đề số 2: Luôn bắt đầu bằng cụm từ "Màn...".
+- Tiêu đề số 3: Luôn viết theo mẫu "Câu Chuyện Đời [Tên Nhân Vật Chính] Và Sự Thật Đau Đớn Sau Nhiều Năm...".
+- Tiêu đề số 4: Luôn bắt đầu bằng cụm từ "Truyện Tâm Lý Xã Hội Về Luật Nhân Quả...".
+- Tiêu đề số 5: Luôn bắt đầu bằng cụm từ "Bí Mật Sau Cuộc Đời...".
+- TUYỆT ĐỐI KHÔNG dùng các từ liên quan đến tiền bạc như: tiền, nghèo, giàu, gia tài, phú hộ, triệu phú, tỷ phú, vàng, bạc... (Nếu cốt truyện có tiền bạc, phải dùng từ thay thế né tránh như "phú quý", "hào môn", "sự nghiệp").
+
+---
+
+### 🏷️ BƯỚC 3: VIẾT THẺ TAG YOUTUBE
+Tạo một đoạn văn bản chứa các thẻ tag cách nhau bằng dấu phẩy, tổng độ dài khoảng 400 ký tự. Phải phân bổ đủ 4 nhóm từ khóa sau:
+- Nhóm 1 (Mặc định cố định): "truyện audio, truyện đêm khuya, truyện tâm lý xã hội, truyện đời sống, truyện Mimi Truyện, truyện gia đình, truyện cảm động, truyện người vợ, truyện mẹ chồng nàng dâu, truyện nhân quả, Mimi Truyện, Mimi Truyen, nghe truyện Mimi Truyện, truyện audio Mimi, kênh Mimi Truyện, nghe truyện hay, truyện hay mỗi ngày, truyện kể đêm khuya, truyện Việt Nam, audio truyện hay,"
+- Nhóm 2: Từ khóa liên quan đến thể loại cụ thể của truyện vừa đưa (ví dụ: trùng sinh, xuyên không, cổ đại...).
+- Nhóm 3: Tên các nhân vật chính xuất hiện trong đoạn truyện.
+- Nhóm 4: Các cụm từ nổi bật, ấn tượng lấy từ nội dung cốt truyện.
+
+---
+
+### 📝 BƯỚC 4: VIẾT MÔ TẢ VIDEO CHUẨN SEO
+Viết mô tả siêu rút gọn theo đúng cấu trúc 4 phần sau (không thêm bớt dòng, không viết tràn lan):
+- Dòng 1 (Bộ hashtag): #MimiTruyen #TruyenAudio #TruyenTamLyXaHoi #TruyenKichTinh #Audio
+- Dòng 2: [Tiêu đề tốt nhất đã chọn ở Bước 2]
+- Dòng 3 & 4 (Tóm tắt nội dung): Viết 2 câu ngắn gọn, súc tích, mô tả tình huống kịch tính, nghẹt thở của truyện (Tuyệt đối KHÔNG nhắc đến các từ "ngủ ngon", "giấc ngủ", "dễ ngủ").
+- Dòng 5 (Kêu gọi hành động cố định): 👉 Đăng ký Mimi Truyện và bật chuông để nghe truyện mới mỗi ngày.
+
+---
+
+### ⚠️ QUY TẮC ĐỊNH DẠNG ĐẦU RA (OUTPUT):
+- Luôn sử dụng các thanh ngăn cách (---) và tiêu đề lớn bằng định dạng Markdown (## 🎯 BƯỚC 2..., ## 🏷️ BƯỚC 3..., ## 📝 BƯỚC 4...) để tạo cấu trúc rõ ràng, scannable, dễ đọc lướt.
+- Phần Thẻ Tag ở Bước 3 phải được đặt riêng trong một khối mã (code block) để dễ dàng sao chép.
+- Sử dụng trích dẫn (>) để làm nổi bật Tiêu đề được chọn ở Bước 2.
+- Luôn dùng tiếng Việt, giọng điệu adaptive, sắc sảo và tuân thủ tuyệt đối các quy định trên.
+
+Bây giờ, tôi sẽ gửi đoạn trích truyện đầu tiên, hãy thực hiện ngay lập tức từ BƯỚC 2 đến BƯỚC 4 cho tôi."""
 
 
 def _seo_conversation_id():
@@ -138,20 +188,20 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     reset_docx(output_path)
     log("🧹 Đã làm rỗng file kết quả (sẽ ghi nội dung mới sau khi Gemini trả lời).")
 
-    log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) — KHÔNG kèm câu lệnh — lên Gemini SEO...")
+    log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) — KÈM TRỌN YÊU CẦU SEO — lên Gemini...")
 
     own_driver = driver is None
     try:
         if driver is None:
             driver = g.init_firefox(url=SEO_GEMINI_URL)
-        # Luôn điều hướng + XÁC NHẬN đang ở đúng cuộc trò chuyện SEO (kể cả khi tái
-        # dùng Firefox đang ở chat dịch). Sai chat → DỪNG, không gửi nhầm ra chat mới.
-        if not _open_seo_chat(driver, log):
-            save_seo_docx("", output_path)   # giữ file rỗng để lần sau chạy lại SEO
-            return ""
-        log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
-        # prefix="" → chỉ gửi nguyên văn nội dung, không thêm yêu cầu gì.
-        ans = g.send_to_gemini(driver, text, prefix="", on_log=log)
+        # Cố mở đúng cuộc trò chuyện SEO cho tiện, nhưng KHÔNG bắt buộc: tin nhắn đã
+        # tự chứa đủ yêu cầu (SEO_PROMPT) nên vào chat mới trống vẫn gửi được.
+        if _open_seo_chat(driver, log):
+            log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
+        else:
+            log("↪️ Không vào được chat SEO — vẫn gửi KÈM TRỌN YÊU CẦU vào chat hiện tại.")
+        # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
+        ans = g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log)
         if not ans:
             log("⚠️ Gemini không trả về kết quả SEO.")
             ans = ""

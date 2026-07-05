@@ -123,6 +123,12 @@ def balanced_wrap(
     words = text.split()
     if not words:
         return None
+    # CHỐNG TREO: tiêu đề bất thường (rất nhiều từ — thường do parse SEO lấy nhầm cả
+    # câu mở đầu) khiến số tổ hợp ngắt dòng bùng nổ giai thừa → CPU treo hàng phút.
+    # Quá dài thì bỏ cách "cân đối" (trả None → fit_text hạ cỡ rồi báo lỗi gọn),
+    # KHÔNG quét tổ hợp. Tiêu đề thật luôn ngắn (≤ ~16 từ) nên không ảnh hưởng.
+    if len(words) > 18:
+        return None
 
     candidates: list[tuple[tuple[float, float, int], list[str]]] = []
     for line_count in range(1, min(max_lines, len(words)) + 1):
