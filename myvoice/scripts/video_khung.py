@@ -294,7 +294,7 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
 
 
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
-                progress=None, skip_existing=False) -> Path:
+                progress=None, skip_existing=False, output: Path | None = None) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
@@ -307,13 +307,17 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     skip_existing: nếu True và video kết quả đã tồn tại thì trả về luôn, KHÔNG
                    dựng lại (chế độ ♻ "chỉ dựng phần còn thiếu").
 
+    output: đường dẫn video kết quả tùy chọn. None (mặc định) → đặt cạnh audio với
+            tên <tên_audio>_videodone.mp4. Truyền vào để đặt tên riêng (vd YOUTUBE.mp4);
+            skip_existing khi đó kiểm tra ĐÚNG file này nên vẫn "chỉ dựng phần còn thiếu".
+
     effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
             Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC, rồi mới đưa vào
             khung1 và cắt bo góc (lặp lại nếu ngắn hơn audio). None = không thêm.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
-    output = audio_file.parent / (audio_file.stem + "_videodone.mp4")
+    output = Path(output) if output else audio_file.parent / (audio_file.stem + "_videodone.mp4")
     if skip_existing and output.exists() and output.stat().st_size > 0:
         log(f"♻ Video ngang đã có → bỏ qua dựng lại: {output.name}")
         return output
@@ -336,7 +340,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     if not audio_file.exists():
         raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur  = get_duration(audio_file)
-    output     = audio_file.parent / (audio_file.stem + "_videodone.mp4")
+    # output đã được xác định ở trên (tôn trọng tham số output tùy chọn).
 
     # Khung + vùng trong + mặt nạ bo góc (lấy từ khung1)
     im, pink = pink_mask(KHUNG1)

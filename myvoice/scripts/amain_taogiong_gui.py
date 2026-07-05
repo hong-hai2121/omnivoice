@@ -65,7 +65,8 @@ OPTS_DEFAULTS = dict(
     make_video=True, ngang_speed="1.0", effect=DEFAULT_EFFECT,
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
     make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
-    doc_no_effect=False, bring_front=True,
+    doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
+    tiktok_no_effect=False, tiktok_caption_pos=40, bring_front=True,
 )
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
@@ -530,6 +531,85 @@ def _speedup_audio_for_doc(src, factor):
     return out
 
 
+def _render_tiktok_caption_png(text: str, out_png: Path, canvas=(1080, 1920),
+                               y_ratio: float = 0.40) -> Path | None:
+    """Vẽ 'Mimi Truyện Số ..' ĐẸP lên PNG TRONG SUỐT đúng khung dọc, TÂM ở ~y_ratio
+    chiều cao (0.40 = 40%). Trả về out_png, hoặc None nếu lỗi.
+
+    Thiết kế: nền pill bo góc bán trong suốt + VIỀN vàng + bóng đổ mềm; chữ tô
+    GRADIENT vàng→cam có VIỀN tối. Dùng PIL (tiếng Việt có dấu tốt) → tránh
+    drawtext/escaping của ffmpeg.
+    """
+    try:
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    except Exception as e:
+        logging.warning(f"Không tạo được chữ TikTok (thiếu PIL): {e}")
+        return None
+    W, H = canvas
+    # Font đậm hỗ trợ tiếng Việt (thử vài font Windows quen thuộc).
+    font = None
+    for fp, sz in [("C:/Windows/Fonts/segoeuib.ttf", 78),
+                   ("C:/Windows/Fonts/arialbd.ttf", 78),
+                   ("C:/Windows/Fonts/tahomabd.ttf", 74),
+                   ("C:/Windows/Fonts/arial.ttf", 78)]:
+        try:
+            font = ImageFont.truetype(fp, size=sz)
+            break
+        except Exception:
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    base = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    measure = ImageDraw.Draw(base)
+    stroke = 4
+    l, t, r, b = measure.textbbox((0, 0), text, font=font, stroke_width=stroke)
+    tw, th = r - l, b - t
+    cx, cy = W / 2, H * y_ratio
+
+    # ── Nền pill bo góc + viền vàng + bóng đổ mềm ──
+    pad_x, pad_y = 54, 30
+    pw, ph = tw + pad_x * 2, th + pad_y * 2
+    x0, y0, x1, y1 = cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2
+    radius = int(ph / 2)
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle([x0, y0 + 8, x1, y1 + 8], radius=radius,
+                                             fill=(0, 0, 0, 130))
+    base = Image.alpha_composite(base, shadow.filter(ImageFilter.GaussianBlur(12)))
+    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(panel).rounded_rectangle([x0, y0, x1, y1], radius=radius,
+                                            fill=(25, 12, 35, 190),
+                                            outline=(255, 205, 60, 255), width=6)
+    base = Image.alpha_composite(base, panel)
+
+    # ── Chữ: viền tối vẽ trước, rồi tô gradient vàng→cam qua mask ──
+    tx = cx - tw / 2 - l
+    ty = cy - th / 2 - t
+    outline = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(outline).text((tx, ty), text, font=font, fill=(0, 0, 0, 0),
+                                 stroke_width=stroke, stroke_fill=(70, 25, 0, 255))
+    base = Image.alpha_composite(base, outline)
+    grad = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(grad)
+    top_c, bot_c = (255, 244, 170), (255, 138, 20)
+    gy0, gy1 = int(cy - th / 2), int(cy + th / 2)
+    for yy in range(gy0, gy1 + 1):
+        f = (yy - gy0) / max(1, gy1 - gy0)
+        col = tuple(int(top_c[i] + (bot_c[i] - top_c[i]) * f) for i in range(3))
+        gd.line([(int(x0), yy), (int(x1), yy)], fill=col + (255,))
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).text((tx, ty), text, font=font, fill=255)
+    base.paste(grad, (0, 0), mask)
+
+    try:
+        out_png.parent.mkdir(parents=True, exist_ok=True)
+        base.save(str(out_png))
+        return out_png
+    except Exception as e:
+        logging.warning(f"Không lưu được ảnh chữ TikTok: {e}")
+        return None
+
+
 def _play_done_sound(success: bool = True) -> None:
     """Phát âm báo khi chạy xong (async, không chặn; bỏ qua nếu không phát được)."""
     try:
@@ -548,7 +628,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -770,7 +850,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(0)
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
-                                        skip_existing=reuse_audio)
+                                        skip_existing=reuse_audio, output=ngang_out)
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
@@ -806,6 +886,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             if doc_from_ngang:
                 if ngang_video_path and ngang_video_path.exists():
                     ngang_src = ngang_video_path
+                elif ngang_out and Path(ngang_out).exists():
+                    ngang_src = Path(ngang_out)   # bản tự động: YOUTUBE.mp4 đã có
                 else:
                     cands = sorted(
                         output_path.parent.glob(output_path.stem + "*_videodone.mp4"),
@@ -827,13 +909,92 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
                                            progress=_video_progress("📱 Dựng video dọc..."),
                                            skip_existing=reuse_audio,
-                                           source_video=ngang_src)
+                                           source_video=ngang_src, output=doc_out)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
             except Exception as e:
                 logging.error(f"Lỗi dựng video dọc: {e}")
                 status_var.set(f"Lỗi video dọc: {e}")
+
+        # ── (TÙY CHỌN) VIDEO TIKTOK — 10 phút ĐẦU của audio, ghép NGUYÊN video
+        #    trong videodoc/ (KHÔNG dùng lại video ngang). File riêng để đăng TikTok.
+        if make_tiktok:
+            from video_doc import build_video_doc
+            from video_timclip import (cut_audio_at_sentence_end,
+                                       probe_audio_duration)
+            # 1) Audio: lấy ~10 phút đầu, cắt ở CUỐI CÂU (khoảng lặng) nên không cần
+            #    chuẩn 10 phút. Audio ≤ ~10 phút → dùng nguyên; cắt lỗi cũng dùng nguyên.
+            tk_audio = output_path
+            try:
+                total_sec = probe_audio_duration(output_path)
+            except Exception:
+                total_sec = 0.0
+            if total_sec > 10.5 * 60:
+                tk_wav = output_path.with_name(output_path.stem + "_tiktok" + output_path.suffix)
+                if reuse_audio and tk_wav.exists() and tk_wav.stat().st_size > 4096:
+                    tk_audio = tk_wav
+                    logging.info(f"♻ Dùng lại audio TikTok đã có: {tk_wav.name}")
+                else:
+                    status_var.set("Đang cắt 10 phút đầu cho TikTok...")
+                    try:
+                        cut_seconds, _ = cut_audio_at_sentence_end(
+                            output_path, tk_wav,
+                            target_minutes=10.0, min_minutes=9.0, max_minutes=11.0,
+                            silence_db=-35.0, min_silence=0.5)
+                        tk_audio = tk_wav
+                        m, s = divmod(cut_seconds, 60)
+                        logging.info(f"✂ Audio TikTok: cắt tại {int(m)}:{s:05.2f} → {tk_wav.name}")
+                    except Exception as e:
+                        logging.warning(f"Không cắt được 10 phút cho TikTok (dùng audio đầy đủ): {e}")
+                        tk_audio = output_path
+            else:
+                logging.info(f"🎵 Audio ~{total_sec/60:.1f} phút (≤10) → TikTok dùng nguyên audio.")
+
+            # 1b) Tăng tốc audio (giữ cao độ) nếu chọn mức > 1.0 — như video ngang/dọc.
+            if tiktok_speed and tiktok_speed > 1.001:
+                status_var.set(f"Đang tăng tốc audio x{tiktok_speed:.2f} cho TikTok...")
+                try:
+                    tk_audio = _speedup_audio_for_doc(tk_audio, tiktok_speed)
+                    logging.info(f"⏩ Tăng tốc audio TikTok x{tiktok_speed:.2f} → {tk_audio.name}")
+                except Exception as e:
+                    logging.warning(f"Không tăng tốc được audio TikTok (giữ tốc độ gốc): {e}")
+
+            # 2) Dựng video dọc từ kho videodoc/ (nguyên video, source_video=None).
+            #    Tên riêng để KHÔNG đè video dọc (facebook/output_doc).
+            tk_video_out = (Path(tiktok_out) if tiktok_out
+                            else output_path.with_name(output_path.stem + "_tiktok.mp4"))
+            # Chữ overlay 'Mimi Truyện Số …' ở vị trí % chiều cao do người dùng chọn.
+            cap_png = None
+            if tiktok_caption:
+                y_ratio = max(0.0, min(tiktok_caption_pos / 100.0, 1.0))
+                cap_tmp = tk_video_out.with_name(tk_video_out.stem + "_caption.png")
+                cap_png = _render_tiktok_caption_png(tiktok_caption, cap_tmp, y_ratio=y_ratio)
+                if cap_png:
+                    logging.info(f"🔤 Chữ TikTok (≈{tiktok_caption_pos}% cao): {tiktok_caption!r}")
+            status_var.set("Đang dựng video TikTok...")
+            logging.info(f"Bắt đầu dựng video TikTok từ {tk_audio.name} (kho videodoc/)...")
+            try:
+                progress_var.set(0)
+                tk_effect = None if tiktok_no_effect else effect
+                tk_out = build_video_doc(tk_audio, log=logging.info, effect=tk_effect,
+                                         progress=_video_progress("🎵 Dựng video TikTok..."),
+                                         skip_existing=reuse_audio,
+                                         source_video=None, output=tk_video_out,
+                                         caption_png=cap_png)
+                progress_var.set(100)
+                status_var.set(f"Xong! Video TikTok → {tk_out.name}")
+                logging.info(f"Đã tạo video TikTok → {tk_out.name}")
+            except Exception as e:
+                logging.error(f"Lỗi dựng video TikTok: {e}")
+                status_var.set(f"Lỗi video TikTok: {e}")
+            finally:
+                # Dọn ảnh chữ tạm (đã nung vào video). Bỏ qua nếu Windows còn khóa.
+                if cap_png:
+                    try:
+                        Path(cap_png).unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
     except Exception as e:
         failed = True
@@ -1276,7 +1437,7 @@ class App(tk.Tk):
         right = ttk.Frame(frame_video)
         right.grid(row=0, column=0, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(5, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
+        right.rowconfigure(6, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
 
         # ── Video dọc (chuyển từ cột giữa sang cho đỡ chật) ──
         vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
@@ -1313,9 +1474,41 @@ class App(tk.Tk):
         ttk.Checkbutton(vdoc_opts3, text="🚫  Không áp hiệu ứng cho video dọc",
                         variable=self.var_doc_no_effect).pack(side="left")
 
+        # ── Video TikTok (group riêng, DƯỚI 'Video dọc', TRÊN nút Chạy) ──
+        # Lấy ~10 phút ĐẦU của audio (cắt ở cuối câu) + ghép NGUYÊN video trong
+        # videodoc/ → 1 video dọc riêng để đăng TikTok.
+        tiktok = ttk.LabelFrame(right, text="  🎵  Video TikTok (10 phút đầu)  ")
+        tiktok.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        self.var_make_tiktok = tk.BooleanVar(value=self._opt_settings["make_tiktok"])
+        ttk.Checkbutton(tiktok, text="Tạo video TikTok (từ kho videodoc)",
+                        variable=self.var_make_tiktok).pack(anchor="w")
+        tiktok_opts = ttk.Frame(tiktok)
+        tiktok_opts.pack(anchor="w", fill="x", pady=(6, 0))
+        ttk.Label(tiktok_opts, text="Tăng tốc:").pack(side="left", padx=(0, 2))
+        self.var_tiktok_speed = tk.StringVar(value=self._opt_settings["tiktok_speed"])
+        ttk.Combobox(tiktok_opts, textvariable=self.var_tiktok_speed, width=6,
+                     values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
+        ttk.Label(tiktok_opts, text="x (giữ cao độ)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
+        # Không phủ hiệu ứng lên video TikTok (video sạch hiệu ứng).
+        tiktok_opts2 = ttk.Frame(tiktok)
+        tiktok_opts2.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_tiktok_no_effect = tk.BooleanVar(value=self._opt_settings["tiktok_no_effect"])
+        ttk.Checkbutton(tiktok_opts2, text="🚫  Không áp hiệu ứng cho TikTok",
+                        variable=self.var_tiktok_no_effect).pack(side="left")
+        # Vị trí chữ theo chiều cao (0 = trên cùng, 100 = dưới cùng).
+        tiktok_opts3 = ttk.Frame(tiktok)
+        tiktok_opts3.pack(anchor="w", fill="x", pady=(6, 0))
+        ttk.Label(tiktok_opts3, text="Vị trí chữ (% cao):").pack(side="left", padx=(0, 6))
+        self.var_tiktok_caption_pos = tk.IntVar(value=self._opt_settings["tiktok_caption_pos"])
+        ttk.Spinbox(tiktok_opts3, from_=5, to=95, increment=5,
+                    textvariable=self.var_tiktok_caption_pos, width=5).pack(side="left")
+        ttk.Label(tiktok_opts3, text="(0 = trên, 100 = dưới)",
+                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
+
         # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
         act = ttk.Frame(right)
-        act.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        act.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
                                   style="Accent.TButton")
         self.btn_run.pack(side="left", padx=(0, 8))
@@ -1328,7 +1521,7 @@ class App(tk.Tk):
 
         # ── Xóa output + chế độ dùng lại — xuống hàng riêng cho khỏi bị khuất ──
         act2 = ttk.Frame(right)
-        act2.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        act2.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         ttk.Button(act2, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
         # ♻ Dùng lại audio/video đã có: bỏ qua tạo giọng nếu output.wav còn đúng
         # văn bản/giọng, và bỏ qua video nào đã dựng — chỉ dựng phần còn thiếu.
@@ -1341,7 +1534,7 @@ class App(tk.Tk):
         # Hữu ích khi chạy nền: tới bước clone giọng thì GUI tự bật lên trên (vd
         # đang làm việc ở VS Code) để dễ theo dõi / ưu tiên CPU+GPU cho app.
         act3 = ttk.Frame(right)
-        act3.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        act3.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         self.var_bring_front = tk.BooleanVar(value=self._opt_settings["bring_front"])
         ttk.Checkbutton(act3,
                         text="⬆️  Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần)",
@@ -1349,7 +1542,7 @@ class App(tk.Tk):
 
         # ── Tiến trình ──
         prog_frame = ttk.Frame(right)
-        prog_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        prog_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -1360,7 +1553,7 @@ class App(tk.Tk):
                   style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         # ── Nhật ký: nằm DƯỚI dòng 'Sẵn sàng' trong panel video (giống gốc) ──
-        self._build_log_panel(right, 5)
+        self._build_log_panel(right, 6)
         self._show_view("home")   # mặc định mở Home (đầy đủ như giao diện gốc)
 
     def _show_view(self, key):
@@ -1635,8 +1828,9 @@ class App(tk.Tk):
                 logging.info("♻ Bỏ qua SEO (đã có).")
             self._save_youtube_seo_copy(seo_docx, folder / "youtube_seo.txt", episode)
 
-            # 6) Thumbnail + cập nhật số tập
-            if not (folder / f"thumbnail{episode}.png").exists():
+            # 6) Thumbnail (ngang + dọc) + cập nhật số tập
+            if not (folder / f"thumbnail{episode}.png").exists() \
+                    or not (folder / f"thumbnail{episode}_dọc.png").exists():
                 self._make_thumbnail_for_folder(folder, episode)
             save_episode_number(max(load_episode_number(), int(episode)))
             # 7) Drive (idempotent)
@@ -1657,7 +1851,7 @@ class App(tk.Tk):
                 except Exception:
                     pass
                 self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
-                self._batch_run_tts(folder, tts_settings)
+                self._batch_run_tts(folder, tts_settings, episode)
 
             self._manifest_update(src, episode, folder, done=True)
             self.pipe_progress.set(100)
@@ -2166,6 +2360,10 @@ class App(tk.Tk):
                 doc_speed=self.var_doc_speed.get(),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
                 doc_no_effect=self.var_doc_no_effect.get(),
+                make_tiktok=self.var_make_tiktok.get(),
+                tiktok_speed=self.var_tiktok_speed.get(),
+                tiktok_no_effect=self.var_tiktok_no_effect.get(),
+                tiktok_caption_pos=int(self.var_tiktok_caption_pos.get()),
                 bring_front=self.var_bring_front.get(),
             ))
         except Exception as e:
@@ -2617,6 +2815,16 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             ngang_speed = 1.0
         ngang_speed = max(0.5, min(ngang_speed, 2.0))
+        try:
+            tiktok_speed = float(str(self.var_tiktok_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            tiktok_speed = 1.0
+        tiktok_speed = max(0.5, min(tiktok_speed, 2.0))
+        try:
+            tiktok_caption_pos = int(self.var_tiktok_caption_pos.get())
+        except Exception:
+            tiktok_caption_pos = 40
+        tiktok_caption_pos = max(0, min(tiktok_caption_pos, 100))
 
         effect_name = self._current_effect()
         effect_path = None
@@ -2633,6 +2841,9 @@ class App(tk.Tk):
             ngang_speed=ngang_speed, cut_half=cut_half,
             doc_from_ngang=self.var_doc_from_ngang.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
+            make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
+            tiktok_no_effect=self.var_tiktok_no_effect.get(),
+            tiktok_caption_pos=tiktok_caption_pos,
             bring_front=self.var_bring_front.get(),
         )
 
@@ -2745,9 +2956,12 @@ class App(tk.Tk):
             logging.error(f"⚠️ Lỗi tạo input.txt: {e}")
             return False
 
-    def _batch_run_tts(self, folder, ts) -> bool:
+    def _batch_run_tts(self, folder, ts, episode=None) -> bool:
         """Tạo giọng OmniVoice cho 1 tập: đọc folder/input.txt → folder/output.wav
-        (kèm cắt/dựng video theo cài đặt ts). Chạy ĐỒNG BỘ trong thread batch."""
+        (kèm cắt/dựng video theo cài đặt ts). Chạy ĐỒNG BỘ trong thread batch.
+
+        episode: số tập (để ghi chữ 'Mimi Truyện Số <episode>' lên video TikTok, khớp
+                 số trên thumbnail). None → không ghi chữ."""
         input_txt = folder / "input.txt"
         if not input_txt.exists():
             logging.warning(f"⚠️ {folder.name}: chưa có input.txt → bỏ qua tạo giọng.")
@@ -2783,13 +2997,26 @@ class App(tk.Tk):
             ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
             ts["ngang_speed"], ts["cut_half"], True,   # reuse=True → TIẾP TỤC: dùng
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
-        )                                               # render phần còn thiếu (vd video dọc).
+            # Bản tự động: đặt tên riêng cho các video kết quả trong thư mục tập.
+            ngang_out=folder / "YOUTUBE.mp4",      # video NGANG (đăng YouTube)
+            doc_out=folder / "facebook.mp4",       # video DỌC  (đăng Facebook)
+            make_tiktok=ts.get("make_tiktok", False),
+            tiktok_out=folder / "tiktok.mp4",      # video TIKTOK (10 phút đầu)
+            tiktok_speed=ts.get("tiktok_speed", 1.0),
+            tiktok_no_effect=ts.get("tiktok_no_effect", False),
+            # Chữ trên TikTok = 'Mimi Truyện Số <số ở thumbnail>' (khớp số tập).
+            tiktok_caption=(f"Mimi Truyện Số {episode}" if episode else None),
+            tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
+        )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         return True
 
     def _make_thumbnail_for_folder(self, folder, episode: str) -> bool:
-        """Render thumbnail cho 1 tập: tiêu đề lấy từ folder/seoYoutube.docx, ảnh
-        mèo ngẫu nhiên, số tập = episode. Lưu thumbnail<episode>.png vào thư mục."""
+        """Render thumbnail cho 1 tập — CẢ 2 bản, dùng CHUNG ảnh mèo + tiêu đề + số tập:
+          • NGANG (1920×1080): thumbnail<episode>.png
+          • DỌC  (1080×1920): thumbnail<episode>_dọc.png  (chuẩn YouTube Shorts)
+        Bản nào đã có thì bỏ qua (tạo tiếp phần còn thiếu). Lỗi bản DỌC KHÔNG chặn
+        bản NGANG. Tiêu đề lấy từ folder/seoYoutube.docx."""
         try:
             import random
             youtube_dir = str(YOUTUBE_DIR)
@@ -2797,6 +3024,13 @@ class App(tk.Tk):
                 sys.path.insert(0, youtube_dir)
             import dien_tieu_de_thumbnail as renderer
             from seo_docx_parser import parse_seo_docx
+
+            out_png = folder / f"thumbnail{episode}.png"        # bản NGANG
+            out_doc = folder / f"thumbnail{episode}_dọc.png"    # bản DỌC
+            need_ngang = not out_png.exists()
+            need_doc = not out_doc.exists()
+            if not need_ngang and not need_doc:
+                return True   # cả 2 bản đã có → khỏi làm lại
 
             seo_docx = folder / "seoYoutube.docx"
             title = ""
@@ -2823,12 +3057,23 @@ class App(tk.Tk):
                 logging.warning(f"⚠️ Không có ảnh mèo trong {renderer.CAT_IMAGE_DIR} — bỏ qua thumbnail.")
                 return False
 
-            out_png = folder / f"thumbnail{episode}.png"
-            renderer.add_title(
-                renderer.SOURCE_IMAGE, out_png, title, random.choice(photos),
-                renderer.FRAME_IMAGE, episode, renderer.NUMBER_FRAME_IMAGE)
-            logging.info(f"🖼  Đã tạo thumbnail: {out_png}")
-            return True
+            photo = random.choice(photos)   # dùng CHUNG cho cả bản ngang & dọc
+            made = False
+            if need_ngang:
+                renderer.add_title(
+                    renderer.SOURCE_IMAGE, out_png, title, photo,
+                    renderer.FRAME_IMAGE, episode, renderer.NUMBER_FRAME_IMAGE)
+                logging.info(f"🖼  Đã tạo thumbnail ngang: {out_png.name}")
+                made = True
+            # Bản DỌC 1080×1920 — bọc riêng để lỗi bản dọc KHÔNG làm hỏng bản ngang.
+            if need_doc:
+                try:
+                    renderer.add_title_vertical(out_doc, title, photo, episode)
+                    logging.info(f"🖼  Đã tạo thumbnail dọc: {out_doc.name}")
+                    made = True
+                except Exception as e:
+                    logging.warning(f"⚠️ {folder.name}: lỗi tạo thumbnail dọc (giữ bản ngang): {e}")
+            return made
         except Exception as e:
             logging.error(f"Lỗi tạo thumbnail {folder.name}: {e}")
             return False
@@ -2950,8 +3195,12 @@ class App(tk.Tk):
             "seo": self._seo_docx_valid(folder / "seoYoutube.docx"),
             "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
             "audio": (folder / "output.wav").exists(),
-            "video_ngang": bool(list(folder.glob("*_videodone.mp4"))),
-            "video_doc": bool(list(folder.glob("*_doc.mp4"))),
+            # Bản tự động đặt tên YOUTUBE.mp4 / facebook.mp4; vẫn nhận tên cũ
+            # (*_videodone.mp4 / *_doc.mp4) cho các tập tạo trước đây.
+            "video_ngang": (folder / "YOUTUBE.mp4").exists()
+                            or bool(list(folder.glob("*_videodone.mp4"))),
+            "video_doc": (folder / "facebook.mp4").exists()
+                          or bool(list(folder.glob("*_doc.mp4"))),
         }
 
     def _manifest_update(self, source, episode, folder, done=None) -> None:
@@ -3169,9 +3418,10 @@ class App(tk.Tk):
                     self._save_youtube_seo_copy(
                         seo_docx, folder / "youtube_seo.txt", episode)
 
-                    # ── 6) Thumbnail — bỏ qua nếu đã có ─────────────────────────
-                    if (folder / f"thumbnail{episode}.png").exists():
-                        logging.info("♻ Bỏ qua thumbnail (đã có).")
+                    # ── 6) Thumbnail (ngang + dọc) — bỏ qua nếu đã có CẢ 2 bản ──
+                    if (folder / f"thumbnail{episode}.png").exists() \
+                            and (folder / f"thumbnail{episode}_dọc.png").exists():
+                        logging.info("♻ Bỏ qua thumbnail (đã có cả ngang & dọc).")
                     else:
                         self._make_thumbnail_for_folder(folder, episode)
                     # Xong thumbnail → cập nhật SỐ TẬP (không lùi) + ghi tiến độ manifest.
@@ -3201,7 +3451,7 @@ class App(tk.Tk):
                         except Exception:
                             pass
                         self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
-                        self._batch_run_tts(folder, tts_settings)
+                        self._batch_run_tts(folder, tts_settings, episode)
 
                     self._manifest_update(src, episode, folder, done=True)  # link XONG
                     ok_count += 1
@@ -3452,6 +3702,25 @@ class App(tk.Tk):
         if self.var_make_video.get() and ngang_speed > 1.001:
             logging.info(f"Video ngang sẽ tăng tốc audio x{ngang_speed:.2f} (giữ cao độ).")
 
+        # Tốc độ audio cho VIDEO TIKTOK (10 phút đầu) — atempo, giữ cao độ
+        make_tiktok = self.var_make_tiktok.get()
+        try:
+            tiktok_speed = float(str(self.var_tiktok_speed.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            tiktok_speed = 1.0
+        tiktok_speed = max(0.5, min(tiktok_speed, 2.0))
+        tiktok_no_effect = self.var_tiktok_no_effect.get()   # không phủ hiệu ứng lên TikTok
+        # Chữ TikTok = 'Mimi Truyện Số <số tập gần nhất>' (khớp thumbnail); 0 → không ghi.
+        _ep = load_episode_number()
+        tiktok_caption = f"Mimi Truyện Số {_ep:02d}" if _ep > 0 else None
+        try:
+            tiktok_caption_pos = int(self.var_tiktok_caption_pos.get())
+        except Exception:
+            tiktok_caption_pos = 40
+        tiktok_caption_pos = max(0, min(tiktok_caption_pos, 100))
+        if make_tiktok and tiktok_speed > 1.001:
+            logging.info(f"Video TikTok sẽ tăng tốc audio x{tiktok_speed:.2f} (giữ cao độ).")
+
         preview_path = text_file.parent / (text_file.stem + "_preview.txt")
         if preview_path.exists():
             preview_path.unlink()
@@ -3474,6 +3743,12 @@ class App(tk.Tk):
                 self.status.set(f"Kết quả sẽ lưu thành: {out_path.name}")
         self.var_out.set(str(out_path))
         self._last_output = self.var_out.get()
+
+        # Áp QUY TẮC ĐẶT TÊN như bản tự động: 3 video theo nền tảng (cùng thư mục output).
+        _out_dir = out_path.parent
+        ngang_out = _out_dir / "YOUTUBE.mp4"     # video ngang → YouTube
+        doc_out = _out_dir / "facebook.mp4"      # video dọc  → Facebook
+        tiktok_out = _out_dir / "tiktok.mp4"     # video TikTok
 
         self._stop_preview()                         # dừng audio đang nghe (nếu có)
         self.btn_preview.config(state="disabled")    # khóa tới khi tạo xong lần này
@@ -3501,6 +3776,15 @@ class App(tk.Tk):
                   cut_audio, cut_target, cut_min, cut_max,
                   make_video_doc, doc_full_audio, doc_speed,
                   ngang_speed, cut_half, reuse, doc_from_ngang, doc_no_effect),
+            kwargs={"make_tiktok": make_tiktok,   # video TikTok (10 phút đầu)
+                    "tiktok_speed": tiktok_speed,
+                    "tiktok_no_effect": tiktok_no_effect,
+                    "tiktok_caption": tiktok_caption,
+                    "tiktok_caption_pos": tiktok_caption_pos,
+                    # Quy tắc đặt tên 3 video (giống bản tự động).
+                    "ngang_out": ngang_out,
+                    "doc_out": doc_out,
+                    "tiktok_out": tiktok_out},
             daemon=True,
         ).start()
 

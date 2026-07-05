@@ -53,7 +53,9 @@ X264_CRF = 18
 
 
 def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
-                    skip_existing=False, source_video=None) -> Path:
+                    skip_existing=False, source_video=None, output: Path | None = None,
+                    caption_png: Path | None = None,
+                    caption_pulse_period: float = 300.0) -> Path:
     """Dựng video DỌC 1080x1920 (không khung) từ một file audio. Trả về đường dẫn output.
 
     Ném RuntimeError nếu thiếu tài nguyên hoặc ffmpeg lỗi. `log` là hàm nhận chuỗi
@@ -68,10 +70,19 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                   phóng to "fill" cho khớp chiều cao khung dọc rồi cắt giữa, thay
                   âm bằng audio_file. Khi đó BỎ QUA kho videodoc/ và hiệu ứng (video
                   nguồn đã có sẵn khung/hiệu ứng).
+    output: đường dẫn video kết quả tùy chọn. None (mặc định) → đặt cạnh audio với
+            tên <tên_audio>_doc.mp4. Truyền vào để đặt tên riêng (vd facebook.mp4);
+            skip_existing khi đó kiểm tra ĐÚNG file này nên vẫn "chỉ dựng phần còn thiếu".
+    caption_png: ảnh PNG TRONG SUỐT kích thước đúng khung dọc (1080x1920), đã vẽ sẵn
+            chữ ở vị trí mong muốn → phủ (overlay) lên trên cùng video. None = không.
+            Truyền qua -i (không dính escaping filtergraph nên chữ tiếng Việt an toàn).
+    caption_pulse_period: chu kỳ (giây) của hiệu ứng HÚT MẮT — cứ mỗi chu kỳ, chữ
+            NẢY lên ~70px trong 1.2s rồi về chỗ (mặc định 300 = mỗi 5 phút 1 lần).
+            ≤ 0 → chữ đứng yên, không nảy. Chỉ áp dụng khi có caption_png.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
-    output = audio_file.parent / (audio_file.stem + "_doc.mp4")
+    output = Path(output) if output else audio_file.parent / (audio_file.stem + "_doc.mp4")
     if skip_existing and output.exists() and output.stat().st_size > 0:
         log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
         return output
@@ -79,6 +90,15 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
     if not audio_file.exists():
         raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur = get_duration(audio_file)
+
+    # Ảnh chữ overlay (tùy chọn). Video base kết ở nhãn [vid] khi có caption để phủ
+    # thêm 1 lớp overlay; không có thì kết thẳng ở [out].
+    caption_png = Path(caption_png) if caption_png else None
+    if caption_png and not caption_png.exists():
+        log(f"[Cảnh báo] Không tìm thấy ảnh chữ overlay, bỏ qua: {caption_png}")
+        caption_png = None
+    has_caption = caption_png is not None
+    vend = "[vid]" if has_caption else "[out]"
 
     reuse_ngang = source_video is not None
     if reuse_ngang:
@@ -95,7 +115,7 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         # Scale "fill" cho khớp chiều cao 1920 rồi cắt giữa về 1080 (như bản random).
         filt = (
             f"[0:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
-            f"crop={OUT_W}:{OUT_H},setsar=1[out]"
+            f"crop={OUT_W}:{OUT_H},setsar=1" + vend
         )
         concat_list = None
     else:
@@ -135,10 +155,10 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 base + "[bg];"
                 f"[1:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
                 f"crop={OUT_W}:{OUT_H},format=rgba[fx];"
-                f"[bg][fx]overlay=0:0:shortest=0[out]"
+                f"[bg][fx]overlay=0:0:shortest=0" + vend
             )
         else:
-            filt = base + "[out]"
+            filt = base + vend
 
     def build_cmd(gpu):
         if gpu:
@@ -166,8 +186,22 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 1
             cmd += ["-i", str(audio_file)]                          # audio
             audio_idx = 2 if effect else 1
+        # Ảnh chữ caption: input tĩnh (lặp 1 frame) → overlay lên trên cùng → [out].
+        full_filt = filt
+        if has_caption:
+            cmd += ["-loop", "1", "-i", str(caption_png)]           # sau audio
+            cap_idx = audio_idx + 1
+            if caption_pulse_period and caption_pulse_period > 0:
+                P = caption_pulse_period
+                # HÚT MẮT: mỗi P giây, chữ NẢY lên ~70px trong 1.2s rồi về (dấu phẩy
+                # trong biểu thức phải escape \, vì filtergraph dùng , tách filter).
+                yexpr = f"-70*sin(PI*mod(t\\,{P:g})/1.2)*lt(mod(t\\,{P:g})\\,1.2)"
+                ov = f"overlay=x=0:y={yexpr}"
+            else:
+                ov = "overlay=0:0"
+            full_filt = filt + f";[vid][{cap_idx}:v]{ov}[out]"
         cmd += [
-            "-filter_complex", filt,
+            "-filter_complex", full_filt,
             "-map", "[out]",
             "-map", f"{audio_idx}:a",
             "-t", f"{audio_dur:.6f}",            # cắt video đúng bằng độ dài audio
