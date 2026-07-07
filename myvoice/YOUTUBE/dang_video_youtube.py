@@ -691,15 +691,15 @@ class App:
         self.var_episode.set(str(max(0, int(cur) + delta)).zfill(width))
 
     def _title_with_episode(self, title):
-        """Chèn 'Số <số tập>' ngay sau 'Mimi Truyện' trong tiêu đề (khớp số ở thumbnail).
+        """Chèn 'Số <số tập>' ngay sau 'Mimi audio' trong tiêu đề (khớp số ở thumbnail).
 
-        Không có 'Mimi Truyện' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên.
+        Không có 'Mimi audio' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên.
         """
         ep = self.var_episode.get().strip()
         if not ep or not title:
             return title
         suffix = f"Số {ep}"
-        marker = "mimi truyện"
+        marker = "mimi audio"
         idx = title.lower().rfind(marker)
         if idx == -1:
             return f"{title} {suffix}"

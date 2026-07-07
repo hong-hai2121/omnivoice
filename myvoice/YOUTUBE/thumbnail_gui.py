@@ -31,12 +31,12 @@ WINDOW_HEIGHT = 735
 
 # ── Thêm "Số <tập>" / thẻ từ khóa theo số tập (khớp công cụ đăng video) ──────────
 def add_episode_to_title(title: str, ep: str) -> str:
-    """Chèn 'Số <ep>' ngay sau 'Mimi Truyện' trong tiêu đề (khớp số ở thumbnail).
-    Không có 'Mimi Truyện' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên."""
+    """Chèn 'Số <ep>' ngay sau 'Mimi audio' trong tiêu đề (khớp số ở thumbnail).
+    Không có 'Mimi audio' thì thêm vào cuối; đã có 'Số' sẵn thì giữ nguyên."""
     title = (title or "").strip()
     if not ep or not title:
         return title
-    marker = "mimi truyện"
+    marker = "mimi audio"
     idx = title.lower().rfind(marker)
     if idx == -1:
         return f"{title} Số {ep}"
@@ -48,12 +48,12 @@ def add_episode_to_title(title: str, ep: str) -> str:
 
 
 def add_episode_to_description(description: str, ep: str) -> str:
-    """Thêm 'Số <ep>' vào dòng tiêu đề ĐẦU của mô tả (lần 'Mimi Truyện' xuất hiện
+    """Thêm 'Số <ep>' vào dòng tiêu đề ĐẦU của mô tả (lần 'Mimi audio' xuất hiện
     đầu tiên — thường là tiêu đề ở trên cùng), để mô tả khớp với tiêu đề."""
     description = description or ""
     if not ep or not description:
         return description
-    marker = "mimi truyện"
+    marker = "mimi audio"
     idx = description.lower().find(marker)
     if idx == -1:
         return description
@@ -65,20 +65,20 @@ def add_episode_to_description(description: str, ep: str) -> str:
 
 
 def ensure_brand_suffix(title: str) -> str:
-    """Đảm bảo tiêu đề kết thúc bằng '| Mimi Truyện' (dùng cho phần COPY đăng
+    """Đảm bảo tiêu đề kết thúc bằng '| Mimi audio' (dùng cho phần COPY đăng
     YouTube). Ô nhập tiêu đề đã bỏ hậu tố này nên copy phải gắn lại."""
     title = (title or "").strip()
-    if not title or title.lower().endswith("mimi truyện"):
+    if not title or title.lower().endswith("mimi audio"):
         return title
-    return f"{title} | Mimi Truyện"
+    return f"{title} | Mimi audio"
 
 
 def add_episode_tag(tags, ep: str):
-    """Thêm thẻ từ khóa 'mimi truyện số <ep>' vào cuối danh sách tag (nếu chưa có)."""
+    """Thêm thẻ từ khóa 'mimi audio số <ep>' vào cuối danh sách tag (nếu chưa có)."""
     tags = list(tags or [])
     if not ep:
         return tags
-    extra = f"mimi truyện số {ep}"
+    extra = f"mimi audio số {ep}"
     if any((t or "").strip().lower() == extra for t in tags):
         return tags
     return tags + [extra]
@@ -114,7 +114,7 @@ def add_full_hashtags(description: str) -> str:
 def cap_tags(tags, ep: str, limit: int = MAX_TAGS_LEN) -> str:
     """Nối thẻ tag bằng ', ' và CẮT bớt cho tổng ký tự < limit; LUÔN giữ tag tập."""
     tag_list = add_episode_tag(tags, ep)
-    ep_tag = f"mimi truyện số {ep}" if ep else None
+    ep_tag = f"mimi audio số {ep}" if ep else None
     keep = [t for t in tag_list if ep_tag and t == ep_tag]
     others = [t for t in tag_list if not (ep_tag and t == ep_tag)]
     while others and len(", ".join(others + keep)) >= limit:
@@ -350,7 +350,7 @@ class ThumbnailGUI:
                    command=self._copy_tags).pack(side="left", padx=(8, 0))
         tk.Label(
             input_card,
-            text="Tiêu đề & mô tả tự thêm “Số <tập>”; thẻ tag thêm “mimi truyện số <tập>”.",
+            text="Tiêu đề & mô tả tự thêm “Số <tập>”; thẻ tag thêm “mimi audio số <tập>”.",
             bg="white", fg="#697386", font=("Segoe UI", 9), anchor="w", wraplength=430,
         ).grid(row=10, column=0, sticky="w", pady=(6, 0))
 
@@ -401,7 +401,7 @@ class ThumbnailGUI:
             seo = parse_seo_docx(SEO_DOCX_FILE)
         except Exception:
             return
-        # Ô nhập (và chữ trên thumbnail) bỏ hậu tố '| Mimi Truyện'; nút Copy tiêu
+        # Ô nhập (và chữ trên thumbnail) bỏ hậu tố '| Mimi audio'; nút Copy tiêu
         # đề sẽ tự gắn lại hậu tố này khi đăng YouTube.
         title = renderer.strip_brand_suffix((seo.get("title") or "").strip())
         if title:
@@ -463,8 +463,8 @@ class ThumbnailGUI:
 
     def _copy_title(self) -> None:
         # Tiêu đề copy LẤY THẲNG TỪ tài liệu SEO (seoYoutube.docx) + số tập — KHÔNG
-        # lấy từ ô nhập (ô nhập đã bỏ '| Mimi Truyện' cho thumbnail). SEO đã có sẵn
-        # '| Mimi Truyện'; ensure_brand_suffix chỉ phòng khi SEO thiếu hậu tố.
+        # lấy từ ô nhập (ô nhập đã bỏ '| Mimi audio' cho thumbnail). SEO đã có sẵn
+        # '| Mimi audio'; ensure_brand_suffix chỉ phòng khi SEO thiếu hậu tố.
         title = ensure_brand_suffix(self._read_seo().get("title", ""))
         title = add_episode_to_title(title, self._episode_number())
         self._copy_text(add_full_prefix(title), "tiêu đề")

@@ -29,19 +29,19 @@ FOREGROUND_FRAME_IMAGE = THUMBNAIL_DIR / "khung trên.png"
 FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"              # khung ảnh NGANG (mèo nằm ngang)
 FRAME_IMAGE_VERTICAL = THUMBNAIL_DIR / "anhdoc.png"  # khung ảnh DỌC (mèo dọc/đứng)
 NUMBER_FRAME_IMAGE = THUMBNAIL_DIR / "Số.png"
-LOGO_IMAGE = THUMBNAIL_DIR / "logo.png"  # logo Mimi Truyện (tách từ khung trên.png) cho bản DỌC
+LOGO_IMAGE = THUMBNAIL_DIR / "logo.png"  # logo Mimi audio (tách từ khung trên.png) cho bản DỌC
 CAT_IMAGE_DIR = HERE.parent / "Anh"
 OUTPUT_DIR = HERE.parent / "kịch_bản" / "output"
 DEFAULT_TITLE = "Bữa Tiệc Toàn Ngỗng 388 Tệ Và Sự Thật Đau Đớn Sau Nhiều Năm."
 DEFAULT_NUMBER = "01"
 
-# Hậu tố thương hiệu "| Mimi Truyện" CHỈ bỏ khi VẼ chữ lên thumbnail. Tiêu đề để
+# Hậu tố thương hiệu "| Mimi audio" CHỈ bỏ khi VẼ chữ lên thumbnail. Tiêu đề để
 # COPY (đăng YouTube) đi đường khác (thumbnail_gui._copy_title) nên vẫn giữ nguyên.
-_BRAND_SUFFIX_RE = re.compile(r"\s*\|\s*mimi\s*truyện\s*$", re.IGNORECASE)
+_BRAND_SUFFIX_RE = re.compile(r"\s*\|\s*mimi\s*(?:audio|truyện)\s*$", re.IGNORECASE)
 
 
 def strip_brand_suffix(title: str) -> str:
-    """Bỏ phần '| Mimi Truyện' ở CUỐI tiêu đề (chỉ dùng cho chữ trên thumbnail)."""
+    """Bỏ phần '| Mimi audio' ở CUỐI tiêu đề (chỉ dùng cho chữ trên thumbnail)."""
     return _BRAND_SUFFIX_RE.sub("", title or "").rstrip()
 
 # Phần giấy có dòng kẻ trong ảnh mẫu. Góc dương giúp chữ nghiêng theo mặt giấy.
@@ -488,7 +488,7 @@ def add_title_vertical(
     """
     if not photo_path.is_file():
         raise FileNotFoundError(f"Không tìm thấy ảnh nền: {photo_path}")
-    title = strip_brand_suffix(title)   # bỏ '| Mimi Truyện' khỏi chữ trên thumbnail
+    title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
     width, height = VERTICAL_CANVAS
 
     # 1) Nền: ảnh Anh phủ kín khung dọc (cover, lệch lên trên một chút cho thấy mặt).
@@ -537,7 +537,7 @@ def add_title_vertical(
     _draw_vertical_title(title_layer, content, font, center, spacing, stroke)
     base = Image.alpha_composite(base, title_layer)
 
-    # 5) Logo Mimi Truyện ở góc trên-trái.
+    # 5) Logo Mimi audio ở góc trên-trái.
     if logo_path.is_file():
         logo = Image.open(logo_path).convert("RGBA")
         logo = ImageOps.contain(logo, (V_LOGO_WIDTH, V_LOGO_WIDTH),
@@ -564,7 +564,7 @@ def add_title(
     number_frame_path: Path,
     max_lines: int = 4,
 ) -> Path:
-    title = strip_brand_suffix(title)   # bỏ '| Mimi Truyện' khỏi chữ trên thumbnail
+    title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
     paper = Image.open(source).convert("RGBA")
     # Thứ tự lớp: nền hoa → tờ giấy/ảnh/nội dung → khung trang trí trên cùng.
     background = load_canvas_layer(BACKGROUND_IMAGE, paper.size)

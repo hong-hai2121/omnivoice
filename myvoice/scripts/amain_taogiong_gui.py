@@ -52,6 +52,10 @@ PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="med
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
+# Kho NHẠC NỀN (myvoice/Music) — chèn vào video TikTok, mix nhỏ hơn giọng.
+MUSIC_DIR  = BASE_DIR / "Music"
+MUSIC_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
+
 # Kho hiệu ứng phủ lên video (scripts/hieuung/) — thường là .mov có alpha
 EFFECTS_DIR = Path(__file__).resolve().parent / "hieuung"
 EFFECT_EXTS = {".mov", ".mp4", ".webm", ".mkv", ".avi", ".gif"}
@@ -66,7 +70,8 @@ OPTS_DEFAULTS = dict(
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
     make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
-    tiktok_no_effect=False, tiktok_caption_pos=40, bring_front=True,
+    tiktok_no_effect=False, tiktok_caption_pos=40,
+    tiktok_music=False, tiktok_music_db=-12, bring_front=True,
 )
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
@@ -440,17 +445,17 @@ def split_chunks(text: str, max_len: int):
 
 
 # ── THAY CÂU QUẢNG BÁ KÊNH THEO VỊ TRÍ ────────────────────────────────────────
-# Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi Truyện". Tùy vị
+# Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi audio". Tùy vị
 # trí trong bài (mở đầu / thân bài / kết bài) ta thay bằng 3 câu khác nhau dưới
 # đây. SỬA 3 CÂU NÀY nếu muốn đổi lời.
-PROMO_OPENING = "lại là mimi truyện đây, mời bạn nghe câu truyện hôm nay."
-PROMO_BODY    = "bạn đang nghe tại mimi truyện."
+PROMO_OPENING = "lại là mimi audio đây, mời bạn nghe câu truyện hôm nay."
+PROMO_BODY    = "bạn đang nghe tại mimi audio."
 PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe truyện, đây là câu truyện không có thật "
                  "ở trung quốc xin chào và hẹn gặp lại.")
 
-# Câu quảng bá luôn chứa tên kênh "Mimi Truyện" → dùng cả cụm làm dấu hiệu nhận
-# biết (tránh khớp nhầm từ "mimi" lẻ); cho phép biến thể "chuyện".
-_PROMO_MARKER = re.compile(r'mimi\s+(?:truyện|chuyện)', re.IGNORECASE)
+# Câu quảng bá luôn chứa tên kênh "Mimi audio" → dùng cả cụm làm dấu hiệu nhận
+# biết (tránh khớp nhầm từ "mimi" lẻ); vẫn bắt biến thể cũ "truyện/chuyện".
+_PROMO_MARKER = re.compile(r'mimi\s+(?:audio|truyện|chuyện)', re.IGNORECASE)
 # Tách câu nhưng GIỮ dấu kết câu/xuống dòng ở cuối mỗi mảnh để ghép lại nguyên trạng.
 _PROMO_SENT_SPLIT = re.compile(r'(?<=[.!?。！？\n])')
 
@@ -531,9 +536,66 @@ def _speedup_audio_for_doc(src, factor):
     return out
 
 
+def list_music_files() -> list[str]:
+    """Danh sách file nhạc nền trong myvoice/Music (chỉ tên file)."""
+    if not MUSIC_DIR.exists():
+        return []
+    return sorted(f.name for f in MUSIC_DIR.iterdir()
+                  if f.is_file() and f.suffix.lower() in MUSIC_EXTS)
+
+
+def _detect_peak_db(path: Path, ffmpeg: str, seconds: int = 150):
+    """Đọc đỉnh (max_volume, dBFS) của audio bằng volumedetect (tối đa `seconds`
+    giây đầu cho nhanh). Trả về float dB hoặc None nếu không đo được."""
+    import subprocess
+    r = subprocess.run(
+        [ffmpeg, "-hide_banner", "-t", str(seconds), "-i", str(path),
+         "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", r.stderr or "")
+    return float(m.group(1)) if m else None
+
+
+def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
+                  out_wav: Path) -> Path:
+    """Trộn NHẠC NỀN vào giọng: nhạc được hạ để đỉnh nhỏ hơn đỉnh GIỌNG đúng
+    |below_db| dB (vd giọng -6dB, below=-12 → nhạc ≈ -18dB). Nhạc LẶP cho đủ dài,
+    fade-in 1s, cắt bằng độ dài giọng. Trả về out_wav (giữ nguyên độ dài giọng).
+
+    Đo đỉnh giọng + nhạc để tự tính gain → nhỏ hơn giọng ổn định dù nhạc to/nhỏ.
+    Đo lỗi thì lùi về giả định giọng -6dB / nhạc 0dB.
+    """
+    import shutil
+    import subprocess
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
+    voice_wav, music_file, out_wav = Path(voice_wav), Path(music_file), Path(out_wav)
+
+    voice_peak = _detect_peak_db(voice_wav, ffmpeg)
+    music_peak = _detect_peak_db(music_file, ffmpeg)
+    if voice_peak is None:
+        voice_peak = -6.0                         # giọng OmniVoice chuẩn hoá ≈ -6dBFS
+    target_db = voice_peak + below_db             # đỉnh nhạc mong muốn (dưới giọng)
+    gain_db = (target_db - music_peak) if music_peak is not None else target_db
+    gain_db = min(gain_db, 0.0)                    # không khuếch đại nhạc vượt gốc
+
+    filt = (f"[1:a]volume={gain_db:.2f}dB,afade=t=in:d=1.0,"
+            f"aresample=44100[bg];"
+            f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[a]")
+    cmd = [ffmpeg, "-y", "-i", str(voice_wav),
+           "-stream_loop", "-1", "-i", str(music_file),   # lặp nhạc cho đủ dài
+           "-filter_complex", filt, "-map", "[a]",
+           "-c:a", "pcm_s16le", str(out_wav)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0 or not out_wav.exists():
+        raise RuntimeError(f"ffmpeg mix nhạc lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+    return out_wav
+
+
 def _render_tiktok_caption_png(text: str, out_png: Path, canvas=(1080, 1920),
                                y_ratio: float = 0.40) -> Path | None:
-    """Vẽ 'Mimi Truyện Số ..' ĐẸP lên PNG TRONG SUỐT đúng khung dọc, TÂM ở ~y_ratio
+    """Vẽ 'Mimi audio Số ..' ĐẸP lên PNG TRONG SUỐT đúng khung dọc, TÂM ở ~y_ratio
     chiều cao (0.40 = 40%). Trả về out_png, hoặc None nếu lỗi.
 
     Thiết kế: nền pill bo góc bán trong suốt + VIỀN vàng + bóng đổ mềm; chữ tô
@@ -628,7 +690,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -960,11 +1022,35 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 except Exception as e:
                     logging.warning(f"Không tăng tốc được audio TikTok (giữ tốc độ gốc): {e}")
 
+            # 1c) Chèn NHẠC NỀN (từ Music/), mix nhỏ hơn giọng |tiktok_music_db| dB.
+            if tiktok_music:
+                musics = list_music_files()
+                if not musics:
+                    logging.warning(f"🎼 Bật nhạc nền nhưng {MUSIC_DIR} trống → bỏ qua nhạc.")
+                else:
+                    import random as _rnd
+                    music_file = MUSIC_DIR / _rnd.choice(musics)
+                    mix_out = (Path(tiktok_out).with_name(Path(tiktok_out).stem + "_bgm.wav")
+                               if tiktok_out
+                               else tk_audio.with_name(tk_audio.stem + "_bgm.wav"))
+                    if reuse_audio and mix_out.exists() and mix_out.stat().st_size > 4096:
+                        tk_audio = mix_out
+                        logging.info(f"♻ Dùng lại audio TikTok + nhạc đã có: {mix_out.name}")
+                    else:
+                        status_var.set("Đang chèn nhạc nền cho TikTok...")
+                        try:
+                            tk_audio = _mix_bg_music(tk_audio, music_file,
+                                                     float(tiktok_music_db), mix_out)
+                            logging.info(f"🎼 Nhạc nền: {music_file.name} (≈{tiktok_music_db:.0f}dB "
+                                         f"dưới giọng) → {mix_out.name}")
+                        except Exception as e:
+                            logging.warning(f"Không chèn được nhạc nền (giữ giọng gốc): {e}")
+
             # 2) Dựng video dọc từ kho videodoc/ (nguyên video, source_video=None).
             #    Tên riêng để KHÔNG đè video dọc (facebook/output_doc).
             tk_video_out = (Path(tiktok_out) if tiktok_out
                             else output_path.with_name(output_path.stem + "_tiktok.mp4"))
-            # Chữ overlay 'Mimi Truyện Số …' ở vị trí % chiều cao do người dùng chọn.
+            # Chữ overlay 'Mimi audio Số …' ở vị trí % chiều cao do người dùng chọn.
             cap_png = None
             if tiktok_caption:
                 y_ratio = max(0.0, min(tiktok_caption_pos / 100.0, 1.0))
@@ -1505,6 +1591,17 @@ class App(tk.Tk):
                     textvariable=self.var_tiktok_caption_pos, width=5).pack(side="left")
         ttk.Label(tiktok_opts3, text="(0 = trên, 100 = dưới)",
                   style="Hint.TLabel").pack(side="left", padx=(6, 0))
+        # Nhạc nền (từ Music/) + mức nhỏ hơn giọng (dB). Giọng ≈ -6dB → -12 = nhạc ≈ -18dB.
+        tiktok_opts4 = ttk.Frame(tiktok)
+        tiktok_opts4.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_tiktok_music = tk.BooleanVar(value=self._opt_settings["tiktok_music"])
+        ttk.Checkbutton(tiktok_opts4, text="🎼  Chèn nhạc nền (Music/)",
+                        variable=self.var_tiktok_music).pack(side="left")
+        ttk.Label(tiktok_opts4, text="nhỏ hơn giọng:").pack(side="left", padx=(10, 2))
+        self.var_tiktok_music_db = tk.IntVar(value=self._opt_settings["tiktok_music_db"])
+        ttk.Spinbox(tiktok_opts4, from_=-30, to=0, increment=1,
+                    textvariable=self.var_tiktok_music_db, width=5).pack(side="left")
+        ttk.Label(tiktok_opts4, text="dB", style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
         act = ttk.Frame(right)
@@ -2364,6 +2461,8 @@ class App(tk.Tk):
                 tiktok_speed=self.var_tiktok_speed.get(),
                 tiktok_no_effect=self.var_tiktok_no_effect.get(),
                 tiktok_caption_pos=int(self.var_tiktok_caption_pos.get()),
+                tiktok_music=self.var_tiktok_music.get(),
+                tiktok_music_db=int(self.var_tiktok_music_db.get()),
                 bring_front=self.var_bring_front.get(),
             ))
         except Exception as e:
@@ -2825,6 +2924,11 @@ class App(tk.Tk):
         except Exception:
             tiktok_caption_pos = 40
         tiktok_caption_pos = max(0, min(tiktok_caption_pos, 100))
+        try:
+            tiktok_music_db = int(self.var_tiktok_music_db.get())
+        except Exception:
+            tiktok_music_db = -12
+        tiktok_music_db = max(-40, min(tiktok_music_db, 0))
 
         effect_name = self._current_effect()
         effect_path = None
@@ -2844,6 +2948,7 @@ class App(tk.Tk):
             make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
             tiktok_caption_pos=tiktok_caption_pos,
+            tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
             bring_front=self.var_bring_front.get(),
         )
 
@@ -2960,7 +3065,7 @@ class App(tk.Tk):
         """Tạo giọng OmniVoice cho 1 tập: đọc folder/input.txt → folder/output.wav
         (kèm cắt/dựng video theo cài đặt ts). Chạy ĐỒNG BỘ trong thread batch.
 
-        episode: số tập (để ghi chữ 'Mimi Truyện Số <episode>' lên video TikTok, khớp
+        episode: số tập (để ghi chữ 'Mimi audio Số <episode>' lên video TikTok, khớp
                  số trên thumbnail). None → không ghi chữ."""
         input_txt = folder / "input.txt"
         if not input_txt.exists():
@@ -3004,9 +3109,11 @@ class App(tk.Tk):
             tiktok_out=folder / "tiktok.mp4",      # video TIKTOK (10 phút đầu)
             tiktok_speed=ts.get("tiktok_speed", 1.0),
             tiktok_no_effect=ts.get("tiktok_no_effect", False),
-            # Chữ trên TikTok = 'Mimi Truyện Số <số ở thumbnail>' (khớp số tập).
-            tiktok_caption=(f"Mimi Truyện Số {episode}" if episode else None),
+            # Chữ trên TikTok = 'Mimi audio Số <số ở thumbnail>' (khớp số tập).
+            tiktok_caption=(f"Mimi audio Số {episode}" if episode else None),
             tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
+            tiktok_music=ts.get("tiktok_music", False),
+            tiktok_music_db=ts.get("tiktok_music_db", -12),
         )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         return True
@@ -3081,7 +3188,7 @@ class App(tk.Tk):
     def _seo_copy_blocks(self, seo_docx, episode: str):
         """Đọc seoYoutube.docx → {'title','desc','tags'} đã chuẩn hóa cho 1 tập
         (None nếu lỗi). Khớp tuyệt đối với 3 nút Copy của tab Thumbnail:
-        tiêu đề mở đầu [FULL] + 'Số <tập>' + '| Mimi Truyện'; mô tả thêm hashtag
+        tiêu đề mở đầu [FULL] + 'Số <tập>' + '| Mimi audio'; mô tả thêm hashtag
         #truyenfull #full; thẻ tag gắn tag tập rồi cắt cho tổng < 499 ký tự."""
         try:
             youtube_dir = str(YOUTUBE_DIR)
@@ -3099,12 +3206,12 @@ class App(tk.Tk):
                 tg.add_episode_to_description(seo.get("description", ""), ep))
 
             # Thẻ tag: gắn tag tập rồi cắt bớt cho tổng (nối bằng ', ') < 499 ký tự
-            # (giới hạn YouTube) — nhưng LUÔN GIỮ tag tập 'mimi truyện số <ep>'.
+            # (giới hạn YouTube) — nhưng LUÔN GIỮ tag tập 'mimi audio số <ep>'.
             tag_list = tg.add_episode_tag(seo.get("tags", []), ep)
             tags = tg.cap_tags(seo.get("tags", []), ep)
             dropped = len(tag_list) - len([t for t in tags.split(", ") if t])
             if dropped:
-                ep_tag = f"mimi truyện số {ep}" if ep else None
+                ep_tag = f"mimi audio số {ep}" if ep else None
                 logging.info(f"✂ Thẻ tag ≥{tg.MAX_TAGS_LEN} ký tự → bỏ {dropped} tag cuối "
                              + (f"(giữ '{ep_tag}')." if ep_tag else "."))
             return {"title": title or "", "desc": desc or "", "tags": tags or ""}
@@ -3118,7 +3225,7 @@ class App(tk.Tk):
 
         Tab Thumbnail chỉ đọc seoYoutube.docx CHUNG (kịch_bản/) nên khi chạy NHIỀU
         LINK không copy được nội dung từng tập. File này ghi đúng nội dung 3 nút đó
-        (đã gắn 'Số <tập>' + hậu tố '| Mimi Truyện') cho file SEO của riêng tập.
+        (đã gắn 'Số <tập>' + hậu tố '| Mimi audio') cho file SEO của riêng tập.
         """
         blocks = self._seo_copy_blocks(seo_docx, episode)
         if not blocks:
@@ -3710,14 +3817,20 @@ class App(tk.Tk):
             tiktok_speed = 1.0
         tiktok_speed = max(0.5, min(tiktok_speed, 2.0))
         tiktok_no_effect = self.var_tiktok_no_effect.get()   # không phủ hiệu ứng lên TikTok
-        # Chữ TikTok = 'Mimi Truyện Số <số tập gần nhất>' (khớp thumbnail); 0 → không ghi.
+        # Chữ TikTok = 'Mimi audio Số <số tập gần nhất>' (khớp thumbnail); 0 → không ghi.
         _ep = load_episode_number()
-        tiktok_caption = f"Mimi Truyện Số {_ep:02d}" if _ep > 0 else None
+        tiktok_caption = f"Mimi audio Số {_ep:02d}" if _ep > 0 else None
         try:
             tiktok_caption_pos = int(self.var_tiktok_caption_pos.get())
         except Exception:
             tiktok_caption_pos = 40
         tiktok_caption_pos = max(0, min(tiktok_caption_pos, 100))
+        tiktok_music = self.var_tiktok_music.get()
+        try:
+            tiktok_music_db = int(self.var_tiktok_music_db.get())
+        except Exception:
+            tiktok_music_db = -12
+        tiktok_music_db = max(-40, min(tiktok_music_db, 0))
         if make_tiktok and tiktok_speed > 1.001:
             logging.info(f"Video TikTok sẽ tăng tốc audio x{tiktok_speed:.2f} (giữ cao độ).")
 
@@ -3781,6 +3894,8 @@ class App(tk.Tk):
                     "tiktok_no_effect": tiktok_no_effect,
                     "tiktok_caption": tiktok_caption,
                     "tiktok_caption_pos": tiktok_caption_pos,
+                    "tiktok_music": tiktok_music,
+                    "tiktok_music_db": tiktok_music_db,
                     # Quy tắc đặt tên 3 video (giống bản tự động).
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,

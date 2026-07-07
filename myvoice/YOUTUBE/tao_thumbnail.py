@@ -152,7 +152,7 @@ def create_thumbnail(title: str, output: Path, background: Path | None = None) -
     # Nhãn thương hiệu và thể loại giữ bố cục nhất quán giữa các thumbnail.
     badge_font = load_font(27)
     draw.rounded_rectangle((text_x, 52, text_x + 270, 98), radius=13, fill="#dc1e3f")
-    draw_text_centered(draw, text_x, 59, 270, "MIMI TRUYỆN", badge_font, fill="white")
+    draw_text_centered(draw, text_x, 59, 270, "MIMI AUDIO", badge_font, fill="white")
 
     genre_font = load_font(27)
     draw.text((text_x, 128), "TRUYỆN AUDIO • KỊCH TÍNH", font=genre_font,
