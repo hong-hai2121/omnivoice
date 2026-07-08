@@ -59,6 +59,9 @@ examples/exp*
 whisper_cache/
 /myvoice/scripts/downloads_zh/
 
+# Cache model dịch zh→vi offline (opus-mt-zh-vi, ~300MB, tải tự động khi cần)
+mt_cache/
+
 # Khóa OAuth của YouTube uploader — TUYỆT ĐỐI không đưa lên repo (bí mật)
 /myvoice/YOUTUBE/client_secret.json
 /myvoice/YOUTUBE/token.json

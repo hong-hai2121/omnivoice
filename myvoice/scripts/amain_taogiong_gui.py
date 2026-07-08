@@ -2629,6 +2629,17 @@ class App(tk.Tk):
         if n_but:
             logging.info(f'🔁 Đã thay {n_but} chữ "but" (tiếng Anh) → "nhưng".')
 
+        # 2d) XỬ LÝ chữ Hán Gemini bỏ sót: câu dài → dịch NGHĨA (MT offline),
+        #     chữ ngắn / tên / thành ngữ → phiên âm Hán-Việt.
+        try:
+            import dich_hanviet as hv
+            content, n_mt, n_am = hv.translate_han(content, on_log=logging.info)
+            if n_mt or n_am:
+                logging.info(f"🈶 Chữ Hán sót: {n_mt} đoạn dịch nghĩa (MT), "
+                             f"{n_am} chữ phiên âm Hán-Việt.")
+        except Exception as e:
+            logging.warning(f"⚠️ Bỏ qua xử lý chữ Hán: {e}")
+
         # 3) GHI VÀO input.txt (đường dẫn ở ô 'Văn bản')
         try:
             out = Path(self.var_txt.get())
@@ -3079,6 +3090,13 @@ class App(tk.Tk):
             content, n_but = replace_leaked_but(content)
             if n_but:
                 logging.info(f'🔁 Đã thay {n_but} chữ "but" → "nhưng".')
+            try:
+                import dich_hanviet as hv
+                content, n_mt, n_am = hv.translate_han(content, on_log=logging.info)
+                if n_mt or n_am:
+                    logging.info(f"🈶 Chữ Hán sót: {n_mt} đoạn MT, {n_am} chữ phiên âm.")
+            except Exception as e:
+                logging.warning(f"⚠️ Bỏ qua xử lý chữ Hán: {e}")
             try:
                 import dich_chuanbi_input as prep
                 content = prep.remove_annotations(content)   # bỏ chú thích () []
