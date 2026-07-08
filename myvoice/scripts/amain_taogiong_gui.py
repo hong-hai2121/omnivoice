@@ -489,6 +489,27 @@ def replace_channel_promo(text: str) -> tuple[str, int]:
     return "".join(sentences), len(promo_idx)
 
 
+# ── SỬA CHỮ "but" TIẾNG ANH BỊ SÓT → "nhưng" ─────────────────────────────────
+# Gemini đôi khi để sót liên từ 但 thành "But/but" (tiếng Anh) thay vì "Nhưng".
+# Khớp NGUYÊN TỪ (word-boundary) nên KHÔNG đụng "bút", "debut", "buttery"...
+_ENG_BUT = re.compile(r'\bbut\b', re.IGNORECASE)
+
+
+def _but_to_nhung(m: "re.Match") -> str:
+    w = m.group(0)
+    if w.isupper():          # BUT  → NHƯNG
+        return "NHƯNG"
+    if w[0].isupper():       # But  → Nhưng
+        return "Nhưng"
+    return "nhưng"           # but  → nhưng
+
+
+def replace_leaked_but(text: str) -> tuple[str, int]:
+    """Thay chữ tiếng Anh 'but' (Gemini sót khi dịch 但) → 'nhưng', giữ hoa/thường.
+    Trả về (text_đã_thay, số_lần_thay)."""
+    return _ENG_BUT.subn(_but_to_nhung, text)
+
+
 def chunks_dir_for(output_path: Path) -> Path:
     """Thư mục chunks dùng chung cho mọi bản đánh số (output, output1, output2…).
 
@@ -2603,6 +2624,11 @@ class App(tk.Tk):
         if n_promo:
             logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh (mở đầu/thân/kết).")
 
+        # 2c) SỬA chữ "but" tiếng Anh Gemini sót → "nhưng"
+        content, n_but = replace_leaked_but(content)
+        if n_but:
+            logging.info(f'🔁 Đã thay {n_but} chữ "but" (tiếng Anh) → "nhưng".')
+
         # 3) GHI VÀO input.txt (đường dẫn ở ô 'Văn bản')
         try:
             out = Path(self.var_txt.get())
@@ -3050,6 +3076,9 @@ class App(tk.Tk):
             content, n_promo = replace_channel_promo(content)
             if n_promo:
                 logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh.")
+            content, n_but = replace_leaked_but(content)
+            if n_but:
+                logging.info(f'🔁 Đã thay {n_but} chữ "but" → "nhưng".')
             try:
                 import dich_chuanbi_input as prep
                 content = prep.remove_annotations(content)   # bỏ chú thích () []
