@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 from functools import lru_cache
 from itertools import combinations
+import random
 import re
 import sys
 from pathlib import Path
@@ -24,7 +25,11 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 HERE = Path(__file__).resolve().parent
 THUMBNAIL_DIR = HERE / "thumbnail"
 SOURCE_IMAGE = THUMBNAIL_DIR / "tiêu đề.png"
-BACKGROUND_IMAGE = THUMBNAIL_DIR / "khung nên.png"
+# Nền hoa: có NHIỀU mẫu (khung nen 1.png, khung nen 2.png, ...) và mỗi lần tạo
+# thumbnail sẽ chọn NGẪU NHIÊN một mẫu cho mới mẻ. Thêm/bớt nền chỉ cần thêm/xoá
+# file "khung nen *.png" trong thư mục thumbnail, không phải sửa code. Ảnh nền tự
+# co giãn về đúng canvas nên không bắt buộc cùng kích thước.
+BACKGROUND_PATTERN = "khung nen*.png"
 FOREGROUND_FRAME_IMAGE = THUMBNAIL_DIR / "khung trên.png"
 FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"              # khung ảnh NGANG (mèo nằm ngang)
 FRAME_IMAGE_VERTICAL = THUMBNAIL_DIR / "anhdoc.png"  # khung ảnh DỌC (mèo dọc/đứng)
@@ -44,18 +49,26 @@ def strip_brand_suffix(title: str) -> str:
     """Bỏ phần '| Mimi audio' ở CUỐI tiêu đề (chỉ dùng cho chữ trên thumbnail)."""
     return _BRAND_SUFFIX_RE.sub("", title or "").rstrip()
 
-# Phần giấy có dòng kẻ trong ảnh mẫu. Góc dương giúp chữ nghiêng theo mặt giấy.
+# Phần giấy có dòng kẻ trong ảnh mẫu (hệ toạ độ 1920×1080). Góc theo mặt giấy;
+# ảnh tiêu đề.png gần như PHẲNG NGANG (dòng kẻ ~ -0.4°) nên góc ≈ 0.
 # Dùng gần hết phần giấy có dòng kẻ để tiêu đề nổi bật như thumbnail YouTube.
-TEXT_BOX = (65, 265, 1235, 885)
-TEXT_ANGLE = 6.7
-TEXT_PADDING = 34
+# Đo lại khi đổi ảnh mẫu (bản 2026-07-09 giấy dời xuống/rộng hơn): vùng dòng kẻ
+# hiện x≈60→1270, y≈395(dòng đầu)→959(dòng cuối), giấy tới x1330/y1066.
+TEXT_BOX = (58, 366, 1258, 974)
+TEXT_ANGLE = 0.0
+TEXT_PADDING = 10
 
-# Bảng màu tiêu đề: chữ tô gradient đỏ (sáng trên → sậm dưới) cho có chiều sâu,
-# bọc viền trắng dày và một rim tối rất mỏng ngoài cùng để tách hẳn khỏi nền giấy.
-TITLE_COLOR_TOP = (236, 64, 64)       # đỏ tươi phía trên
-TITLE_COLOR_BOTTOM = (150, 10, 24)    # đỏ sậm phía dưới
-TITLE_OUTLINE = (255, 255, 255)       # viền trắng
-TITLE_EDGE = (60, 0, 6)               # rim tối ngoài cùng
+# ── Kiểu chữ tiêu đề CỔ ĐIỂN ────────────────────────────────────────────────────
+# Serif dày, lõi MỘT màu đỏ rượu/mận đậm (không đỏ tươi), có VIỀN TRẮNG bao quanh
+# cho nổi bật, và một BÓNG KEM lệch THẲNG xuống dưới nhẹ → chữ nổi, cổ điển.
+TITLE_COLOR = (120, 24, 40)           # đỏ rượu / đỏ mận đậm (lõi chữ)
+TITLE_WHITE = (255, 255, 255)         # viền trắng bao quanh chữ
+TITLE_CREAM = (250, 244, 230)         # màu BÓNG KEM (bản sao lệch xuống)
+
+# Độ lệch/độ dày (hệ 1920px, tự co theo scale_x).
+TITLE_WHITE_STROKE = 4                # bề dày viền trắng quanh chữ
+TITLE_CREAM_OFFSET = 6                # bóng kem lệch THẲNG xuống dưới, nhẹ
+TITLE_CREAM_STROKE = 2                # bề dày bản sao kem (cho bóng lộ ra dưới viền trắng)
 
 # Vùng BÊN TRONG khung ảnh.png trên canvas 1920×1080. Ảnh mèo bị crop theo
 # đúng hình chữ nhật này, sau đó ảnh khung được phủ lên trên để che hoàn toàn phần dư.
@@ -83,7 +96,7 @@ V_PANEL_HEIGHT = 700                # chiều cao panel giấy kem
 V_PANEL_PAD = 50                    # đệm trong panel quanh chữ
 V_LOGO_WIDTH = 360                  # bề ngang logo
 V_BADGE_DIAMETER = 250             # đường kính huy hiệu số tập
-V_TITLE_STROKE_RATIO = 0.06         # độ dày viền trắng theo cỡ chữ (đã giảm 1/2 cho bớt nổi)
+V_TITLE_STROKE_RATIO = 0.032        # viền trắng MỎNG theo cỡ chữ (tách chữ mà không thành mảng nền)
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -91,25 +104,45 @@ for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
-@lru_cache(maxsize=128)
-def find_font(size: int) -> ImageFont.FreeTypeFont:
-    """Dùng font Windows siêu đậm (ultra-bold), có đầy đủ dấu tiếng Việt.
+FONTS_DIR = HERE / "fonts"
 
-    Ưu tiên Segoe UI Black / Arial Black để chữ nổi khối, dày nét như thumbnail
-    chuyên nghiệp; vẫn lùi về Arial Bold nếu máy thiếu các font trên.
-    """
-    candidates = (
-        Path("C:/Windows/Fonts/seguibl.ttf"),   # Segoe UI Black
-        Path("C:/Windows/Fonts/ariblk.ttf"),    # Arial Black
-        Path("C:/Windows/Fonts/arialbd.ttf"),
-        Path("C:/Windows/Fonts/tahomabd.ttf"),
-        Path("C:/Windows/Fonts/calibrib.ttf"),
-        Path("C:/Windows/Fonts/arial.ttf"),
-    )
-    for font_path in candidates:
-        if font_path.exists():
-            return ImageFont.truetype(str(font_path), size=size)
-    raise FileNotFoundError("Không tìm thấy font Windows hỗ trợ tiếng Việt.")
+# Kiểu chữ tiêu đề: SERIF cổ điển. Mỗi mục là (đường_dẫn, biến_thể) — "biến thể"
+# chỉ dùng cho variable font (Merriweather/Lora) để chọn độ đậm; font Windows
+# thường để None. Thứ tự = mức ưu tiên, dừng ở font đầu tiên có trên máy.
+#   • Merriweather ExtraBold — serif Google Fonts, ĐỦ dấu tiếng Việt; nét đậm vừa
+#     phải: nổi trên thumbnail mà vẫn thoáng, dễ đọc (tải sẵn trong fonts/, offline).
+#     Đổi biến thể sang "Black" nếu muốn dày khối hơn, "Bold" nếu muốn mảnh hơn.
+#   • Lora Bold — serif Google thanh lịch hơn, cũng đủ dấu Việt.
+#   • Times/Cambria/Constantia Bold — serif Windows dựng sẵn, ĐÃ KIỂM TRA đủ dấu
+#     đôi tiếng Việt (ẫ ệ ự ữ ợ...), dùng khi thiếu font bundle.
+# CẢNH BÁO — các font sau THIẾU dấu đôi tiếng Việt (ra ô vuông) nên KHÔNG dùng làm
+# fallback: Georgia, Book Antiqua, và Nexa Rust (bản free). PIL/FreeType không tự
+# ghép dấu tổ hợp nên font phải có sẵn glyph precomposed thì chữ mới hiện đủ dấu.
+_TITLE_FONT_CANDIDATES = (
+    (FONTS_DIR / "Merriweather.ttf", "ExtraBold"),
+    (FONTS_DIR / "Lora.ttf", "Bold"),
+    (Path("C:/Windows/Fonts/timesbd.ttf"), None),    # Times New Roman Bold
+    (Path("C:/Windows/Fonts/cambriab.ttf"), None),   # Cambria Bold
+    (Path("C:/Windows/Fonts/constanb.ttf"), None),   # Constantia Bold
+    (Path("C:/Windows/Fonts/arialbd.ttf"), None),    # cứu cánh cuối: sans đậm
+)
+
+
+@lru_cache(maxsize=256)
+def find_font(size: int) -> ImageFont.FreeTypeFont:
+    """Font tiêu đề serif cổ điển, đủ dấu tiếng Việt (xem _TITLE_FONT_CANDIDATES)."""
+    for font_path, variation in _TITLE_FONT_CANDIDATES:
+        if not font_path.exists():
+            continue
+        font = ImageFont.truetype(str(font_path), size=size)
+        if variation:
+            try:
+                font.set_variation_by_name(variation)
+            except (OSError, ValueError):
+                # File không phải variable font hoặc thiếu biến thể → giữ nét mặc định.
+                pass
+        return font
+    raise FileNotFoundError("Không tìm thấy font serif hỗ trợ tiếng Việt.")
 
 
 def balanced_wrap(
@@ -169,7 +202,9 @@ def fit_text(
         if lines is None:
             continue
         content = "\n".join(lines)
-        spacing = max(6, round(size * 0.15))
+        # Giãn dòng RẤT KHÍT (0.08) để chữ TO nhất, lấp đầy giấy. Chỉ chừa tối thiểu
+        # cho dấu tiếng Việt cao không dính dòng trên. Tăng số này nếu muốn thoáng hơn.
+        spacing = max(6, round(size * 0.08))
         left, top, right, bottom = measure.multiline_textbbox(
             (0, 0), content, font=font, spacing=spacing, stroke_width=3
         )
@@ -213,6 +248,21 @@ def load_canvas_layer(path: Path, size: tuple[int, int]) -> Image.Image:
 
 def natural_sort_key(path: Path) -> list[object]:
     return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", path.name)]
+
+
+def list_background_images(thumbnail_dir: Path = THUMBNAIL_DIR) -> list[Path]:
+    """Liệt kê các ảnh nền hoa (khung nen 1.png, khung nen 2.png, ...) theo thứ tự."""
+    return sorted(thumbnail_dir.glob(BACKGROUND_PATTERN), key=natural_sort_key)
+
+
+def random_background(thumbnail_dir: Path = THUMBNAIL_DIR) -> Path:
+    """Chọn ngẫu nhiên một ảnh nền hoa để mỗi thumbnail trông mới mẻ."""
+    backgrounds = list_background_images(thumbnail_dir)
+    if not backgrounds:
+        raise FileNotFoundError(
+            f"Không tìm thấy ảnh nền '{BACKGROUND_PATTERN}' trong {thumbnail_dir}"
+        )
+    return random.choice(backgrounds)
 
 
 def list_photo_files(photo_dir: Path) -> list[Path]:
@@ -341,28 +391,6 @@ def add_number_to_tag(base: Image.Image, number: str, tag_path: Path) -> Image.I
     return Image.alpha_composite(result, text_layer)
 
 
-def vertical_gradient(
-    size: tuple[int, int],
-    top_color: tuple[int, int, int],
-    bottom_color: tuple[int, int, int],
-    y0: int,
-    y1: int,
-) -> Image.Image:
-    """Tạo lớp gradient dọc; màu chỉ chuyển trong khoảng [y0, y1] của chữ."""
-    width, height = size
-    grad = Image.new("RGBA", size)
-    draw = ImageDraw.Draw(grad)
-    span = max(y1 - y0, 1)
-    for y in range(height):
-        t = min(1.0, max(0.0, (y - y0) / span))
-        color = tuple(
-            round(top_color[index] + (bottom_color[index] - top_color[index]) * t)
-            for index in range(3)
-        )
-        draw.line([(0, y), (width, y)], fill=(*color, 255))
-    return grad
-
-
 def draw_title_text(
     layer: Image.Image,
     content: str,
@@ -371,30 +399,25 @@ def draw_title_text(
     spacing: int,
     scale_x: float,
 ) -> None:
-    """Vẽ tiêu đề: rim tối ngoài cùng → viền trắng dày → lõi chữ tô gradient đỏ."""
+    """Vẽ tiêu đề cổ điển: BÓNG KEM lệch xuống → viền TRẮNG → lõi đỏ rượu đồng nhất."""
     draw = ImageDraw.Draw(layer)
     common = dict(font=font, spacing=spacing, anchor="mm", align="center")
-    white_width = max(3, round(4 * scale_x))
-    edge_width = white_width + max(2, round(3 * scale_x))
+    cx, cy = center
+    down = round(TITLE_CREAM_OFFSET * scale_x)
+    white_w = max(2, round(TITLE_WHITE_STROKE * scale_x))
+    cream_stroke = max(1, round(TITLE_CREAM_STROKE * scale_x))
 
-    # 1) Rim tối hơi loe ra ngoài viền trắng để chữ không bị "chìm" vào nền sáng.
+    # 1) Bóng kem: bản sao màu kem lệch THẲNG xuống, hơi dày hơn cả viền trắng để
+    #    ló ra phía dưới viền (không lệch ngang → không nghiêng).
     draw.multiline_text(
-        center, content, fill=(*TITLE_EDGE, 255),
-        stroke_width=edge_width, stroke_fill=(*TITLE_EDGE, 255), **common,
+        (cx, cy + down), content, fill=(*TITLE_CREAM, 255),
+        stroke_width=white_w + cream_stroke, stroke_fill=(*TITLE_CREAM, 255), **common,
     )
-    # 2) Viền trắng dày bao quanh lõi chữ.
+    # 2) Viền TRẮNG bao quanh + lõi chữ đỏ rượu / mận đậm (MỘT màu đồng nhất).
     draw.multiline_text(
-        center, content, fill=(*TITLE_OUTLINE, 255),
-        stroke_width=white_width, stroke_fill=(*TITLE_OUTLINE, 255), **common,
+        center, content, fill=(*TITLE_COLOR, 255),
+        stroke_width=white_w, stroke_fill=(*TITLE_WHITE, 255), **common,
     )
-    # 3) Lõi chữ: tô gradient đỏ qua mask đúng hình glyph (không kèm viền).
-    bbox = draw.multiline_textbbox(center, content, stroke_width=0, **common)
-    mask = Image.new("L", layer.size, 0)
-    ImageDraw.Draw(mask).multiline_text(center, content, fill=255, stroke_width=0, **common)
-    grad = vertical_gradient(
-        layer.size, TITLE_COLOR_TOP, TITLE_COLOR_BOTTOM, bbox[1], bbox[3]
-    )
-    layer.paste(grad, (0, 0), mask)
 
 
 def _fit_vertical_title(
@@ -432,19 +455,17 @@ def _draw_vertical_title(
     spacing: int,
     stroke: int,
 ) -> None:
-    """Vẽ tiêu đề bản dọc: rim tối ngoài cùng → viền trắng dày → lõi gradient đỏ."""
+    """Vẽ tiêu đề bản dọc: BÓNG KEM lệch xuống → viền TRẮNG → lõi đỏ rượu đồng nhất."""
     draw = ImageDraw.Draw(layer)
     common = dict(font=font, spacing=spacing, anchor="mm", align="center")
-    edge = stroke + max(2, round(stroke * 0.35))
-    draw.multiline_text(center, content, fill=(*TITLE_EDGE, 255),
-                        stroke_width=edge, stroke_fill=(*TITLE_EDGE, 255), **common)
-    draw.multiline_text(center, content, fill=(*TITLE_OUTLINE, 255),
-                        stroke_width=stroke, stroke_fill=(*TITLE_OUTLINE, 255), **common)
-    bbox = draw.multiline_textbbox(center, content, stroke_width=0, **common)
-    mask = Image.new("L", layer.size, 0)
-    ImageDraw.Draw(mask).multiline_text(center, content, fill=255, stroke_width=0, **common)
-    grad = vertical_gradient(layer.size, TITLE_COLOR_TOP, TITLE_COLOR_BOTTOM, bbox[1], bbox[3])
-    layer.paste(grad, (0, 0), mask)
+    cx, cy = center
+    down = max(1, round(stroke * 1.2))   # bóng kem lệch xuống theo cỡ chữ bản dọc
+    # 1) Bóng kem lệch thẳng xuống (bản sao màu kem, dày hơn viền trắng để ló ra dưới).
+    draw.multiline_text((cx, cy + down), content, fill=(*TITLE_CREAM, 255),
+                        stroke_width=round(stroke * 1.5), stroke_fill=(*TITLE_CREAM, 255), **common)
+    # 2) Viền TRẮNG bao quanh + lõi chữ đỏ rượu đồng nhất.
+    draw.multiline_text(center, content, fill=(*TITLE_COLOR, 255),
+                        stroke_width=stroke, stroke_fill=(*TITLE_WHITE, 255), **common)
 
 
 def _add_vertical_episode_badge(base: Image.Image, number: str) -> Image.Image:
@@ -563,12 +584,16 @@ def add_title(
     number: str,
     number_frame_path: Path,
     max_lines: int = 4,
+    background: Path | None = None,
 ) -> Path:
     title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
     paper = Image.open(source).convert("RGBA")
     # Thứ tự lớp: nền hoa → tờ giấy/ảnh/nội dung → khung trang trí trên cùng.
-    background = load_canvas_layer(BACKGROUND_IMAGE, paper.size)
-    base = Image.alpha_composite(background, paper)
+    # Không truyền nền cụ thể → chọn NGẪU NHIÊN một mẫu "khung nen *.png".
+    if background is None:
+        background = random_background()
+    background_layer = load_canvas_layer(background, paper.size)
+    base = Image.alpha_composite(background_layer, paper)
     width, height = base.size
 
     # Tỷ lệ này được thiết kế cho ảnh 1920x1080; vẫn co giãn nếu ảnh mẫu thay đổi kích thước.
@@ -584,43 +609,22 @@ def add_title(
 
     font, content, spacing = fit_text(title, box_width, box_height, max_lines)
     text_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shadow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shadow_draw = ImageDraw.Draw(shadow_layer)
 
-    # Bóng đen mềm tách chữ khỏi nền giấy, sau đó vẽ chữ đỏ có viền kem.
-    shadow_position = (center[0] + round(8 * scale_x), center[1] + round(9 * scale_y))
-    shadow_draw.multiline_text(
-        shadow_position,
-        content,
-        font=font,
-        fill=(0, 0, 0, 120),
-        spacing=spacing,
-        anchor="mm",
-        align="center",
-        stroke_width=5,
-        stroke_fill=(0, 0, 0, 110),
-    )
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=max(3, round(8 * scale_x))))
+    # Chữ cổ điển: bóng KEM lệch thẳng xuống + lõi đỏ rượu (xem draw_title_text).
     draw_title_text(text_layer, content, font, center, spacing, scale_x)
 
-    # Cả bóng và chữ cùng xoay nhẹ để theo góc của tờ giấy trong ảnh mẫu.
-    shadow_layer = shadow_layer.rotate(TEXT_ANGLE, resample=Image.Resampling.BICUBIC, center=center)
+    # Xoay nhẹ theo góc của tờ giấy trong ảnh mẫu (góc ≈ 0 với ảnh phẳng hiện tại).
     text_layer = text_layer.rotate(TEXT_ANGLE, resample=Image.Resampling.BICUBIC, center=center)
-    result = Image.alpha_composite(base, shadow_layer)
-    result = Image.alpha_composite(result, text_layer)
-    # Chọn khung theo HƯỚNG ảnh mèo: ảnh DỌC (cao > rộng) → anhdoc.png; ảnh NGANG
-    # → ảnh.png. Chỉ dùng MỘT khung, không chồng cả hai. Thiếu khung dọc thì lùi
-    # về khung ngang cho an toàn.
-    with Image.open(photo_path) as _p:
-        is_portrait = _p.height > _p.width
-    use_vertical = is_portrait and FRAME_IMAGE_VERTICAL.is_file()
-    if use_vertical:
-        chosen_frame, chosen_box = FRAME_IMAGE_VERTICAL, FRAME_INNER_BOX_VERTICAL
+    result = Image.alpha_composite(base, text_layer)
+    # LUÔN dùng khung ảnh DỌC (anhdoc.png) cho mọi thumbnail — KHÔNG dùng khung
+    # NGANG (ảnh.png) nữa. Ảnh mèo (ngang hay dọc) đều được crop cover vào khung dọc
+    # và bo góc cho đẹp. Chỉ lùi về khung ngang nếu THIẾU file anhdoc.png.
+    if FRAME_IMAGE_VERTICAL.is_file():
+        chosen_frame, chosen_box, round_corners = FRAME_IMAGE_VERTICAL, FRAME_INNER_BOX_VERTICAL, True
     else:
-        chosen_frame, chosen_box = frame_path, FRAME_INNER_BOX
-    # Khung dọc → bo góc ảnh cho đẹp.
+        chosen_frame, chosen_box, round_corners = frame_path, FRAME_INNER_BOX, False
     result = add_photo_to_frame(result, photo_path, chosen_frame, chosen_box,
-                                round_corners=use_vertical)
+                                round_corners=round_corners)
     if number:
         result = add_number_to_tag(result, number, number_frame_path)
     result = Image.alpha_composite(result, load_canvas_layer(FOREGROUND_FRAME_IMAGE, result.size))
@@ -646,6 +650,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--number", default=DEFAULT_NUMBER, help="Số hiển thị trên thẻ (mặc định: 01).")
     parser.add_argument("--number-frame", type=Path, default=NUMBER_FRAME_IMAGE, help="Ảnh PNG thẻ số.")
     parser.add_argument("--max-lines", type=int, default=4, help="Số dòng tối đa (mặc định: 4).")
+    parser.add_argument("--background", type=Path,
+                        help="Ảnh nền hoa cụ thể. Bỏ trống để chọn ngẫu nhiên trong các 'khung nen *.png'.")
     return parser.parse_args()
 
 
@@ -659,6 +665,8 @@ def main() -> int:
         raise ValueError("--max-lines phải lớn hơn hoặc bằng 1.")
     photo = args.photo.expanduser().resolve() if args.photo else select_default_photo(args.photo_dir.expanduser())
     output_path = args.output.expanduser() if args.output else next_thumbnail_path()
+    # Chọn nền tại đây để in ra đúng mẫu đã dùng (không truyền → add_title tự random).
+    background = args.background.expanduser().resolve() if args.background else random_background()
     output = add_title(
         source,
         output_path,
@@ -668,8 +676,10 @@ def main() -> int:
         args.number.strip(),
         args.number_frame.expanduser().resolve(),
         args.max_lines,
+        background,
     )
     print(f"Ảnh trong khung: {photo}")
+    print(f"Nền hoa: {background.name}")
     print(f"Số trên thẻ: {args.number.strip() or '(không hiển thị)'}")
     print(f"Đã tạo thumbnail: {output}")
     return 0
