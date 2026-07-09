@@ -41,7 +41,7 @@ SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) —
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
 DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải từ link
-DRIVE_SCRIPT_FOLDER_ID = "1LU1gRtZJRRpIjedxUGSa_V_zW8L1q8PQ"  # thư mục Drive "kịch bản"
+DRIVE_SCRIPT_FOLDER_ID = "1cDUrHiQmzyIK7a8rqY3pFspHsizaceei"  # thư mục Drive "kịch bản"
 PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
@@ -711,7 +711,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -732,17 +732,35 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         tmp_dir = chunks_dir_for(output_path)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        # Chữ ký cấu hình (giọng/chế độ/văn bản) — quyết định có thể DÙNG LẠI
-        # audio cũ hay phải tạo lại (text/giọng đổi → chữ ký khác → tạo lại).
-        sig = hashlib.sha1("|".join([mode, str(voice_param), *chunks])
-                           .encode("utf-8")).hexdigest()
-        sig_file = tmp_dir / "_signature.txt"
-        old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
-
-        # ♻ Dùng lại: chỉ tái dùng khi audio đã có VÀ chữ ký khớp (cùng văn bản/giọng).
-        # Nếu văn bản/giọng đã đổi thì vẫn tạo lại để không ghép nhầm bản cũ.
         audio_ready = output_path.exists() and output_path.stat().st_size > 4096
-        reuse_audio = reuse and audio_ready and old_sig == sig
+
+        # video_only: BỎ QUA tạo giọng, chỉ DỰNG VIDEO từ audio có sẵn (nút "Dựng
+        # lại" riêng của từng mục). Cần audio đã tồn tại.
+        if video_only:
+            if not audio_ready:
+                logging.error(f"🎬 Chưa có audio để dựng video: {output_path}")
+                status_var.set("🎬 Chưa có audio — hãy tạo giọng trước.")
+                return
+            sig = old_sig = None
+            reuse_audio = True
+        else:
+            # Chữ ký cấu hình (giọng/chế độ/văn bản) — quyết định có thể DÙNG LẠI
+            # audio cũ hay phải tạo lại (text/giọng đổi → chữ ký khác → tạo lại).
+            sig = hashlib.sha1("|".join([mode, str(voice_param), *chunks])
+                               .encode("utf-8")).hexdigest()
+            sig_file = tmp_dir / "_signature.txt"
+            old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
+            # ♻ Dùng lại: chỉ tái dùng khi audio đã có VÀ chữ ký khớp (cùng văn bản/giọng).
+            # Nếu văn bản/giọng đã đổi thì vẫn tạo lại để không ghép nhầm bản cũ.
+            reuse_audio = reuse and audio_ready and old_sig == sig
+
+        # Dựng video: chế độ dùng-lại BỎ QUA video đã có (chỉ dựng phần thiếu). Nhưng
+        # nút "Dựng lại" (video_only) thì LUÔN dựng lại video dù đã tồn tại.
+        skip_video = reuse_audio and not video_only
+        # Audio DẪN XUẤT (bản cắt/½/tiktok/nhạc nền): luồng ♻ thường thì tái dùng cho
+        # nhanh; nhưng nút "Dựng lại" (video_only) TẠO LẠI để áp cài đặt GUI mới nhất
+        # (tốc độ, dB nhạc…). Audio GỐC (output.wav) vẫn dùng lại (không chạy lại TTS).
+        reuse_derived = reuse_audio and not video_only
 
         if reuse_audio:
             logging.info(f"♻ Dùng lại audio đã có (bỏ qua tạo giọng): {output_path.name}")
@@ -872,7 +890,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         cut_path = None
         if cut_half:
             hp = output_path.with_name(output_path.stem + "_half" + output_path.suffix)
-            if reuse_audio and hp.exists() and hp.stat().st_size > 4096:
+            if reuse_derived and hp.exists() and hp.stat().st_size > 4096:
                 cut_path = hp
                 logging.info(f"♻ Dùng lại bản ~1/2 đã có: {hp.name}")
             else:
@@ -896,7 +914,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.warning(f"Không cắt được bản 1/2: {e}")
         elif cut_audio:
             cp = output_path.with_name(output_path.stem + "_cut" + output_path.suffix)
-            if reuse_audio and cp.exists() and cp.stat().st_size > 4096:
+            if reuse_derived and cp.exists() and cp.stat().st_size > 4096:
                 cut_path = cp
                 logging.info(f"♻ Dùng lại bản 10–15 phút đã có: {cp.name}")
             else:
@@ -933,7 +951,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(0)
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
-                                        skip_existing=reuse_audio, output=ngang_out)
+                                        skip_existing=skip_video, output=ngang_out)
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
@@ -991,7 +1009,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 doc_effect = None if doc_no_effect else effect
                 vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
                                            progress=_video_progress("📱 Dựng video dọc..."),
-                                           skip_existing=reuse_audio,
+                                           skip_existing=skip_video,
                                            source_video=ngang_src, output=doc_out)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
@@ -1015,7 +1033,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 total_sec = 0.0
             if total_sec > 10.5 * 60:
                 tk_wav = output_path.with_name(output_path.stem + "_tiktok" + output_path.suffix)
-                if reuse_audio and tk_wav.exists() and tk_wav.stat().st_size > 4096:
+                if reuse_derived and tk_wav.exists() and tk_wav.stat().st_size > 4096:
                     tk_audio = tk_wav
                     logging.info(f"♻ Dùng lại audio TikTok đã có: {tk_wav.name}")
                 else:
@@ -1054,7 +1072,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     mix_out = (Path(tiktok_out).with_name(Path(tiktok_out).stem + "_bgm.wav")
                                if tiktok_out
                                else tk_audio.with_name(tk_audio.stem + "_bgm.wav"))
-                    if reuse_audio and mix_out.exists() and mix_out.stat().st_size > 4096:
+                    if reuse_derived and mix_out.exists() and mix_out.stat().st_size > 4096:
                         tk_audio = mix_out
                         logging.info(f"♻ Dùng lại audio TikTok + nhạc đã có: {mix_out.name}")
                     else:
@@ -1086,7 +1104,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 tk_effect = None if tiktok_no_effect else effect
                 tk_out = build_video_doc(tk_audio, log=logging.info, effect=tk_effect,
                                          progress=_video_progress("🎵 Dựng video TikTok..."),
-                                         skip_existing=reuse_audio,
+                                         skip_existing=skip_video,
                                          source_video=None, output=tk_video_out,
                                          caption_png=cap_png)
                 progress_var.set(100)
@@ -1487,6 +1505,11 @@ class App(tk.Tk):
                      values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
         ttk.Label(video_row, text="x (giữ cao độ)",
                   style="Hint.TLabel").pack(side="left", padx=(4, 0))
+        # Nút DỰNG LẠI (chỉ dựng video ngang từ audio có sẵn) — dồn về PHẢI của hàng
+        # để nằm ở góc trên-phải mà không phá bố cục hàng.
+        self.btn_run_ngang = ttk.Button(video_row, text="▶ Dựng lại", width=11,
+                                        command=lambda: self._rebuild_video("ngang"))
+        self.btn_run_ngang.pack(side="right")
 
         # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
         fx_row = ttk.Frame(sec_opt)
@@ -1581,6 +1604,12 @@ class App(tk.Tk):
         ttk.Checkbutton(vdoc_opts3, text="🚫  Không áp hiệu ứng cho video dọc",
                         variable=self.var_doc_no_effect).pack(side="left")
 
+        # Nút DỰNG LẠI ở GÓC TRÊN-PHẢI: dùng place() nên KHÔNG chiếm chỗ trong luồng
+        # pack → không đẩy/vỡ layout của mục. (Dựng lại video dọc từ audio có sẵn.)
+        self.btn_run_doc = ttk.Button(vdoc, text="▶ Dựng lại",
+                                      command=lambda: self._rebuild_video("doc"))
+        self.btn_run_doc.place(relx=1.0, x=-6, y=2, anchor="ne")
+
         # ── Video TikTok (group riêng, DƯỚI 'Video dọc', TRÊN nút Chạy) ──
         # Lấy ~10 phút ĐẦU của audio (cắt ở cuối câu) + ghép NGUYÊN video trong
         # videodoc/ → 1 video dọc riêng để đăng TikTok.
@@ -1623,6 +1652,12 @@ class App(tk.Tk):
         ttk.Spinbox(tiktok_opts4, from_=-30, to=0, increment=1,
                     textvariable=self.var_tiktok_music_db, width=5).pack(side="left")
         ttk.Label(tiktok_opts4, text="dB", style="Hint.TLabel").pack(side="left", padx=(4, 0))
+
+        # Nút DỰNG LẠI ở GÓC TRÊN-PHẢI (place() → không phá layout). Dựng lại video
+        # TikTok từ audio có sẵn.
+        self.btn_run_tiktok = ttk.Button(tiktok, text="▶ Dựng lại",
+                                         command=lambda: self._rebuild_video("tiktok"))
+        self.btn_run_tiktok.place(relx=1.0, x=-6, y=2, anchor="ne")
 
         # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
         act = ttk.Frame(right)
@@ -3758,6 +3793,17 @@ class App(tk.Tk):
             seo.run(str(GEMINI_DOCX), str(SEO_DOCX),
                     keep_open=(driver is not None), log=logging.info, driver=driver)
             self.pipe_status.set(f"✅ SEO YouTube xong → {SEO_DOCX.name}")
+
+            # Luồng 1 LINK không có bước thumbnail như batch (batch làm ở bước 6) →
+            # tạo LUÔN ở đây, ngay sau khi có SEO (nguồn tiêu đề). Số tập lấy từ tab
+            # Thumbnail (đã tự lưu vào state → đọc file, an toàn đa luồng); 0 → bỏ qua.
+            ep = load_episode_number()
+            if ep > 0:
+                self.pipe_status.set(f"🖼  Đang tạo thumbnail tập {ep:02d}...")
+                if self._make_thumbnail_for_folder(SCRIPT_DIR, f"{ep:02d}"):
+                    logging.info(f"🖼  Đã tạo thumbnail tập {ep:02d} (kịch_bản/).")
+            else:
+                logging.info("ℹ️ Chưa đặt số tập ở tab Thumbnail (0) → chưa tạo thumbnail 1 link.")
         except Exception as e:
             logging.error(f"Lỗi tạo SEO YouTube (bỏ qua, tiếp tục quy trình): {e}")
             self.pipe_status.set(f"⚠️ SEO YouTube lỗi: {e}")
@@ -3864,9 +3910,9 @@ class App(tk.Tk):
             tiktok_speed = 1.0
         tiktok_speed = max(0.5, min(tiktok_speed, 2.0))
         tiktok_no_effect = self.var_tiktok_no_effect.get()   # không phủ hiệu ứng lên TikTok
-        # Chữ TikTok = 'Mimi audio Số <số tập gần nhất>' (khớp thumbnail); 0 → không ghi.
-        _ep = load_episode_number()
-        tiktok_caption = f"Mimi audio Số {_ep:02d}" if _ep > 0 else None
+        # Chữ TikTok = 'Mimi audio Số <số tập>' (khớp thumbnail); LUÔN ghi (kể cả 00).
+        _ep = self._current_episode_number()
+        tiktok_caption = f"Mimi audio Số {_ep:02d}"   # LUÔN ghi chữ (kể cả số 00)
         try:
             tiktok_caption_pos = int(self.var_tiktok_caption_pos.get())
         except Exception:
@@ -3947,6 +3993,105 @@ class App(tk.Tk):
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,
                     "tiktok_out": tiktok_out},
+            daemon=True,
+        ).start()
+
+    @staticmethod
+    def _parse_speed(var) -> float:
+        """Đọc tốc độ (combobox) → float, kẹp trong [0.5, 2.0] (giới hạn atempo)."""
+        try:
+            v = float(str(var.get()).replace(",", ".").strip())
+        except (TypeError, ValueError):
+            v = 1.0
+        return max(0.5, min(v, 2.0))
+
+    def _current_episode_number(self) -> int:
+        """Số tập cho chữ TikTok: ƯU TIÊN số ĐANG nhập ở tab Thumbnail (khớp đúng số
+        người dùng vừa đặt, kể cả khi chưa lưu), không có thì lấy số đã lưu gần nhất."""
+        tg = getattr(self, "_thumb_gui", None)
+        if tg is not None:
+            try:
+                n = str(tg.number_var.get()).strip()
+                if n.isdecimal():
+                    return int(n)
+            except Exception:
+                pass
+        return load_episode_number()
+
+    def _rebuild_video(self, kind: str):
+        """Nút 'Dựng lại' của từng mục: dựng LẠI đúng 1 loại video (ngang/dọc/tiktok)
+        từ AUDIO ĐÃ CÓ trong kịch_bản, KHÔNG chạy lại TTS. Tái dùng run_tts(video_only)."""
+        out_path = Path(self.var_out.get())
+        if not (out_path.exists() and out_path.stat().st_size > 4096):
+            messagebox.showwarning(
+                "Chưa có audio",
+                f"Không thấy audio đã tạo:\n{out_path}\n\n"
+                "Hãy tạo giọng trước, hoặc chọn đúng file ở ô 'Kết quả'.")
+            return
+
+        # 3 video theo nền tảng (cùng thư mục với audio) — như bản tự động.
+        _out_dir = out_path.parent
+        ngang_out = _out_dir / "YOUTUBE.mp4"
+        doc_out = _out_dir / "facebook.mp4"
+        tiktok_out = _out_dir / "tiktok.mp4"
+
+        # Hiệu ứng phủ (nếu chọn) — bỏ tiền tố ★, chuyển thành đường dẫn đầy đủ.
+        effect_name = self._current_effect()
+        effect_path = None
+        if effect_name and effect_name != EFFECT_NONE:
+            p = EFFECTS_DIR / effect_name
+            effect_path = str(p) if p.exists() else None
+
+        # Tham số cắt (cho video dọc lấy bản cắt) — đọc an toàn.
+        cut_audio = self.var_cut_audio.get()
+        try:
+            cut_target = float(self.var_cut_target.get())
+            cut_min = float(self.var_cut_min.get())
+            cut_max = float(self.var_cut_max.get())
+        except Exception:
+            cut_audio, cut_target, cut_min, cut_max = False, 12.0, 10.0, 15.0
+
+        # Chữ TikTok = 'Mimi audio Số <số tập>' (khớp thumbnail); LUÔN ghi (kể cả 00).
+        _ep = self._current_episode_number()
+        tiktok_caption = f"Mimi audio Số {_ep:02d}"   # LUÔN ghi chữ (kể cả số 00)
+        try:
+            tiktok_caption_pos = max(0, min(int(self.var_tiktok_caption_pos.get()), 100))
+        except Exception:
+            tiktok_caption_pos = 40
+        try:
+            tiktok_music_db = max(-40, min(int(self.var_tiktok_music_db.get()), 0))
+        except Exception:
+            tiktok_music_db = -12
+
+        btn = {"ngang": self.btn_run_ngang, "doc": self.btn_run_doc,
+               "tiktok": self.btn_run_tiktok}[kind]
+        btn.config(state="disabled")
+        self.progress.set(0)
+        self.status.set(f"🎬 Dựng lại video {kind} từ audio có sẵn...")
+        logging.info(f"🎬 Dựng lại video {kind} từ {out_path.name} (không chạy lại TTS).")
+
+        ev = threading.Event()
+        ev.set()   # không tạm dừng
+        threading.Thread(
+            target=run_tts,
+            args=("", None, [], str(out_path), self.progress, self.status,
+                  btn, _NullWidget(), _NullWidget(), ev),
+            kwargs=dict(
+                video_only=True, reuse=True, effect=effect_path,
+                make_video=(kind == "ngang"), ngang_speed=self._parse_speed(self.var_ngang_speed),
+                ngang_out=ngang_out,
+                cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
+                cut_half=self.var_cut_half.get(),
+                make_video_doc=(kind == "doc"), doc_full_audio=self.var_doc_full_audio.get(),
+                doc_speed=self._parse_speed(self.var_doc_speed),
+                doc_from_ngang=self.var_doc_from_ngang.get(),
+                doc_no_effect=self.var_doc_no_effect.get(), doc_out=doc_out,
+                make_tiktok=(kind == "tiktok"), tiktok_out=tiktok_out,
+                tiktok_speed=self._parse_speed(self.var_tiktok_speed),
+                tiktok_no_effect=self.var_tiktok_no_effect.get(),
+                tiktok_caption=tiktok_caption, tiktok_caption_pos=tiktok_caption_pos,
+                tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
+            ),
             daemon=True,
         ).start()
 

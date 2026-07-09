@@ -143,6 +143,9 @@ class ThumbnailGUI:
         self.running = False
 
         self.number_var = tk.StringVar(value=self._load_episode_number())
+        # Tự LƯU số tập mỗi khi thay đổi (gõ tay hoặc +/−) → các công cụ khác luôn đọc
+        # đúng số hiện tại (vd chữ 'Mimi audio Số N' trên video TikTok).
+        self.number_var.trace_add("write", lambda *_: self._save_episode_number())
         self.photo_name_var = tk.StringVar(value="Chưa chọn ảnh")
         self.status_var = tk.StringVar(value="Sẵn sàng")
         self.output_var = tk.StringVar(value="")
