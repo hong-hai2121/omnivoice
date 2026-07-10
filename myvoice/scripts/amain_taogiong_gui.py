@@ -4029,6 +4029,10 @@ class App(tk.Tk):
                 "Hãy tạo giọng trước, hoặc chọn đúng file ở ô 'Kết quả'.")
             return
 
+        # Bấm "Dựng lại" cũng NHỚ cài đặt lần chạy gần nhất (tốc độ, chữ TikTok, nhạc
+        # nền...) như nút "Chạy" chính, để lần sau mở app dùng lại làm mặc định.
+        self._save_opt_settings()
+
         # 3 video theo nền tảng (cùng thư mục với audio) — như bản tự động.
         _out_dir = out_path.parent
         ngang_out = _out_dir / "YOUTUBE.mp4"
