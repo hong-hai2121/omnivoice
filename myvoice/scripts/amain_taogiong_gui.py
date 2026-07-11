@@ -36,6 +36,8 @@ BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
+VIDEODOC_DIR   = BASE_DIR / "videodoc"                # kho clip DỌC (có thể chia thư mục con theo chủ đề)
+VIDEODOC_INPUT = VIDEODOC_DIR / "input.txt"           # ghi TÊN 1 thư mục con → dựng video dọc Facebook từ đó
 GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemini → nguồn nội dung TTS
 SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) — chạy sau bước dịch
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
@@ -69,10 +71,44 @@ OPTS_DEFAULTS = dict(
     make_video=True, ngang_speed="1.0", effect=DEFAULT_EFFECT,
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
     make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
+    doc_from_subfolder=False,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
 )
+
+
+def resolve_videodoc_subfolder(log=print):
+    """Đọc videodoc/input.txt → TÊN thư mục con → trả về Path thư mục con hợp lệ.
+
+    File input: dòng đầu KHÁC rỗng và không bắt đầu bằng '#' được coi là tên thư mục
+    con trong videodoc/. Trả về None (→ dùng cả kho videodoc/) khi file thiếu/rỗng,
+    thư mục con không tồn tại, hoặc không có clip .mp4 nào bên trong.
+    """
+    try:
+        if not VIDEODOC_INPUT.exists():
+            log(f"[video dọc] Không thấy {VIDEODOC_INPUT} → dùng cả kho videodoc/.")
+            return None
+        name = ""
+        for line in VIDEODOC_INPUT.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if s and not s.startswith("#"):
+                name = s
+                break
+        if not name:
+            log("[video dọc] input.txt rỗng → dùng cả kho videodoc/.")
+            return None
+        sub = VIDEODOC_DIR / name
+        if not sub.is_dir():
+            log(f"[video dọc] Thư mục con '{name}' không có trong videodoc/ → dùng cả kho.")
+            return None
+        if not any(sub.glob("*.mp4")):
+            log(f"[video dọc] Thư mục con '{name}' không có .mp4 → dùng cả kho videodoc/.")
+            return None
+        return sub
+    except Exception as e:
+        log(f"[video dọc] Lỗi đọc input.txt ({e}) → dùng cả kho videodoc/.")
+        return None
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
 UI = dict(
@@ -711,7 +747,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -980,11 +1016,19 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.info(f"⏩ Tăng tốc audio video dọc x{doc_speed:.2f} → {doc_audio.name}")
                 except Exception as e:
                     logging.warning(f"Không tăng tốc được audio (giữ tốc độ gốc): {e}")
-            # ♻ Dùng lại VIDEO NGANG đã dựng (phóng to khớp chiều cao dọc, thay
-            # âm bằng audio video dọc). Ưu tiên video ngang vừa dựng; nếu chưa có
-            # (vd không bật dựng video ngang) thì tìm file *_videodone.mp4 đã có.
+            # NGUỒN video dọc — ưu tiên theo thứ tự:
+            #   1) 📁 Thư mục con videodoc/ (theo videodoc/input.txt) nếu bật + hợp lệ
+            #   2) ♻ Dùng lại VIDEO NGANG đã dựng (phóng to khớp chiều cao dọc)
+            #   3) Ghép random cả kho videodoc/ (mặc định)
+            # Ở mọi trường hợp, audio áp vào là doc_audio (audio video dọc/Facebook).
             ngang_src = None
-            if doc_from_ngang:
+            doc_source_dir = None
+            if doc_from_subfolder:
+                doc_source_dir = resolve_videodoc_subfolder(log=logging.info)
+                if doc_source_dir is not None:
+                    logging.info(f"📁 Video dọc ghép từ thư mục con: videodoc/{doc_source_dir.name}")
+            # Chỉ dùng lại video ngang khi KHÔNG dùng (được) thư mục con.
+            if doc_from_ngang and doc_source_dir is None:
                 if ngang_video_path and ngang_video_path.exists():
                     ngang_src = ngang_video_path
                 elif ngang_out and Path(ngang_out).exists():
@@ -1010,7 +1054,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
                                            progress=_video_progress("📱 Dựng video dọc..."),
                                            skip_existing=skip_video,
-                                           source_video=ngang_src, output=doc_out)
+                                           source_video=ngang_src, source_dir=doc_source_dir,
+                                           output=doc_out)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
@@ -1018,8 +1063,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 logging.error(f"Lỗi dựng video dọc: {e}")
                 status_var.set(f"Lỗi video dọc: {e}")
 
-        # ── (TÙY CHỌN) VIDEO TIKTOK — 10 phút ĐẦU của audio, ghép NGUYÊN video
-        #    trong videodoc/ (KHÔNG dùng lại video ngang). File riêng để đăng TikTok.
+        # ── (TÙY CHỌN) VIDEO TIKTOK — 10 phút ĐẦU của audio. Nguồn hình:
+        #    • Bật "📁 Ghép từ thư mục con videodoc" → DÙNG LẠI video Facebook đã dựng.
+        #    • Ngược lại → ghép NGUYÊN video trong videodoc/ như cũ. File riêng để đăng TikTok.
         if make_tiktok:
             from video_doc import build_video_doc
             from video_timclip import (cut_audio_at_sentence_end,
@@ -1085,10 +1131,22 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         except Exception as e:
                             logging.warning(f"Không chèn được nhạc nền (giữ giọng gốc): {e}")
 
-            # 2) Dựng video dọc từ kho videodoc/ (nguyên video, source_video=None).
+            # 2) Nguồn hình TikTok phụ thuộc "📁 Ghép từ thư mục con videodoc":
+            #    - BẬT  → DÙNG LẠI video Facebook (facebook.mp4) đã dựng, KHÔNG ghép lại.
+            #    - TẮT  → ghép NGUYÊN video trong kho videodoc/ như cũ (giữ nguyên chức năng).
             #    Tên riêng để KHÔNG đè video dọc (facebook/output_doc).
             tk_video_out = (Path(tiktok_out) if tiktok_out
                             else output_path.with_name(output_path.stem + "_tiktok.mp4"))
+            tk_source = None
+            if doc_from_subfolder:
+                fb_video = (Path(doc_out) if doc_out
+                            else output_path.with_name(output_path.stem + "_doc.mp4"))
+                if fb_video.exists() and fb_video.stat().st_size > 0:
+                    tk_source = fb_video
+                    logging.info(f"🎵 TikTok dùng lại video Facebook: {fb_video.name}")
+                else:
+                    logging.warning("Bật ghép thư mục con nhưng chưa có video Facebook "
+                                    "→ TikTok ghép từ kho videodoc/.")
             # Chữ overlay 'Mimi audio Số …' ở vị trí % chiều cao do người dùng chọn.
             cap_png = None
             if tiktok_caption:
@@ -1097,15 +1155,16 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 cap_png = _render_tiktok_caption_png(tiktok_caption, cap_tmp, y_ratio=y_ratio)
                 if cap_png:
                     logging.info(f"🔤 Chữ TikTok (≈{tiktok_caption_pos}% cao): {tiktok_caption!r}")
+            src_label = "video Facebook" if tk_source else "kho videodoc/"
             status_var.set("Đang dựng video TikTok...")
-            logging.info(f"Bắt đầu dựng video TikTok từ {tk_audio.name} (kho videodoc/)...")
+            logging.info(f"Bắt đầu dựng video TikTok từ {tk_audio.name} ({src_label})...")
             try:
                 progress_var.set(0)
                 tk_effect = None if tiktok_no_effect else effect
                 tk_out = build_video_doc(tk_audio, log=logging.info, effect=tk_effect,
                                          progress=_video_progress("🎵 Dựng video TikTok..."),
                                          skip_existing=skip_video,
-                                         source_video=None, output=tk_video_out,
+                                         source_video=tk_source, output=tk_video_out,
                                          caption_png=cap_png)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video TikTok → {tk_out.name}")
@@ -1531,9 +1590,10 @@ class App(tk.Tk):
         # Nạp danh sách (yêu thích ★ lên đầu) + chọn lại hiệu ứng của lần chạy trước
         self._reload_effect_combo(keep=self._opt_settings.get("effect", EFFECT_NONE))
 
-        # Cắt bản 10–15 phút (file phụ output_cut.wav) — gộp 1 dòng cho gọn chiều cao
+        # Cắt bản 10–15 phút (file phụ output_cut.wav) — ẨN khỏi UI theo yêu cầu.
+        # Vẫn tạo widget + biến để logic cắt và lưu cài đặt chạy theo giá trị đã lưu;
+        # chỉ KHÔNG .pack() nên hàng này không hiển thị.
         cut_row = ttk.Frame(sec_opt)
-        cut_row.pack(anchor="w", fill="x", pady=(8, 0))
         self.var_cut_audio = tk.BooleanVar(value=self._opt_settings["cut_audio"])
         ttk.Checkbutton(cut_row, text="✂️  Cắt 10–15 phút",
                         variable=self.var_cut_audio).pack(side="left")
@@ -1550,9 +1610,9 @@ class App(tk.Tk):
         ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
                     textvariable=self.var_cut_max, width=4).pack(side="left")
 
-        # Cắt ~1/2 audio gốc (file riêng output_half.wav) — độc lập bản 10–15 phút
+        # Cắt ~1/2 audio gốc (file riêng output_half.wav) — ẨN khỏi UI theo yêu cầu
+        # (giữ widget + biến, chỉ không .pack() nên không hiển thị).
         cuthalf_row = ttk.Frame(sec_opt)
-        cuthalf_row.pack(anchor="w", fill="x", pady=(6, 0))
         self.var_cut_half = tk.BooleanVar(value=self._opt_settings["cut_half"])
         ttk.Checkbutton(cuthalf_row, text="✂️  Cắt 1/2 (≈ nửa audio gốc)",
                         variable=self.var_cut_half).pack(side="left")
@@ -1567,9 +1627,9 @@ class App(tk.Tk):
         right = ttk.Frame(frame_video)
         right.grid(row=0, column=0, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(6, weight=1)   # ô nhật ký (dưới 'Sẵn sàng') giãn theo chiều cao
+        right.rowconfigure(2, weight=1)   # hàng NHẬT KÝ (dưới Video dọc + TikTok) giãn — nhật ký lên cao
 
-        # ── Video dọc (chuyển từ cột giữa sang cho đỡ chật) ──
+        # ── Video dọc ──
         vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
         vdoc.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.var_make_video_doc = tk.BooleanVar(value=self._opt_settings["make_video_doc"])
@@ -1595,7 +1655,22 @@ class App(tk.Tk):
         self.var_doc_from_ngang = tk.BooleanVar(value=self._opt_settings["doc_from_ngang"])
         ttk.Checkbutton(vdoc_opts2,
                         text="♻  Dùng lại video ngang (phóng to khớp chiều cao)",
-                        variable=self.var_doc_from_ngang).pack(side="left")
+                        variable=self.var_doc_from_ngang,
+                        command=lambda: self._exclusive_doc_source("ngang")).pack(side="left")
+
+        # 📁 Ghép video dọc từ 1 THƯ MỤC CON của videodoc/ (tên ghi trong
+        # videodoc/input.txt). LOẠI TRỪ với "dùng lại video ngang": bật cái này
+        # tự tắt cái kia (xem _exclusive_doc_source).
+        vdoc_opts2b = ttk.Frame(vdoc)
+        vdoc_opts2b.pack(anchor="w", fill="x", pady=(6, 0))
+        self.var_doc_from_subfolder = tk.BooleanVar(value=self._opt_settings["doc_from_subfolder"])
+        # Settings cũ lỡ bật cả hai → ưu tiên thư mục con, tắt dùng-lại-ngang.
+        if self.var_doc_from_subfolder.get() and self.var_doc_from_ngang.get():
+            self.var_doc_from_ngang.set(False)
+        ttk.Checkbutton(vdoc_opts2b,
+                        text="📁  Ghép từ thư mục con videodoc (theo videodoc/input.txt)",
+                        variable=self.var_doc_from_subfolder,
+                        command=lambda: self._exclusive_doc_source("subfolder")).pack(side="left")
 
         # Không phủ hiệu ứng lên video dọc (mọi trường hợp) — video dọc sạch hiệu ứng.
         vdoc_opts3 = ttk.Frame(vdoc)
@@ -1616,7 +1691,8 @@ class App(tk.Tk):
         tiktok = ttk.LabelFrame(right, text="  🎵  Video TikTok (10 phút đầu)  ")
         tiktok.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.var_make_tiktok = tk.BooleanVar(value=self._opt_settings["make_tiktok"])
-        ttk.Checkbutton(tiktok, text="Tạo video TikTok (từ kho videodoc)",
+        ttk.Checkbutton(tiktok, text="Tạo video TikTok (dùng lại Facebook khi bật 📁, "
+                        "không thì ghép từ videodoc)",
                         variable=self.var_make_tiktok).pack(anchor="w")
         tiktok_opts = ttk.Frame(tiktok)
         tiktok_opts.pack(anchor="w", fill="x", pady=(6, 0))
@@ -1659,9 +1735,10 @@ class App(tk.Tk):
                                          command=lambda: self._rebuild_video("tiktok"))
         self.btn_run_tiktok.place(relx=1.0, x=-6, y=2, anchor="ne")
 
-        # ── Hành động (Chạy / Tạm dừng / Nghe thử) ──
-        act = ttk.Frame(right)
-        act.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        # ── Nhóm hành động (Chạy / Tạm dừng / Nghe thử) — đặt trong CỘT TTS, NGAY DƯỚI
+        #    group box "Cài đặt" (NGOÀI group box). left rows: ...sec_opt=3 → 4,5,6,7. ──
+        act = ttk.Frame(left)
+        act.grid(row=4, column=0, sticky="ew", pady=(8, 8))
         self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
                                   style="Accent.TButton")
         self.btn_run.pack(side="left", padx=(0, 8))
@@ -1673,8 +1750,8 @@ class App(tk.Tk):
         self.btn_preview.pack(side="left")
 
         # ── Xóa output + chế độ dùng lại — xuống hàng riêng cho khỏi bị khuất ──
-        act2 = ttk.Frame(right)
-        act2.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        act2 = ttk.Frame(left)
+        act2.grid(row=5, column=0, sticky="ew", pady=(0, 10))
         ttk.Button(act2, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
         # ♻ Dùng lại audio/video đã có: bỏ qua tạo giọng nếu output.wav còn đúng
         # văn bản/giọng, và bỏ qua video nào đã dựng — chỉ dựng phần còn thiếu.
@@ -1686,16 +1763,16 @@ class App(tk.Tk):
         # ── Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần) ──
         # Hữu ích khi chạy nền: tới bước clone giọng thì GUI tự bật lên trên (vd
         # đang làm việc ở VS Code) để dễ theo dõi / ưu tiên CPU+GPU cho app.
-        act3 = ttk.Frame(right)
-        act3.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        act3 = ttk.Frame(left)
+        act3.grid(row=6, column=0, sticky="ew", pady=(0, 10))
         self.var_bring_front = tk.BooleanVar(value=self._opt_settings["bring_front"])
         ttk.Checkbutton(act3,
                         text="⬆️  Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần)",
                         variable=self.var_bring_front).pack(side="left")
 
         # ── Tiến trình ──
-        prog_frame = ttk.Frame(right)
-        prog_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        prog_frame = ttk.Frame(left)
+        prog_frame.grid(row=7, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self.progress = tk.IntVar(value=0)
         self.progress_bar = ttk.Progressbar(prog_frame, variable=self.progress,
@@ -1705,8 +1782,8 @@ class App(tk.Tk):
         ttk.Label(prog_frame, textvariable=self.status,
                   style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        # ── Nhật ký: nằm DƯỚI dòng 'Sẵn sàng' trong panel video (giống gốc) ──
-        self._build_log_panel(right, 6)
+        # ── Nhật ký: ngay dưới Video dọc + TikTok (đẩy lên cao) ──
+        self._build_log_panel(right, 2)
         self._show_view("home")   # mặc định mở Home (đầy đủ như giao diện gốc)
 
     def _show_view(self, key):
@@ -2512,6 +2589,7 @@ class App(tk.Tk):
                 doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self.var_doc_speed.get(),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
+                doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(),
                 make_tiktok=self.var_make_tiktok.get(),
                 tiktok_speed=self.var_tiktok_speed.get(),
@@ -2524,18 +2602,62 @@ class App(tk.Tk):
         except Exception as e:
             logging.warning(f"Không lưu được cài đặt: {e}")
 
-    def _clear_output(self):
-        """Xóa output/, XÓA HẲN các thư mục tập VÀ làm rỗng các file trong kịch_bản/.
+    @staticmethod
+    def _send_to_recycle_bin(paths):
+        """Đưa danh sách file/thư mục vào THÙNG RÁC Windows (khôi phục được).
 
-        - output/ (kịch_bản/output): xóa hẳn mọi file + thư mục con (wav, video, chunks).
-        - Thư mục tập (tên toàn chữ số: 01, 02, 17...): XÓA HẲN cả thư mục — mỗi tập
-          gồm audio/video, docx dịch/SEO, input.txt, youtube_seo.txt, thumbnail...
-          (KHÔNG đụng tới output/ vì tên không phải số.)
-        - kịch_bản/: LÀM RỖNG các file nằm trực tiếp ở đây (input.txt, tiengTrung.docx,
-          gemini_result.docx, seoYoutube.docx...) — giữ tên file, xóa sạch nội dung.
-          Riêng .docx ghi lại thành docx RỖNG HỢP LỆ để code đọc sau không lỗi.
+        Dùng SHFileOperationW của shell32 với cờ FOF_ALLOWUNDO — không cần thư viện
+        ngoài (send2trash/winshell). Trả về (số thành công, số lỗi).
         """
-        import shutil
+        import os
+        import ctypes
+        from ctypes import wintypes
+
+        class _SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND),
+                ("wFunc", wintypes.UINT),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+
+        FO_DELETE = 0x0003
+        # ALLOWUNDO(vào Thùng rác) | NOCONFIRMATION | SILENT | NOERRORUI
+        FLAGS = 0x0040 | 0x0010 | 0x0004 | 0x0400
+        ok = fail = 0
+        for p in paths:
+            try:
+                # pFrom phải kết thúc bằng NULL kép -> thêm "\x00" (buffer tự thêm 1 NULL nữa).
+                buf = ctypes.create_unicode_buffer(os.path.abspath(str(p)) + "\x00")
+                op = _SHFILEOPSTRUCTW()
+                op.wFunc = FO_DELETE
+                op.pFrom = ctypes.cast(buf, wintypes.LPCWSTR)
+                op.fFlags = FLAGS
+                rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+                if rc == 0 and not op.fAnyOperationsAborted:
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception as e:
+                logging.warning(f"Không đưa vào Thùng rác được {p}: {e}")
+                fail += 1
+        return ok, fail
+
+    def _clear_output(self):
+        """Đưa output/, các thư mục tập và nội dung file kịch_bản/ vào THÙNG RÁC.
+
+        Khác bản cũ (xóa thẳng, không cứu được): giờ mọi thứ vào Thùng rác Windows nên
+        LỠ TAY vẫn khôi phục được, và có 1 bước XÁC NHẬN trước khi làm.
+        - output/ (kịch_bản/output): đưa mọi file + thư mục con vào Thùng rác.
+        - Thư mục tập (tên toàn chữ số 01, 02, 17...): đưa cả thư mục vào Thùng rác.
+        - kịch_bản/: các file trực tiếp (input.txt, *.docx...) được đưa vào Thùng rác
+          (giữ nội dung cũ để cứu được) rồi tạo lại bản RỖNG cùng tên cho pipeline chạy
+          tiếp không lỗi. Nếu file KHÔNG vào được Thùng rác thì GIỮ NGUYÊN, không ghi đè.
+        """
         out_items = list(OUTPUT_DIR.iterdir()) if OUTPUT_DIR.exists() else []
         kb_files = [p for p in SCRIPT_DIR.iterdir() if p.is_file()] if SCRIPT_DIR.exists() else []
         # Thư mục tập = thư mục con của kịch_bản có tên TOÀN CHỮ SỐ (01, 02, 17...).
@@ -2546,28 +2668,32 @@ class App(tk.Tk):
             self.status.set("Không có gì để xóa hay làm rỗng.")
             return
 
-        # Xóa ngay, KHÔNG hỏi xác nhận (theo yêu cầu chạy nhanh).
+        # Xác nhận trước khi xóa (phòng lỡ tay). Chỉ 1 hộp Yes/No nên vẫn nhanh.
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+                "Xác nhận xóa output",
+                "Đưa vào THÙNG RÁC (có thể khôi phục lại):\n"
+                f"  • {len(out_items)} mục trong output/\n"
+                f"  • {len(ep_dirs)} thư mục tập (01, 02...)\n"
+                f"  • {len(kb_files)} file trong kịch_bản/ (bản cũ vào Thùng rác, "
+                "tạo lại bản rỗng)\n\nTiếp tục?"):
+            self.status.set("Đã hủy — không xóa gì.")
+            return
+
         self._stop_preview()   # nhả file đang nghe (nếu có) để xóa được
 
-        # 1) Xóa hẳn mọi thứ trong output/
-        for p in out_items:
-            if p.is_dir():
-                shutil.rmtree(p, ignore_errors=True)
-            else:
-                p.unlink(missing_ok=True)
+        # 1) output/ + 2) thư mục tập -> Thùng rác
+        out_ok, out_fail = self._send_to_recycle_bin(out_items)
+        ep_ok, ep_fail = self._send_to_recycle_bin(ep_dirs)
 
-        # 2) Xóa hẳn các thư mục tập (01, 02, 17...) — cả audio/video/docx bên trong
-        removed_dirs = 0
-        for d in ep_dirs:
-            try:
-                shutil.rmtree(d, ignore_errors=True)
-                removed_dirs += 1
-            except Exception as e:
-                logging.warning(f"Không xóa được thư mục tập {d.name}: {e}")
-
-        # 3) Làm rỗng các file trong kịch_bản/ (giữ tên, xóa nội dung)
+        # 3) File trong kịch_bản/: đưa bản cũ vào Thùng rác rồi tạo lại bản RỖNG.
+        kb_ok, kb_fail = self._send_to_recycle_bin(kb_files)
         emptied = 0
         for p in kb_files:
+            if p.exists():
+                # Chưa vào được Thùng rác -> KHÔNG ghi đè để khỏi mất nội dung.
+                logging.warning(f"Giữ nguyên (chưa vào Thùng rác được): {p.name}")
+                continue
             try:
                 if p.suffix.lower() == ".docx":
                     from docx import Document
@@ -2576,15 +2702,19 @@ class App(tk.Tk):
                     p.write_text("", encoding="utf-8")
                 emptied += 1
             except Exception as e:
-                logging.warning(f"Không làm rỗng được {p.name}: {e}")
+                logging.warning(f"Không tạo lại được {p.name}: {e}")
 
         # Đặt lại tên kết quả về output.wav để đánh số lại từ đầu
         self.var_out.set(str(OUTPUT_DIR / "output.wav"))
         self._last_output = None
         self.btn_preview.config(state="disabled")
-        logging.info(f"Đã xóa output trong {OUTPUT_DIR}, xóa {removed_dirs} thư mục tập, "
-                     f"và làm rỗng {emptied} file trong {SCRIPT_DIR}")
-        self.status.set("Đã xóa output + thư mục tập + làm rỗng kịch_bản.")
+        total_fail = out_fail + ep_fail + kb_fail
+        logging.info(f"Vào Thùng rác: {out_ok} mục output, {ep_ok} thư mục tập, "
+                     f"{kb_ok} file kịch_bản; tạo lại {emptied} bản rỗng; lỗi {total_fail}")
+        msg = "Đã đưa output + thư mục tập + file kịch_bản vào Thùng rác (khôi phục được)."
+        if total_fail:
+            msg += f"  ({total_fail} mục lỗi — xem nhật ký)"
+        self.status.set(msg)
 
     def _pick_file(self, var, filetypes):
         path = filedialog.askopenfilename(filetypes=filetypes)
@@ -3016,6 +3146,7 @@ class App(tk.Tk):
             doc_full_audio=self.var_doc_full_audio.get(), doc_speed=doc_speed,
             ngang_speed=ngang_speed, cut_half=cut_half,
             doc_from_ngang=self.var_doc_from_ngang.get(),
+            doc_from_subfolder=self.var_doc_from_subfolder.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
             make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
@@ -3184,6 +3315,7 @@ class App(tk.Tk):
             ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
             ts["ngang_speed"], ts["cut_half"], True,   # reuse=True → TIẾP TỤC: dùng
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
+            doc_from_subfolder=ts.get("doc_from_subfolder", False),
             # Bản tự động: đặt tên riêng cho các video kết quả trong thư mục tập.
             ngang_out=folder / "YOUTUBE.mp4",      # video NGANG (đăng YouTube)
             doc_out=folder / "facebook.mp4",       # video DỌC  (đăng Facebook)
@@ -3344,19 +3476,37 @@ class App(tk.Tk):
 
     def _translation_complete(self, gemini_docx, chunks, episode) -> bool:
         """True nếu MỌI đoạn trong gemini_result.docx đã dịch xong (không rỗng, không
-        '(chưa dịch)', hết chữ Hán). Thiếu đoạn nào thì ghi log rõ để biết mà sửa."""
+        '(chưa dịch)', hết chữ Hán). Thiếu đoạn nào thì ghi log rõ để biết mà sửa.
+
+        Ngoài ra: nếu còn MỘT ĐOẠN HÁN LIÊN TIẾP đủ dài (Gemini bỏ sót nguyên câu) thì
+        cũng trả False → BỎ QUA cả tập, sang tập khác (dù tỉ lệ chữ Hán toàn đoạn thấp)."""
         import dich_gemini as g
         n = len(chunks)
         check = g.read_results_docx(gemini_docx, n) if Path(gemini_docx).exists() else [None] * n
         missing = [j + 1 for j, r in enumerate(check) if not g.is_translation_done(r)]
-        if not missing:
-            return True
-        head = ", ".join(map(str, missing[:10])) + ("..." if len(missing) > 10 else "")
-        logging.error(
-            f"⛔ Tập {episode}: CHƯA dịch xong {len(missing)}/{n} đoạn (đoạn {head}) → "
-            "DỪNG, KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
-            "đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
-        return False
+        if missing:
+            head = ", ".join(map(str, missing[:10])) + ("..." if len(missing) > 10 else "")
+            logging.error(
+                f"⛔ Tập {episode}: CHƯA dịch xong {len(missing)}/{n} đoạn (đoạn {head}) → "
+                "DỪNG, KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
+                "đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
+            return False
+
+        # Còn MỘT ĐOẠN HÁN LIÊN TIẾP đủ dài (>= MAX_CHINESE_RUN chữ) → Gemini bỏ sót
+        # nguyên câu. BỎ QUA cả tập, sang tập khác (khỏi tạo input/SEO/audio/video).
+        worst_j, worst_run = 0, 0
+        for j, r in enumerate(check, 1):
+            run = g.max_chinese_run(r or "")
+            if run > worst_run:
+                worst_j, worst_run = j, run
+        if worst_run >= g.MAX_CHINESE_RUN:
+            logging.error(
+                f"⛔ Tập {episode}: đoạn {worst_j} còn CHUỖI HÁN LIÊN TIẾP {worst_run} chữ "
+                f"(>= {g.MAX_CHINESE_RUN}) — Gemini bỏ sót nguyên câu → BỎ QUA cả tập, "
+                "chuyển sang tập khác.")
+            return False
+
+        return True
 
     # ── MANIFEST: tiến độ + map nguồn↔tập (để chạy tiếp & báo cáo) ──────────────
     def _folder_steps(self, folder, episode: str) -> dict:
@@ -3884,6 +4034,7 @@ class App(tk.Tk):
         make_video_doc = self.var_make_video_doc.get()
         doc_full_audio = self.var_doc_full_audio.get()
         doc_from_ngang = self.var_doc_from_ngang.get()   # dùng lại video ngang cho dọc
+        doc_from_subfolder = self.var_doc_from_subfolder.get()  # ghép từ thư mục con videodoc
         doc_no_effect = self.var_doc_no_effect.get()     # không phủ hiệu ứng lên video dọc
         try:
             doc_speed = float(str(self.var_doc_speed.get()).replace(",", ".").strip())
@@ -3989,6 +4140,7 @@ class App(tk.Tk):
                     "tiktok_caption_pos": tiktok_caption_pos,
                     "tiktok_music": tiktok_music,
                     "tiktok_music_db": tiktok_music_db,
+                    "doc_from_subfolder": doc_from_subfolder,   # ghép video dọc từ thư mục con videodoc
                     # Quy tắc đặt tên 3 video (giống bản tự động).
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,
@@ -4017,6 +4169,15 @@ class App(tk.Tk):
             except Exception:
                 pass
         return load_episode_number()
+
+    def _exclusive_doc_source(self, chosen: str):
+        """2 nguồn hình video dọc loại trừ nhau: '♻ dùng lại video ngang' và
+        '📁 ghép từ thư mục con videodoc'. Vừa bật cái này thì tắt cái kia.
+        (Cả hai cùng tắt vẫn hợp lệ → ghép random cả kho videodoc/.)"""
+        if chosen == "ngang" and self.var_doc_from_ngang.get():
+            self.var_doc_from_subfolder.set(False)
+        elif chosen == "subfolder" and self.var_doc_from_subfolder.get():
+            self.var_doc_from_ngang.set(False)
 
     def _rebuild_video(self, kind: str):
         """Nút 'Dựng lại' của từng mục: dựng LẠI đúng 1 loại video (ngang/dọc/tiktok)
@@ -4089,6 +4250,7 @@ class App(tk.Tk):
                 make_video_doc=(kind == "doc"), doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self._parse_speed(self.var_doc_speed),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
+                doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(), doc_out=doc_out,
                 make_tiktok=(kind == "tiktok"), tiktok_out=tiktok_out,
                 tiktok_speed=self._parse_speed(self.var_tiktok_speed),

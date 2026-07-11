@@ -53,7 +53,8 @@ X264_CRF = 18
 
 
 def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
-                    skip_existing=False, source_video=None, output: Path | None = None,
+                    skip_existing=False, source_video=None, source_dir=None,
+                    output: Path | None = None,
                     caption_png: Path | None = None,
                     caption_pulse_period: float = 300.0) -> Path:
     """Dựng video DỌC 1080x1920 (không khung) từ một file audio. Trả về đường dẫn output.
@@ -70,6 +71,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                   phóng to "fill" cho khớp chiều cao khung dọc rồi cắt giữa, thay
                   âm bằng audio_file. Khi đó BỎ QUA kho videodoc/ và hiệu ứng (video
                   nguồn đã có sẵn khung/hiệu ứng).
+    source_dir: thư mục chứa clip để ghép random (thay cho kho videodoc/ mặc định).
+                Dùng khi muốn lấy nguồn từ 1 thư mục con của videodoc/ (vd theo chủ đề).
+                Bỏ qua nếu đã truyền source_video. None → dùng videodoc/ như cũ.
     output: đường dẫn video kết quả tùy chọn. None (mặc định) → đặt cạnh audio với
             tên <tên_audio>_doc.mp4. Truyền vào để đặt tên riêng (vd facebook.mp4);
             skip_existing khi đó kiểm tra ĐÚNG file này nên vẫn "chỉ dựng phần còn thiếu".
@@ -119,9 +123,10 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         )
         concat_list = None
     else:
-        videos = sorted(VIDEO_DIR.glob("*.mp4"))
+        video_dir = Path(source_dir) if source_dir else VIDEO_DIR
+        videos = sorted(video_dir.glob("*.mp4"))
         if not videos:
-            raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
+            raise RuntimeError(f"Không có file .mp4 nào trong: {video_dir}")
 
         effect = Path(effect) if effect else None
         if effect and not effect.exists():
@@ -139,6 +144,7 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 f.write(f"file '{v.as_posix()}'\n")
 
         log(f"Khung dọc  : {OUT_W}x{OUT_H} (KHÔNG khung)")
+        log(f"Nguồn clip : {video_dir}")
         log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
         log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
         log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")

@@ -74,20 +74,20 @@ def ensure_brand_suffix(title: str) -> str:
 
 
 def add_episode_tag(tags, ep: str):
-    """Thêm thẻ từ khóa 'mimi audio số <ep>' vào cuối danh sách tag (nếu chưa có)."""
+    """Đưa thẻ 'mimi audio số <ep>' lên ĐẦU danh sách tag (thêm nếu chưa có, hoặc
+    dời lên đầu nếu đã nằm ở chỗ khác)."""
     tags = list(tags or [])
     if not ep:
         return tags
     extra = f"mimi audio số {ep}"
-    if any((t or "").strip().lower() == extra for t in tags):
-        return tags
-    return tags + [extra]
+    rest = [t for t in tags if (t or "").strip().lower() != extra.lower()]
+    return [extra] + rest
 
 
 # ── Quy ước cố định khi COPY đăng YouTube ───────────────────────────────────────
 FULL_TITLE_PREFIX = "[FULL]"            # luôn mở đầu tiêu đề
 FULL_HASHTAGS = ("#truyenfull", "#full")  # luôn có trong mô tả
-MAX_TAGS_LEN = 499                      # tổng ký tự thẻ tag (nối ', ') PHẢI < giá trị này
+MAX_TAGS_LEN = 500                      # tổng ký tự thẻ tag (nối ', ') PHẢI <= giá trị này (giới hạn YouTube)
 
 
 def add_full_prefix(title: str) -> str:
@@ -112,14 +112,22 @@ def add_full_hashtags(description: str) -> str:
 
 
 def cap_tags(tags, ep: str, limit: int = MAX_TAGS_LEN) -> str:
-    """Nối thẻ tag bằng ', ' và CẮT bớt cho tổng ký tự < limit; LUÔN giữ tag tập."""
-    tag_list = add_episode_tag(tags, ep)
-    ep_tag = f"mimi audio số {ep}" if ep else None
-    keep = [t for t in tag_list if ep_tag and t == ep_tag]
-    others = [t for t in tag_list if not (ep_tag and t == ep_tag)]
-    while others and len(", ".join(others + keep)) >= limit:
-        others.pop()        # bỏ tag thường ở cuối, KHÔNG đụng tag tập
-    return ", ".join(others + keep)
+    """Nối thẻ tag bằng ', ', thẻ tập ('mimi audio số <ep>') để Ở ĐẦU danh sách.
+
+    Lấy LẦN LƯỢT từ đầu; khi thêm 1 thẻ mà tổng (nối ', ') VƯỢT `limit` ký tự thì BỎ
+    thẻ đó VÀ mọi thẻ đứng SAU nó (cắt tại ranh giới, không nhảy cóc lấy thẻ ngắn hơn
+    ở phía sau)."""
+    tag_list = add_episode_tag(tags, ep)   # thẻ tập đã ở ĐẦU danh sách
+    kept: list[str] = []
+    for t in tag_list:
+        t = (t or "").strip()
+        if not t:
+            continue
+        if len(", ".join(kept + [t])) <= limit:
+            kept.append(t)
+        else:
+            break            # thẻ này vượt limit → bỏ nó và các thẻ sau
+    return ", ".join(kept)
 
 
 class ThumbnailGUI:

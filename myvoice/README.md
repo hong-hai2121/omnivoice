@@ -37,7 +37,7 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/video_khung.py` | Dựng **video NGANG**: ghép random clip trong `videongang/` rồi lồng vào khung PNG (`Backbround/`). Đầu ra `<audio>_videodone.mp4`. |
 | `scripts/video_doc.py` | Dựng **video DỌC 1080×1920 (KHÔNG khung)**: ghép random clip trong `videodoc/`, mux audio. Đầu ra `<audio>_doc.mp4`. |
 | `scripts/video_timclip.py` | Gợi ý đoạn clip ngắn từ kịch bản; và **cắt audio bản 10–15 phút** tại khoảng lặng cuối câu (dùng cho video dọc). |
-| `scripts/video_xoatieng.py` | Xóa audio gốc + scale video nguồn trong `mp4/` → `mp4_no_audio/`. |
+| `scripts/video_xoatieng.py` | **GUI (mặc định)**: chọn nhiều video (mặc định mở ở Downloads) → xóa tiếng + **cắt đầy khung** về khung hình đồng nhất (Ngang 1920×1080 / Dọc 1080×1920), tùy chọn **cắt bỏ số giây đầu/cuối** mỗi video → lưu vào thư mục đầu ra tùy chọn (mặc định `videongang/`) với tên tuần tự `<tiền tố><số>.mp4` (vd `nauan01.mp4`), tự nối tiếp số đang có, **giữ nguyên file gốc**. Cờ `--batch`: luồng cũ `mp4/` → `mp4_no_audio/` cho `video_ghepcuoi.py`. |
 | `scripts/video_ghepcuoi.py` | Ghép video đã tắt tiếng với `kịch_bản/output.wav`. |
 | `scripts/doiten_video.py` | Chuẩn hóa khung hình + xóa tiếng + đổi tên tuần tự. **GUI chọn chế độ NGANG** (`videongang/`→1920×1080, tag `_ng_`) **hoặc DỌC** (`videodoc/`→1080×1920, tag `_doc_`); hoặc CLI `--mode ngang|doc`. |
 | `scripts/doiten_anh.py` | Chỉ đổi tên ảnh mới/chưa có tên số chuẩn trong `Anh/`; các file như `1.png`, `2.jpg` và `Pink.png` được giữ nguyên. Chạy trực tiếp sẽ đổi tên, thêm `--dry-run` để chỉ xem trước. |
@@ -106,7 +106,10 @@ Khi bấm **▶ Chạy**, ngoài `output.wav` còn có các tùy chọn ở khun
 
 - **✂️ Cắt 10–15 phút** (mặc định bật): cắt thêm `output_cut.wav` từ `output.wav` (chỉ cắt bằng ffmpeg, **không** tạo lại giọng). Chỉnh được số phút Đích/Từ/Đến.
 - **🎬 Tự dựng video** (ngang): dựng video có khung từ **audio full**.
-- **📱 Video dọc** (mặc định bật): dựng video dọc từ **audio bản cắt**; tick thêm **"dùng audio không cắt"** để video dọc dùng audio full (tiếng giống video ngang).
+- **📱 Video dọc** (mặc định bật): dựng video dọc từ **audio bản cắt**; tick thêm **"dùng audio không cắt"** để video dọc dùng audio full (tiếng giống video ngang). Nguồn hình video dọc (Facebook) chọn theo thứ tự ưu tiên:
+  - **📁 Ghép từ thư mục con videodoc** (theo `videodoc/input.txt`): ghi TÊN 1 thư mục con của `videodoc/` vào file `videodoc/input.txt` → ghép random clip trong thư mục chủ đề đó. Sửa file = đổi nguồn cho tương lai (không cần đụng code). File rỗng/không hợp lệ → tự dùng cả kho `videodoc/`.
+  - **♻ Dùng lại video ngang** (YouTube.mp4) đã dựng, phóng to khớp chiều cao dọc + cắt giữa.
+  - Không tick gì → ghép random cả kho `videodoc/`. Mọi trường hợp đều áp **audio của video dọc/Facebook**.
 
 ## GUI hiệu ứng bong bóng
 
