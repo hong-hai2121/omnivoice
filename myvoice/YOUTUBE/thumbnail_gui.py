@@ -89,6 +89,23 @@ FULL_TITLE_PREFIX = "[FULL]"            # luôn mở đầu tiêu đề
 FULL_HASHTAGS = ("#truyenfull", "#full")  # luôn có trong mô tả
 MAX_TAGS_LEN = 500                      # tổng ký tự thẻ tag (nối ', ') PHẢI <= giá trị này (giới hạn YouTube)
 
+# Thẻ tag ƯU TIÊN BỎ TRƯỚC khi phải cắt cho vừa 500 (so khớp BỎ DẤU + không phân biệt
+# hoa/thường, nên 'truyện Việt Nam' cũng khớp 'viet nam'). Thêm cụm khác vào đây nếu cần.
+DEPRIORITIZED_TAG_SUBSTRINGS = ("viet nam",)
+
+
+def _strip_accents(s: str) -> str:
+    """Bỏ dấu tiếng Việt + viết thường để so khớp không phụ thuộc dấu/hoa thường."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", s or "")
+    return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
+
+
+def _is_deprioritized_tag(tag: str) -> bool:
+    """True nếu thẻ nên BỎ TRƯỚC khi cắt (vd chứa 'việt nam')."""
+    norm = _strip_accents(tag)
+    return any(sub in norm for sub in DEPRIORITIZED_TAG_SUBSTRINGS)
+
 
 def add_full_prefix(title: str) -> str:
     """Thêm '[FULL]' vào ĐẦU tiêu đề (bỏ qua nếu đã có sẵn)."""
@@ -111,22 +128,62 @@ def add_full_hashtags(description: str) -> str:
     return f"{description.rstrip()}\n{joined}"
 
 
+def episode_hashtag(ep: str) -> str:
+    """Hashtag tập ở ĐẦU mô tả: '#MimiAudioSo<ep>' (CamelCase, BỎ dấu — đồng bộ các
+    hashtag #MimiAudio/#TruyenAudio sẵn có). ep rỗng → ''."""
+    ep = (ep or "").strip()
+    return f"#MimiAudioSo{ep}" if ep else ""
+
+
+def add_episode_hashtag_top(description: str, ep: str) -> str:
+    """Chèn hashtag tập ('#MimiAudioSo<ep>') lên ĐẦU mô tả.
+
+    Bỏ qua nếu ep rỗng, hoặc mô tả đã mở đầu bằng đúng hashtag này (tránh nhân đôi
+    khi copy lại)."""
+    description = description or ""
+    tag = episode_hashtag(ep)
+    if not tag:
+        return description
+    if description.lstrip().lower().startswith(tag.lower()):
+        return description
+    if not description.strip():
+        return tag
+    return f"{tag}\n{description}"
+
+
+def youtube_tags_len(tags) -> int:
+    """Độ dài thẻ tag theo cách YOUTUBE ĐẾM cho giới hạn 500 — KHÔNG phải len chuỗi.
+
+    YouTube bọc mỗi tag CÓ DẤU CÁCH trong ngoặc kép (+2 ký tự) rồi nối bằng dấu phẩy
+    (n−1 dấu). Vì gần như mọi tag đều có dấu cách, chuỗi 481 ký tự thường (nối ', ')
+    có thể bị YouTube tính thành >500 → báo vượt. Đo bằng hàm này mới khớp YouTube."""
+    tags = [t for t in ((x or "").strip() for x in tags) if t]
+    if not tags:
+        return 0
+    return sum(len(t) + (2 if " " in t else 0) for t in tags) + (len(tags) - 1)
+
+
 def cap_tags(tags, ep: str, limit: int = MAX_TAGS_LEN) -> str:
     """Nối thẻ tag bằng ', ', thẻ tập ('mimi audio số <ep>') để Ở ĐẦU danh sách.
 
-    Lấy LẦN LƯỢT từ đầu; khi thêm 1 thẻ mà tổng (nối ', ') VƯỢT `limit` ký tự thì BỎ
-    thẻ đó VÀ mọi thẻ đứng SAU nó (cắt tại ranh giới, không nhảy cóc lấy thẻ ngắn hơn
-    ở phía sau)."""
+    Lấy LẦN LƯỢT từ đầu; ĐO theo cách YouTube đếm (youtube_tags_len — tag có dấu cách
+    +2 cho ngoặc kép). Khi thêm 1 thẻ mà tổng VƯỢT `limit` thì BỎ thẻ đó VÀ mọi thẻ
+    đứng SAU nó (cắt tại ranh giới, không nhảy cóc lấy thẻ ngắn hơn ở phía sau)."""
     tag_list = add_episode_tag(tags, ep)   # thẻ tập đã ở ĐẦU danh sách
+    # Dời các thẻ ƯU TIÊN BỎ (vd chứa 'việt nam') xuống CUỐI để khi cắt cho vừa 500
+    # chúng bị bỏ TRƯỚC các thẻ khác. Giữ nguyên thứ tự tương đối trong từng nhóm;
+    # thẻ tập ('mimi audio số <ep>') không dính nên vẫn nằm đầu.
+    tag_list = ([t for t in tag_list if not _is_deprioritized_tag(t)]
+                + [t for t in tag_list if _is_deprioritized_tag(t)])
     kept: list[str] = []
     for t in tag_list:
         t = (t or "").strip()
         if not t:
             continue
-        if len(", ".join(kept + [t])) <= limit:
+        if youtube_tags_len(kept + [t]) <= limit:
             kept.append(t)
         else:
-            break            # thẻ này vượt limit → bỏ nó và các thẻ sau
+            break            # thẻ này vượt limit (YouTube) → bỏ nó và các thẻ sau
     return ", ".join(kept)
 
 
@@ -482,7 +539,9 @@ class ThumbnailGUI:
 
     def _copy_description(self) -> None:
         seo = self._read_seo()
-        desc = add_episode_to_description(seo.get("description", ""), self._episode_number())
+        ep = self._episode_number()
+        desc = add_episode_to_description(seo.get("description", ""), ep)
+        desc = add_episode_hashtag_top(desc, ep)      # '#MimiAudioSo<ep>' lên đầu
         self._copy_text(add_full_hashtags(desc), "mô tả")
 
     def _copy_tags(self) -> None:

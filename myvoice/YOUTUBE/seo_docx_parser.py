@@ -73,21 +73,40 @@ def _is_desc_hint(text):
 
 
 def _read_paragraphs(path):
-    """Đọc các paragraph nội dung (bỏ Heading/Title) đã strip, giữ nguyên thứ tự."""
+    """Đọc (text, is_heading) của từng paragraph đã strip, GIỮ NGUYÊN thứ tự.
+
+    GIỮ luôn Heading/Title thay vì bỏ: khi người dùng DÁN nội dung Gemini vào Word,
+    các mốc mục ('BƯỚC 3: THẺ TAG', 'BƯỚC 4: MÔ TẢ VIDEO') hay bị Word gán style
+    Heading — nếu bỏ thì không định vị được THẺ TAG / MÔ TẢ (mất tag + mô tả). Cờ
+    is_heading để phần tách TIÊU ĐỀ tránh nhặt nhầm dòng mốc làm tiêu đề.
+    """
     from docx import Document
     doc = Document(str(path))
     out = []
     for p in doc.paragraphs:
         style = p.style.name or ""
-        if style.startswith("Heading") or style.startswith("Title"):
-            continue
-        out.append(p.text.strip())
+        is_heading = style.startswith("Heading") or style.startswith("Title")
+        out.append((p.text.strip(), is_heading))
     return out
+
+
+def _title_after_marker(line):
+    """Tiêu đề nằm CÙNG dòng với mốc (kiểu DÁN: 'TIÊU ĐỀ TỐT NHẤT ĐƯỢC CHỌN: <tiêu đề>').
+
+    Tách phần sau dấu ':' (hoặc '：') ĐẦU TIÊN — chính là dấu hai chấm của mốc, nên
+    phần còn lại là tiêu đề nguyên vẹn. Không có ':' hoặc sau ':' rỗng → trả ''.
+    """
+    for sep in (":", "："):
+        if sep in line:
+            return line.split(sep, 1)[1].strip()
+    return ""
 
 
 def parse_seo_docx(path):
     """Trả về dict {'title': str, 'description': str, 'tags': list[str]}."""
-    paras = _read_paragraphs(path)
+    rows = _read_paragraphs(path)
+    paras = [t for t, _ in rows]
+    heads = [h for _, h in rows]
     n = len(paras)
 
     def find(keyword):
@@ -109,13 +128,22 @@ def parse_seo_docx(path):
     if i_desc < 0:
         i_desc = find("MÔ TẢ")
 
-    # ── TIÊU ĐỀ: dòng nội dung đầu tiên sau mốc "TIÊU ĐỀ TỐT NHẤT" ──
+    # ── TIÊU ĐỀ: ưu tiên phần CÙNG dòng với mốc (kiểu dán), sau đó tới dòng kế ──
     title = ""
     if i_best >= 0:
-        for t in paras[i_best + 1:]:
-            if _looks_like_title(t):
-                title = t
-                break
+        # Kiểu DÁN: 'TIÊU ĐỀ TỐT NHẤT ĐƯỢC CHỌN: <tiêu đề>' — tiêu đề nằm ngay trên dòng mốc.
+        same_line = _title_after_marker(paras[i_best])
+        if _looks_like_title(same_line):
+            title = same_line
+        else:
+            # Kiểu Gemini gốc: tiêu đề ở dòng NỘI DUNG kế tiếp (bỏ qua các dòng mốc/heading
+            # như 'Plaintext' không phải heading nhưng dòng mốc BƯỚC 3/4 thì bỏ nhờ heads).
+            for idx in range(i_best + 1, n):
+                if heads[idx]:
+                    continue
+                if _looks_like_title(paras[idx]):
+                    title = paras[idx]
+                    break
     # Dự phòng: chưa có mốc "tốt nhất" thì lấy ứng viên đầu trong mục chọn tiêu đề
     # (bỏ qua câu mở đầu dài dòng nhờ _looks_like_title).
     if not title:

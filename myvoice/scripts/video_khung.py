@@ -294,7 +294,8 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
 
 
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
-                progress=None, skip_existing=False, output: Path | None = None) -> Path:
+                progress=None, skip_existing=False, output: Path | None = None,
+                source_dir: Path | None = None) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
@@ -314,6 +315,10 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
             Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC, rồi mới đưa vào
             khung1 và cắt bo góc (lặp lại nếu ngắn hơn audio). None = không thêm.
+
+    source_dir: thư mục kho clip ngang để ghép random. None (mặc định) → dùng cả
+                videongang/. Truyền 1 thư mục con (vd videongang/thiennhien) để chỉ
+                ghép clip theo chủ đề đó.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -332,9 +337,18 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
         effect = None
 
-    videos = sorted(VIDEO_DIR.glob("*.mp4"))
+    src_dir = Path(source_dir) if source_dir else VIDEO_DIR
+    videos = sorted(src_dir.glob("*.mp4"))
+    if not videos and not source_dir:
+        # Kho gốc videongang/ rỗng (đã dồn clip vào thư mục con theo chủ đề) → khi
+        # chọn "tất cả" thì gom MỌI clip trong các thư mục con thay vì báo lỗi.
+        videos = sorted(src_dir.rglob("*.mp4"))
+        if videos:
+            log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
     if not videos:
-        raise RuntimeError(f"Không có file .mp4 nào trong: {VIDEO_DIR}")
+        raise RuntimeError(f"Không có file .mp4 nào trong: {src_dir}")
+    if source_dir:
+        log(f"📁 Nguồn video ngang: {src_dir.name}/ ({len(videos)} clip)")
 
     audio_file = Path(audio_file)
     if not audio_file.exists():
