@@ -49,10 +49,10 @@ DEFAULT_INPUT = KICHBAN_DIR / "input.txt"
 _SKIP_RE = re.compile(r"^(kết quả dịch từ gemini.*|đoạn\s*\d+.*|doan\s*\d+.*)$", re.IGNORECASE)
 
 # Chú thích trong ngoặc cần bỏ: () và [] (kèm cả ngoặc full-width của bản gốc
-# tiếng Trung: （）【】［］). Mỗi mẫu chỉ khớp 1 lớp ngoặc; main() lặp để xử lý
-# ngoặc lồng nhau.
+# tiếng Trung: （）［］). Mỗi mẫu chỉ khớp 1 lớp ngoặc; main() lặp để xử lý ngoặc
+# lồng nhau. LƯU Ý: KHÔNG bỏ ngoặc lưỡi liềm 【】 — giữ nguyên nội dung trong đó.
 _ANNOTATION_RE = re.compile(
-    r"\([^()]*\)|\[[^\[\]]*\]|（[^（）]*）|【[^【】]*】|［[^［］]*］"
+    r"\([^()]*\)|\[[^\[\]]*\]|（[^（）]*）|［[^［］]*］"
 )
 
 
