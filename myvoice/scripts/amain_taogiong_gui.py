@@ -2389,13 +2389,17 @@ class App(tk.Tk):
 
     # ── TAB '🎧 NHẬN DIỆN': nhận diện link + dịch + tạo giọng/video HÀNG LOẠT ──────
     def _build_recog_panel(self, parent):
-        """Quy trình 3 bước cho HÀNG LOẠT tập trong kịch_bản/:
+        """Quy trình 5 bước cho HÀNG LOẠT tập trong kịch_bản/:
           ①  Nhận diện các link → tiengTrung.docx (mỗi link 1 thư mục tập).
           ②  Dịch Gemini + tạo input.txt cho các tập đã nhận diện.
-          ③  Tạo giọng clone + video (y hệt tab Home) cho các tập đã có input.txt.
+          ③  Gửi SEO lên Gemini → seoYoutube.docx + youtube_seo.txt (cần Firefox).
+          ④  Tạo thumbnail ngang/dọc từ tiêu đề SEO (chỉ render ảnh, KHÔNG cần Firefox).
+          ⑤  Tạo giọng clone + video (y hệt tab Home) cho các tập đã có input.txt.
+        ③ và ④ tách riêng: render lại ảnh khỏi phải đụng tới Gemini/Firefox.
         Có BẢNG trạng thái các tập (tick chọn tập để chạy riêng) + nút Làm mới; bảng
         tự cập nhật khi mở tab và sau mỗi bước."""
         self._recog_checked = set()   # số tập được tick để chạy riêng (rỗng = chạy hết)
+        self._recog_seo_cache = {}    # (file, mtime, size) -> SEO hợp lệ? (xem _recog_seo_ok)
         wrap = ttk.Frame(parent, padding=6)
         wrap.grid(row=0, column=0, sticky="nsew")
         # Xếp 2 CỘT: trái = điều khiển (①②③ + tiến trình), phải = bảng tập + nhật ký.
@@ -2407,7 +2411,7 @@ class App(tk.Tk):
 
         ttk.Label(wrap, text="🎧  Nhận diện & tạo kịch bản/video hàng loạt",
                   style="Header.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(wrap, text="Quy trình 3 bước chạy cho các thư mục tập trong kịch_bản/. Tick tập "
+        ttk.Label(wrap, text="Quy trình 5 bước chạy cho các thư mục tập trong kịch_bản/. Tick tập "
                   "trong bảng để chỉ chạy tập đó; KHÔNG tick = chạy hết tập đủ điều kiện.",
                   style="Sub.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 8))
 
@@ -2452,14 +2456,16 @@ class App(tk.Tk):
         ttk.Button(bar, text="🔄 Làm mới", command=self._recog_refresh_table).pack(side="left")
         ttk.Button(bar, text="Chọn tất cả", command=lambda: self._recog_check_all(True)).pack(side="left", padx=(8, 0))
         ttk.Button(bar, text="Bỏ chọn", command=lambda: self._recog_check_all(False)).pack(side="left", padx=(6, 0))
-        ttk.Label(bar, text="(bấm ô ☐ để tick tập cần chạy riêng • ✅ = đã có · — = chưa)",
+        ttk.Label(bar, text="(bấm vào DÒNG để tick tập cần chạy riêng • ✅ = đã có · — = chưa "
+                            "· ½ = thumbnail mới có 1 bản)",
                   style="Sub.TLabel").pack(side="left", padx=(10, 0))
 
-        cols = ("sel", "ep", "zh", "input", "audio", "video")
+        cols = ("sel", "ep", "zh", "input", "seo", "thumb", "audio", "video")
         self._recog_tree = tree = ttk.Treeview(tbl, columns=cols, show="headings",
                                                height=8, selectmode="none")
         heads = {"sel": ("", 34), "ep": ("Tập", 54), "zh": ("Tiếng Trung", 100),
-                 "input": ("input.txt", 88), "audio": ("Giọng", 72), "video": ("Video", 72)}
+                 "input": ("input.txt", 88), "seo": ("SEO", 62), "thumb": ("Thumbnail", 78),
+                 "audio": ("Giọng", 72), "video": ("Video", 72)}
         for c, (txt, w) in heads.items():
             tree.heading(c, text=txt)
             tree.column(c, width=w, anchor="center", stretch=(c in ("zh", "input")))
@@ -2468,6 +2474,9 @@ class App(tk.Tk):
         vsb.grid(row=1, column=1, sticky="ns", pady=(0, 6), padx=(0, 6))
         tree.configure(yscrollcommand=vsb.set)
         tree.bind("<Button-1>", self._recog_on_tree_click)
+        # Tag "sel" đặt TRƯỚC need/done trong danh sách tag của dòng → màu tick thắng
+        # (Tk lấy option ở tag đứng đầu), nhờ vậy tập đang tick luôn nhìn ra ngay.
+        tree.tag_configure("sel", background="#CFE3FF")     # tập ĐANG TICK → xanh dương nhạt
         tree.tag_configure("need", background="#FFF3CD")   # tập CÒN VIỆC → tô vàng nhạt
         tree.tag_configure("done", background="#E7F6E7")   # tập đã đủ video → xanh nhạt
         # Dòng tóm tắt: tổng số tập + số tập cần bước ②/③ (đếm ở _recog_refresh_table).
@@ -2475,8 +2484,8 @@ class App(tk.Tk):
         ttk.Label(tbl, textvariable=self._recog_count_var, style="Sub.TLabel").grid(
             row=2, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 6))
 
-        # ── ② + ③  (chạy cho tập được tick, hoặc hết tập đủ điều kiện) ───────────
-        # Cột trái hẹp → xếp DỌC cho đủ chỗ chữ (2 nút ngang sẽ bị cắt tên).
+        # ── ② + ③ + ④ + ⑤  (chạy cho tập được tick, hoặc hết tập đủ điều kiện) ───
+        # Cột trái hẹp → xếp DỌC cho đủ chỗ chữ (nút xếp ngang sẽ bị cắt tên).
         btnrow = ttk.Frame(left)
         btnrow.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         btnrow.columnconfigure(0, weight=1)
@@ -2484,10 +2493,25 @@ class App(tk.Tk):
             btnrow, text="🌐  ②  Dịch + tạo input.txt",
             style="Accent.TButton", command=self._recog_translate_all)
         self.recog_translate_btn.grid(row=0, column=0, sticky="ew")
+        # ③ SEO và ④ thumbnail đứng CÙNG 1 HÀNG, chia đôi bề ngang (uniform) — 2 bước
+        # này đi liền nhau nên để cạnh nhau. Nửa hàng ~342px, tên nút cần ~205/281px
+        # nên vẫn đủ chỗ, không bị cắt chữ như các nút dài ở hàng riêng.
+        seorow = ttk.Frame(btnrow)
+        seorow.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        seorow.columnconfigure(0, weight=1, uniform="seo")
+        seorow.columnconfigure(1, weight=1, uniform="seo")
+        self.recog_seo_btn = ttk.Button(
+            seorow, text="🔎  ③  Gửi SEO (Gemini)",
+            style="Accent.TButton", command=self._recog_seo_all)
+        self.recog_seo_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.recog_thumb_btn = ttk.Button(
+            seorow, text="🖼  ④  Tạo thumbnail (ngang + dọc)",
+            style="Accent.TButton", command=self._recog_thumb_all)
+        self.recog_thumb_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
         self.recog_tts_btn = ttk.Button(
-            btnrow, text="🎬  ③  Tạo giọng + video (clone như Home)",
+            btnrow, text="🎬  ⑤  Tạo giọng + video (clone như Home)",
             style="Accent.TButton", command=self._recog_make_video_all)
-        self.recog_tts_btn.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.recog_tts_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
         # ── Tiến trình + Tạm dừng/Dừng (dùng chung biến với batch) ──────────────
         pf = ttk.Frame(left)
@@ -2529,8 +2553,34 @@ class App(tk.Tk):
                     out.append(p)
         return out
 
+    def _recog_seo_ok(self, folder) -> bool:
+        """SEO của 1 tập đã có tiêu đề thật chưa (dùng chung logic với Home).
+
+        Có CACHE theo (đường dẫn, mtime, cỡ file): mỗi lần làm mới bảng mà mở lại
+        seoYoutube.docx của mọi tập thì bảng giật; file đổi thì key đổi → tự đọc lại.
+        """
+        p = Path(folder) / "seoYoutube.docx"
+        try:
+            st = p.stat()
+        except OSError:
+            return False
+        key = (str(p), st.st_mtime_ns, st.st_size)
+        cache = self._recog_seo_cache
+        if key not in cache:
+            if len(cache) > 400:
+                cache.clear()
+            cache[key] = self._seo_docx_valid(p)
+        return cache[key]
+
+    def _thumb_count(self, folder, episode: str) -> int:
+        """Số bản thumbnail đã có của 1 tập: 0 · 1 (thiếu ngang hoặc dọc) · 2 (đủ)."""
+        folder = Path(folder)
+        return int((folder / f"thumbnail{episode}.png").is_file()) \
+            + int((folder / f"thumbnail{episode}_dọc.png").is_file())
+
     def _recog_refresh_table(self):
-        """Đổ lại bảng: mỗi tập 1 dòng + trạng thái (tiếng Trung / input.txt / giọng / video)."""
+        """Đổ lại bảng: mỗi tập 1 dòng + trạng thái (tiếng Trung / input.txt / SEO /
+        thumbnail / giọng / video)."""
         tree = getattr(self, "_recog_tree", None)
         if tree is None:
             return
@@ -2539,7 +2589,7 @@ class App(tk.Tk):
         except Exception:
             return
         yes, no = "✅", "—"
-        total = need2 = need3 = 0
+        total = need2 = need_seo = need_thumb = need5 = 0
         for folder in self._all_episode_folders():
             total += 1
             ep = folder.name
@@ -2549,21 +2599,38 @@ class App(tk.Tk):
                 has_inp = inp.is_file() and inp.stat().st_size > 0
             except OSError:
                 has_inp = False
+            gem = folder / "gemini_result.docx"
+            try:
+                has_gem = gem.is_file() and gem.stat().st_size > 0
+            except OSError:
+                has_gem = False
+            has_seo = self._recog_seo_ok(folder)
+            n_thumb = self._thumb_count(folder, ep)
             has_aud = (folder / "output.wav").is_file()
             has_vid = any((folder / n).is_file()
                           for n in ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4"))
-            # "Cần làm": có tiếng Trung mà chưa có input.txt (bước ②), hoặc đã có
-            # input.txt mà chưa có video (bước ③).
+            # "Cần làm": có tiếng Trung mà chưa có input.txt (②); đã dịch mà chưa có
+            # SEO (③); đã có SEO mà thiếu thumbnail (④ — thumbnail lấy tiêu đề từ SEO
+            # nên chưa SEO thì chưa tính là cần); có input.txt mà chưa có video (⑤).
             need_step2 = has_zh and not has_inp
-            need_step3 = has_inp and not has_vid
+            need_step3 = has_gem and not has_seo
+            need_step4 = has_seo and n_thumb < 2
+            need_step5 = has_inp and not has_vid
             need2 += int(need_step2)
-            need3 += int(need_step3)
-            tag = "need" if (need_step2 or need_step3) else ("done" if has_vid else "")
-            tree.insert("", "end", tags=((tag,) if tag else ()), values=(
+            need_seo += int(need_step3)
+            need_thumb += int(need_step4)
+            need5 += int(need_step5)
+            tag = "need" if (need_step2 or need_step3 or need_step4 or need_step5) \
+                else ("done" if has_vid else "")
+            tags = (("sel",) if ep in self._recog_checked else ()) \
+                + ((tag,) if tag else ())
+            tree.insert("", "end", tags=tags, values=(
                 "☑" if ep in self._recog_checked else "☐",
                 ep,
                 yes if has_zh else no,
                 yes if has_inp else no,
+                yes if has_seo else no,
+                yes if n_thumb == 2 else ("½" if n_thumb else no),
                 yes if has_aud else no,
                 yes if has_vid else no,
             ))
@@ -2573,14 +2640,31 @@ class App(tk.Tk):
                 var.set("⚠️ Chưa có thư mục tập nào trong kịch_bản/ — chạy ① để tạo, hoặc bấm 🔄 Làm mới.")
             else:
                 var.set(f"Tổng {total} tập   •   cần ② (dịch+input.txt): {need2}   •   "
-                        f"cần ③ (giọng+video): {need3}   •   dòng tô vàng = còn việc")
+                        f"cần ③ (SEO): {need_seo}   •   cần ④ (thumbnail): {need_thumb}   •   "
+                        f"cần ⑤ (giọng+video): {need5}   •   dòng tô vàng = còn việc")
+        self._recog_selection_hint()
+
+    def _recog_selection_hint(self):
+        """Ghi rõ ĐANG tick tập nào ra dòng trạng thái — để biết chắc bấm ②→⑤ sẽ
+        chạy tập nào TRƯỚC khi bấm (không tick = chạy hết). Đang chạy thì không ghi
+        đè trạng thái của tác vụ."""
+        if self._pipe_busy:
+            return
+        eps = sorted(getattr(self, "_recog_checked", set()))
+        if eps:
+            self.pipe_status.set(f"☑ Đang tick {len(eps)} tập: {', '.join(eps)} → "
+                                 "②→⑤ CHỈ chạy các tập này.")
+        else:
+            self.pipe_status.set("Chưa tick tập nào → ②→⑤ sẽ chạy HẾT tập đủ điều kiện.")
 
     def _recog_on_tree_click(self, event):
-        """Bấm ô ☐/☑ (cột đầu) để tick/bỏ tick 1 tập; cột khác thì bỏ qua."""
+        """Bấm vào BẤT KỲ ô nào của 1 dòng = tick/bỏ tick tập đó.
+
+        Trước đây chỉ ô ☐ (rộng 34px) mới ăn → bấm vào số tập tưởng đã chọn nhưng
+        thật ra chưa tick, bấm ②→⑤ là chạy HẾT tập. Nay bấm đâu trên dòng cũng được.
+        """
         tree = self._recog_tree
         if tree.identify_region(event.x, event.y) != "cell":
-            return
-        if tree.identify_column(event.x) != "#1":
             return
         row = tree.identify_row(event.y)
         if not row:
@@ -2590,7 +2674,12 @@ class App(tk.Tk):
             self._recog_checked.discard(ep)
         else:
             self._recog_checked.add(ep)
-        tree.set(row, "sel", "☑" if ep in self._recog_checked else "☐")
+        on = ep in self._recog_checked
+        tree.set(row, "sel", "☑" if on else "☐")
+        # Đổi màu dòng ngay (khỏi dựng lại cả bảng): "sel" phải đứng đầu để thắng need/done.
+        tags = [t for t in tree.item(row, "tags") if t != "sel"]
+        tree.item(row, tags=(["sel"] + tags) if on else tags)
+        self._recog_selection_hint()
         return "break"
 
     def _recog_check_all(self, on: bool):
@@ -2780,7 +2869,199 @@ class App(tk.Tk):
             self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
 
-    # ── Bước ③: TẠO GIỌNG (clone) + VIDEO cho MỌI tập đã có input.txt ─────────────
+    # ── Bước ③: GỬI SEO (Gemini) cho MỌI tập đã dịch ─────────────────────────────
+    def _folders_with_gemini(self) -> list:
+        """Thư mục tập (kịch_bản/NN) đã có gemini_result.docx KHÔNG rỗng — SEO lấy
+        đoạn đầu của bản dịch này làm nguồn, theo số tập."""
+        out = []
+        if SCRIPT_DIR.exists():
+            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
+                if p.is_dir() and p.name.isdecimal():
+                    gem = p / "gemini_result.docx"
+                    try:
+                        if gem.is_file() and gem.stat().st_size > 0:
+                            out.append(p)
+                    except OSError:
+                        pass
+        return out
+
+    def _recog_seo_all(self):
+        """Nút '🔎 Gửi SEO (Gemini)': chạy bước SEO của tab Home LẦN LƯỢT cho các tập
+        ĐÃ DỊCH (có gemini_result.docx) → seoYoutube.docx + youtube_seo.txt. Tập nào đã
+        có SEO hợp lệ thì bỏ qua. KHÔNG nhận diện/dịch lại, KHÔNG thumbnail/video
+        (thumbnail tách sang nút ④)."""
+        if self._pipe_busy:
+            return
+        folders = self._recog_apply_selection(self._folders_with_gemini())
+        if not folders:
+            self.pipe_status.set("⚠️ Không có tập đã dịch phù hợp (kiểm tra tick / gemini_result.docx).")
+            logging.warning("Không có thư mục tập nào có gemini_result.docx để gửi SEO.")
+            return
+        self._recog_log_preview("③ Gửi SEO", folders)   # xem trước danh sách sẽ chạy
+        self._save_pipe_settings()
+        self._pipe_set_busy(True)
+        self._batch_pause_evt.clear()
+        self._batch_stop_evt.clear()
+        self._batch_running = True
+        self._set_batch_pause_btns(state="normal", text="⏸  Tạm dừng")
+        self._set_batch_stop_btns(state="normal")
+        self.pipe_progress.set(0)
+        self.pipe_link_status.set(f"⏳ Gửi SEO cho {len(folders)} tập...")
+        threading.Thread(target=self._recog_seo_all_worker,
+                         args=(folders,), daemon=True).start()
+
+    def _recog_seo_all_worker(self, folders):
+        """Với mỗi tập đã dịch: gửi SEO lên Gemini (bỏ qua nếu seoYoutube.docx đã có
+        tiêu đề) → lưu youtube_seo.txt. Dùng CHUNG 1 Firefox cho mọi tập + hỗ trợ
+        Tạm dừng/Dừng như batch. Thumbnail do nút ④ lo."""
+        driver = None
+        total = len(folders)
+        ok_count = 0
+        try:
+            import dich_gemini as g
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import seo_youtube_gemini as seo
+            logging.info("\n" + "═" * 10 +
+                         f" GỬI SEO cho {total} tập đã dịch " + "═" * 10)
+
+            for i, folder in enumerate(folders, 1):
+                self._batch_pause_wait()
+                if self._batch_stop_evt.is_set():
+                    logging.info(f"⏹ ĐÃ DỪNG — xong {ok_count}/{total} tập.")
+                    self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
+                    break
+
+                episode = folder.name
+                gemini_docx = folder / "gemini_result.docx"
+                seo_docx = folder / "seoYoutube.docx"
+                self.pipe_link_status.set(f"🔎 SEO: Tập {episode} ({i}/{total})")
+                self.pipe_status.set(f"🔎 Tập {episode} ({i}/{total})")
+
+                try:
+                    # ── SEO YouTube — bỏ qua nếu seoYoutube.docx đã có tiêu đề ──
+                    if self._seo_docx_valid(seo_docx):
+                        logging.info(f"♻ Tập {episode}: đã có seoYoutube.docx hợp lệ — bỏ qua SEO.")
+                    else:
+                        if driver is None:
+                            logging.info("🌐 Mở Firefox cho SEO...")
+                            driver = g.init_firefox()
+                        logging.info(f"🔎 Tập {episode}: tạo SEO YouTube...")
+                        # seo.run tự mở đúng cuộc trò chuyện SEO nên tập sau dùng lại
+                        # được driver này; keep_open=True → worker đóng ở cuối.
+                        seo.run(str(gemini_docx), str(seo_docx),
+                                keep_open=True, log=logging.info, driver=driver)
+                        logging.info(f"💾 Đã tạo: {seo_docx}")
+
+                    # ── Nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt — LUÔN
+                    # tạo lại (nhẹ) để áp dụng logic mới nhất, như tab Home. ──
+                    self._save_youtube_seo_copy(
+                        seo_docx, folder / "youtube_seo.txt", episode)
+                    self._manifest_update_if_known(folder, episode)
+                    ok_count += 1
+                except Exception as e:
+                    import traceback
+                    logging.error(f"❌ Lỗi SEO tập {episode}: {e}")
+                    logging.error(traceback.format_exc())
+                    continue
+
+            self.pipe_progress.set(100)
+            self.pipe_link_status.set(f"✅ Xong SEO: {ok_count}/{total} tập.")
+            self.pipe_status.set(f"✅ Đã gửi SEO {ok_count}/{total} tập — bấm ④ để tạo thumbnail.")
+            logging.info(f"🎉 XONG: {ok_count}/{total} tập có SEO.")
+        except Exception as e:
+            logging.error(f"Lỗi SEO hàng loạt: {e}")
+            self.pipe_status.set(f"Lỗi: {e}")
+        finally:
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            self._pipe_set_busy(False)
+            self._batch_controls_reset()
+            self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
+
+    # ── Bước ④: TẠO THUMBNAIL (ngang + dọc) cho MỌI tập đã có SEO ────────────────
+    def _folders_with_seo(self) -> list:
+        """Thư mục tập (kịch_bản/NN) đã có seoYoutube.docx CÓ tiêu đề — thumbnail lấy
+        tiêu đề từ đó nên chưa SEO thì chưa render được, theo số tập."""
+        return [p for p in self._all_episode_folders() if self._recog_seo_ok(p)]
+
+    def _recog_thumb_all(self):
+        """Nút '🖼 Tạo thumbnail': render thumbnail ngang + dọc (y hệt tab Home) cho các
+        tập ĐÃ CÓ SEO. Tập nào đủ 2 bản thì bỏ qua. Chỉ render ảnh — KHÔNG mở Firefox,
+        KHÔNG gửi gì lên Gemini, nên chạy lại thoải mái."""
+        if self._pipe_busy:
+            return
+        folders = self._recog_apply_selection(self._folders_with_seo())
+        if not folders:
+            self.pipe_status.set("⚠️ Không có tập nào có SEO hợp lệ (kiểm tra tick / chạy ③ trước).")
+            logging.warning("Không có thư mục tập nào có seoYoutube.docx hợp lệ để tạo thumbnail.")
+            return
+        self._recog_log_preview("④ Tạo thumbnail", folders)   # xem trước danh sách sẽ chạy
+        self._save_pipe_settings()
+        self._pipe_set_busy(True)
+        self._batch_pause_evt.clear()
+        self._batch_stop_evt.clear()
+        self._batch_running = True
+        self._set_batch_pause_btns(state="normal", text="⏸  Tạm dừng")
+        self._set_batch_stop_btns(state="normal")
+        self.pipe_progress.set(0)
+        self.pipe_link_status.set(f"⏳ Tạo thumbnail cho {len(folders)} tập...")
+        threading.Thread(target=self._recog_thumb_all_worker,
+                         args=(folders,), daemon=True).start()
+
+    def _recog_thumb_all_worker(self, folders):
+        """Với mỗi tập đã có SEO: render thumbnail ngang + dọc (bỏ qua nếu đã đủ 2 bản)
+        → cập nhật số tập + manifest. Hỗ trợ Tạm dừng/Dừng."""
+        total = len(folders)
+        ok_count = 0
+        try:
+            logging.info("\n" + "═" * 10 +
+                         f" TẠO THUMBNAIL cho {total} tập đã có SEO " + "═" * 10)
+            for i, folder in enumerate(folders, 1):
+                self._batch_pause_wait()
+                if self._batch_stop_evt.is_set():
+                    logging.info(f"⏹ ĐÃ DỪNG — xong {ok_count}/{total} tập.")
+                    self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
+                    break
+
+                episode = folder.name
+                self.pipe_link_status.set(f"🖼 Thumbnail: Tập {episode} ({i}/{total})")
+                self.pipe_status.set(f"🖼 Tập {episode} ({i}/{total})")
+                try:
+                    if self._thumb_count(folder, episode) == 2:
+                        logging.info(f"♻ Tập {episode}: đã có thumbnail ngang & dọc — bỏ qua.")
+                    elif not self._make_thumbnail_for_folder(folder, episode):
+                        # Thiếu tiêu đề SEO / ảnh mèo / tiêu đề bất thường — đã ghi log
+                        # lý do trong _make_thumbnail_for_folder.
+                        logging.warning(f"⚠️ Tập {episode}: chưa tạo được thumbnail.")
+                        continue
+                    # Xong thumbnail → cập nhật SỐ TẬP (không lùi) + ghi tiến độ manifest.
+                    save_episode_number(max(load_episode_number(), int(episode)))
+                    self._manifest_update_if_known(folder, episode)
+                    ok_count += 1
+                except Exception as e:
+                    import traceback
+                    logging.error(f"❌ Lỗi thumbnail tập {episode}: {e}")
+                    logging.error(traceback.format_exc())
+                    continue
+
+            self.pipe_progress.set(100)
+            self.pipe_link_status.set(f"✅ Xong thumbnail: {ok_count}/{total} tập.")
+            self.pipe_status.set(f"✅ Đã tạo thumbnail {ok_count}/{total} tập.")
+            logging.info(f"🎉 XONG: {ok_count}/{total} tập có thumbnail.")
+        except Exception as e:
+            logging.error(f"Lỗi thumbnail hàng loạt: {e}")
+            self.pipe_status.set(f"Lỗi: {e}")
+        finally:
+            self._pipe_set_busy(False)
+            self._batch_controls_reset()
+            self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
+
+    # ── Bước ⑤: TẠO GIỌNG (clone) + VIDEO cho MỌI tập đã có input.txt ─────────────
     def _folders_with_input(self) -> list:
         """Thư mục tập (kịch_bản/NN) đã có input.txt KHÔNG rỗng, theo số tập."""
         out = []
@@ -3684,6 +3965,8 @@ class App(tk.Tk):
         for b in (self.btn_recog, self.btn_gemini, self.btn_prep,
                   getattr(self, "recog_tab_btn", None),
                   getattr(self, "recog_translate_btn", None),
+                  getattr(self, "recog_seo_btn", None),
+                  getattr(self, "recog_thumb_btn", None),
                   getattr(self, "recog_tts_btn", None)):
             if b is not None:
                 b.config(state=state)
