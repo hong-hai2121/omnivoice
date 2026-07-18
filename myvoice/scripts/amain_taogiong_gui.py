@@ -5,12 +5,18 @@ Giao diện desktop cho Voice Cloning — chạy: python taogiong_gui.py
 import sys, os
 # Gốc repo OmniVoice (chứa package omnivoice + venv) — lùi 2 cấp từ myvoice/scripts/
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
-_VENV_PYTHON = os.path.join(_REPO_ROOT, "venv", "Scripts", "python.exe")
-if __name__ == "__main__" and os.path.exists(_VENV_PYTHON) and \
-        os.path.normcase(os.path.abspath(sys.executable)) != \
-        os.path.normcase(os.path.abspath(_VENV_PYTHON)):
+_VENV_SCRIPTS = os.path.join(_REPO_ROOT, "venv", "Scripts")
+_VENV_PYTHON  = os.path.join(_VENV_SCRIPTS, "python.exe")
+_VENV_PYTHONW = os.path.join(_VENV_SCRIPTS, "pythonw.exe")   # bản KHÔNG mở cửa sổ console đen
+def _samepath(a, b):
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+# Nếu chưa chạy bằng interpreter của venv → chạy lại bằng pythonw.exe (ẩn cửa sổ console).
+# Đã ở venv (python.exe hoặc pythonw.exe) thì không khởi động lại nữa.
+if __name__ == "__main__" and (os.path.exists(_VENV_PYTHON) or os.path.exists(_VENV_PYTHONW)) \
+        and not (_samepath(sys.executable, _VENV_PYTHON) or _samepath(sys.executable, _VENV_PYTHONW)):
     import subprocess
-    subprocess.run([_VENV_PYTHON] + sys.argv)
+    _launcher = _VENV_PYTHONW if os.path.exists(_VENV_PYTHONW) else _VENV_PYTHON
+    subprocess.Popen([_launcher] + sys.argv)
     sys.exit()
 # Để import được package omnivoice ở gốc repo dù chạy từ thư mục con
 if _REPO_ROOT not in sys.path:
