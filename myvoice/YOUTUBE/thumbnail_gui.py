@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import queue
 import random
+import re
 import threading
 import traceback
 from pathlib import Path
@@ -113,6 +114,47 @@ def add_full_prefix(title: str) -> str:
     if not title or title.lower().startswith(FULL_TITLE_PREFIX.lower()):
         return title
     return f"{FULL_TITLE_PREFIX} {title}"
+
+
+# ── Tiêu đề COPY khi đăng ───────────────────────────────────────────────────────
+#   YouTube: 'Mimi audio Số <tập> | <tên truyện>'
+#   TikTok : 'Full ở Mimi audio Số <tập> | <tên truyện>'  (thêm 'Full ở' phía trước)
+BRAND_NAME = "Mimi audio"
+TIKTOK_TITLE_HEAD = "Full ở"    # mở đầu tiêu đề TikTok (thay cho '[FULL]' cũ)
+
+# Cụm thương hiệu ở bất kỳ đâu trong tiêu đề, kèm 'Số <n>' và dấu '|' đứng trước.
+_BRAND_CHUNK_RE = re.compile(r"\s*\|?\s*mimi\s*audio(\s*số\s*\d+)?\s*", re.IGNORECASE)
+# Phần mở đầu cũ/mới: '[FULL]' hoặc 'Full ở' (để chạy lại không bị nhân đôi).
+_TITLE_HEAD_RE = re.compile(r"^\s*(\[full\]|full\s+ở)\s*", re.IGNORECASE)
+
+
+def strip_title_decorations(title: str) -> str:
+    """Bỏ mọi phần trang trí ('[FULL]' / 'Full ở', 'Mimi audio', 'Số <n>', dấu '|')
+    → còn lại TÊN TRUYỆN gốc. Nhờ vậy dựng lại tiêu đề nhiều lần vẫn ra một kết quả,
+    dù SEO ghi kiểu cũ ('... | Mimi audio') hay kiểu mới."""
+    t = _TITLE_HEAD_RE.sub("", (title or "").strip())
+    t = _BRAND_CHUNK_RE.sub(" ", t)
+    t = t.strip().strip("|").strip()
+    return re.sub(r"\s{2,}", " ", t)
+
+
+def compose_youtube_title(title: str, ep: str) -> str:
+    """Tiêu đề COPY đăng YouTube:
+        'Mimi audio Số 12 | Mẹ Chồng Nàng Dâu'
+    Không có số tập → 'Mimi audio | Mẹ Chồng Nàng Dâu'."""
+    core = strip_title_decorations(title)
+    if not core:
+        return ""
+    ep = (ep or "").strip()
+    head = BRAND_NAME + (f" Số {ep}" if ep else "")
+    return f"{head} | {core}"
+
+
+def compose_tiktok_title(title: str, ep: str) -> str:
+    """Tiêu đề COPY đăng TikTok = tiêu đề YouTube thêm 'Full ở' phía trước:
+        'Full ở Mimi audio Số 12 | Mẹ Chồng Nàng Dâu'."""
+    yt = compose_youtube_title(title, ep)
+    return f"{TIKTOK_TITLE_HEAD} {yt}" if yt else ""
 
 
 def add_full_hashtags(description: str) -> str:
@@ -414,11 +456,13 @@ class ThumbnailGUI:
         self.status_label = tk.Label(action, textvariable=self.status_var, bg="white", fg="#6D5CE8", font=("Segoe UI", 10, "bold"))
         self.status_label.grid(row=0, column=status_col, sticky="e")
 
-        # 3 nút COPY nội dung đăng YouTube (lấy từ seoYoutube.docx + 'Số <tập>').
+        # 4 nút COPY nội dung đăng video (lấy từ seoYoutube.docx + 'Số <tập>').
         copy_row = tk.Frame(input_card, bg="white")
         copy_row.grid(row=9, column=0, sticky="ew", pady=(16, 0))
-        ttk.Button(copy_row, text="📋 Tiêu đề", style="ThumbSoft.TButton",
-                   command=self._copy_title).pack(side="left")
+        ttk.Button(copy_row, text="📋 Tiêu đề youtube", style="ThumbSoft.TButton",
+                   command=self._copy_title_youtube).pack(side="left")
+        ttk.Button(copy_row, text="📋 Tiêu đề tiktok", style="ThumbSoft.TButton",
+                   command=self._copy_title_tiktok).pack(side="left", padx=(8, 0))
         ttk.Button(copy_row, text="📋 Mô tả", style="ThumbSoft.TButton",
                    command=self._copy_description).pack(side="left", padx=(8, 0))
         ttk.Button(copy_row, text="📋 Thẻ tag", style="ThumbSoft.TButton",
@@ -536,13 +580,19 @@ class ThumbnailGUI:
         self.root.clipboard_append(text)
         self.status_var.set(f"✓ Đã copy {what} ({len(text)} ký tự)")
 
-    def _copy_title(self) -> None:
+    def _copy_title_youtube(self) -> None:
         # Tiêu đề copy LẤY THẲNG TỪ tài liệu SEO (seoYoutube.docx) + số tập — KHÔNG
-        # lấy từ ô nhập (ô nhập đã bỏ '| Mimi audio' cho thumbnail). SEO đã có sẵn
-        # '| Mimi audio'; ensure_brand_suffix chỉ phòng khi SEO thiếu hậu tố.
-        title = ensure_brand_suffix(self._read_seo().get("title", ""))
-        title = add_episode_to_title(title, self._episode_number())
-        self._copy_text(add_full_prefix(title), "tiêu đề")
+        # lấy từ ô nhập (ô nhập chỉ chứa tên truyện để vẽ thumbnail). Hàm compose tự
+        # bỏ trang trí cũ của SEO rồi dựng 'Mimi audio Số <tập> | <tên truyện>'.
+        title = compose_youtube_title(self._read_seo().get("title", ""),
+                                      self._episode_number())
+        self._copy_text(title, "tiêu đề YouTube")
+
+    def _copy_title_tiktok(self) -> None:
+        # Như trên nhưng thêm 'Full ở' phía trước (bản đăng TikTok).
+        title = compose_tiktok_title(self._read_seo().get("title", ""),
+                                     self._episode_number())
+        self._copy_text(title, "tiêu đề TikTok")
 
     def _copy_description(self) -> None:
         seo = self._read_seo()

@@ -538,10 +538,11 @@ def split_chunks(text: str, max_len: int):
 # Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi audio". Tùy vị
 # trí trong bài (mở đầu / thân bài / kết bài) ta thay bằng 3 câu khác nhau dưới
 # đây. SỬA 3 CÂU NÀY nếu muốn đổi lời.
-PROMO_OPENING = "lại là mimi audio đây, mời bạn nghe câu truyện hôm nay."
-PROMO_BODY    = "bạn đang nghe tại mimi audio."
-PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe truyện, đây là câu truyện không có thật "
-                 "ở trung quốc xin chào và hẹn gặp lại.")
+PROMO_OPENING = "Mimi Audio đây, mời bạn nghe câu chuyện hôm nay."
+PROMO_BODY    = "Nếu thấy hay, bạn thả tim ủng hộ mình nhé."
+PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe. "
+                 "Nếu thấy hay, nhớ thả tim và theo dõi Mimi Audio nhé. "
+                 "Hẹn gặp lại ở câu chuyện tiếp theo.")
 
 # Câu quảng bá luôn chứa tên kênh "Mimi audio" → dùng cả cụm làm dấu hiệu nhận
 # biết (tránh khớp nhầm từ "mimi" lẻ); vẫn bắt biến thể cũ "truyện/chuyện".
@@ -2283,7 +2284,10 @@ class App(tk.Tk):
 
         btns = ttk.Frame(right)
         btns.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ttk.Button(btns, text="📋  Tiêu đề", command=lambda: self._copyseo_copy("title")).pack(side="left")
+        ttk.Button(btns, text="📋  Tiêu đề youtube",
+                   command=lambda: self._copyseo_copy("title")).pack(side="left")
+        ttk.Button(btns, text="📋  Tiêu đề tiktok",
+                   command=lambda: self._copyseo_copy("title_tiktok")).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="📋  Mô tả", command=lambda: self._copyseo_copy("desc")).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="📋  Thẻ tag", command=lambda: self._copyseo_copy("tags")).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="📋  Cả 3", style="Accent.TButton",
@@ -2363,13 +2367,14 @@ class App(tk.Tk):
             self._copyseo_status.set(f"Tập {ep}: lỗi đọc SEO")
             return
         self._set_copyseo_preview(
-            "===== TIÊU ĐỀ =====\n" + blocks["title"] + "\n\n"
+            "===== TIÊU ĐỀ YOUTUBE =====\n" + blocks["title"] + "\n\n"
+            "===== TIÊU ĐỀ TIKTOK =====\n" + blocks.get("title_tiktok", "") + "\n\n"
             "===== MÔ TẢ =====\n" + blocks["desc"] + "\n\n"
             "===== THẺ TAG =====\n" + blocks["tags"])
         self._copyseo_status.set(f"Tập {ep} • thẻ tag {len(blocks['tags'])} ký tự")
 
     def _copyseo_copy(self, which: str):
-        """Copy 1 phần (title/desc/tags) hoặc 'all' của tập đang chọn vào clipboard."""
+        """Copy 1 phần (title/title_tiktok/desc/tags) hoặc 'all' của tập đang chọn."""
         ep = self._copyseo_selected_episode()
         if not ep:
             messagebox.showinfo("Chọn tập", "Hãy chọn 1 tập trong danh sách bên trái.")
@@ -2380,12 +2385,12 @@ class App(tk.Tk):
             messagebox.showwarning("Không có SEO", f"Tập {ep} chưa đọc được nội dung SEO.")
             return
         self._copyseo_blocks[ep] = blocks
-        label = {"title": "tiêu đề", "desc": "mô tả",
-                 "tags": "thẻ tag", "all": "cả 3 phần"}[which]
+        label = {"title": "tiêu đề youtube", "title_tiktok": "tiêu đề tiktok",
+                 "desc": "mô tả", "tags": "thẻ tag", "all": "cả 3 phần"}[which]
         if which == "all":
             text = blocks["title"] + "\n\n" + blocks["desc"] + "\n\n" + blocks["tags"]
         else:
-            text = blocks[which]
+            text = blocks.get(which, "")
         if not text.strip():
             self._copyseo_status.set(f"Tập {ep}: không có {label} để copy.")
             return
@@ -4537,10 +4542,11 @@ class App(tk.Tk):
             return False
 
     def _seo_copy_blocks(self, seo_docx, episode: str):
-        """Đọc seoYoutube.docx → {'title','desc','tags'} đã chuẩn hóa cho 1 tập
-        (None nếu lỗi). Khớp tuyệt đối với 3 nút Copy của tab Thumbnail:
-        tiêu đề mở đầu [FULL] + 'Số <tập>' + '| Mimi audio'; mô tả thêm hashtag
-        #truyenfull #full; thẻ tag gắn tag tập rồi cắt cho tổng < 499 ký tự."""
+        """Đọc seoYoutube.docx → {'title','title_tiktok','desc','tags'} đã chuẩn hóa
+        cho 1 tập (None nếu lỗi). Khớp tuyệt đối với các nút Copy của tab Thumbnail:
+        tiêu đề YouTube 'Mimi audio Số <tập> | <tên truyện>', bản TikTok thêm 'Full ở'
+        phía trước; mô tả thêm hashtag #truyenfull #full; thẻ tag gắn tag tập rồi cắt
+        cho tổng < 499 ký tự."""
         try:
             youtube_dir = str(YOUTUBE_DIR)
             if youtube_dir not in sys.path:
@@ -4550,9 +4556,10 @@ class App(tk.Tk):
 
             seo = parse_seo_docx(str(seo_docx))
             ep = episode if str(episode).strip().isdecimal() else ""
-            # Tiêu đề mở đầu [FULL]; mô tả thêm hashtag #truyenfull #full.
-            title = tg.add_full_prefix(
-                tg.add_episode_to_title(tg.ensure_brand_suffix(seo.get("title", "")), ep))
+            # Tiêu đề YouTube 'Mimi audio Số <tập> | <tên truyện>'; bản TikTok thêm
+            # 'Full ở' phía trước. Mô tả thêm hashtag #truyenfull #full.
+            title = tg.compose_youtube_title(seo.get("title", ""), ep)
+            title_tiktok = tg.compose_tiktok_title(seo.get("title", ""), ep)
             desc = tg.add_episode_to_description(seo.get("description", ""), ep)
             desc = tg.add_episode_hashtag_top(desc, ep)   # '#MimiAudioSo<ep>' lên đầu
             desc = tg.add_full_hashtags(desc)
@@ -4566,7 +4573,8 @@ class App(tk.Tk):
                 ep_tag = f"mimi audio số {ep}" if ep else None
                 logging.info(f"✂ Thẻ tag ≥{tg.MAX_TAGS_LEN} ký tự → bỏ {dropped} tag cuối "
                              + (f"(giữ '{ep_tag}')." if ep_tag else "."))
-            return {"title": title or "", "desc": desc or "", "tags": tags or ""}
+            return {"title": title or "", "title_tiktok": title_tiktok or "",
+                    "desc": desc or "", "tags": tags or ""}
         except Exception as e:
             logging.warning(f"Không đọc được nội dung SEO copy: {e}")
             return None
@@ -4577,14 +4585,15 @@ class App(tk.Tk):
 
         Tab Thumbnail chỉ đọc seoYoutube.docx CHUNG (kịch_bản/) nên khi chạy NHIỀU
         LINK không copy được nội dung từng tập. File này ghi đúng nội dung 3 nút đó
-        (đã gắn 'Số <tập>' + hậu tố '| Mimi audio') cho file SEO của riêng tập.
+        (tiêu đề 'Full ở Mimi audio Số <tập> | <tên truyện>') cho SEO của riêng tập.
         """
         blocks = self._seo_copy_blocks(seo_docx, episode)
         if not blocks:
             return False
         try:
             content = (
-                "===== TIÊU ĐỀ =====\n" + blocks["title"] + "\n\n"
+                "===== TIÊU ĐỀ YOUTUBE =====\n" + blocks["title"] + "\n\n"
+                "===== TIÊU ĐỀ TIKTOK =====\n" + blocks.get("title_tiktok", "") + "\n\n"
                 "===== MÔ TẢ =====\n" + blocks["desc"] + "\n\n"
                 "===== THẺ TAG =====\n" + blocks["tags"] + "\n"
             )
