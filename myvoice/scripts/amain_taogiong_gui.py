@@ -78,7 +78,8 @@ OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=300,
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
     cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
-    make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_from_ngang=False,
+    make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_percent=100,
+    doc_from_ngang=False,
     doc_from_subfolder=False,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
     tiktok_percent=50,
@@ -802,7 +803,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -1065,6 +1066,42 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             else:
                 logging.warning("Chưa có bản cắt → video dọc dùng tạm audio full.")
                 doc_audio = output_path
+            # (TÙY CHỌN) Cắt ~doc_percent% ĐẦU của audio video dọc (cắt ở CUỐI CÂU) —
+            # dùng CHUNG cơ chế với TikTok. doc_percent ≥ 100 → giữ nguyên (không cắt),
+            # nên tương thích ngược. Cắt SAU khi đã chọn nguồn (full/bản cắt) và TRƯỚC
+            # bước tăng tốc → kết hợp được "dùng audio không cắt" + lấy 50%.
+            dpct = max(10, min(int(doc_percent or 100), 100))
+            if dpct < 99:
+                try:
+                    from video_timclip import (cut_audio_at_sentence_end,
+                                               probe_audio_duration)
+                    d_total = probe_audio_duration(doc_audio)
+                    d_target = d_total * dpct / 100.0
+                    # Chỉ cắt khi audio đủ dài và mốc % nằm trong khoảng hợp lý.
+                    if d_total > 0 and d_target >= 15 and d_target < d_total - 5:
+                        dp_wav = doc_audio.with_name(
+                            doc_audio.stem + f"_docpct{dpct}" + doc_audio.suffix)
+                        if reuse_derived and dp_wav.exists() and dp_wav.stat().st_size > 4096:
+                            doc_audio = dp_wav
+                            logging.info(f"♻ Dùng lại audio video dọc {dpct}% đã có: {dp_wav.name}")
+                        else:
+                            status_var.set(f"Đang cắt ~{dpct}% audio cho video dọc (cắt cuối câu)...")
+                            t_min = d_target / 60.0
+                            margin = max(0.75, t_min * 0.08)   # cửa sổ ±max(0.75', 8%)
+                            cut_seconds, _ = cut_audio_at_sentence_end(
+                                doc_audio, dp_wav, target_minutes=t_min,
+                                min_minutes=max(0.05, t_min - margin),
+                                max_minutes=min(d_total / 60.0, t_min + margin),
+                                silence_db=-35.0, min_silence=0.5)
+                            doc_audio = dp_wav
+                            m, s = divmod(cut_seconds, 60)
+                            real_pct = cut_seconds / d_total * 100 if d_total else dpct
+                            logging.info(f"✂ Audio video dọc ~{dpct}%: cắt tại {int(m)}:{s:05.2f} "
+                                         f"(≈{real_pct:.0f}% thực) → {dp_wav.name}")
+                    else:
+                        logging.info(f"📱 Video dọc lấy {dpct}% → audio ngắn/mốc sát biên, dùng nguyên audio.")
+                except Exception as e:
+                    logging.warning(f"Không cắt được ~{dpct}% cho video dọc (dùng nguyên audio): {e}")
             # Tăng tốc audio (giữ cao độ) trước khi dựng — nếu chọn mức > 1.0
             if doc_speed and doc_speed > 1.001:
                 status_var.set(f"Đang tăng tốc audio x{doc_speed:.2f} cho video dọc...")
@@ -1742,6 +1779,18 @@ class App(tk.Tk):
         ttk.Combobox(vdoc_opts, textvariable=self.var_doc_speed, width=6,
                      values=["1.0", "1.05", "1.1", "1.15", "1.2", "1.25"]).pack(side="left")
         ttk.Label(vdoc_opts, text="x (giữ cao độ)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
+
+        # Lấy ~N% thời lượng audio (cắt ở CUỐI CÂU) — giống TikTok. 100 = cả bài
+        # (giữ nguyên hành vi cũ). Kết hợp được với "dùng audio không cắt" ở trên.
+        vdoc_optsp = ttk.Frame(vdoc)
+        vdoc_optsp.pack(anchor="w", fill="x", pady=(6, 0))
+        ttk.Label(vdoc_optsp, text="Lấy khoảng:").pack(side="left", padx=(0, 2))
+        self.var_doc_percent = tk.StringVar(value=str(self._opt_settings["doc_percent"]))
+        ttk.Combobox(vdoc_optsp, textvariable=self.var_doc_percent, width=5,
+                     values=["25", "30", "40", "50", "60", "70", "75", "80", "90", "100"]
+                     ).pack(side="left")
+        ttk.Label(vdoc_optsp, text="% thời lượng (cắt cuối câu · 100 = cả bài)",
                   style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # Dùng lại video ngang đã dựng (phóng to khớp chiều cao dọc + cắt giữa),
@@ -3565,6 +3614,7 @@ class App(tk.Tk):
                 make_video_doc=self.var_make_video_doc.get(),
                 doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self.var_doc_speed.get(),
+                doc_percent=self._parse_percent(self.var_doc_percent, 100),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
                 doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(),
@@ -4270,6 +4320,7 @@ class App(tk.Tk):
             cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
             make_video_doc=self.var_make_video_doc.get(),
             doc_full_audio=self.var_doc_full_audio.get(), doc_speed=doc_speed,
+            doc_percent=self._parse_percent(self.var_doc_percent, 100),
             ngang_speed=ngang_speed, ngang_source=self.var_ngang_source.get(), cut_half=cut_half,
             doc_from_ngang=self.var_doc_from_ngang.get(),
             doc_from_subfolder=self.var_doc_from_subfolder.get(),
@@ -4453,6 +4504,7 @@ class App(tk.Tk):
             ts["make_video"], ts["effect"],
             ts["cut_audio"], ts["cut_target"], ts["cut_min"], ts["cut_max"],
             ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
+            ts.get("doc_percent", 100),                # % cắt audio video dọc (100 = cả bài)
             ts["ngang_speed"], ts["cut_half"], True,   # reuse=True → TIẾP TỤC: dùng
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
             doc_from_subfolder=ts.get("doc_from_subfolder", False),
@@ -4564,15 +4616,18 @@ class App(tk.Tk):
             desc = tg.add_episode_hashtag_top(desc, ep)   # '#MimiAudioSo<ep>' lên đầu
             desc = tg.add_full_hashtags(desc)
 
-            # Thẻ tag: gắn tag tập rồi cắt bớt cho tổng (nối bằng ', ') < 499 ký tự
-            # (giới hạn YouTube) — nhưng LUÔN GIỮ tag tập 'mimi audio số <ep>'.
-            tag_list = tg.add_episode_tag(seo.get("tags", []), ep)
-            tags = tg.cap_tags(seo.get("tags", []), ep)
-            dropped = len(tag_list) - len([t for t in tags.split(", ") if t])
+            # Thẻ tag: gắn thẻ tập 'mimi audio số <ep>' + thẻ TÊN TRUYỆN lên đầu rồi cắt
+            # cho tổng (đếm kiểu YouTube) < 500 ký tự — LUÔN GIỮ 2 thẻ này; ưu tiên bỏ
+            # TRƯỚC các thẻ KHÔNG phải tiếng Việt (chữ Hán / latin không dấu, trừ 'mimi audio').
+            raw_tags = seo.get("tags", [])
+            raw_title = seo.get("title", "")
+            full_list = tg.add_episode_tag(tg.add_title_tag(raw_tags, raw_title), ep)
+            tags = tg.cap_tags(raw_tags, ep, raw_title)
+            dropped = len(full_list) - len([t for t in tags.split(", ") if t])
             if dropped:
                 ep_tag = f"mimi audio số {ep}" if ep else None
                 logging.info(f"✂ Thẻ tag ≥{tg.MAX_TAGS_LEN} ký tự → bỏ {dropped} tag cuối "
-                             + (f"(giữ '{ep_tag}')." if ep_tag else "."))
+                             + (f"(giữ '{ep_tag}' + tên truyện)." if ep_tag else "(giữ tên truyện)."))
             return {"title": title or "", "title_tiktok": title_tiktok or "",
                     "desc": desc or "", "tags": tags or ""}
         except Exception as e:
@@ -5189,8 +5244,11 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             doc_speed = 1.0
         doc_speed = max(0.5, min(doc_speed, 2.0))   # atempo chỉ nhận 0.5–2.0
+        doc_percent = self._parse_percent(self.var_doc_percent, 100)  # % audio cho video dọc (100 = cả bài)
         if make_video_doc and doc_speed > 1.001:
             logging.info(f"Video dọc sẽ tăng tốc audio x{doc_speed:.2f} (giữ cao độ).")
+        if make_video_doc and doc_percent < 99:
+            logging.info(f"Video dọc sẽ cắt ~{doc_percent}% audio (cắt cuối câu).")
 
         # Tốc độ audio cho VIDEO NGANG (audio full) — atempo, giữ cao độ
         try:
@@ -5281,7 +5339,7 @@ class App(tk.Tk):
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
                   self.var_make_video.get(), effect_path,
                   cut_audio, cut_target, cut_min, cut_max,
-                  make_video_doc, doc_full_audio, doc_speed,
+                  make_video_doc, doc_full_audio, doc_speed, doc_percent,
                   ngang_speed, cut_half, reuse, doc_from_ngang, doc_no_effect),
             kwargs={"make_tiktok": make_tiktok,   # video TikTok (cắt theo %)
                     "tiktok_speed": tiktok_speed,
@@ -5439,6 +5497,7 @@ class App(tk.Tk):
                 cut_half=self.var_cut_half.get(),
                 make_video_doc=(kind == "doc"), doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self._parse_speed(self.var_doc_speed),
+                doc_percent=self._parse_percent(self.var_doc_percent, 100),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
                 doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(), doc_out=doc_out,

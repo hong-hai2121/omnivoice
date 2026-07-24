@@ -85,6 +85,19 @@ def add_episode_tag(tags, ep: str):
     return [extra] + rest
 
 
+def add_title_tag(tags, title: str):
+    """Đưa TÊN TRUYỆN (tách trang trí khỏi tiêu đề) lên ĐẦU danh sách tag — để copy
+    thẻ tag luôn có tên truyện. Thêm nếu chưa có, hoặc dời lên đầu nếu đã nằm chỗ khác;
+    tiêu đề rỗng → giữ nguyên."""
+    tags = list(tags or [])
+    core = strip_title_decorations(title)
+    if not core:
+        return tags
+    key = _strip_accents(core).strip()
+    rest = [t for t in tags if _strip_accents(t or "").strip() != key]
+    return [core] + rest
+
+
 # ── Quy ước cố định khi COPY đăng YouTube ───────────────────────────────────────
 FULL_TITLE_PREFIX = "[FULL]"            # luôn mở đầu tiêu đề
 FULL_HASHTAGS = ("#truyenfull", "#full")  # luôn có trong mô tả
@@ -102,10 +115,36 @@ def _strip_accents(s: str) -> str:
     return "".join(c for c in s if unicodedata.category(c) != "Mn").lower()
 
 
+def _has_cjk(s: str) -> bool:
+    """True nếu chuỗi có chữ Hán (CJK) — thẻ tag còn sót tiếng Trung."""
+    return any("一" <= c <= "鿿" or "㐀" <= c <= "䶿" for c in (s or ""))
+
+
+def _has_vietnamese_marks(s: str) -> bool:
+    """True nếu chuỗi có DẤU tiếng Việt (ă/â/ê/ô/ơ/ư, thanh điệu, hoặc đ/Đ). Dùng để
+    phân biệt thẻ tiếng Việt với thẻ thuần latin KHÔNG dấu (tiếng Anh / tên người)."""
+    import unicodedata
+    s = s or ""
+    if "đ" in s.lower():
+        return True
+    return any(unicodedata.category(c) == "Mn" for c in unicodedata.normalize("NFD", s))
+
+
 def _is_deprioritized_tag(tag: str) -> bool:
-    """True nếu thẻ nên BỎ TRƯỚC khi cắt (vd chứa 'việt nam')."""
+    """True nếu thẻ nên BỎ TRƯỚC khi cắt cho vừa 500.
+
+    Ưu tiên bỏ các thẻ KHÔNG phải tiếng Việt: có chữ Hán (CJK), HOẶC thuần latin
+    KHÔNG dấu (tiếng Anh / tên người). NGOẠI LỆ: thẻ chứa 'mimi audio' (tên kênh) —
+    kể cả thẻ tập 'mimi audio số <ep>' — thì LUÔN GIỮ. Vẫn giữ quy tắc cũ theo
+    DEPRIORITIZED_TAG_SUBSTRINGS (vd 'việt nam')."""
     norm = _strip_accents(tag)
-    return any(sub in norm for sub in DEPRIORITIZED_TAG_SUBSTRINGS)
+    if "mimi audio" in norm:                                   # tên kênh → không bao giờ bỏ
+        return False
+    if any(sub in norm for sub in DEPRIORITIZED_TAG_SUBSTRINGS):
+        return True
+    if _has_cjk(tag):                                          # còn sót chữ Hán
+        return True
+    return not _has_vietnamese_marks(tag)                      # thuần latin không dấu → tiếng Anh/tên
 
 
 def add_full_prefix(title: str) -> str:
@@ -206,18 +245,26 @@ def youtube_tags_len(tags) -> int:
     return sum(len(t) + (2 if " " in t else 0) for t in tags) + (len(tags) - 1)
 
 
-def cap_tags(tags, ep: str, limit: int = MAX_TAGS_LEN) -> str:
-    """Nối thẻ tag bằng ', ', thẻ tập ('mimi audio số <ep>') để Ở ĐẦU danh sách.
+def cap_tags(tags, ep: str, title: str = "", limit: int = MAX_TAGS_LEN) -> str:
+    """Nối thẻ tag bằng ', ', với thẻ tập ('mimi audio số <ep>') VÀ thẻ TÊN TRUYỆN
+    (tách từ `title`) để Ở ĐẦU danh sách và LUÔN GIỮ (không bị cắt).
 
     Lấy LẦN LƯỢT từ đầu; ĐO theo cách YouTube đếm (youtube_tags_len — tag có dấu cách
     +2 cho ngoặc kép). Khi thêm 1 thẻ mà tổng VƯỢT `limit` thì BỎ thẻ đó VÀ mọi thẻ
     đứng SAU nó (cắt tại ranh giới, không nhảy cóc lấy thẻ ngắn hơn ở phía sau)."""
-    tag_list = add_episode_tag(tags, ep)   # thẻ tập đã ở ĐẦU danh sách
-    # Dời các thẻ ƯU TIÊN BỎ (vd chứa 'việt nam') xuống CUỐI để khi cắt cho vừa 500
-    # chúng bị bỏ TRƯỚC các thẻ khác. Giữ nguyên thứ tự tương đối trong từng nhóm;
-    # thẻ tập ('mimi audio số <ep>') không dính nên vẫn nằm đầu.
-    tag_list = ([t for t in tag_list if not _is_deprioritized_tag(t)]
-                + [t for t in tag_list if _is_deprioritized_tag(t)])
+    core = strip_title_decorations(title)
+    tag_list = add_title_tag(tags, title)      # tên truyện lên đầu
+    tag_list = add_episode_tag(tag_list, ep)   # thẻ tập lên ĐẦU (trước tên truyện)
+    # Dời các thẻ ƯU TIÊN BỎ (không phải tiếng Việt: chữ Hán / latin không dấu, hoặc
+    # 'việt nam') xuống CUỐI để khi cắt cho vừa 500 chúng bị bỏ TRƯỚC các thẻ khác.
+    # LUÔN GIỮ thẻ tập + thẻ tên truyện dù tên truyện có thể không dấu.
+    always = {t for t in ((f"mimi audio số {ep}" if ep else ""), core) if t}
+
+    def _protected(t: str) -> bool:
+        return (t or "").strip() in always
+
+    tag_list = ([t for t in tag_list if _protected(t) or not _is_deprioritized_tag(t)]
+                + [t for t in tag_list if not _protected(t) and _is_deprioritized_tag(t)])
     kept: list[str] = []
     for t in tag_list:
         t = (t or "").strip()
@@ -603,7 +650,9 @@ class ThumbnailGUI:
 
     def _copy_tags(self) -> None:
         seo = self._read_seo()
-        self._copy_text(cap_tags(seo.get("tags", []), self._episode_number()), "thẻ tag")
+        self._copy_text(
+            cap_tags(seo.get("tags", []), self._episode_number(), seo.get("title", "")),
+            "thẻ tag")
 
     def _on_upload_scripts_click(self) -> None:
         """Bấm nút 'Tải kịch bản lên Drive' → gọi callback của app cha. Callback tự
