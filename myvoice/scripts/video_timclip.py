@@ -149,6 +149,11 @@ EXPLANATION_KEYWORDS = (
 )
 
 
+# GUI gọi module này qua pythonw.exe (không console) nên mỗi lần chạy ffmpeg/ffprobe
+# Windows lại bật một cửa sổ console mới → nhấp nháy. Cờ này cho chạy hẳn không console.
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+
 class ClipFinderError(Exception):
     """Lỗi có thể hiển thị trực tiếp cho người dùng CLI."""
 
@@ -596,6 +601,7 @@ def probe_audio_duration(audio_path: Path) -> float:
         encoding="utf-8",
         errors="replace",
         check=False,
+        creationflags=CREATE_NO_WINDOW,
     )
     if result.returncode != 0:
         raise ClipFinderError(f"FFprobe không đọc được audio: {result.stderr.strip()}")
@@ -661,6 +667,7 @@ def find_sentence_end_silence(
         encoding="utf-8",
         errors="replace",
         check=False,
+        creationflags=CREATE_NO_WINDOW,
     )
     if result.returncode != 0:
         raise ClipFinderError(f"FFmpeg không dò được khoảng lặng: {result.stderr.strip()}")
@@ -760,6 +767,7 @@ def cut_audio_at_sentence_end(
         encoding="utf-8",
         errors="replace",
         check=False,
+        creationflags=CREATE_NO_WINDOW,
     )
     if result.returncode != 0:
         raise ClipFinderError(f"FFmpeg không thể cắt audio: {result.stderr.strip()}")

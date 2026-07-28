@@ -68,7 +68,9 @@ COPY_PREFIX = (
 "Với món ăn, đồ vật, thành ngữ hoặc cách gọi đặc thù Trung Quốc, hãy dịch sao cho người Việt dễ hiểu; nếu cần có thể giữ tên gốc kèm giải thích ngắn, nhưng không dài dòng. "
 "Nếu gặp câu quảng bá kênh, kêu gọi like, đăng ký, chia sẻ, tặng quà như “小薯条邀你一起看书咯”, “请点赞/订阅/转发/打赏”, “感谢支持”..., "
 "hãy đổi tên kênh gốc thành “Mimi audio” và dịch đúng ý, nhưng không để làm rối mạch truyện chính. "
-"Ví dụ: “小薯条邀你一起看书咯” dịch là “Mimi audio xin mời bạn lắng nghe câu chuyện hôm nay nhé”. "
+"Dịch theo VỊ TRÍ trong bài, dùng ĐÚNG 3 câu sau: câu quảng bá ở MỞ ĐẦU → “Lại là Mimi Audio đây, mời bạn nghe câu chuyện hôm nay.”; "
+"câu ở THÂN BÀI → “Nếu thấy hay, bạn thả tim ủng hộ mình nhé.”; "
+"câu ở KẾT BÀI → “Cảm ơn bạn đã lắng nghe. Đây là câu chuyện không có thật,... Nếu thấy hay, nhớ thích và theo dõi Mimi Audio nhé. Hẹn gặp lại ở câu chuyện tiếp theo.”. "
 "Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện."
 )
 

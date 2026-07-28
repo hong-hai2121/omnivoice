@@ -37,6 +37,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
 from pathlib import Path
 
+# GUI chạy bằng pythonw.exe (không console) nên mỗi lần gọi ffmpeg/ffprobe Windows
+# lại bật một cửa sổ console mới → nhấp nháy. Cờ này cho chạy hẳn không console.
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VOICE_DIR  = BASE_DIR / "voice"
@@ -434,6 +437,90 @@ def norm_source(src: str) -> str:
         return s
 
 
+# ── THƯ MỤC TẬP: "01" (kiểu cũ) hoặc "01 - <tên nguồn>" (kiểu mới) ───────────
+# Thư mục tập mang thêm TÊN NGUỒN để nhìn là biết tập đó làm từ link/file nào:
+# "01 - 95", "07 - 陈家有女初长成". SỐ TẬP luôn là phần ĐẦU tên thư mục nên thư
+# mục cũ (tên thuần số) vẫn chạy bình thường — mọi nơi tra tập đều đi qua các hàm
+# dưới đây THAY CHO việc so tên thư mục bằng .isdecimal().
+_EP_DIR_RE = re.compile(r'^(\d+)\s*(?:-\s*(.*))?$')
+# Ký tự Windows cấm đặt trong tên thư mục (+ ký tự điều khiển).
+_BAD_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+MAX_SOURCE_LABEL = 60      # cắt bớt tên nguồn quá dài cho tên thư mục gọn
+
+
+def episode_of(name: str):
+    """Số tập (chuỗi 2 chữ số) lấy từ TÊN thư mục tập; không phải thư mục tập → None.
+
+    "1" → "01" · "01" → "01" · "01 - 95" → "01" · "output"/"downloads_zh" → None.
+    """
+    m = _EP_DIR_RE.match((name or "").strip())
+    return m.group(1).zfill(2) if m else None
+
+
+def episode_dirs() -> list:
+    """Mọi thư mục tập trong kịch_bản/ (cả tên cũ "01" lẫn mới "01 - 95"), theo SỐ TẬP."""
+    if not SCRIPT_DIR.exists():
+        return []
+    out = [p for p in SCRIPT_DIR.iterdir() if p.is_dir() and episode_of(p.name)]
+    return sorted(out, key=lambda p: (int(episode_of(p.name)), p.name))
+
+
+def find_episode_dir(episode):
+    """Thư mục CÓ SẴN của tập (khớp số tập, bất kể có kèm tên nguồn hay không)."""
+    ep = str(episode).strip().zfill(2)
+    for p in episode_dirs():
+        if episode_of(p.name) == ep:
+            return p
+    return None
+
+
+def safe_folder_name(name: str) -> str:
+    """Rút gọn chuỗi thành phần tên thư mục hợp lệ trên Windows."""
+    s = _BAD_FS_CHARS.sub(" ", (name or "")).strip()
+    s = re.sub(r"\s+", " ", s)
+    if len(s) > MAX_SOURCE_LABEL:
+        s = s[:MAX_SOURCE_LABEL].rstrip()
+    return s.rstrip(" .")          # Windows cấm tên kết thúc bằng '.' hoặc ' '
+
+
+def source_label(source: str) -> str:
+    """TÊN NGUỒN ngắn để gắn vào tên thư mục tập.
+
+    • File local → tên file bỏ đuôi ("C:\\Users\\PC\\Downloads\\95.mp4" → "95").
+    • Link video → tiêu đề video (yt-dlp, CHỈ đọc metadata, không tải); lấy không
+      được thì lùi về đoạn cuối của URL.
+    Không lấy được gì → "" (thư mục giữ tên thuần số như cũ).
+    """
+    s = (source or "").strip().strip('"').strip("'")
+    if not s:
+        return ""
+    if not s.lower().startswith(("http://", "https://")):
+        return safe_folder_name(Path(s).stem)
+    try:
+        import yt_dlp
+        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
+                               "skip_download": True, "noplaylist": True}) as ydl:
+            info = ydl.extract_info(s, download=False) or {}
+        label = safe_folder_name(info.get("title") or info.get("id") or "")
+        if label:
+            return label
+    except Exception as e:
+        logging.info(f"ℹ️ Không lấy được tiêu đề video ({e}) — đặt tên theo link.")
+    tail = s.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    return safe_folder_name(tail)
+
+
+def episode_dir_for(episode, source=None) -> Path:
+    """Đường dẫn thư mục của tập: DÙNG LẠI thư mục đã có (không đổi tên thư mục cũ);
+    chưa có thì đặt tên mới "<số tập> - <tên nguồn>" (thiếu tên nguồn → "<số tập>")."""
+    existing = find_episode_dir(episode)
+    if existing is not None:
+        return existing
+    ep = str(episode).strip().zfill(2)
+    label = source_label(source) if source else ""
+    return SCRIPT_DIR / (f"{ep} - {label}" if label else ep)
+
+
 def load_manifest() -> dict:
     """Đọc manifest (nguồn→{episode, steps, done, updated}); lỗi/thiếu → {}."""
     try:
@@ -539,10 +626,10 @@ def split_chunks(text: str, max_len: int):
 # Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi audio". Tùy vị
 # trí trong bài (mở đầu / thân bài / kết bài) ta thay bằng 3 câu khác nhau dưới
 # đây. SỬA 3 CÂU NÀY nếu muốn đổi lời.
-PROMO_OPENING = "Mimi Audio đây, mời bạn nghe câu chuyện hôm nay."
+PROMO_OPENING = "Lại là Mimi Audio đây, mời bạn nghe câu chuyện hôm nay."
 PROMO_BODY    = "Nếu thấy hay, bạn thả tim ủng hộ mình nhé."
-PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe. "
-                 "Nếu thấy hay, nhớ thả tim và theo dõi Mimi Audio nhé. "
+PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe. Đây là câu chuyện không có thật,... "
+                 "Nếu thấy hay, nhớ thích và theo dõi Mimi Audio nhé. "
                  "Hẹn gặp lại ở câu chuyện tiếp theo.")
 
 # Câu quảng bá luôn chứa tên kênh "Mimi audio" → dùng cả cụm làm dấu hiệu nhận
@@ -552,33 +639,49 @@ _PROMO_MARKER = re.compile(r'mimi\s+(?:audio|truyện|chuyện)', re.IGNORECASE)
 _PROMO_SENT_SPLIT = re.compile(r'(?<=[.!?。！？\n])')
 
 
-def replace_channel_promo(text: str) -> tuple[str, int]:
+def replace_channel_promo(text: str) -> tuple[str, int, int]:
     """Thay câu quảng bá kênh (chứa 'mimi') bằng 1 trong 3 câu theo vị trí:
     xuất hiện ĐẦU TIÊN → mở đầu, CUỐI CÙNG → kết bài, Ở GIỮA → thân bài.
     Nếu chỉ có 1 câu: nửa đầu văn bản → mở đầu, nửa cuối → kết bài.
 
-    Trả về (text_đã_thay, số_câu_đã_thay). Giữ nguyên khoảng trắng/xuống dòng quanh
-    câu để không phá cấu trúc đoạn.
+    Bài LUÔN phải có câu mở đầu ở đầu và câu kết ở cuối. Nếu bản dịch thiếu (không
+    có câu quảng bá nào, hoặc chỉ có 1 câu nên chỉ ra được mở đầu HOẶC kết bài) thì
+    THÊM MẶC ĐỊNH câu còn thiếu vào đầu/cuối văn bản.
+
+    Trả về (text_đã_xử_lý, số_câu_đã_thay, số_câu_thêm_mặc_định). Giữ nguyên khoảng
+    trắng/xuống dòng quanh câu để không phá cấu trúc đoạn.
     """
     sentences = _PROMO_SENT_SPLIT.split(text)
     promo_idx = [i for i, s in enumerate(sentences) if _PROMO_MARKER.search(s)]
-    if not promo_idx:
-        return text, 0
-    first, last, n = promo_idx[0], promo_idx[-1], len(sentences)
-    for i in promo_idx:
-        orig = sentences[i]
-        lead = orig[:len(orig) - len(orig.lstrip())]   # khoảng trắng đầu câu
-        trail = orig[len(orig.rstrip()):]              # khoảng trắng/\n cuối câu
-        if len(promo_idx) == 1:
-            repl = PROMO_OPENING if i < n / 2 else PROMO_ENDING
-        elif i == first:
-            repl = PROMO_OPENING
-        elif i == last:
-            repl = PROMO_ENDING
-        else:
-            repl = PROMO_BODY
-        sentences[i] = lead + repl + trail
-    return "".join(sentences), len(promo_idx)
+    has_opening = has_ending = False
+    if promo_idx:
+        first, last, n = promo_idx[0], promo_idx[-1], len(sentences)
+        for i in promo_idx:
+            orig = sentences[i]
+            lead = orig[:len(orig) - len(orig.lstrip())]   # khoảng trắng đầu câu
+            trail = orig[len(orig.rstrip()):]              # khoảng trắng/\n cuối câu
+            if len(promo_idx) == 1:
+                repl = PROMO_OPENING if i < n / 2 else PROMO_ENDING
+            elif i == first:
+                repl = PROMO_OPENING
+            elif i == last:
+                repl = PROMO_ENDING
+            else:
+                repl = PROMO_BODY
+            has_opening = has_opening or repl == PROMO_OPENING
+            has_ending = has_ending or repl == PROMO_ENDING
+            sentences[i] = lead + repl + trail
+    out = "".join(sentences)
+
+    # ── THÊM MẶC ĐỊNH câu còn thiếu ───────────────────────────────────────────
+    added = 0
+    if not has_opening:
+        out = PROMO_OPENING + "\n" + out.lstrip()
+        added += 1
+    if not has_ending:
+        out = out.rstrip() + "\n" + PROMO_ENDING
+        added += 1
+    return out, len(promo_idx), added
 
 
 # ── SỬA CHỮ "but" TIẾNG ANH BỊ SÓT → "nhưng" ─────────────────────────────────
@@ -643,7 +746,8 @@ def _speedup_audio_for_doc(src, factor):
     out = src.with_name(f"{src.stem}_sped{tag}{src.suffix}")
     cmd = [ffmpeg, "-y", "-i", str(src), "-filter:a", f"atempo={factor:.4f}",
            "-vn", str(out)]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
     if r.returncode != 0 or not out.exists():
         raise RuntimeError(f"ffmpeg atempo lỗi: {(r.stderr or '')[-300:] or r.returncode}")
     return out
@@ -664,7 +768,8 @@ def _detect_peak_db(path: Path, ffmpeg: str, seconds: int = 150):
     r = subprocess.run(
         [ffmpeg, "-hide_banner", "-t", str(seconds), "-i", str(path),
          "-af", "volumedetect", "-f", "null", "-"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=CREATE_NO_WINDOW)
     m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", r.stderr or "")
     return float(m.group(1)) if m else None
 
@@ -700,7 +805,8 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
            "-stream_loop", "-1", "-i", str(music_file),   # lặp nhạc cho đủ dài
            "-filter_complex", filt, "-map", "[a]",
            "-c:a", "pcm_s16le", str(out_wav)]
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
     if r.returncode != 0 or not out_wav.exists():
         raise RuntimeError(f"ffmpeg mix nhạc lỗi: {(r.stderr or '')[-300:] or r.returncode}")
     return out_wav
@@ -2096,16 +2202,17 @@ class App(tk.Tk):
             ep = e.get("episode", "")
             if str(ep).isdecimal():
                 rows[int(ep)] = (e.get("source", src), e)
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir()):
-                if p.is_dir() and p.name.isdecimal() and int(p.name) not in rows:
-                    rows[int(p.name)] = ("(không rõ — tạo trước khi có manifest)", None)
+        for p in episode_dirs():
+            n = int(episode_of(p.name))
+            if n not in rows:
+                rows[n] = ("(không rõ — tạo trước khi có manifest)", None)
 
         n_done = 0
         for ep in sorted(rows):
             src, e = rows[ep]
             episode = str(ep).zfill(2)
-            steps = (e or {}).get("steps") or self._folder_steps(SCRIPT_DIR / episode, episode)
+            folder = find_episode_dir(episode) or (SCRIPT_DIR / episode)
+            steps = (e or {}).get("steps") or self._folder_steps(folder, episode)
             done = bool((e or {}).get("done")) if e else all(
                 steps.get(k) for _, k in self._REPORT_STEPS if k != "video_doc")
             prog = "  ".join(("✅" if steps.get(k) else "⬜") + lbl
@@ -2130,7 +2237,7 @@ class App(tk.Tk):
             messagebox.showinfo("Chọn tập", "Hãy chọn 1 tập trong bảng rồi bấm 'Chạy tiếp'.")
             return
         episode = str(tv.item(sel[0], "values")[1]).strip().zfill(2)
-        folder = SCRIPT_DIR / episode
+        folder = find_episode_dir(episode) or (SCRIPT_DIR / episode)
         if not folder.exists():
             messagebox.showwarning("Không có thư mục", f"Không thấy thư mục tập {episode}.")
             return
@@ -2375,11 +2482,9 @@ class App(tk.Tk):
             return
         prev = self._copyseo_selected_episode()
         self._copyseo_blocks = {}        # SEO có thể đã đổi → đọc lại khi chọn
-        eps = []
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir()):
-                if p.is_dir() and p.name.isdecimal() and (p / "seoYoutube.docx").exists():
-                    eps.append(p.name)
+        # Giữ TÊN thư mục (có kèm tên nguồn) để hiện ra danh sách + dựng đường dẫn;
+        # số tập thật lấy lại bằng episode_of() khi cần dựng tiêu đề SEO.
+        eps = [p.name for p in episode_dirs() if (p / "seoYoutube.docx").exists()]
         self._copyseo_episodes = eps
         lst.delete(0, tk.END)
         for ep in eps:
@@ -2409,7 +2514,8 @@ class App(tk.Tk):
             return
         blocks = self._copyseo_blocks.get(ep)
         if blocks is None:
-            blocks = self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx", ep)
+            blocks = self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx",
+                                           episode_of(ep) or "")
             self._copyseo_blocks[ep] = blocks
         if not blocks:
             self._set_copyseo_preview(f"(Không đọc được SEO của tập {ep}.)")
@@ -2429,7 +2535,8 @@ class App(tk.Tk):
             messagebox.showinfo("Chọn tập", "Hãy chọn 1 tập trong danh sách bên trái.")
             return
         blocks = self._copyseo_blocks.get(ep) or \
-            self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx", ep)
+            self._seo_copy_blocks(SCRIPT_DIR / ep / "seoYoutube.docx",
+                                  episode_of(ep) or "")
         if not blocks:
             messagebox.showwarning("Không có SEO", f"Tập {ep} chưa đọc được nội dung SEO.")
             return
@@ -2605,13 +2712,8 @@ class App(tk.Tk):
 
     # ── BẢNG trạng thái các tập + tick chọn ──────────────────────────────────────
     def _all_episode_folders(self) -> list:
-        """Mọi thư mục tập kịch_bản/NN (tên là số), theo số tập."""
-        out = []
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
-                if p.is_dir() and p.name.isdecimal():
-                    out.append(p)
-        return out
+        """Mọi thư mục tập kịch_bản/NN (hoặc 'NN - tên nguồn'), theo số tập."""
+        return episode_dirs()
 
     def _recog_seo_ok(self, folder) -> bool:
         """SEO của 1 tập đã có tiêu đề thật chưa (dùng chung logic với Home).
@@ -2652,7 +2754,10 @@ class App(tk.Tk):
         total = need2 = need_seo = need_thumb = need5 = 0
         for folder in self._all_episode_folders():
             total += 1
+            # ep = TÊN thư mục (khóa tick + hiển thị, có thể là "01 - 95");
+            # epnum = SỐ TẬP thật, dùng khi cần đánh số (vd đếm thumbnail).
             ep = folder.name
+            epnum = episode_of(ep)
             has_zh = find_zh_docx(folder) is not None
             inp = folder / "input.txt"
             try:
@@ -2665,7 +2770,7 @@ class App(tk.Tk):
             except OSError:
                 has_gem = False
             has_seo = self._recog_seo_ok(folder)
-            n_thumb = self._thumb_count(folder, ep)
+            n_thumb = self._thumb_count(folder, epnum)
             has_aud = (folder / "output.wav").is_file()
             has_vid = any((folder / n).is_file()
                           for n in ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4"))
@@ -2790,13 +2895,8 @@ class App(tk.Tk):
 
     # ── Gộp bước ②+③: DỊCH Gemini + tạo input.txt cho MỌI tập đã nhận diện ────────
     def _recognized_folders(self) -> list:
-        """Thư mục tập (kịch_bản/NN) ĐÃ nhận diện (có tiengTrung.docx/*_zh.docx), theo số tập."""
-        out = []
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
-                if p.is_dir() and p.name.isdecimal() and find_zh_docx(p) is not None:
-                    out.append(p)
-        return out
+        """Thư mục tập ĐÃ nhận diện (có tiengTrung.docx/*_zh.docx), theo số tập."""
+        return [p for p in episode_dirs() if find_zh_docx(p) is not None]
 
     def _recog_translate_all(self):
         """Nút '🌐 Dịch + tạo input.txt': gộp bước ② (dịch Gemini) + ③ (input.txt) của
@@ -2851,8 +2951,8 @@ class App(tk.Tk):
                     self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
                     break
 
-                episode = folder.name
-                src = ep2src.get(episode.zfill(2))
+                episode = episode_of(folder.name)   # SỐ TẬP (tên thư mục có thể kèm tên nguồn)
+                src = ep2src.get(episode)
                 gemini_docx = folder / "gemini_result.docx"
                 input_txt = folder / "input.txt"
                 self.pipe_link_status.set(f"🌐 Dịch: Tập {episode} ({i}/{total})")
@@ -2934,15 +3034,13 @@ class App(tk.Tk):
         """Thư mục tập (kịch_bản/NN) đã có gemini_result.docx KHÔNG rỗng — SEO lấy
         đoạn đầu của bản dịch này làm nguồn, theo số tập."""
         out = []
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
-                if p.is_dir() and p.name.isdecimal():
-                    gem = p / "gemini_result.docx"
-                    try:
-                        if gem.is_file() and gem.stat().st_size > 0:
-                            out.append(p)
-                    except OSError:
-                        pass
+        for p in episode_dirs():
+            gem = p / "gemini_result.docx"
+            try:
+                if gem.is_file() and gem.stat().st_size > 0:
+                    out.append(p)
+            except OSError:
+                pass
         return out
 
     def _recog_seo_all(self):
@@ -2993,7 +3091,7 @@ class App(tk.Tk):
                     self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
                     break
 
-                episode = folder.name
+                episode = episode_of(folder.name)   # SỐ TẬP (tên thư mục có thể kèm tên nguồn)
                 gemini_docx = folder / "gemini_result.docx"
                 seo_docx = folder / "seoYoutube.docx"
                 self.pipe_link_status.set(f"🔎 SEO: Tập {episode} ({i}/{total})")
@@ -3088,7 +3186,7 @@ class App(tk.Tk):
                     self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
                     break
 
-                episode = folder.name
+                episode = episode_of(folder.name)   # SỐ TẬP (tên thư mục có thể kèm tên nguồn)
                 self.pipe_link_status.set(f"🖼 Thumbnail: Tập {episode} ({i}/{total})")
                 self.pipe_status.set(f"🖼 Tập {episode} ({i}/{total})")
                 try:
@@ -3125,15 +3223,13 @@ class App(tk.Tk):
     def _folders_with_input(self) -> list:
         """Thư mục tập (kịch_bản/NN) đã có input.txt KHÔNG rỗng, theo số tập."""
         out = []
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
-                if p.is_dir() and p.name.isdecimal():
-                    inp = p / "input.txt"
-                    try:
-                        if inp.is_file() and inp.stat().st_size > 0:
-                            out.append(p)
-                    except OSError:
-                        pass
+        for p in episode_dirs():
+            inp = p / "input.txt"
+            try:
+                if inp.is_file() and inp.stat().st_size > 0:
+                    out.append(p)
+            except OSError:
+                pass
         return out
 
     def _recog_make_video_all(self):
@@ -3178,7 +3274,7 @@ class App(tk.Tk):
                     logging.info(f"⏹ ĐÃ DỪNG — xong {ok_count}/{total} tập.")
                     self.pipe_link_status.set(f"⏹ Đã dừng — xong {ok_count}/{total} tập.")
                     break
-                episode = folder.name
+                episode = episode_of(folder.name)   # SỐ TẬP (tên thư mục có thể kèm tên nguồn)
                 self.pipe_link_status.set(f"🎬 Tạo giọng + video: Tập {episode} ({i}/{total})")
                 self.pipe_status.set(f"🎬 Tập {episode} ({i}/{total})")
                 try:
@@ -3286,11 +3382,9 @@ class App(tk.Tk):
             except OSError:
                 pass
 
-        # 1) Nhiều link: thư mục con tên là số tập.
-        if SCRIPT_DIR.exists():
-            for p in sorted(SCRIPT_DIR.iterdir(), key=lambda x: x.name):
-                if p.is_dir() and p.name.isdecimal():
-                    _add(p / "input.txt", p.name.zfill(2))
+        # 1) Nhiều link: thư mục con tập ("01" hoặc "01 - tên nguồn").
+        for p in episode_dirs():
+            _add(p / "input.txt", episode_of(p.name))
 
         # 2) Một link: kịch_bản/input.txt theo số tập ở tab Thumbnail.
         ep = self._current_episode_number()
@@ -3688,9 +3782,9 @@ class App(tk.Tk):
         """
         out_items = list(OUTPUT_DIR.iterdir()) if OUTPUT_DIR.exists() else []
         kb_files = [p for p in SCRIPT_DIR.iterdir() if p.is_file()] if SCRIPT_DIR.exists() else []
-        # Thư mục tập = thư mục con của kịch_bản có tên TOÀN CHỮ SỐ (01, 02, 17...).
-        ep_dirs = ([p for p in SCRIPT_DIR.iterdir() if p.is_dir() and p.name.isdecimal()]
-                   if SCRIPT_DIR.exists() else [])
+        # Thư mục tập = thư mục con của kịch_bản bắt đầu bằng SỐ TẬP
+        # ("01", "02", hoặc kèm tên nguồn "01 - 95"). output/ không nằm trong này.
+        ep_dirs = episode_dirs()
 
         if not out_items and not kb_files and not ep_dirs:
             self.status.set("Không có gì để xóa hay làm rỗng.")
@@ -3835,9 +3929,12 @@ class App(tk.Tk):
             return False
 
         # 2b) THAY CÂU QUẢNG BÁ KÊNH theo vị trí (mở đầu / thân bài / kết bài)
-        content, n_promo = replace_channel_promo(content)
+        content, n_promo, n_add = replace_channel_promo(content)
         if n_promo:
             logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh (mở đầu/thân/kết).")
+        if n_add:
+            logging.info(f"➕ Bản dịch thiếu {n_add} câu quảng bá → đã thêm mặc định "
+                         f"vào đầu/cuối bài.")
 
         # 2c) SỬA chữ "but" tiếng Anh Gemini sót → "nhưng"
         content, n_but = replace_leaked_but(content)
@@ -4178,7 +4275,9 @@ class App(tk.Tk):
                     break
 
                 episode, is_new = self._allocate_episode(src)
-                folder = SCRIPT_DIR / episode
+                # Tên thư mục kèm TÊN NGUỒN ("01 - 95") để biết tập làm từ đâu;
+                # tập đã có thư mục thì dùng lại thư mục cũ, không đổi tên.
+                folder = episode_dir_for(episode, src)
                 folder.mkdir(parents=True, exist_ok=True)
                 # Ghi nguồn↔tập vào manifest (chưa done) để sau chạy tiếp/batch đúng tập.
                 self._manifest_update(src, episode, folder, done=False)
@@ -4441,9 +4540,11 @@ class App(tk.Tk):
             content = "\n".join(t for _, t in chunks).strip()
             if not content:
                 return False
-            content, n_promo = replace_channel_promo(content)
+            content, n_promo, n_add = replace_channel_promo(content)
             if n_promo:
                 logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh.")
+            if n_add:
+                logging.info(f"➕ Thiếu {n_add} câu quảng bá → đã thêm mặc định.")
             content, n_but = replace_leaked_but(content)
             if n_but:
                 logging.info(f'🔁 Đã thay {n_but} chữ "but" → "nhưng".')
@@ -4781,10 +4882,8 @@ class App(tk.Tk):
             return str(entry["episode"]).zfill(2), False
         used = {int(v["episode"]) for v in m.values()
                 if str(v.get("episode", "")).isdecimal()}
-        if SCRIPT_DIR.exists():
-            for p in SCRIPT_DIR.iterdir():
-                if p.is_dir() and p.name.isdecimal():
-                    used.add(int(p.name))
+        for p in episode_dirs():
+            used.add(int(episode_of(p.name)))
         used.add(load_episode_number())
         nxt = (max(used) + 1) if used else 1
         return str(nxt).zfill(2), True
@@ -4840,7 +4939,8 @@ class App(tk.Tk):
                 # → cấp số kế tiếp. Nhờ vậy nhập khác thứ tự / thiếu link vẫn đúng tập.
                 episode, is_new = self._allocate_episode(src)
                 episode_num = int(episode)
-                folder = SCRIPT_DIR / episode            # tên thư mục = số tập
+                # Tên thư mục = "<số tập> - <tên nguồn>" (tập cũ giữ nguyên tên cũ).
+                folder = episode_dir_for(episode, src)
                 folder.mkdir(parents=True, exist_ok=True)
                 # Ghi nguồn↔tập vào manifest NGAY (kể cả lỗi sau đó vẫn biết link→tập).
                 self._manifest_update(src, episode, folder, done=False)

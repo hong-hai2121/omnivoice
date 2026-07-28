@@ -72,6 +72,28 @@ ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa k
 OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
                     # luồn xuống dưới viền khung1 — khử viền đen quanh video
 
+# GUI chạy bằng pythonw.exe (không có console), nên MỖI lần gọi ffmpeg/ffprobe
+# Windows phải cấp một cửa sổ console mới → màn hình NHẤP NHÁY liên tục khi quét
+# hàng trăm clip, và thỉnh thoảng ffprobe trả stdout RỖNG/CỤT do console + pipe
+# bị dựng/huỷ dồn dập → json.loads() nổ ("Expecting value: line 1 column 1").
+# CREATE_NO_WINDOW: chạy hẳn không console → hết nhấp nháy, hết cả lỗi kèm theo.
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+# Cache thời lượng clip: kho videodoc/ có vài trăm file, dựng video nào cũng ffprobe
+# lại từ đầu (mỗi file 1 tiến trình). Nhớ theo (kích thước, mtime) nên file sửa/đổi
+# là tự probe lại; lần dựng sau gần như không phải gọi ffprobe nữa.
+PROBE_CACHE_FILE = Path(__file__).resolve().parent / "probe_cache.json"
+_probe_cache: dict | None = None
+
+
+def _run(cmd, **kw):
+    """subprocess.run cho ffmpeg/ffprobe — luôn KHÔNG bật cửa sổ console."""
+    kw.setdefault("capture_output", True)
+    kw.setdefault("text", True)
+    kw.setdefault("encoding", "utf-8")
+    kw.setdefault("errors", "replace")
+    return subprocess.run(cmd, creationflags=CREATE_NO_WINDOW, **kw)
+
 
 def _even(value: float) -> int:
     """Kích thước video phải chia hết cho 2 để mã hóa yuv420p."""
@@ -95,13 +117,16 @@ def scale_box(x: int, y: int, w: int, h: int,
     return left, top, right - left, bottom - top
 
 
+_nvenc_cached: bool | None = None
+
+
 def has_nvenc() -> bool:
-    """Kiểm tra ffmpeg có encoder h264_nvenc hay không."""
-    r = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-encoders"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    return r.returncode == 0 and "h264_nvenc" in r.stdout
+    """Kiểm tra ffmpeg có encoder h264_nvenc hay không (hỏi 1 lần rồi nhớ)."""
+    global _nvenc_cached
+    if _nvenc_cached is None:
+        r = _run(["ffmpeg", "-hide_banner", "-encoders"])
+        _nvenc_cached = r.returncode == 0 and "h264_nvenc" in (r.stdout or "")
+    return _nvenc_cached
 
 
 def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng video",
@@ -128,6 +153,7 @@ def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng v
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=ef,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=CREATE_NO_WINDOW,
         )
         for line in proc.stdout:
             line = line.strip()
@@ -160,24 +186,106 @@ def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng v
     return proc.returncode, tail
 
 
+def _ffprobe_json(args, path: Path, tries: int = 3):
+    """Chạy ffprobe -of json và trả về dict — thử lại nếu đầu ra hỏng.
+
+    ffprobe thỉnh thoảng trả stdout RỖNG hoặc CỤT (vd chỉ '{\\n') khi bị gọi dồn
+    dập hàng trăm lần từ GUI, hoặc khi file đang bị chương trình khác giữ. Trước
+    đây json.loads() nổ thẳng ra ngoài với thông báo khó hiểu ("Expecting value:
+    line 1 column 1") và giết cả lượt dựng. Nay: thử lại vài lần rồi mới báo lỗi
+    NÊU RÕ TÊN FILE.
+    """
+    def _why(stderr: str, fallback: str) -> str:
+        """Gọn stderr nhiều dòng của ffprobe thành 1 dòng ngắn để ghi log."""
+        lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+        # Dòng cuối là thông báo dễ hiểu nhất ("Invalid data found...", "No such file...");
+        # bỏ tiền tố đường dẫn dài cho gọn.
+        msg = lines[-1].split(": ", 1)[-1] if lines else fallback
+        return msg[:120]
+
+    last = ""
+    for attempt in range(tries):
+        r = _run(["ffprobe", "-v", "error", *args, "-of", "json", str(path)])
+        out = (r.stdout or "").strip()
+        try:
+            data = json.loads(out)
+        except json.JSONDecodeError:
+            # Đầu ra rỗng/cụt → gần như chắc chắn là lỗi tạm thời, thử lại.
+            last = _why(r.stderr, f"ffprobe trả về dữ liệu hỏng ({out[:40]!r})")
+        else:
+            if data:
+                return data
+            # {} = ffprobe không đọc được file (hỏng / đang bị khoá / thiếu quyền).
+            last = _why(r.stderr, "ffprobe không đọc được file")
+        if attempt < tries - 1:
+            time.sleep(0.2 * (attempt + 1))
+    raise RuntimeError(f"Không đọc được {path.name}: {last}")
+
+
 def get_duration(path: Path) -> float:
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "json", str(path)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    return float(json.loads(r.stdout)["format"]["duration"])
+    path = Path(path)
+    data = _ffprobe_json(["-show_entries", "format=duration"], path)
+    try:
+        return float(data["format"]["duration"])
+    except (KeyError, TypeError, ValueError):
+        raise RuntimeError(f"File không có thời lượng hợp lệ: {path.name}") from None
 
 
 def get_resolution(path: Path) -> tuple[int, int]:
     """Lấy (width, height) của luồng video đầu tiên bằng ffprobe."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "json", str(path)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    s = json.loads(r.stdout)["streams"][0]
-    return int(s["width"]), int(s["height"])
+    path = Path(path)
+    data = _ffprobe_json(
+        ["-select_streams", "v:0", "-show_entries", "stream=width,height"], path)
+    try:
+        s = data["streams"][0]
+        return int(s["width"]), int(s["height"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise RuntimeError(f"File không có luồng video hợp lệ: {path.name}") from None
+
+
+def probe_durations(videos, log=print) -> dict:
+    """Thời lượng của cả kho clip — có cache, và BỎ QUA clip lỗi thay vì chết cả lượt.
+
+    Trước đây đây là chỗ hay hỏng nhất: mỗi clip một tiến trình ffprobe (kho
+    videodoc/ có hơn 200 clip → hơn 200 cửa sổ console nhấp nháy), và chỉ cần MỘT
+    lần ffprobe trả đầu ra hỏng là cả video rớt. Nay chỉ probe clip nào chưa có
+    trong cache (hoặc đã đổi kích thước/ngày sửa), và clip nào đọc không được thì
+    ghi cảnh báo rồi bỏ qua — miễn còn clip dùng được là vẫn dựng.
+    """
+    global _probe_cache
+    if _probe_cache is None:
+        try:
+            _probe_cache = json.loads(PROBE_CACHE_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            _probe_cache = {}     # cache hỏng/chưa có → dựng lại từ đầu, không sao
+
+    durations, bad, added = {}, [], 0
+    for v in videos:
+        try:
+            st = v.stat()
+            key = str(v.resolve())
+            sig = [st.st_size, st.st_mtime_ns]
+            hit = _probe_cache.get(key)
+            if isinstance(hit, list) and len(hit) == 3 and hit[:2] == sig:
+                durations[v] = float(hit[2])
+                continue
+            dur = get_duration(v)
+            _probe_cache[key] = [*sig, dur]
+            durations[v] = dur
+            added += 1
+        except (OSError, RuntimeError) as e:
+            bad.append(f"{v.name} ({e})")
+
+    if bad:
+        log(f"[Cảnh báo] Bỏ qua {len(bad)} clip không đọc được: {', '.join(bad[:5])}"
+            + (" ..." if len(bad) > 5 else ""))
+    if added:
+        try:
+            PROBE_CACHE_FILE.write_text(
+                json.dumps(_probe_cache, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass      # không ghi được cache thì thôi, lần sau probe lại
+    return durations
 
 
 def find_audio() -> Path:
@@ -366,8 +474,11 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     )
     bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch))
 
-    # Ghép random tới khi đủ thời lượng audio
-    durations = {v: get_duration(v) for v in videos}
+    # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
+    durations = probe_durations(videos, log)
+    videos = [v for v in videos if v in durations]
+    if not videos:
+        raise RuntimeError(f"Không đọc được clip nào trong: {src_dir}")
     seq, total = build_playlist(videos, durations, audio_dur)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",

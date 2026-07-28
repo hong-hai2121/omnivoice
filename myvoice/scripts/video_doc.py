@@ -38,7 +38,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 # Tái dùng các tiện ích đã có của bản ngang (đọc thời lượng, dò NVENC, ghép playlist, tìm audio).
 from video_khung import (get_duration, has_nvenc, build_playlist, find_audio,
-                         run_ffmpeg_progress)
+                         run_ffmpeg_progress, probe_durations)
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VIDEO_DIR  = BASE_DIR / "videodoc"     # kho video DỌC để ghép random
@@ -133,8 +133,11 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
             log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
             effect = None
 
-        # Ghép random tới khi đủ thời lượng audio
-        durations = {v: get_duration(v) for v in videos}
+        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
+        durations = probe_durations(videos, log)
+        videos = [v for v in videos if v in durations]
+        if not videos:
+            raise RuntimeError(f"Không đọc được clip nào trong: {video_dir}")
         seq, total = build_playlist(videos, durations, audio_dur)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
