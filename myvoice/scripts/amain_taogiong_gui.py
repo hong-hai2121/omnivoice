@@ -61,7 +61,10 @@ EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng 
 PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
 OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài đặt" (nhớ lần chạy trước)
 # Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice)
-PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7")
+PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
+                     shutdown=False)
+# Số phút chờ trước khi tắt máy khi bật ô "Xong thì tắt máy" (huỷ bằng: shutdown /a).
+SHUTDOWN_DELAY_MIN = 5
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -684,25 +687,30 @@ def replace_channel_promo(text: str) -> tuple[str, int, int]:
     return out, len(promo_idx), added
 
 
-# ── SỬA CHỮ "but" TIẾNG ANH BỊ SÓT → "nhưng" ─────────────────────────────────
-# Gemini đôi khi để sót liên từ 但 thành "But/but" (tiếng Anh) thay vì "Nhưng".
-# Khớp NGUYÊN TỪ (word-boundary) nên KHÔNG đụng "bút", "debut", "buttery"...
-_ENG_BUT = re.compile(r'\bbut\b', re.IGNORECASE)
+# ── SỬA TỪ TIẾNG ANH BỊ SÓT → tiếng Việt ─────────────────────────────────────
+# Gemini đôi khi để sót nguyên từ tiếng Anh giữa câu Việt: "But/but" (但),
+# "If thấy hay…", "Twenty năm sau", "Sit vào trong xe", "Hand ... run lên".
+# Bảng thay + danh sách giữ nguyên nằm ở scripts/tienganh_map.tsv (dich_tienganh).
+def replace_leaked_english(text: str) -> tuple[str, int, list]:
+    """Thay từ tiếng Anh Gemini sót → tiếng Việt, và dò từ lạ còn lại.
 
-
-def _but_to_nhung(m: "re.Match") -> str:
-    w = m.group(0)
-    if w.isupper():          # BUT  → NHƯNG
-        return "NHƯNG"
-    if w[0].isupper():       # But  → Nhưng
-        return "Nhưng"
-    return "nhưng"           # but  → nhưng
-
-
-def replace_leaked_but(text: str) -> tuple[str, int]:
-    """Thay chữ tiếng Anh 'but' (Gemini sót khi dịch 但) → 'nhưng', giữ hoa/thường.
-    Trả về (text_đã_thay, số_lần_thay)."""
-    return _ENG_BUT.subn(_but_to_nhung, text)
+    Trả về (text_đã_thay, số_từ_đã_thay, danh_sách_từ_nghi_ngờ). Từ nghi ngờ chỉ
+    để CẢNH BÁO (tên riêng/từ mượn mới), không tự sửa. Thiếu module → no-op."""
+    try:
+        import dich_tienganh as en
+    except Exception as e:
+        logging.warning(f"⚠️ Bỏ qua kiểm tra tiếng Anh: {e}")
+        return text, 0, []
+    out, n, suspects = en.fix_english(text, on_log=logging.info)
+    if n:
+        logging.info(f"🔁 Đã thay {n} từ tiếng Anh sót → tiếng Việt.")
+    if suspects:
+        logging.warning("⚠️ Từ lạ (không giống tiếng Việt) — tự xem lại, app KHÔNG "
+                        "tự sửa: " + ", ".join(suspects[:25])
+                        + (f" … (+{len(suspects) - 25})" if len(suspects) > 25 else "")
+                        + f"\n   → Nếu là tên riêng/từ mượn, thêm vào {en._MAP_PATH.name} "
+                          "với cột 2 là dấu '=' để hết cảnh báo.")
+    return out, n, suspects
 
 
 def chunks_dir_for(output_path: Path) -> Path:
@@ -729,6 +737,30 @@ def unique_path(path: Path) -> Path:
         if not cand.exists():
             return cand
         n += 1
+
+
+def find_cover_doc(folder, log=print):
+    """Tìm thumbnail DỌC của tập (thumbnail<NN>_dọc.png, 1080×1920) để đè lên FRAME
+    ĐẦU video dọc/TikTok — TikTok & Facebook lấy frame đầu làm ảnh bìa mặc định.
+
+    • Thư mục tập (kịch_bản/NN) chỉ có 1 file → lấy luôn.
+    • Thư mục chung (kịch_bản/) chứa thumbnail của nhiều tập → lấy đúng SỐ TẬP đang
+      đặt ở tab Thumbnail, không có thì lấy file mới nhất.
+    Trả về None nếu chưa có thumbnail dọc (khi đó video dựng như cũ)."""
+    folder = Path(folder)
+    cands = list(folder.glob("thumbnail*_dọc.png"))
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0]
+    ep = load_episode_number()
+    exact = folder / f"thumbnail{ep:02d}_dọc.png"
+    if exact.is_file():
+        return exact
+    newest = max(cands, key=lambda p: p.stat().st_mtime)
+    log(f"[ảnh bìa] {folder.name} có {len(cands)} thumbnail dọc, không khớp số tập "
+        f"{ep:02d} → dùng bản mới nhất: {newest.name}")
+    return newest
 
 
 def _speedup_audio_for_doc(src, factor):
@@ -1251,11 +1283,15 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(0)
                 # "Không áp hiệu ứng cho video dọc" → bỏ effect ở mọi trường hợp.
                 doc_effect = None if doc_no_effect else effect
+                # Ảnh bìa = thumbnail dọc của tập, đè lên ĐÚNG 1 frame đầu (xem
+                # find_cover_doc). Chưa có thumbnail → None → dựng như cũ.
                 vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
                                            progress=_video_progress("📱 Dựng video dọc..."),
                                            skip_existing=skip_video,
                                            source_video=ngang_src, source_dir=doc_source_dir,
-                                           output=doc_out)
+                                           output=doc_out,
+                                           cover_png=find_cover_doc(output_path.parent,
+                                                                    log=logging.info))
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
@@ -1372,11 +1408,15 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             try:
                 progress_var.set(0)
                 tk_effect = None if tiktok_no_effect else effect
+                # Ảnh bìa nằm TRÊN chữ caption, nhưng chỉ ở frame đầu nên chữ
+                # 'Mimi audio Số …' vẫn hiện bình thường từ frame thứ 2 trở đi.
                 tk_out = build_video_doc(tk_audio, log=logging.info, effect=tk_effect,
                                          progress=_video_progress("🎵 Dựng video TikTok..."),
                                          skip_existing=skip_video,
                                          source_video=tk_source, output=tk_video_out,
-                                         caption_png=cap_png)
+                                         caption_png=cap_png,
+                                         cover_png=find_cover_doc(output_path.parent,
+                                                                  log=logging.info))
                 progress_var.set(100)
                 status_var.set(f"Xong! Video TikTok → {tk_out.name}")
                 logging.info(f"Đã tạo video TikTok → {tk_out.name}")
@@ -1417,6 +1457,9 @@ class App(tk.Tk):
         self._last_output = None
         self._pipe_busy = False
         self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
+        # ⏻ Xong thì tắt máy — DÙNG CHUNG cho 2 ô tick (tab Giọng nói + bước ③), nên
+        # tạo ở đây, TRƯỚC khi dựng panel: tick ở đâu cũng là một cài đặt duy nhất.
+        self.var_shutdown = tk.BooleanVar(value=self._pipe_settings.get("shutdown", False))
         self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
         self._effect_favorites = load_effect_favorites()
@@ -2005,8 +2048,8 @@ class App(tk.Tk):
                                          command=lambda: self._rebuild_video("tiktok"))
         self.btn_run_tiktok.place(relx=1.0, x=-6, y=2, anchor="ne")
 
-        # ── Nhóm hành động (Chạy / Tạm dừng / Nghe thử) — đặt trong CỘT TTS, NGAY DƯỚI
-        #    group box "Cài đặt" (NGOÀI group box). left rows: ...sec_opt=3 → 4,5,6,7. ──
+        # ── Nhóm hành động (Chạy / Tạm dừng / Nghe thử / Xóa output) — đặt trong CỘT
+        #    TTS, NGAY DƯỚI group box "Cài đặt" (NGOÀI group box). left rows: 4 và 5. ──
         act = ttk.Frame(left)
         act.grid(row=4, column=0, sticky="ew", pady=(8, 8))
         self.btn_run = ttk.Button(act, text="▶  Chạy", command=self._start,
@@ -2017,28 +2060,28 @@ class App(tk.Tk):
         self.btn_pause.pack(side="left", padx=(0, 8))
         self.btn_preview = ttk.Button(act, text="🔊  Nghe thử", command=self._toggle_preview,
                                       state="disabled")
-        self.btn_preview.pack(side="left")
+        self.btn_preview.pack(side="left", padx=(0, 8))
+        ttk.Button(act, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
 
-        # ── Xóa output + chế độ dùng lại — xuống hàng riêng cho khỏi bị khuất ──
+        # ── 3 ô tick GỘP 1 HÀNG (chữ rút gọn cho vừa bề ngang cột giữa) ───────────
+        #  ♻ dùng lại : bỏ qua tạo giọng nếu output.wav còn đúng văn bản/giọng và bỏ
+        #               qua video đã dựng — chỉ dựng phần còn thiếu. Mặc định TẮT
+        #               (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
+        #  ⬆️ hiện cửa sổ: tới bước clone giọng thì GUI tự bật lên trên (mỗi link 1 lần).
+        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a);
+        #               dùng CHUNG biến với ô tick ở bước ③.
+        # Cột giữa có weight=0 (co theo nội dung) nên hàng này phải ngắn, kẻo cột
+        # giữa phình ra lấn sang cột video bên phải.
         act2 = ttk.Frame(left)
         act2.grid(row=5, column=0, sticky="ew", pady=(0, 10))
-        ttk.Button(act2, text="🗑  Xóa output", command=self._clear_output).pack(side="left")
-        # ♻ Dùng lại audio/video đã có: bỏ qua tạo giọng nếu output.wav còn đúng
-        # văn bản/giọng, và bỏ qua video nào đã dựng — chỉ dựng phần còn thiếu.
-        # Mặc định TẮT (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
         self.var_reuse = tk.BooleanVar(value=False)
-        ttk.Checkbutton(act2, text="♻  Dùng lại audio/video đã có (chỉ dựng phần còn thiếu)",
-                        variable=self.var_reuse).pack(side="left", padx=(16, 0))
-
-        # ── Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần) ──
-        # Hữu ích khi chạy nền: tới bước clone giọng thì GUI tự bật lên trên (vd
-        # đang làm việc ở VS Code) để dễ theo dõi / ưu tiên CPU+GPU cho app.
-        act3 = ttk.Frame(left)
-        act3.grid(row=6, column=0, sticky="ew", pady=(0, 10))
+        ttk.Checkbutton(act2, text="♻  Dùng lại audio/video",
+                        variable=self.var_reuse).pack(side="left")
         self.var_bring_front = tk.BooleanVar(value=self._opt_settings["bring_front"])
-        ttk.Checkbutton(act3,
-                        text="⬆️  Đưa cửa sổ lên trước khi tạo giọng (mỗi link 1 lần)",
-                        variable=self.var_bring_front).pack(side="left")
+        ttk.Checkbutton(act2, text="⬆️  Hiện cửa sổ khi tạo giọng",
+                        variable=self.var_bring_front).pack(side="left", padx=(14, 0))
+        ttk.Checkbutton(act2, text="⏻  Xong thì tắt máy",
+                        variable=self.var_shutdown).pack(side="left", padx=(14, 0))
 
         # ── Tiến trình ── GỘP LÀM 1 với thanh dưới bước 3: self.progress/self.status
         # DÙNG CHUNG biến với pipe_progress/pipe_status → chỉ một tiến trình duy nhất
@@ -2046,7 +2089,7 @@ class App(tk.Tk):
         # HIỆN ở view 'Giọng nói' (khi cột quy trình bị ẩn); các view khác đã thấy
         # thanh dưới bước 3 nên _show_view ẩn thanh này để không lặp 2 thanh.
         prog_frame = ttk.Frame(left)
-        prog_frame.grid(row=7, column=0, sticky="ew", pady=(0, 10))
+        prog_frame.grid(row=6, column=0, sticky="ew", pady=(0, 10))
         prog_frame.columnconfigure(0, weight=1)
         self._voice_prog_frame = prog_frame
         self.progress = self.pipe_progress        # cùng biến với thanh dưới bước 3
@@ -3936,10 +3979,9 @@ class App(tk.Tk):
             logging.info(f"➕ Bản dịch thiếu {n_add} câu quảng bá → đã thêm mặc định "
                          f"vào đầu/cuối bài.")
 
-        # 2c) SỬA chữ "but" tiếng Anh Gemini sót → "nhưng"
-        content, n_but = replace_leaked_but(content)
-        if n_but:
-            logging.info(f'🔁 Đã thay {n_but} chữ "but" (tiếng Anh) → "nhưng".')
+        # 2c) SỬA từ TIẾNG ANH Gemini sót → tiếng Việt (but→nhưng, If→Nếu,
+        #     Twenty→Hai mươi…) + cảnh báo từ lạ còn lại.
+        content, _n_en, _sus_en = replace_leaked_english(content)
 
         # 2d) XỬ LÝ chữ Hán Gemini bỏ sót: câu dài → dịch NGHĨA (MT offline),
         #     chữ ngắn / tên / thành ngữ → phiên âm Hán-Việt.
@@ -4046,6 +4088,15 @@ class App(tk.Tk):
         ttk.Checkbutton(s3, text="⛓  Chạy tiếp tạo giọng (OmniVoice) sau khi xong",
                         variable=self.var_auto_tts).grid(row=2, column=0, sticky="w", pady=(6, 0))
 
+        # TẮT MÁY khi chạy xong — để chạy batch qua đêm rồi máy tự tắt. Một lần duy
+        # nhất: hẹn xong là tự bỏ tick, khỏi lỡ tắt máy ở lần chạy sau. Biến dùng
+        # chung với ô tick bên tab Giọng nói (tạo ở __init__).
+        ttk.Checkbutton(
+            s3, text=f"⏻  Xong hết thì TẮT MÁY (sau {SHUTDOWN_DELAY_MIN} phút)",
+            variable=self.var_shutdown).grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(s3, text="Huỷ bất cứ lúc nào: mở CMD gõ  shutdown /a",
+                  style="Hint.TLabel").grid(row=4, column=0, sticky="w")
+
         self._pipe_steps = (s1, s2, s3)
 
         # Tiến trình + trạng thái của quy trình
@@ -4117,6 +4168,49 @@ class App(tk.Tk):
             block = "\n".join(paths)
             self.pipe_txt_sources.insert("end", ("\n" if cur else "") + block)
 
+    def _run_tts_then_shutdown(self, *args, **kwargs):
+        """Bọc run_tts cho các luồng ở tab Giọng nói (không đi qua _pipe_set_busy):
+        chạy xong/lỗi thì kiểm tra ô tick ⏻ để hẹn tắt máy. Gọi lại trên luồng Tk
+        bằng after() vì BooleanVar không an toàn khi đụng từ thread khác."""
+        try:
+            run_tts(*args, **kwargs)
+        finally:
+            try:
+                self.after(0, self._maybe_schedule_shutdown)
+            except Exception:
+                pass
+
+    def _maybe_schedule_shutdown(self):
+        """Hẹn TẮT MÁY sau SHUTDOWN_DELAY_MIN phút nếu đã tick ô ⏻ (để chạy batch qua
+        đêm rồi máy tự tắt). Chỉ hẹn khi KHÔNG còn tiến trình nào chạy.
+
+        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt ngoài ý muốn.
+        Vẫn hẹn khi luồng kết thúc do LỖI — máy đằng nào cũng rảnh, log đã ghi lại lỗi.
+        Huỷ bất cứ lúc nào bằng lệnh:  shutdown /a
+        """
+        var = getattr(self, "var_shutdown", None)
+        if var is None or not var.get() or self._pipe_busy:
+            return
+        var.set(False)                 # một lần duy nhất
+        try:
+            self._save_pipe_settings()
+        except Exception:
+            pass
+        try:
+            import subprocess
+            secs = int(SHUTDOWN_DELAY_MIN * 60)
+            subprocess.run(
+                ["shutdown", "/s", "/t", str(secs), "/c",
+                 f"OmniVoice da chay xong - tat may sau {SHUTDOWN_DELAY_MIN} phut. "
+                 f"Huy: shutdown /a"],
+                creationflags=CREATE_NO_WINDOW, check=False)
+            logging.warning(f"⏻ ĐÃ HẸN TẮT MÁY sau {SHUTDOWN_DELAY_MIN} phút — "
+                            f"muốn huỷ thì mở CMD gõ:  shutdown /a")
+            self.pipe_status.set(
+                f"⏻ Tắt máy sau {SHUTDOWN_DELAY_MIN} phút — huỷ: shutdown /a")
+        except Exception as e:
+            logging.error(f"Không hẹn được tắt máy: {e}")
+
     def _pipe_set_busy(self, busy: bool):
         self._pipe_busy = busy
         state = "disabled" if busy else "normal"
@@ -4128,6 +4222,10 @@ class App(tk.Tk):
                   getattr(self, "recog_tts_btn", None)):
             if b is not None:
                 b.config(state=state)
+        # Mọi luồng dài (batch nhiều link, các bước ①②③④⑤) đều đi qua đây khi kết
+        # thúc → chỗ duy nhất cần móc lệnh hẹn tắt máy.
+        if not busy:
+            self._maybe_schedule_shutdown()
 
     def _save_pipe_settings(self):
         """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
@@ -4135,6 +4233,7 @@ class App(tk.Tk):
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
+            shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
         ))
 
     def _reset_pipe_settings(self):
@@ -4143,6 +4242,8 @@ class App(tk.Tk):
         self.var_auto3.set(PIPE_DEFAULTS["auto3"])
         self.var_auto_tts.set(PIPE_DEFAULTS["auto_tts"])
         self.var_seo.set(PIPE_DEFAULTS["seo"])
+        if hasattr(self, "var_shutdown"):
+            self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])
         self.pipe_var_speed.set(PIPE_DEFAULTS["speed"])
         self.pipe_txt_sources.delete("1.0", "end")
@@ -4545,9 +4646,7 @@ class App(tk.Tk):
                 logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh.")
             if n_add:
                 logging.info(f"➕ Thiếu {n_add} câu quảng bá → đã thêm mặc định.")
-            content, n_but = replace_leaked_but(content)
-            if n_but:
-                logging.info(f'🔁 Đã thay {n_but} chữ "but" → "nhưng".')
+            content, _n_en, _sus_en = replace_leaked_english(content)
             try:
                 import dich_hanviet as hv
                 content, n_mt, n_am = hv.translate_han(content, on_log=logging.info)
@@ -5433,7 +5532,7 @@ class App(tk.Tk):
         self.progress.set(0)
         self.status.set(f"Đã chia {len(chunks)} đoạn — đang khởi động...")
         threading.Thread(
-            target=run_tts,
+            target=self._run_tts_then_shutdown,   # bọc để xong thì xét ô tick ⏻
             args=(mode, voice_param, chunks, self.var_out.get(),
                   self.progress, self.status,
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
@@ -5585,7 +5684,7 @@ class App(tk.Tk):
         ev = threading.Event()
         ev.set()   # không tạm dừng
         threading.Thread(
-            target=run_tts,
+            target=self._run_tts_then_shutdown,   # bọc để xong thì xét ô tick ⏻
             args=("", None, [], str(out_path), self.progress, self.status,
                   btn, _NullWidget(), _NullWidget(), ev),
             kwargs=dict(

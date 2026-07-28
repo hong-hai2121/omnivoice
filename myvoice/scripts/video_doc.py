@@ -56,7 +56,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                     skip_existing=False, source_video=None, source_dir=None,
                     output: Path | None = None,
                     caption_png: Path | None = None,
-                    caption_pulse_period: float = 300.0) -> Path:
+                    caption_pulse_period: float = 300.0,
+                    cover_png: Path | None = None,
+                    cover_frames: int = 1) -> Path:
     """Dựng video DỌC 1080x1920 (không khung) từ một file audio. Trả về đường dẫn output.
 
     Ném RuntimeError nếu thiếu tài nguyên hoặc ffmpeg lỗi. `log` là hàm nhận chuỗi
@@ -83,6 +85,12 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
     caption_pulse_period: chu kỳ (giây) của hiệu ứng HÚT MẮT — cứ mỗi chu kỳ, chữ
             NẢY lên ~70px trong 1.2s rồi về chỗ (mặc định 300 = mỗi 5 phút 1 lần).
             ≤ 0 → chữ đứng yên, không nảy. Chỉ áp dụng khi có caption_png.
+    cover_png: ẢNH BÌA (thumbnail dọc 1080×1920) đè lên ĐÚNG frame đầu video để
+            TikTok/Facebook lấy làm ảnh bìa mặc định. KHÔNG đổi thời lượng, KHÔNG
+            đụng audio — chỉ 1 frame nên người xem gần như không thấy khựng. Ảnh
+            sai kích thước vẫn dùng được (tự scale "fill" + cắt giữa). None = không.
+    cover_frames: số frame đầu bị đè (mặc định 1 = đúng 1 frame). Tăng lên nếu nền
+            tảng lấy cover ở frame sau; 1 frame ≈ 0,03s nên không ảnh hưởng nội dung.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -102,7 +110,17 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         log(f"[Cảnh báo] Không tìm thấy ảnh chữ overlay, bỏ qua: {caption_png}")
         caption_png = None
     has_caption = caption_png is not None
-    vend = "[vid]" if has_caption else "[out]"
+
+    # Ảnh bìa: chỉ đè lên frame đầu (xem cover_png) → video base cũng phải kết ở
+    # [vid] để còn chồng thêm lớp, y như trường hợp có caption.
+    cover_png = Path(cover_png) if cover_png else None
+    if cover_png and not cover_png.exists():
+        log(f"[Cảnh báo] Không tìm thấy ảnh bìa, bỏ qua: {cover_png}")
+        cover_png = None
+    has_cover = cover_png is not None
+    cover_frames = max(1, int(cover_frames or 1))
+
+    vend = "[vid]" if (has_caption or has_cover) else "[out]"
 
     reuse_ngang = source_video is not None
     if reuse_ngang:
@@ -169,6 +187,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         else:
             filt = base + vend
 
+    if has_cover:
+        log(f"Ảnh bìa    : {cover_png.name} (đè {cover_frames} frame đầu)")
+
     def build_cmd(gpu):
         if gpu:
             codec = [
@@ -195,11 +216,14 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 1
             cmd += ["-i", str(audio_file)]                          # audio
             audio_idx = 2 if effect else 1
-        # Ảnh chữ caption: input tĩnh (lặp 1 frame) → overlay lên trên cùng → [out].
+        # Các lớp phủ TĨNH, mỗi lớp thêm 1 input ảnh lặp (đặt SAU audio): chữ caption
+        # trước, ẢNH BÌA sau (nằm trên cùng ở frame đầu). Lớp cuối luôn kết ở [out];
+        # khi có cả hai thì nối nhau qua nhãn trung gian [cap].
         full_filt = filt
+        cur, next_idx = "[vid]", audio_idx + 1
         if has_caption:
             cmd += ["-loop", "1", "-i", str(caption_png)]           # sau audio
-            cap_idx = audio_idx + 1
+            cap_idx, next_idx = next_idx, next_idx + 1
             if caption_pulse_period and caption_pulse_period > 0:
                 P = caption_pulse_period
                 # HÚT MẮT: mỗi P giây, chữ NẢY lên ~70px trong 1.2s rồi về (dấu phẩy
@@ -208,7 +232,18 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
                 ov = f"overlay=x=0:y={yexpr}"
             else:
                 ov = "overlay=0:0"
-            full_filt = filt + f";[vid][{cap_idx}:v]{ov}[out]"
+            end = "[cap]" if has_cover else "[out]"
+            full_filt += f";{cur}[{cap_idx}:v]{ov}{end}"
+            cur = "[cap]"
+        if has_cover:
+            # Đè ảnh bìa lên ĐÚNG cover_frames frame đầu: enable=lt(n,N) đếm theo SỐ
+            # FRAME nên chính xác bất kể fps (khác lt(t,...) phải biết fps mới ra 1 frame).
+            cmd += ["-loop", "1", "-i", str(cover_png)]
+            cov_idx, next_idx = next_idx, next_idx + 1
+            full_filt += (
+                f";[{cov_idx}:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
+                f"crop={OUT_W}:{OUT_H},setsar=1[cov];"
+                f"{cur}[cov]overlay=0:0:enable='lt(n\\,{cover_frames})'[out]")
         cmd += [
             "-filter_complex", full_filt,
             "-map", "[out]",

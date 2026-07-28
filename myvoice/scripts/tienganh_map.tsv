@@ -1,0 +1,360 @@
+# tienganh_map.tsv — bảng xử lý TỪ TIẾNG ANH còn sót trong bản dịch Gemini.
+# Dùng bởi dich_tienganh.py (bước tạo input.txt trong app tạo giọng).
+#
+# ĐỊNH DẠNG: mỗi dòng "tu_tieng_anh<TAB>thay_bang_gi", dòng bắt đầu bằng # là
+# ghi chú. Khớp NGUYÊN TỪ, không phân biệt hoa thường; kiểu hoa/thường của từ
+# gốc được giữ lại (If→Nếu, BUT→NHƯNG, but→nhưng).
+#
+#   • Cột 2 là chữ tiếng Việt  → tự động THAY.
+#   • Cột 2 là dấu "="         → GIỮ NGUYÊN, không thay, không cảnh báo.
+#
+# QUY TẮC VÀNG: chỉ thêm vào phần THAY những từ KHÔNG BAO GIỜ là tiếng Việt.
+# "so" (so sánh), "in" (bản in), "run" (run rẩy), "net" (quán net), "gen" (đột
+# biến gen), "hot", "top"… là tiếng Việt/từ mượn quen thuộc → phải để ở phần "="
+# bên dưới. Dòng "=" luôn thắng dòng thay, nên khi lỡ thay nhầm chữ nào, cứ thêm
+# chữ đó vào phần "=" là xong.
+#
+# Từ tiếng Anh lạ mà bảng này chưa biết sẽ KHÔNG bị sửa, chỉ hiện cảnh báo
+# "⚠️ Từ lạ" trong log để tự xem lại.
+
+# ── LIÊN TỪ / TRẠNG TỪ (hay bị sót nhất) ─────────────────────────────────────
+but	nhưng
+and	và
+or	hoặc
+if	nếu
+then	sau đó
+while	trong khi
+when	khi
+because	bởi vì
+however	tuy nhiên
+although	mặc dù
+though	mặc dù
+with	với
+without	không có
+about	về
+after	sau khi
+before	trước khi
+again	lại
+already	đã
+always	luôn luôn
+never	không bao giờ
+maybe	có lẽ
+really	thật sự
+very	rất
+just	chỉ
+only	chỉ
+still	vẫn
+suddenly	đột nhiên
+instantly	ngay lập tức
+immediately	ngay lập tức
+finally	cuối cùng
+actually	thực ra
+of course	dĩ nhiên
+in fact	thực ra
+at least	ít nhất
+right now	ngay bây giờ
+now	bây giờ
+today	hôm nay
+tomorrow	ngày mai
+yesterday	hôm qua
+suddenly	đột nhiên
+quietly	lặng lẽ
+slowly	chậm rãi
+coldly	lạnh lùng
+angrily	giận dữ
+
+# ── SỐ ĐẾM ───────────────────────────────────────────────────────────────────
+one	một
+two	hai
+three	ba
+four	bốn
+five	năm
+six	sáu
+seven	bảy
+eight	tám
+nine	chín
+eleven	mười một
+twelve	mười hai
+twenty	hai mươi
+thirty	ba mươi
+forty	bốn mươi
+fifty	năm mươi
+sixty	sáu mươi
+seventy	bảy mươi
+eighty	tám mươi
+ninety	chín mươi
+hundred	trăm
+thousand	nghìn
+million	triệu
+
+# ── ĐỘNG TỪ ──────────────────────────────────────────────────────────────────
+sit	ngồi
+stand	đứng
+look	nhìn
+saw	thấy
+see	thấy
+know	biết
+knew	biết
+think	nghĩ
+thought	nghĩ
+want	muốn
+need	cần
+went	đã đi
+going	đang đi
+come	đến
+came	đã đến
+give	đưa
+gave	đã đưa
+take	lấy
+took	đã lấy
+make	làm
+made	đã làm
+said	nói
+says	nói
+tell	nói
+told	đã nói
+asked	hỏi
+smile	mỉm cười
+smiled	mỉm cười
+laugh	cười
+cried	khóc
+walked	bước đi
+sleep	ngủ
+wake up	tỉnh dậy
+help	giúp đỡ
+kill	giết
+died	đã chết
+
+# ── DANH TỪ / TÍNH TỪ ────────────────────────────────────────────────────────
+hand	tay
+head	đầu
+face	khuôn mặt
+eyes	đôi mắt
+mouth	miệng
+heart	trái tim
+door	cửa
+window	cửa sổ
+water	nước
+house	ngôi nhà
+money	tiền
+father	bố
+mother	mẹ
+brother	anh trai
+sister	chị gái
+friend	bạn
+people	mọi người
+children	bọn trẻ
+husband	chồng
+wife	vợ
+woman	người phụ nữ
+beautiful	xinh đẹp
+angry	tức giận
+happy	vui vẻ
+afraid	sợ hãi
+young	trẻ
+chapter	chương
+
+# ── LỊCH SỰ ──────────────────────────────────────────────────────────────────
+yes	vâng
+sorry	xin lỗi
+thank you	cảm ơn
+thanks	cảm ơn
+please	làm ơn
+
+# ── GIỮ NGUYÊN: trùng tiếng Việt không dấu (TUYỆT ĐỐI KHÔNG THAY) ────────────
+so	=
+in	=
+run	=
+net	=
+gen	=
+to	=
+do	=
+no	=
+an	=
+im	=
+om	=
+on	=
+can	=
+man	=
+men	=
+ten	=
+than	=
+say	=
+la	=
+ma	=
+ba	=
+ta	=
+ra	=
+cha	=
+con	=
+cho	=
+sau	=
+tay	=
+sao	=
+em	=
+hai	=
+hay	=
+gia	=
+qua	=
+xem	=
+khi	=
+ai	=
+tim	=
+tin	=
+sang	=
+cao	=
+bao	=
+mai	=
+may	=
+mat	=
+son	=
+sen	=
+kim	=
+tam	=
+ham	=
+hen	=
+den	=
+ken	=
+men	=
+ban	=
+chat	=
+gan	=
+tan	=
+van	=
+lan	=
+long	=
+song	=
+dong	=
+bong	=
+hang	=
+sang	=
+mang	=
+rang	=
+pin	=
+gu	=
+ga	=
+bar	=
+che	=
+alo	=
+vali	=
+haiz	=
+hazzz	=
+parabol	=
+mimi	=
+
+# ── GIỮ NGUYÊN: từ mượn / thuật ngữ đã quen trong tiếng Việt ─────────────────
+video	=
+audio	=
+camera	=
+clip	=
+app	=
+game	=
+show	=
+liveshow	=
+livestream	=
+poster	=
+sticker	=
+shipper	=
+internet	=
+wifi	=
+wi	=
+fi	=
+bluetooth	=
+robot	=
+logic	=
+series	=
+remix	=
+rock	=
+vest	=
+blouse	=
+sofa	=
+tivi	=
+taxi	=
+balo	=
+mic	=
+led	=
+ok	=
+okay	=
+mc	=
+gps	=
+suv	=
+km	=
+kg	=
+cm	=
+cp	=
+st	=
+hot	=
+top	=
+search	=
+class	=
+new	=
+name	=
+nick	=
+bro	=
+idol	=
+fan	=
+fanpage	=
+hashtag	=
+paparazzi	=
+marketing	=
+excel	=
+file	=
+email	=
+online	=
+offline	=
+laptop	=
+iphone	=
+ipad	=
+album	=
+vitamin	=
+protein	=
+gluten	=
+canxi	=
+oxy	=
+siro	=
+noel	=
+morse	=
+husky	=
+lolita	=
+wagyu	=
+americano	=
+cologne	=
+hello	=
+kitty	=
+
+# ── GIỮ NGUYÊN: tên riêng / thương hiệu hay gặp trong truyện ─────────────────
+facebook	=
+tiktok	=
+tiktoker	=
+youtube	=
+google	=
+zalo	=
+weibo	=
+wechat	=
+douyin	=
+bilibili	=
+pinduoduo	=
+hollywood	=
+versailles	=
+michelin	=
+mercedes	=
+bmw	=
+audi	=
+lexus	=
+volvo	=
+volkswagen	=
+tiguan	=
+passat	=
+porsche	=
+cayenne	=
+cadillac	=
+brembo	=
+luxgen	=
+santana	=
+range	=
+rover	=
+patek	=
+philippe	=
+cordon	=
+bleu	=
+zealand	=
