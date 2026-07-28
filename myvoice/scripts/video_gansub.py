@@ -13,8 +13,11 @@ Gắn phụ đề (sub) vào video — dùng ĐÚNG chữ từ file kịch bản
      player có thể bật/tắt phụ đề.
 
 Cách dùng:
-    # mặc định: audio tách từ video, kịch bản = ../kịch_bản/input.txt
+    # mặc định: audio tách từ video, kịch bản = input.txt CẠNH video (nếu có)
     python video_gansub.py "duong_dan/output_videodone.mp4"
+
+    # chỉ xuất .srt để tải lên YouTube Studio, KHÔNG đụng tới file video
+    python video_gansub.py "kịch_bản/35 - 94/YOUTUBE.mp4" --srt-only
 
     # chỉ rõ audio + kịch bản + nơi lưu
     python video_gansub.py "output_videodone.mp4" --audio "output3.wav" \
@@ -27,6 +30,7 @@ Yêu cầu:
 
 import argparse
 import difflib
+import math
 import os
 import re
 import subprocess
@@ -52,6 +56,19 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # input.txt nằm ở myvoice/kịch_bản/
 DEFAULT_SCRIPT = SCRIPT_DIR.parent / "kịch_bản" / "input.txt"
 
+
+def guess_script(video_path: Path) -> Path:
+    """Đoán file kịch bản cho video.
+
+    Pipeline để MỖI dự án một thư mục riêng (vd kịch_bản/35 - 94/) chứa cả video
+    lẫn input.txt của chính nó, nên ưu tiên input.txt NẰM CẠNH video; chỉ khi
+    không có (hoặc rỗng) mới lùi về input.txt dùng chung ở kịch_bản/.
+    """
+    sibling = video_path.resolve().parent / "input.txt"
+    if sibling.is_file() and sibling.stat().st_size > 0:
+        return sibling
+    return DEFAULT_SCRIPT
+
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 
 # Tách câu: sau dấu kết câu (. ! ? …) và khoảng trắng theo sau.
@@ -69,15 +86,38 @@ def norm_tokens(text: str):
 # 1) Cắt văn bản gốc thành các cue phụ đề ngắn
 # ----------------------------------------------------------------------------- #
 def wrap_sentence(sentence: str, max_chars: int):
-    """Cắt 1 câu dài thành nhiều mẩu ≤ max_chars, luôn cắt ở ranh giới từ."""
+    """Cắt 1 câu dài thành nhiều mẩu ≤ max_chars, CHIA ĐỀU, cắt ở ranh giới từ.
+
+    Cách tham lam (nhồi cho đầy max_chars rồi vứt phần thừa xuống dòng sau) đẻ ra
+    rất nhiều dòng mồ côi kiểu "nay." / "xẻo." — đọc rất khó chịu. Ở đây tính
+    trước số dòng cần thiết rồi nhắm độ dài trung bình, nên các dòng dài xấp xỉ
+    nhau và không còn chữ rơi lại một mình.
+    """
     words = sentence.split()
+    if not words:
+        return []
+    n_lines = max(1, math.ceil(len(sentence) / max_chars))
+    target = len(sentence) / n_lines
+
     pieces, cur = [], ""
     for w in words:
-        if cur and len(cur) + 1 + len(w) > max_chars:
+        cand = (cur + " " + w).strip()
+        if not cur:
+            cur = cand
+            continue
+        if len(cand) > max_chars:
+            wrap = True
+        elif len(pieces) < n_lines - 1 and len(cand) > target:
+            # Đã quá mức nhắm tới: giữ w lại hay đẩy sang dòng sau, chọn bên nào
+            # cho độ dài gần `target` hơn.
+            wrap = (len(cand) - target) > (target - len(cur))
+        else:
+            wrap = False
+        if wrap:
             pieces.append(cur)
             cur = w
         else:
-            cur = (cur + " " + w).strip()
+            cur = cand
     if cur:
         pieces.append(cur)
     return pieces
@@ -375,8 +415,9 @@ def main():
     parser.add_argument("video", help="Video cần gắn phụ đề (mp4).")
     parser.add_argument("--audio", default=None,
                         help="File audio để căn giờ (mặc định: tách từ video).")
-    parser.add_argument("--script", default=str(DEFAULT_SCRIPT),
-                        help="File văn bản kịch bản gốc (mặc định: ../kịch_bản/input.txt).")
+    parser.add_argument("--script", default=None,
+                        help="File văn bản kịch bản gốc (mặc định: input.txt cạnh video, "
+                             "không có thì lùi về ../kịch_bản/input.txt).")
     parser.add_argument("--out", default=None,
                         help="Video kết quả (mặc định: <tên video>_sub.mp4).")
     parser.add_argument("--model", default="medium",
@@ -385,15 +426,20 @@ def main():
                         help="Độ dài tối đa mỗi dòng phụ đề (mặc định: 50).")
     parser.add_argument("--burn", action="store_true",
                         help="Vẽ cứng phụ đề vào hình (hardsub, re-encode) thay vì nhúng mềm.")
+    parser.add_argument("--srt-only", action="store_true",
+                        help="CHỈ xuất file .srt (vd để tải lên YouTube Studio), không đụng video.")
     args = parser.parse_args()
 
     video_path = Path(args.video)
     if not video_path.is_file():
         print(f"❌ Không tìm thấy video: {video_path}")
         sys.exit(1)
-    script_path = Path(args.script)
+    script_path = Path(args.script) if args.script else guess_script(video_path)
     if not script_path.is_file():
         print(f"❌ Không tìm thấy file kịch bản: {script_path}")
+        sys.exit(1)
+    if script_path.stat().st_size == 0:
+        print(f"❌ File kịch bản rỗng: {script_path}")
         sys.exit(1)
 
     out_path = Path(args.out) if args.out else video_path.with_name(video_path.stem + "_sub.mp4")
@@ -441,6 +487,21 @@ def main():
     write_srt(cues, cue_times, srt_path)
     print(f"💾 Đã ghi phụ đề: {srt_path}")
 
+    def _cleanup_temp():
+        if temp_wav and os.path.exists(temp_wav):
+            try:
+                os.remove(temp_wav)
+            except Exception:
+                pass
+
+    if args.srt_only:
+        # Chỉ cần .srt (tải lên YouTube Studio) — không copy/re-encode file video.
+        _cleanup_temp()
+        print("\n✅ Hoàn tất! (chỉ xuất .srt — video giữ nguyên, không bị đụng vào)")
+        print(f"   File .srt : {srt_path}  ({len(cues)} dòng)")
+        print("   Tải lên: YouTube Studio → video → Phụ đề → Tải tệp lên → chọn .srt")
+        return
+
     if args.burn:
         print("🎬 Đang VẼ CỨNG phụ đề vào hình (re-encode, hơi lâu)...")
         ok = burn_subs(video_path, srt_path, out_path)
@@ -448,11 +509,7 @@ def main():
         print("🎬 Đang nhúng phụ đề (soft sub) vào video...")
         ok = mux_softsub(video_path, srt_path, out_path)
 
-    if temp_wav and os.path.exists(temp_wav):
-        try:
-            os.remove(temp_wav)
-        except Exception:
-            pass
+    _cleanup_temp()
 
     if not ok:
         sys.exit(1)

@@ -27,7 +27,10 @@ if _REPO_ROOT not in sys.path:
 
 import re
 import queue
+import shutil
+import subprocess
 import threading
+import time
 import traceback
 from pathlib import Path
 import tkinter as tk
@@ -41,6 +44,14 @@ OUT_DIR = VOICE_DIR / "_thu_giong"            # nơi lưu audio nghe thử
 OUT_DIR.mkdir(exist_ok=True)
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
 CHUNK_SIZE = 300                              # ký tự tối đa mỗi đoạn khi tách
+
+# ── NGHE THỬ THEO TỐC ĐỘ ────────────────────────────────────────────────────────
+# Đổi tốc độ bằng ffmpeg atempo (GIỮ NGUYÊN cao độ, không bị "chipmunk" như cách
+# đổi sample rate). File gốc trong _thu_giong/ KHÔNG bị đụng — bản đổi tốc độ để
+# riêng ở _thu_giong/_tocdo/ và có cache theo từng mức tốc độ.
+FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
+SPEED_DIR = OUT_DIR / "_tocdo"
+SPEED_MIN, SPEED_MAX, SPEED_STEP = 0.75, 1.60, 0.05
 
 # Kịch bản mẫu để thử giọng (sửa tay thoải mái) — có câu kể, câu hỏi để nghe ngữ điệu.
 DEFAULT_SCRIPT = (
@@ -101,6 +112,8 @@ class App:
 
         self._busy = False
         self._playing = False
+        self._last_src = None       # file wav GỐC vừa phát (để đổi tốc độ phát lại)
+        self._play_until = 0.0      # mốc thời gian dự kiến phát xong (winsound không báo)
         self._model = None          # nạp 1 lần, dùng lại
         self._sr = None
         self.q = queue.Queue()      # (kind, payload) từ thread nền
@@ -168,7 +181,7 @@ class App:
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
+        right.rowconfigure(4, weight=1)
 
         ttk.Label(right, text="Kịch bản thử (sửa tay được):",
                   style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -194,14 +207,36 @@ class App:
         ttk.Button(actions, text="📁  Mở thư mục kết quả",
                    command=self._open_out).pack(side="right")
 
+        # ── Tốc độ nghe thử ──
+        speed_row = ttk.Frame(right)
+        speed_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        ttk.Label(speed_row, text="⏩  Tốc độ nghe:").pack(side="left")
+        ttk.Button(speed_row, text="−", width=3,
+                   command=lambda: self._bump_speed(-SPEED_STEP)).pack(side="left", padx=(8, 0))
+        self.var_speed = tk.DoubleVar(value=1.0)
+        self.scale_speed = ttk.Scale(speed_row, from_=SPEED_MIN, to=SPEED_MAX, length=280,
+                                     orient="horizontal", variable=self.var_speed,
+                                     command=lambda _v: self._update_speed_label())
+        self.scale_speed.pack(side="left", padx=6)
+        self.scale_speed.bind("<ButtonRelease-1>", self._on_speed_release)
+        ttk.Button(speed_row, text="+", width=3,
+                   command=lambda: self._bump_speed(SPEED_STEP)).pack(side="left")
+        self.lbl_speed = ttk.Label(speed_row, text="1.00×", width=6,
+                                   font=("Segoe UI Semibold", 11))
+        self.lbl_speed.pack(side="left", padx=(10, 0))
+        ttk.Button(speed_row, text="↺ 1.0×", width=8,
+                   command=lambda: self._set_speed(1.0)).pack(side="left", padx=(6, 0))
+        ttk.Label(speed_row, text="giữ nguyên cao độ  •  file gốc không đổi",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(right, textvariable=self.status, style="Muted.TLabel").grid(
-            row=4, column=0, sticky="w", pady=(8, 2))
+            row=5, column=0, sticky="w", pady=(8, 2))
         self.pb = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.pb.grid(row=5, column=0, sticky="ew")
+        self.pb.grid(row=6, column=0, sticky="ew")
 
         logf = ttk.LabelFrame(right, text="  Nhật ký  ", padding=6)
-        logf.grid(row=3, column=0, sticky="nsew", pady=(10, 6))
+        logf.grid(row=4, column=0, sticky="nsew", pady=(10, 6))
         logf.rowconfigure(0, weight=1)
         logf.columnconfigure(0, weight=1)
         self.logbox = scrolledtext.ScrolledText(logf, height=7, wrap="word", state="disabled",
@@ -370,6 +405,48 @@ class App:
         finally:
             self.q.put(("done", None))
 
+    # ── tốc độ nghe thử ──
+    def _speed(self) -> float:
+        """Tốc độ đang chọn, đã làm tròn về bội của SPEED_STEP (1.05, 1.10, 1.15...)."""
+        v = round(self.var_speed.get() / SPEED_STEP) * SPEED_STEP
+        return round(min(SPEED_MAX, max(SPEED_MIN, v)), 2)
+
+    def _update_speed_label(self):
+        self.lbl_speed.config(text=f"{self._speed():.2f}×")
+
+    def _set_speed(self, value: float):
+        self.var_speed.set(min(SPEED_MAX, max(SPEED_MIN, value)))
+        self._update_speed_label()
+        self._on_speed_release()
+
+    def _bump_speed(self, delta: float):
+        self._set_speed(self._speed() + delta)
+
+    def _on_speed_release(self, _e=None):
+        """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tốc độ mới để so sánh."""
+        self._update_speed_label()
+        if self._is_playing() and self._last_src and self._last_src.exists():
+            self._play_file(self._last_src)
+
+    def _is_playing(self) -> bool:
+        """winsound không báo khi phát xong → ước lượng bằng độ dài file."""
+        return self._playing and time.monotonic() < self._play_until
+
+    def _speed_file(self, src: Path, speed: float) -> Path:
+        """Bản đổi tốc độ (giữ cao độ) của `src` — dùng lại nếu đã render và còn mới."""
+        SPEED_DIR.mkdir(exist_ok=True)
+        dst = SPEED_DIR / f"{src.stem}@{speed:.2f}x.wav"
+        if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+            return dst
+        proc = subprocess.run(
+            [FFMPEG, "-y", "-loglevel", "error", "-i", str(src),
+             "-filter:a", f"atempo={speed:.3f}", str(dst)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if proc.returncode != 0 or not dst.exists():
+            raise RuntimeError((proc.stderr or "ffmpeg lỗi không rõ").strip()[-300:])
+        return dst
+
     # ── phát lại ──
     def _on_play_saved(self):
         voice = self._selected_voice()
@@ -384,15 +461,32 @@ class App:
         self._play_file(f)
 
     def _play_file(self, path: Path):
+        """Phát `path` (file GỐC) ở tốc độ đang chọn; file gốc không bị sửa."""
         self._stop_play()
+        self._last_src = path
+        speed = self._speed()
+        play_path = path
+        if abs(speed - 1.0) > 1e-6:
+            self.status.set(f"⏩ Đang đổi tốc độ {speed:.2f}×...")
+            self.root.update_idletasks()
+            try:
+                play_path = self._speed_file(path, speed)
+            except Exception as e:
+                self._log(f"⚠️ Không đổi được tốc độ ({e}) → phát ở 1.00×.", "warn")
+                speed = 1.0
+        try:
+            duration = sf.info(str(play_path)).duration
+        except Exception:
+            duration = 0.0
         try:
             import winsound
-            winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            winsound.PlaySound(str(play_path), winsound.SND_FILENAME | winsound.SND_ASYNC)
             self._playing = True
-            self.status.set(f"▶ Đang phát: {path.name}")
+            self._play_until = time.monotonic() + duration + 0.3
+            self.status.set(f"▶ Đang phát: {path.name}  ({speed:.2f}×, {duration:.1f}s)")
         except Exception:
             try:
-                os.startfile(str(path))  # type: ignore[attr-defined]
+                os.startfile(str(play_path))  # type: ignore[attr-defined]
             except Exception as e:
                 messagebox.showerror("Lỗi phát audio", str(e))
 
@@ -403,6 +497,7 @@ class App:
         except Exception:
             pass
         self._playing = False
+        self._play_until = 0.0
 
     def _open_out(self):
         try:
