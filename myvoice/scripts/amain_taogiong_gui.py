@@ -78,6 +78,14 @@ EFFECT_EXTS = {".mov", ".mp4", ".webm", ".mkv", ".avi", ".gif"}
 EFFECT_NONE = "Không (mặc định)"                       # mục "không thêm hiệu ứng"
 DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn sẵn nếu có trong hieuung/
 
+# Kiểu phụ đề cho video ngang (YouTube) — xem video_gansub.py.
+#   • .srt rời: chỉ xuất file, KHÔNG đụng video → tải lên YouTube Studio, người xem
+#     bật/tắt được. Nhanh (chỉ tốn thời gian Whisper nghe audio).
+#   • vẽ cứng : đốt chữ vào khung hình → phải mã hoá lại cả video, lâu hơn nhiều và
+#     tốn thêm dung lượng đĩa bằng đúng một bản video nữa trong lúc ghi đè.
+SUB_MODE_SRT  = "file .srt rời"
+SUB_MODE_BURN = "vẽ cứng vào hình"
+
 # Mặc định mục "Cài đặt" (dùng khi chưa có taogiong_options.json) — sau đó được
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
@@ -91,6 +99,7 @@ OPTS_DEFAULTS = dict(
     tiktok_percent=50,
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
+    make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50,
 )
 
 
@@ -406,6 +415,42 @@ def save_episode_number(n: int) -> None:
         pass
 
 
+# ── SỐ TẬP BỎ QUA (đặt trước cho tương lai) ──────────────────────────────────
+# Danh sách số tập KHÔNG được cấp cho tập mới. Ví dụ đang ở tập 31, đặt trước 33
+# và 34 → sau 32 sẽ nhảy thẳng sang 35 (thường vì 33/34 để dành cho video khác).
+# Chỉ chặn lúc CẤP SỐ MỚI; tập đã tạo rồi thì giữ nguyên số của nó.
+SKIP_EPISODES_FILE = BASE_DIR / "taogiong_skip_episodes.json"
+
+
+def load_skip_episodes() -> set:
+    """Tập hợp số tập cần bỏ qua; file thiếu/hỏng → rỗng."""
+    try:
+        import json
+        data = json.loads(SKIP_EPISODES_FILE.read_text(encoding="utf-8"))
+        return {int(n) for n in data if str(n).strip().isdecimal() and int(n) > 0}
+    except Exception:
+        return set()
+
+
+def save_skip_episodes(nums) -> None:
+    try:
+        import json
+        SKIP_EPISODES_FILE.write_text(
+            json.dumps(sorted({int(n) for n in nums if int(n) > 0}), indent=2),
+            encoding="utf-8")
+    except Exception as e:
+        logging.warning(f"Không lưu được danh sách tập bỏ qua: {e}")
+
+
+def next_episode_number(after: int, skip=None) -> int:
+    """Số tập kế tiếp sau `after`, nhảy qua mọi số nằm trong danh sách bỏ qua."""
+    skip = load_skip_episodes() if skip is None else skip
+    n = int(after) + 1
+    while n in skip:
+        n += 1
+    return n
+
+
 # ── MANIFEST: nhớ link nào ↔ thư mục tập nào + tiến độ (để chạy tiếp/báo cáo) ──
 # File tổng đặt trong kịch_bản/ (đã gitignore). Mỗi lần chạy ghi nguồn (link/file)
 # kèm số tập + bước đã xong. Lần sau chạy CÙNG link → tái dùng ĐÚNG thư mục cũ và
@@ -559,6 +604,11 @@ _SPIKE_RATIO  = 5.0   # khung vượt N× median RMS → spike
 _SILENT_RMS   = 0.005 # median quá thấp = gần im lặng
 _FRAME_MS     = 50    # độ dài mỗi khung phân tích (ms)
 
+# Im lặng đệm vào CUỐI audio đã ghép (giây) — xem chỗ ghép chunk.
+TAIL_SILENCE_SEC = 0.7
+# Thời gian fade-out NHẠC NỀN ở cuối bản trộn (giây).
+BGM_FADE_OUT_SEC = 3.0
+
 
 def detect_spike(path: Path, sr: int) -> list[float]:
     """Trả về danh sách thời điểm (giây) bị spike, rỗng nếu OK."""
@@ -625,66 +675,122 @@ def split_chunks(text: str, max_len: int):
     return chunks
 
 
-# ── THAY CÂU QUẢNG BÁ KÊNH THEO VỊ TRÍ ────────────────────────────────────────
-# Gemini dịch mọi câu quảng bá kênh thành câu chứa tên kênh "Mimi audio". Tùy vị
-# trí trong bài (mở đầu / thân bài / kết bài) ta thay bằng 3 câu khác nhau dưới
-# đây. SỬA 3 CÂU NÀY nếu muốn đổi lời.
+# ── DỌN & CHÈN LẠI CÂU QUẢNG BÁ KÊNH ──────────────────────────────────────────
+# Bản dịch có sẵn rất nhiều câu quảng bá rải rác (xem _PROMO_PATTERNS). Ta xóa hết
+# rồi chèn lại 3 câu dưới đây ở đúng vị trí: mở đầu / thân bài / kết bài.
+# SỬA 3 CÂU NÀY nếu muốn đổi lời.
 PROMO_OPENING = "Lại là Mimi Audio đây, mời bạn nghe câu chuyện hôm nay."
 PROMO_BODY    = "Nếu thấy hay, bạn thả tim ủng hộ mình nhé."
-PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe. Đây là câu chuyện không có thật,... "
+# KHÔNG dùng "..." ở đây: clean_text đổi "..." → "." nên "không có thật,..." biến
+# thành "không có thật,." (phẩy dính chấm) → TTS đọc cụt và tách chunk sai chỗ.
+PROMO_ENDING  = ("Cảm ơn bạn đã lắng nghe. "
+                 "Đây là câu chuyện không có thật, mọi tình tiết chỉ là hư cấu. "
                  "Nếu thấy hay, nhớ thích và theo dõi Mimi Audio nhé. "
                  "Hẹn gặp lại ở câu chuyện tiếp theo.")
 
-# Câu quảng bá luôn chứa tên kênh "Mimi audio" → dùng cả cụm làm dấu hiệu nhận
-# biết (tránh khớp nhầm từ "mimi" lẻ); vẫn bắt biến thể cũ "truyện/chuyện".
-_PROMO_MARKER = re.compile(r'mimi\s+(?:audio|truyện|chuyện)', re.IGNORECASE)
+# Số câu PROMO_BODY chèn giữa bài (rải đều). 0 = không chèn câu nào ở thân bài.
+PROMO_BODY_COUNT = 2
+
+# Nhận diện câu quảng bá/kết bài để XÓA SẠCH trước khi chèn lại. Gemini dịch theo
+# lô nên mỗi lô tự thêm một cụm quảng bá → bản dịch có hàng chục câu rải rác, có
+# chỗ 4–5 câu liên tiếp. Mỗi mẫu phải bám sát nguyên văn câu quảng bá, KHÔNG bắt
+# từ khóa trần ("theo dõi", "ủng hộ", "hẹn gặp", "lắng nghe" đều xuất hiện bình
+# thường trong truyện: "bỏ theo dõi", "tỷ lệ ủng hộ 87%", "hẹn gặp ở luyện võ
+# trường", "ngoan ngoãn lắng nghe"…).
+_PROMO_PATTERNS = re.compile(
+    r'mimi\s*(?:audio|truyện|chuyện)'                       # tên kênh
+    r'|cảm ơn\s+(?:bạn|các bạn|quý vị|mọi người)\s+đã\s+(?:lắng\s+)?nghe'
+    r'|hẹn\s+gặp\s+lại\s+(?:bạn\s+|các bạn\s+|mọi người\s+)?'
+    r'(?:ở|trong|vào|tại)\s+(?:câu\s+chuyện|truyện|video|tập|clip)'
+    r'|câu\s+chuyện\s+(?:này\s+)?(?:hoàn toàn\s+)?không\s+có\s+thật'
+    r'|mọi\s+tình\s+tiết\s+(?:chỉ\s+)?là\s+hư\s+cấu'
+    r'|thả\s+tim\s+ủng\s+hộ'
+    r'|(?:thích|like)\s+và\s+theo\s+dõi'
+    r'|đăng\s+ký\s+kênh',
+    re.IGNORECASE)
+# Câu quảng bá luôn ngắn. Chặn trên để không nuốt nhầm câu truyện dài lỡ chứa cụm.
+_PROMO_MAX_LEN = 150
+# Mảnh chỉ gồm dấu câu/khoảng trắng. Câu "…không có thật,..." bị tách thành
+# "…không có thật,." + "." + "." → xóa câu quảng bá xong phải dọn 2 dấu chấm lẻ.
+_PUNCT_ONLY = re.compile(r'[\s.,;:!?…]+')
 # Tách câu nhưng GIỮ dấu kết câu/xuống dòng ở cuối mỗi mảnh để ghép lại nguyên trạng.
 _PROMO_SENT_SPLIT = re.compile(r'(?<=[.!?。！？\n])')
 
 
+def _is_promo_sentence(s: str) -> bool:
+    """Câu này có phải câu quảng bá kênh / kết bài không?"""
+    core = s.strip()
+    return bool(core) and len(core) <= _PROMO_MAX_LEN and bool(_PROMO_PATTERNS.search(core))
+
+
+def _line_break_near(pieces: list[str], idx: int, window: int = 80) -> int:
+    """Vị trí chèn gần idx nhất mà rơi đúng sau một lần xuống dòng (hết đoạn).
+    Không tìm được trong bán kính window thì chèn thẳng tại idx."""
+    for d in range(window):
+        for j in (idx + d, idx - d):
+            if 0 <= j < len(pieces) and pieces[j].endswith("\n"):
+                return j + 1
+    return idx
+
+
 def replace_channel_promo(text: str) -> tuple[str, int, int]:
-    """Thay câu quảng bá kênh (chứa 'mimi') bằng 1 trong 3 câu theo vị trí:
-    xuất hiện ĐẦU TIÊN → mở đầu, CUỐI CÙNG → kết bài, Ở GIỮA → thân bài.
-    Nếu chỉ có 1 câu: nửa đầu văn bản → mở đầu, nửa cuối → kết bài.
+    """XÓA SẠCH mọi câu quảng bá kênh/kết bài trong bản dịch, rồi CHÈN LẠI đúng
+    số câu ở đúng vị trí mình kiểm soát:
 
-    Bài LUÔN phải có câu mở đầu ở đầu và câu kết ở cuối. Nếu bản dịch thiếu (không
-    có câu quảng bá nào, hoặc chỉ có 1 câu nên chỉ ra được mở đầu HOẶC kết bài) thì
-    THÊM MẶC ĐỊNH câu còn thiếu vào đầu/cuối văn bản.
+        • PROMO_OPENING  → đầu bài
+        • PROMO_BODY     → rải đều PROMO_BODY_COUNT lần ở thân bài
+        • PROMO_ENDING   → cuối bài
 
-    Trả về (text_đã_xử_lý, số_câu_đã_thay, số_câu_thêm_mặc_định). Giữ nguyên khoảng
-    trắng/xuống dòng quanh câu để không phá cấu trúc đoạn.
+    Gemini dịch theo lô, mỗi lô tự thêm một cụm quảng bá, nên bản dịch thô có
+    hàng chục câu rải rác — có chỗ 4–5 câu đọc liên tiếp trong 10 giây, và cụm
+    kết bài có khi rơi vào giữa truyện (rồi cuối bài lại không có câu kết nào).
+    Vì vậy phải DỌN TRƯỚC, CHÈN SAU thay vì thay 1-đổi-1 tại chỗ.
+
+    Trả về (text_đã_xử_lý, số_câu_đã_xóa, số_câu_đã_chèn). Chạy lại trên văn bản
+    đã xử lý KHÔNG cộng dồn: 3 câu vừa chèn cũng khớp mẫu nên bị xóa rồi chèn lại,
+    kết quả luôn đúng 1 mở đầu + PROMO_BODY_COUNT thân bài + 1 kết bài (vị trí
+    thân bài có thể xê dịch một chỗ xuống dòng ở lần chạy thứ hai rồi đứng yên).
     """
-    sentences = _PROMO_SENT_SPLIT.split(text)
-    promo_idx = [i for i, s in enumerate(sentences) if _PROMO_MARKER.search(s)]
-    has_opening = has_ending = False
-    if promo_idx:
-        first, last, n = promo_idx[0], promo_idx[-1], len(sentences)
-        for i in promo_idx:
-            orig = sentences[i]
-            lead = orig[:len(orig) - len(orig.lstrip())]   # khoảng trắng đầu câu
-            trail = orig[len(orig.rstrip()):]              # khoảng trắng/\n cuối câu
-            if len(promo_idx) == 1:
-                repl = PROMO_OPENING if i < n / 2 else PROMO_ENDING
-            elif i == first:
-                repl = PROMO_OPENING
-            elif i == last:
-                repl = PROMO_ENDING
-            else:
-                repl = PROMO_BODY
-            has_opening = has_opening or repl == PROMO_OPENING
-            has_ending = has_ending or repl == PROMO_ENDING
-            sentences[i] = lead + repl + trail
-    out = "".join(sentences)
+    kept, removed = [], []
+    just_removed = False
+    for s in _PROMO_SENT_SPLIT.split(text):
+        drop = _is_promo_sentence(s)
+        if drop:
+            removed.append(s.strip())
+        elif just_removed and _PUNCT_ONLY.fullmatch(s):
+            drop = True                 # dấu chấm lẻ sót lại của câu vừa xóa
+        if drop:
+            just_removed = True
+            if s.endswith("\n"):        # giữ xuống dòng để không dính 2 đoạn vào nhau
+                kept.append("\n")
+        else:
+            just_removed = False
+            kept.append(s)
 
-    # ── THÊM MẶC ĐỊNH câu còn thiếu ───────────────────────────────────────────
-    added = 0
-    if not has_opening:
-        out = PROMO_OPENING + "\n" + out.lstrip()
-        added += 1
-    if not has_ending:
-        out = out.rstrip() + "\n" + PROMO_ENDING
-        added += 1
-    return out, len(promo_idx), added
+    # ── CHÈN LẠI câu thân bài, rải đều, cắt đúng chỗ hết đoạn ─────────────────
+    inserted = 0
+    if PROMO_BODY_COUNT > 0 and kept:
+        spots = sorted(
+            {_line_break_near(kept, len(kept) * k // (PROMO_BODY_COUNT + 1))
+             for k in range(1, PROMO_BODY_COUNT + 1)},
+            reverse=True)
+        for pos in spots:                          # chèn từ cuối lên để giữ chỉ số
+            kept.insert(pos, PROMO_BODY + "\n")
+            inserted += 1
+
+    out = re.sub(r'\n{3,}', '\n\n', "".join(kept).strip())
+    out = PROMO_OPENING + "\n" + out + "\n" + PROMO_ENDING
+    inserted += 2
+
+    if removed:
+        forms = {}
+        for s in removed:
+            forms[s] = forms.get(s, 0) + 1
+        logging.info(
+            f"🧹 Đã xóa {len(removed)} câu quảng bá/kết bài rải rác trong bản dịch: "
+            + " | ".join(f"{n}× {s[:50]!r}" for s, n in
+                         sorted(forms.items(), key=lambda kv: -kv[1])[:8]))
+    return out, len(removed), inserted
 
 
 # ── SỬA TỪ TIẾNG ANH BỊ SÓT → tiếng Việt ─────────────────────────────────────
@@ -806,14 +912,114 @@ def _detect_peak_db(path: Path, ffmpeg: str, seconds: int = 150):
     return float(m.group(1)) if m else None
 
 
+def _probe_duration(path: Path) -> float | None:
+    """Độ dài file (giây) bằng ffprobe. None nếu không đo được."""
+    import shutil
+    import subprocess
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    try:
+        r = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        return float((r.stdout or "").strip())
+    except (ValueError, OSError):
+        return None
+
+
+def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
+                     model: str = "medium", max_chars: int = 50,
+                     progress=None) -> Path | None:
+    """Tạo phụ đề cho video ngang (YouTube). Trả về file .srt, None nếu lỗi.
+
+    Tái dùng nguyên module video_gansub: Whisper CHỈ để lấy mốc giờ, còn CHỮ lấy
+    từ input.txt gốc nên không bao giờ sai chính tả. Chạy ngay trong tiến trình
+    này (không bung subprocess) để dùng chung log + thanh tiến độ.
+
+    mode SUB_MODE_BURN thì đốt chữ vào hình rồi GHI ĐÈ lên video gốc — burn ra file
+    tạm trước, xong mới thay thế, để video cũ không mất nếu ffmpeg chết giữa chừng.
+
+    Whisper được giải phóng khỏi VRAM ở cuối: bước sau còn dựng video bằng NVENC,
+    thiếu VRAM là rớt về CPU (libx264) chậm hẳn.
+    """
+    video_path, script_path = Path(video_path), Path(script_path)
+    if not video_path.exists():
+        logging.warning(f"📝 Chưa có video để gắn phụ đề: {video_path.name}")
+        return None
+    if not script_path.is_file() or script_path.stat().st_size == 0:
+        logging.warning(f"📝 Không có kịch bản ({script_path.name}) → bỏ qua phụ đề.")
+        return None
+
+    tmp_wav = None
+    try:
+        import video_gansub as gs
+        from nhandien_giongnoi import extract_audio, get_audio_duration
+
+        cues = gs.build_cues(script_path.read_text(encoding="utf-8"), max_chars)
+        if not cues:
+            logging.warning("📝 Kịch bản trống → không có gì làm phụ đề.")
+            return None
+        logging.info(f"📝 Cắt {len(cues)} dòng phụ đề từ {script_path.name}, "
+                     f"đang nghe audio bằng Whisper '{model}'...")
+
+        # Nghe TIẾNG CỦA CHÍNH VIDEO (không phải output.wav) — video có thể đã tăng
+        # tốc x1.1, lấy nhầm audio gốc là phụ đề trôi dần.
+        tmp_wav = str(video_path.with_name(video_path.stem + "_sub16k.wav"))
+        if not extract_audio(str(video_path), tmp_wav):
+            return None
+        audio_dur = get_audio_duration(tmp_wav) or 0
+
+        words, starts, ends = gs.transcribe_words(tmp_wav, model, on_progress=progress)
+        if not words:
+            logging.warning("📝 Whisper không nghe được từ nào → phụ đề rải đều theo thời lượng.")
+        cue_times = gs.align_cues(cues, words, starts, ends, audio_dur)
+
+        srt_path = video_path.with_name(video_path.stem + ".srt")
+        gs.write_srt(cues, cue_times, srt_path)
+        logging.info(f"📝 Đã ghi phụ đề → {srt_path.name} ({len(cues)} dòng)")
+
+        if mode == SUB_MODE_BURN:
+            ass_path = gs.write_ass(cues, cue_times, srt_path.with_suffix(".ass"))
+            tmp_mp4 = video_path.with_name(video_path.stem + "_subtmp.mp4")
+            logging.info("📝 Đang vẽ CỨNG phụ đề vào hình (mã hoá lại, hơi lâu)...")
+            if gs.burn_subs(video_path, ass_path, tmp_mp4):
+                os.replace(tmp_mp4, video_path)
+                logging.info(f"📝 Đã đốt phụ đề vào {video_path.name}")
+            else:
+                tmp_mp4.unlink(missing_ok=True)
+                logging.error("📝 Vẽ cứng phụ đề LỖI → giữ nguyên video, chỉ còn file .srt.")
+        return srt_path
+    except Exception as e:
+        logging.error(f"📝 Lỗi tạo phụ đề: {e}")
+        return None
+    finally:
+        if tmp_wav and os.path.exists(tmp_wav):
+            try:
+                os.remove(tmp_wav)
+            except Exception:
+                pass
+        try:
+            from nhandien_giongnoi import free_model
+            free_model()                      # trả VRAM lại cho NVENC dựng video sau
+        except Exception:
+            pass
+
+
 def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
                   out_wav: Path) -> Path:
     """Trộn NHẠC NỀN vào giọng: nhạc được hạ để đỉnh nhỏ hơn đỉnh GIỌNG đúng
     |below_db| dB (vd giọng -6dB, below=-12 → nhạc ≈ -18dB). Nhạc LẶP cho đủ dài,
-    fade-in 1s, cắt bằng độ dài giọng. Trả về out_wav (giữ nguyên độ dài giọng).
+    fade-in 1s + fade-out cuối bài, cắt bằng độ dài giọng. Trả về out_wav (giữ
+    nguyên độ dài giọng).
 
     Đo đỉnh giọng + nhạc để tự tính gain → nhỏ hơn giọng ổn định dù nhạc to/nhỏ.
     Đo lỗi thì lùi về giả định giọng -6dB / nhạc 0dB.
+
+    Fade-out CHỈ áp cho nhạc, KHÔNG áp cho giọng — nếu fade cả bản trộn thì câu
+    kết bị nhỏ dần đi.
     """
     import shutil
     import subprocess
@@ -830,7 +1036,16 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
     gain_db = (target_db - music_peak) if music_peak is not None else target_db
     gain_db = min(gain_db, 0.0)                    # không khuếch đại nhạc vượt gốc
 
-    filt = (f"[1:a]volume={gain_db:.2f}dB,afade=t=in:d=1.0,"
+    # Độ dài giọng = độ dài bản trộn (amix duration=first) → biết mốc bắt đầu fade.
+    voice_sec = _probe_duration(voice_wav)
+    fade_out = ""
+    if voice_sec and voice_sec > BGM_FADE_OUT_SEC * 2:
+        st = voice_sec - BGM_FADE_OUT_SEC
+        fade_out = f"afade=t=out:st={st:.3f}:d={BGM_FADE_OUT_SEC:g},"
+    else:
+        logging.warning("⚠️ Không đo được độ dài giọng → bỏ fade-out nhạc nền.")
+
+    filt = (f"[1:a]volume={gain_db:.2f}dB,afade=t=in:d=1.0,{fade_out}"
             f"aresample=44100[bg];"
             f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[a]")
     cmd = [ffmpeg, "-y", "-i", str(voice_wav),
@@ -941,7 +1156,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -1091,6 +1306,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 merged[-fade:] += p[:fade]
                 merged = np.concatenate([merged, p[fade:]])
 
+            # OmniVoice kết thúc chunk cuối chỉ ~0.13s sau từ cuối cùng → audio
+            # (và video) dừng phựt. Đệm thêm im lặng cho có chỗ thở.
+            merged = np.concatenate(
+                [merged, np.zeros(int(TAIL_SILENCE_SEC * sr), dtype="float32")])
+
             sf.write(output, merged, sr)
             progress_var.set(100)
             status_var.set(f"Xong!  →  {output}")
@@ -1191,6 +1411,23 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             except Exception as e:
                 logging.error(f"Lỗi dựng video: {e}")
                 status_var.set(f"Audio xong, lỗi dựng video: {e}")
+
+        # ── (TÙY CHỌN) PHỤ ĐỀ CHO VIDEO NGANG (YouTube) ────────────────────
+        # Làm SAU khi video ngang xong (cần nghe tiếng của chính video đó) và TRƯỚC
+        # video dọc/TikTok — vì kiểu "vẽ cứng" ghi đè lên YOUTUBE.mp4, mà video dọc
+        # có thể dùng lại chính file này làm nguồn hình.
+        if make_sub and ngang_video_path and Path(ngang_video_path).exists():
+            def _sub_progress(frac):
+                pct = int(frac * 100)
+                progress_var.set(pct)
+                status_var.set(f"📝 Nghe audio làm phụ đề... {pct}%")
+            status_var.set("📝 Đang tạo phụ đề cho video YouTube...")
+            progress_var.set(0)
+            make_youtube_sub(Path(ngang_video_path),
+                             Path(ngang_video_path).parent / "input.txt",
+                             sub_mode, sub_model, sub_max_chars,
+                             progress=_sub_progress)
+            progress_var.set(100)
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
         # Mặc định lấy AUDIO BẢN CẮT (cut_path = bản 1/2 nếu bật, không thì bản
@@ -1852,6 +2089,33 @@ class App(tk.Tk):
                                         command=lambda: self._rebuild_video("ngang"))
         self.btn_run_ngang.pack(side="right")
 
+        # ── Phụ đề cho video ngang (YouTube) — BẬT/TẮT được ──────────────────
+        # Dùng lại video_gansub.py: Whisper nghe audio CỦA CHÍNH VIDEO để lấy mốc
+        # giờ, còn chữ lấy từ input.txt gốc nên không sai chính tả.
+        sub_row = ttk.Frame(sec_opt)
+        sub_row.pack(anchor="w", fill="x", pady=(8, 0))
+        self.var_make_sub = tk.BooleanVar(value=self._opt_settings["make_sub"])
+        ttk.Checkbutton(sub_row, text="📝  Phụ đề cho video YouTube",
+                        variable=self.var_make_sub).pack(side="left")
+        ttk.Label(sub_row, text="Kiểu:").pack(side="left", padx=(12, 2))
+        self.var_sub_mode = tk.StringVar(value=self._opt_settings["sub_mode"])
+        ttk.Combobox(sub_row, textvariable=self.var_sub_mode, width=15, state="readonly",
+                     values=[SUB_MODE_SRT, SUB_MODE_BURN]).pack(side="left")
+        ttk.Label(sub_row, text="Model:").pack(side="left", padx=(10, 2))
+        self.var_sub_model = tk.StringVar(value=self._opt_settings["sub_model"])
+        ttk.Combobox(sub_row, textvariable=self.var_sub_model, width=9, state="readonly",
+                     values=["small", "medium", "large-v3"]).pack(side="left")
+
+        sub_row2 = ttk.Frame(sec_opt)
+        sub_row2.pack(anchor="w", fill="x", pady=(4, 0))
+        ttk.Label(sub_row2, text="Dài mỗi dòng:").pack(side="left", padx=(26, 2))
+        self.var_sub_max_chars = tk.IntVar(value=self._opt_settings["sub_max_chars"])
+        ttk.Spinbox(sub_row2, from_=20, to=90, increment=1, width=5,
+                    textvariable=self.var_sub_max_chars).pack(side="left")
+        ttk.Label(sub_row2, text="ký tự · .srt rời = tải lên YouTube Studio (nhanh); "
+                                 "vẽ cứng = mã hoá lại cả video (lâu)",
+                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
+
         # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
         fx_row = ttk.Frame(sec_opt)
         fx_row.pack(anchor="w", fill="x", pady=(8, 0))
@@ -2021,6 +2285,12 @@ class App(tk.Tk):
         self.var_tiktok_no_effect = tk.BooleanVar(value=self._opt_settings["tiktok_no_effect"])
         ttk.Checkbutton(tiktok_opts2, text="🚫  Không áp hiệu ứng cho TikTok",
                         variable=self.var_tiktok_no_effect).pack(side="left")
+        # Danh sách số tập ĐẶT TRƯỚC để bỏ qua khi cấp số tập mới (xem next_episode_number).
+        ttk.Button(tiktok_opts2, text="⏭  Tập bỏ qua…",
+                   command=self._edit_skip_episodes).pack(side="left", padx=(18, 0))
+        self.lbl_skip_eps = ttk.Label(tiktok_opts2, text="", style="Hint.TLabel")
+        self.lbl_skip_eps.pack(side="left", padx=(8, 0))
+        self._refresh_skip_episodes_label()
         # Vị trí chữ theo chiều cao (0 = trên cùng, 100 = dưới cùng).
         tiktok_opts3 = ttk.Frame(tiktok)
         tiktok_opts3.pack(anchor="w", fill="x", pady=(6, 0))
@@ -3763,6 +4033,10 @@ class App(tk.Tk):
                 tiktok_music=self.var_tiktok_music.get(),
                 tiktok_music_db=int(self.var_tiktok_music_db.get()),
                 bring_front=self.var_bring_front.get(),
+                make_sub=self.var_make_sub.get(),
+                sub_mode=self.var_sub_mode.get(),
+                sub_model=self.var_sub_model.get(),
+                sub_max_chars=int(self.var_sub_max_chars.get()),
             ))
         except Exception as e:
             logging.warning(f"Không lưu được cài đặt: {e}")
@@ -3971,13 +4245,10 @@ class App(tk.Tk):
             messagebox.showerror("Trống", f"Không lấy được nội dung từ:\n{GEMINI_DOCX}")
             return False
 
-        # 2b) THAY CÂU QUẢNG BÁ KÊNH theo vị trí (mở đầu / thân bài / kết bài)
+        # 2b) DỌN câu quảng bá kênh rải rác → CHÈN LẠI (mở đầu / thân bài / kết bài)
         content, n_promo, n_add = replace_channel_promo(content)
-        if n_promo:
-            logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh (mở đầu/thân/kết).")
-        if n_add:
-            logging.info(f"➕ Bản dịch thiếu {n_add} câu quảng bá → đã thêm mặc định "
-                         f"vào đầu/cuối bài.")
+        logging.info(f"🔁 Quảng bá kênh: xóa {n_promo} câu rải rác trong bản dịch, "
+                     f"chèn lại {n_add} câu (mở đầu/thân/kết).")
 
         # 2c) SỬA từ TIẾNG ANH Gemini sót → tiếng Việt (but→nhưng, If→Nếu,
         #     Twenty→Hai mươi…) + cảnh báo từ lạ còn lại.
@@ -4531,6 +4802,9 @@ class App(tk.Tk):
             tiktok_caption_pos=tiktok_caption_pos,
             tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
             bring_front=self.var_bring_front.get(),
+            make_sub=self.var_make_sub.get(), sub_mode=self.var_sub_mode.get(),
+            sub_model=self.var_sub_model.get(),
+            sub_max_chars=self._parse_sub_max_chars(),
         )
 
     # ── CHẾ ĐỘ NHIỀU LINK: mỗi link 1 thư mục kịch_bản/NN, full pipeline ───────
@@ -4642,10 +4916,8 @@ class App(tk.Tk):
             if not content:
                 return False
             content, n_promo, n_add = replace_channel_promo(content)
-            if n_promo:
-                logging.info(f"🔁 Đã thay {n_promo} câu quảng bá kênh.")
-            if n_add:
-                logging.info(f"➕ Thiếu {n_add} câu quảng bá → đã thêm mặc định.")
+            logging.info(f"🔁 Quảng bá kênh: xóa {n_promo} câu rải rác, "
+                         f"chèn lại {n_add} câu.")
             content, _n_en, _sus_en = replace_leaked_english(content)
             try:
                 import dich_hanviet as hv
@@ -4722,6 +4994,11 @@ class App(tk.Tk):
             tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
             tiktok_music=ts.get("tiktok_music", False),
             tiktok_music_db=ts.get("tiktok_music_db", -12),
+            # Phụ đề cho YOUTUBE.mp4 (tắt mặc định — xem hàng "📝 Phụ đề" ở Cài đặt).
+            make_sub=ts.get("make_sub", False),
+            sub_mode=ts.get("sub_mode", SUB_MODE_SRT),
+            sub_model=ts.get("sub_model", "medium"),
+            sub_max_chars=ts.get("sub_max_chars", 50),
         )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         return True
@@ -4962,7 +5239,8 @@ class App(tk.Tk):
 
     def _allocate_episode(self, source):
         """(episode, is_new). Nguồn đã có trong manifest → ĐÚNG tập cũ; nguồn mới →
-        số tập kế tiếp (không trùng manifest / thư mục đã có / số đã lưu)."""
+        số tập kế tiếp (không trùng manifest / thư mục đã có / số đã lưu, và nhảy
+        qua các số trong danh sách 'tập bỏ qua')."""
         m = load_manifest()
         key = norm_source(source)
         entry = m.get(key)
@@ -4979,13 +5257,19 @@ class App(tk.Tk):
                     break
         if entry is not None and str(entry.get("episode", "")).isdecimal():
             return str(entry["episode"]).zfill(2), False
-        used = {int(v["episode"]) for v in m.values()
+        # Nhảy qua các số đã đặt trước trong danh sách "tập bỏ qua".
+        return str(next_episode_number(self._last_used_episode())).zfill(2), True
+
+    @staticmethod
+    def _last_used_episode() -> int:
+        """Số tập LỚN NHẤT đã dùng: manifest + thư mục tập có sẵn + số đã lưu. Chưa
+        có tập nào → 0 (nên tập đầu tiên sẽ là 1)."""
+        used = {int(v["episode"]) for v in load_manifest().values()
                 if str(v.get("episode", "")).isdecimal()}
         for p in episode_dirs():
             used.add(int(episode_of(p.name)))
         used.add(load_episode_number())
-        nxt = (max(used) + 1) if used else 1
-        return str(nxt).zfill(2), True
+        return max(used) if used else 0
 
     def _pipe_batch_worker(self, sources, model, speed, tts_settings=None):
         import time
@@ -5553,7 +5837,12 @@ class App(tk.Tk):
                     # Quy tắc đặt tên 3 video (giống bản tự động).
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,
-                    "tiktok_out": tiktok_out},
+                    "tiktok_out": tiktok_out,
+                    # Phụ đề cho video ngang (YouTube)
+                    "make_sub": self.var_make_sub.get(),
+                    "sub_mode": self.var_sub_mode.get(),
+                    "sub_model": self.var_sub_model.get(),
+                    "sub_max_chars": self._parse_sub_max_chars()},
             daemon=True,
         ).start()
 
@@ -5565,6 +5854,14 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             v = default
         return max(10, min(v, 100))
+
+    def _parse_sub_max_chars(self, default: int = 50) -> int:
+        """Đọc ô 'Dài mỗi dòng' phụ đề → int, kẹp trong [20, 90]."""
+        try:
+            v = int(str(self.var_sub_max_chars.get()).strip())
+        except (TypeError, ValueError, AttributeError):
+            v = default
+        return max(20, min(v, 90))
 
     @staticmethod
     def _parse_speed(var) -> float:
@@ -5590,8 +5887,9 @@ class App(tk.Tk):
 
     def _default_tiktok_episode(self) -> str:
         """Số tập MẶC ĐỊNH cho chữ TikTok = số tab Thumbnail + 1 (2 chữ số). TikTok của
-        tập ĐANG dựng đi TRƯỚC thumbnail 1 số, nên +1 để khớp đúng tập mới."""
-        return f"{self._current_episode_number() + 1:02d}"
+        tập ĐANG dựng đi TRƯỚC thumbnail 1 số, nên +1 để khớp đúng tập mới.
+        Số nằm trong danh sách "tập bỏ qua" thì nhảy tiếp cho tới số dùng được."""
+        return f"{next_episode_number(self._current_episode_number()):02d}"
 
     def _sync_tiktok_episode(self, *_):
         """Cập nhật ô 'Số tập' TikTok theo số Thumbnail + 1 (gọi khi số thumbnail đổi).
@@ -5614,7 +5912,114 @@ class App(tk.Tk):
                     return int(n)
             except Exception:
                 pass
-        return self._current_episode_number() + 1
+        return next_episode_number(self._current_episode_number())
+
+    # ── TẬP BỎ QUA (đặt trước cho tương lai) ────────────────────────────────
+    @staticmethod
+    def _parse_episode_list(s: str) -> set:
+        """'33, 34' / '33 34' / '33-35' → {33, 34, 35}. Bỏ qua phần không hợp lệ."""
+        out = set()
+        for token in re.split(r'[,\s]+', (s or "").strip()):
+            if not token:
+                continue
+            m = re.fullmatch(r'(\d+)\s*-\s*(\d+)', token)
+            if m:
+                a, b = int(m.group(1)), int(m.group(2))
+                out.update(range(min(a, b), max(a, b) + 1))
+            elif token.isdecimal():
+                out.add(int(token))
+        return {n for n in out if n > 0}
+
+    def _refresh_skip_episodes_label(self):
+        """Cập nhật chữ gợi ý cạnh nút: các tập đang bỏ qua + tập mới kế tiếp."""
+        lbl = getattr(self, "lbl_skip_eps", None)
+        if lbl is None:
+            return
+        skip = load_skip_episodes()
+        nxt = next_episode_number(self._last_used_episode(), skip)
+        lbl.config(text=(f"bỏ qua {', '.join(str(n) for n in sorted(skip))} · "
+                         f"tập mới → {nxt:02d}") if skip else f"tập mới → {nxt:02d}")
+
+    def _edit_skip_episodes(self):
+        """Hộp thoại xem/sửa danh sách số tập sẽ BỎ QUA khi cấp số tập mới."""
+        win = tk.Toplevel(self)
+        win.title("Tập bỏ qua")
+        win.configure(bg=UI["bg"])
+        win.transient(self)
+        win.resizable(False, False)
+
+        wrap = ttk.Frame(win, padding=14)
+        wrap.pack(fill="both", expand=True)
+        ttk.Label(wrap, text="Số tập sẽ BỎ QUA khi cấp số cho tập mới").pack(anchor="w")
+        ttk.Label(wrap, text="Ví dụ: đang ở tập 31, thêm 33 và 34 → sau 32 nhảy thẳng "
+                             "sang 35.\nTập ĐÃ tạo vẫn giữ nguyên số của nó.",
+                  style="Hint.TLabel", justify="left").pack(anchor="w", pady=(2, 10))
+
+        mid = ttk.Frame(wrap)
+        mid.pack(fill="both", expand=True)
+        lst = tk.Listbox(mid, width=14, height=8, selectmode="extended",
+                         exportselection=False, activestyle="dotbox",
+                         font=("Segoe UI", 10))
+        lst.pack(side="left", fill="y")
+        sb = ttk.Scrollbar(mid, orient="vertical", command=lst.yview)
+        sb.pack(side="left", fill="y")
+        lst.configure(yscrollcommand=sb.set)
+
+        side = ttk.Frame(mid)
+        side.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        ttk.Label(side, text="Thêm số tập:").pack(anchor="w")
+        var_add = tk.StringVar()
+        ent = ttk.Entry(side, textvariable=var_add, width=16)
+        ent.pack(anchor="w", pady=(2, 2))
+        ttk.Label(side, text="cách nhau bởi dấu phẩy,\nhoặc khoảng: 33-35",
+                  style="Hint.TLabel", justify="left").pack(anchor="w")
+        info = ttk.Label(side, text="", style="Hint.TLabel", justify="left")
+        info.pack(anchor="w", pady=(10, 0))
+
+        def refresh():
+            skip = sorted(load_skip_episodes())
+            lst.delete(0, "end")
+            for n in skip:
+                lst.insert("end", f"  Tập {n:02d}")
+            nxt = next_episode_number(self._last_used_episode(), set(skip))
+            info.config(text=f"Tập lớn nhất đã có: {self._last_used_episode():02d}\n"
+                             f"Tập mới kế tiếp: {nxt:02d}")
+            self._refresh_skip_episodes_label()
+            return skip
+
+        def add():
+            nums = self._parse_episode_list(var_add.get())
+            if not nums:
+                messagebox.showwarning("Chưa hợp lệ",
+                                       "Nhập số tập, ví dụ: 33, 34 hoặc 33-35.",
+                                       parent=win)
+                return
+            save_skip_episodes(load_skip_episodes() | nums)
+            var_add.set("")
+            refresh()
+
+        def remove():
+            skip = sorted(load_skip_episodes())
+            chosen = {skip[i] for i in lst.curselection()}
+            if not chosen:
+                messagebox.showinfo("Chưa chọn", "Chọn dòng cần xóa trong danh sách.",
+                                    parent=win)
+                return
+            save_skip_episodes(set(skip) - chosen)
+            refresh()
+
+        ent.bind("<Return>", lambda e: add())
+        btns = ttk.Frame(wrap)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="➕  Thêm", command=add).pack(side="left")
+        ttk.Button(btns, text="🗑  Xóa mục chọn", command=remove).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Đóng", command=win.destroy).pack(side="right")
+
+        refresh()
+        win.update_idletasks()
+        win.geometry(f"+{self.winfo_rootx() + 90}+{self.winfo_rooty() + 110}")
+        ent.focus_set()
+        win.grab_set()
 
     def _exclusive_doc_source(self, chosen: str):
         """2 nguồn hình video dọc loại trừ nhau: '♻ dùng lại video ngang' và
@@ -5706,6 +6111,10 @@ class App(tk.Tk):
                 tiktok_no_effect=self.var_tiktok_no_effect.get(),
                 tiktok_caption=tiktok_caption, tiktok_caption_pos=tiktok_caption_pos,
                 tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
+                # Chỉ nút "Dựng lại" của video NGANG mới làm phụ đề (2 video kia không có).
+                make_sub=(kind == "ngang" and self.var_make_sub.get()),
+                sub_mode=self.var_sub_mode.get(), sub_model=self.var_sub_model.get(),
+                sub_max_chars=self._parse_sub_max_chars(),
             ),
             daemon=True,
         ).start()

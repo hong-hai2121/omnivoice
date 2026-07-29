@@ -327,13 +327,138 @@ def write_srt(cues, cue_times, srt_path: Path):
 
 
 # Kiểu chữ phụ đề khi burn-in (cú pháp force_style của ASS).
-# Chữ trắng đậm, viền đen dày, bóng nhẹ, canh giữa dưới — dễ đọc trên mọi nền.
+# Chữ trắng đậm trên KHUNG NỀN đen mờ, canh giữa dưới — đọc được trên mọi nền,
+# kể cả khung hình sáng trắng hay nền trang trí nhiều hoạ tiết.
 # FontSize tính theo độ cao 1080; ffmpeg tự co theo độ phân giải thật.
+#
+# Hai điểm dễ sai của ASS, nhớ kỹ khi chỉnh:
+#   • BorderStyle=3 (khung nền đặc) tô hộp bằng OutlineColour, KHÔNG phải
+#     BackColour — BackColour lúc này chỉ còn dùng cho bóng đổ.
+#   • Màu ghi dạng &HAABBGGRR, trong đó AA là ĐỘ TRONG SUỐT ngược đời:
+#     00 = đen đặc hoàn toàn, FF = trong suốt hoàn toàn. Muốn nền ĐẬM hơn thì
+#     GIẢM số (&H60 → &H30), muốn nhạt hơn thì tăng.
+#   • Outline = độ dày đệm quanh chữ (khung nền to/nhỏ theo số này).
+#
+# FontSize=18 (không phải 22) để khung nền của dòng dài nhất — 50 ký tự theo
+# --max-chars mặc định — vẫn nằm gọn trong khung video, không tràn ra viền
+# trang trí hai bên. Muốn chữ to hơn thì tăng FontSize VÀ giảm --max-chars
+# tương ứng, nếu không khung nền sẽ thò ra ngoài.
 BURN_STYLE = (
-    "FontName=Arial,FontSize=22,Bold=1,"
-    "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H80000000,"
-    "BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV=45"
+    "FontName=Arial,FontSize=18,Bold=1,"
+    "PrimaryColour=&H00FFFFFF,OutlineColour=&H60000000,BackColour=&H00000000,"
+    "BorderStyle=3,Outline=5,Shadow=0,Alignment=2,MarginV=45"
 )
+
+
+# ── KHUNG NỀN BO TRÒN ────────────────────────────────────────────────────────
+# ASS KHÔNG có sẵn khung nền bo góc: BorderStyle=3 luôn vẽ hộp VUÔNG và không có
+# tham số bán kính. Nên muốn bo tròn thì phải tự sinh file .ass, mỗi dòng phụ đề
+# thành 2 event: lớp 0 vẽ hình chữ nhật bo góc bằng lệnh vẽ vector \p1, lớp 1 là
+# chữ đè lên. Muốn đo được bề rộng hộp thì phải đo bề rộng chữ trước → dùng Pillow
+# đọc đúng file font mà libass sẽ dùng.
+#
+# Toạ độ tính trong khung 1920x1080; ffmpeg tự co theo độ phân giải thật.
+ASS_PLAY_W, ASS_PLAY_H = 1920, 1080
+SUB_FONT       = "Arial"
+SUB_FONT_FILE  = r"C:\Windows\Fonts\arialbd.ttf"   # Arial Bold — chỉ dùng để ĐO chữ
+SUB_FONT_SIZE  = 67       # px (bằng FontSize=18 của khung 384x288 mà ffmpeg dùng)
+SUB_MARGIN_V   = 173      # đáy dòng chữ cách đáy khung hình bao nhiêu px
+BOX_PAD_X      = 24       # đệm trái/phải giữa chữ và mép hộp
+BOX_PAD_Y      = 10       # đệm trên/dưới
+BOX_RADIUS     = 26       # bán kính bo góc
+BOX_ALPHA      = "60"     # độ TRONG SUỐT: 00 = đen đặc, FF = trong suốt hẳn
+
+
+def _text_width(text: str) -> float:
+    """Bề rộng chữ (px) ở SUB_FONT_SIZE. Thiếu font → ước lượng thô theo số ký tự."""
+    try:
+        from PIL import ImageFont
+        return ImageFont.truetype(SUB_FONT_FILE, SUB_FONT_SIZE).getlength(text)
+    except Exception:
+        return len(text) * SUB_FONT_SIZE * 0.52
+
+
+def _line_metrics():
+    """(ascent, descent) của font ở SUB_FONT_SIZE — để biết dòng chữ cao bao nhiêu."""
+    try:
+        from PIL import ImageFont
+        return ImageFont.truetype(SUB_FONT_FILE, SUB_FONT_SIZE).getmetrics()
+    except Exception:
+        return int(SUB_FONT_SIZE * 0.9), int(SUB_FONT_SIZE * 0.25)
+
+
+def _rounded_rect_path(x0, y0, x1, y1, r) -> str:
+    """Lệnh vẽ ASS (\\p1) cho hình chữ nhật bo 4 góc.
+
+    Mỗi góc là một đường bezier bậc 3 với CẢ HAI điểm điều khiển đặt ngay tại đỉnh
+    góc vuông — kéo đường cong sát vào góc, cho ra cung tròn đều mắt.
+    """
+    x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
+    r = int(max(0, min(r, (x1 - x0) // 2, (y1 - y0) // 2)))
+    return (f"m {x0 + r} {y0} "
+            f"l {x1 - r} {y0} b {x1} {y0} {x1} {y0} {x1} {y0 + r} "
+            f"l {x1} {y1 - r} b {x1} {y1} {x1} {y1} {x1 - r} {y1} "
+            f"l {x0 + r} {y1} b {x0} {y1} {x0} {y1} {x0} {y1 - r} "
+            f"l {x0} {y0 + r} b {x0} {y0} {x0} {y0} {x0 + r} {y0}")
+
+
+def _ass_ts(sec: float) -> str:
+    """Mốc giờ kiểu ASS: H:MM:SS.cc (phần trăm giây)."""
+    if sec < 0:
+        sec = 0
+    cs = int(round(sec * 100))
+    h, cs = divmod(cs, 360_000)
+    m, cs = divmod(cs, 6_000)
+    s, cs = divmod(cs, 100)
+    return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+_ASS_HEADER = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {ASS_PLAY_W}
+PlayResY: {ASS_PLAY_H}
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, \
+BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, \
+BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Sub,{SUB_FONT},{SUB_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,\
+-1,0,0,0,100,100,0,0,1,0,0,2,20,20,{SUB_MARGIN_V},1
+Style: Box,{SUB_FONT},{SUB_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,\
+0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+
+
+def write_ass(cues, cue_times, ass_path: Path):
+    """Ghi .ass: mỗi dòng phụ đề = 1 hộp bo góc (lớp 0) + chữ trắng (lớp 1)."""
+    ascent, descent = _line_metrics()
+    line_h = ascent + descent
+    cx = ASS_PLAY_W / 2
+    # libass đặt ĐÁY dòng chữ cách đáy khung đúng MarginV.
+    text_bottom = ASS_PLAY_H - SUB_MARGIN_V
+    out = [_ASS_HEADER]
+    for cue, (st, en) in zip(cues, cue_times):
+        lines = cue.split("\n")
+        w = max(_text_width(ln) for ln in lines)
+        n = len(lines)
+        x0, x1 = cx - w / 2 - BOX_PAD_X, cx + w / 2 + BOX_PAD_X
+        y1 = text_bottom + BOX_PAD_Y
+        y0 = text_bottom - line_h * n - BOX_PAD_Y
+        path = _rounded_rect_path(x0, y0, x1, y1, BOX_RADIUS)
+        a, b = _ass_ts(st), _ass_ts(en)
+        out.append(
+            f"Dialogue: 0,{a},{b},Box,,0,0,0,,"
+            f"{{\\p1\\pos(0,0)\\c&H000000&\\alpha&H{BOX_ALPHA}&\\bord0\\shad0}}{path}{{\\p0}}\n"
+        )
+        body = "\\N".join(lines)
+        out.append(f"Dialogue: 1,{a},{b},Sub,,0,0,0,,{body}\n")
+    ass_path.write_text("".join(out), encoding="utf-8")
+    return ass_path
 
 
 def has_nvenc() -> bool:
@@ -348,14 +473,19 @@ def has_nvenc() -> bool:
         return False
 
 
-def burn_subs(video_path: Path, srt_path: Path, out_path: Path, style=BURN_STYLE):
+def burn_subs(video_path: Path, sub_path: Path, out_path: Path, style=BURN_STYLE):
     """Vẽ CỨNG phụ đề thẳng vào khung hình (hardsub) — phải re-encode video.
+
+    `sub_path` nhận .ass (đã có sẵn kiểu + khung nền bo góc, KHÔNG ép force_style)
+    hoặc .srt (không có kiểu riêng → ép bằng force_style, khung nền vuông).
 
     Ưu tiên GPU (h264_nvenc) cho nhanh; nếu GPU lỗi tự fallback về CPU (libx264).
     Để né rắc rối escape đường dẫn Windows (dấu ':' của ổ đĩa) trong bộ lọc
-    subtitles, ta chạy ffmpeg với cwd = thư mục chứa .srt và chỉ truyền TÊN file.
+    subtitles, ta chạy ffmpeg với cwd = thư mục chứa file phụ đề và chỉ truyền TÊN file.
     """
-    vf = f"subtitles={srt_path.name}:force_style='{style}'"
+    vf = f"subtitles={sub_path.name}"
+    if sub_path.suffix.lower() != ".ass":
+        vf += f":force_style='{style}'"
 
     def build_cmd(gpu):
         if gpu:
@@ -375,12 +505,12 @@ def burn_subs(video_path: Path, srt_path: Path, out_path: Path, style=BURN_STYLE
     use_gpu = has_nvenc()
     print("   Encode: GPU (h264_nvenc)" if use_gpu else "   Encode: CPU (libx264)")
     result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", cwd=str(srt_path.parent))
+                            encoding="utf-8", errors="replace", cwd=str(sub_path.parent))
     # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt.
     if result.returncode != 0 and use_gpu:
         print("   GPU lỗi, chuyển sang CPU (libx264)...")
         result = subprocess.run(build_cmd(False), capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", cwd=str(srt_path.parent))
+                                encoding="utf-8", errors="replace", cwd=str(sub_path.parent))
     if result.returncode != 0:
         print(f"❌ Lỗi ffmpeg khi burn sub:\n{result.stderr[-1200:]}", file=sys.stderr)
         return False
@@ -503,8 +633,12 @@ def main():
         return
 
     if args.burn:
+        # Burn thì dùng .ass (khung nền bo góc) chứ không phải .srt: .srt không mang
+        # được kiểu riêng, ép bằng force_style chỉ ra khung nền VUÔNG.
+        ass_path = write_ass(cues, cue_times, srt_path.with_suffix(".ass"))
+        print(f"💾 Đã ghi kiểu phụ đề: {ass_path.name}")
         print("🎬 Đang VẼ CỨNG phụ đề vào hình (re-encode, hơi lâu)...")
-        ok = burn_subs(video_path, srt_path, out_path)
+        ok = burn_subs(video_path, ass_path, out_path)
     else:
         print("🎬 Đang nhúng phụ đề (soft sub) vào video...")
         ok = mux_softsub(video_path, srt_path, out_path)
