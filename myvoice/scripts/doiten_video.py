@@ -28,6 +28,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Cho phép import module cùng thư mục scripts/ kể cả khi được gọi từ nơi khác.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+import xoa_antoan   # xoá an toàn (Thùng rác) thay cho os.remove — xem #1 trong review
+
 # Ép UTF-8 cho stdout/stderr khi chạy CLI (guard cho trường hợp không có .buffer).
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -234,7 +241,13 @@ def run_rename(mode, log=print):
         ok, how = normalize(src, tmp, tw, th, codec, w, h, log=log)
         if ok:
             log(f"  [OK] {f}  ({codec} {w}x{h}) -> {how}")
-            os.remove(src)               # xóa file gốc sau khi tạo bản chuẩn hóa
+            # Bản chuẩn hoá là MẤT MÁT (re-encode + crop cắt cạnh + bỏ audio) và kho
+            # clip gốc KHÔNG nằm trong git → không được xoá hẳn. Đưa vào Thùng rác để
+            # lỡ crop hỏng / chọn nhầm chế độ ngang-dọc vẫn khôi phục được.
+            if not xoa_antoan.recycle_one(src, on_log=log):
+                log(f"  [GIỮ GỐC] không đưa được vào Thùng rác: {f} "
+                    "→ file gốc còn nguyên, lần chạy sau sẽ bị chuẩn hoá lại (trùng). "
+                    "Tự xoá tay nếu không cần nữa.")
             new_processed.append(tmp)
         else:
             log(f"  [LỖI] {f}")

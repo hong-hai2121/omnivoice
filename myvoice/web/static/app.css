@@ -1,0 +1,197 @@
+/* Bảng điều khiển myvoice — một file, không phụ thuộc mạng.
+   Sáng/tối theo cài đặt máy; bố cục co lại vừa màn hình điện thoại. */
+
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --fg: #1b1d21;
+  --muted: #6b7280;
+  --border: #e2e5ea;
+  --accent: #2563eb;
+  --ok: #15803d;
+  --ok-bg: #e8f5ec;
+  --warn: #b45309;
+  --warn-bg: #fdf3e3;
+  --danger: #b91c1c;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .08);
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1c1f25;
+    --fg: #e7e9ee;
+    --muted: #9aa3b2;
+    --border: #2b3038;
+    --accent: #60a5fa;
+    --ok: #4ade80;
+    --ok-bg: #14301f;
+    --warn: #fbbf24;
+    --warn-bg: #35290f;
+    --danger: #f87171;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding-bottom: 240px;              /* chừa chỗ cho panel nhật ký cố định dưới */
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+/* ── Thanh trên ─────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+  padding: 12px 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-size: 17px; }
+.topbar nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.topbar nav a {
+  padding: 7px 13px; border-radius: 999px;
+  color: var(--fg); text-decoration: none; font-weight: 500;
+}
+.topbar nav a:hover { background: var(--bg); }
+.topbar nav a.on { background: var(--accent); color: #fff; }
+
+main { padding: 20px; max-width: 1500px; margin: 0 auto; }
+
+.pagehead h1 { margin: 0 0 4px; font-size: 22px; }
+.pagehead p { margin: 0 0 18px; }
+h2 { font-size: 15px; margin: 20px 0 10px; color: var(--accent); }
+h2:first-child { margin-top: 0; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.spacer { flex: 1; }
+code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
+
+/* ── Khối ───────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 16px;
+}
+.panelhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; align-items: start; }
+.row { display: flex; flex-wrap: wrap; gap: 12px; }
+.row > * { flex: 1 1 130px; }
+
+.empty, .warn {
+  padding: 14px; border-radius: var(--radius);
+  background: var(--warn-bg); color: var(--warn); border: 1px solid var(--border);
+}
+.empty { background: var(--card); color: var(--muted); }
+
+/* ── Form ───────────────────────────────────────────────────────────────── */
+.field { display: block; margin-bottom: 12px; }
+.field > span, legend { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; }
+input[type=text], input:not([type]), select, textarea {
+  width: 100%; padding: 9px 11px; font: inherit;
+  color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 9px;
+}
+textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 13.5px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin: 0 0 12px; }
+.chk { display: flex; align-items: center; gap: 8px; margin: 7px 0; cursor: pointer; }
+.chk input { width: 17px; height: 17px; accent-color: var(--accent); }
+
+button {
+  font: inherit; cursor: pointer; padding: 9px 15px;
+  border-radius: 9px; border: 1px solid var(--border);
+  background: var(--card); color: var(--fg);
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.danger { color: var(--danger); }
+button.ghost { background: transparent; padding: 6px 11px; font-size: 13.5px; }
+button.small { padding: 3px 9px; }
+.savebar { position: sticky; bottom: 0; padding: 12px 0; background: linear-gradient(transparent, var(--bg) 40%); }
+form.row { align-items: flex-end; }
+form.panel button.primary { width: 100%; }
+
+/* ── Thẻ tập ────────────────────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px;
+}
+.card.full { border-left: 3px solid var(--ok); }
+.cardhead { display: flex; gap: 11px; align-items: flex-start; }
+.cardtitle { flex: 1; min-width: 0; }
+.cardtitle b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardtitle .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ep {
+  font-weight: 700; font-size: 17px; padding: 3px 10px; border-radius: 8px;
+  background: var(--bg); color: var(--accent);
+}
+.count { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.count.ok { color: var(--ok); font-weight: 600; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 10px; }
+.chips form { display: contents; }
+.chip {
+  font-size: 12.5px; padding: 4px 9px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--muted);
+}
+.chip.done { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.chip.todo { cursor: pointer; }
+.chip.todo:hover { border-color: var(--accent); color: var(--accent); }
+.cardfoot { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 13px; }
+.thumblink { color: var(--accent); text-decoration: none; }
+.thumblink:hover { text-decoration: underline; }
+
+/* ── Hàng đợi ───────────────────────────────────────────────────────────── */
+.job { padding: 10px 0; border-top: 1px solid var(--border); }
+.job:first-child { border-top: none; }
+.jobtop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.jobtop form { display: contents; }
+.badge {
+  font-size: 11.5px; padding: 2px 8px; border-radius: 999px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--border);
+}
+.badge.run { background: var(--accent); color: #fff; border-color: transparent; }
+.badge.done { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.badge.failed { color: var(--danger); }
+.badge.stopped { color: var(--warn); }
+.bar { height: 5px; border-radius: 999px; background: var(--bg); margin-top: 8px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.history summary { cursor: pointer; color: var(--muted); font-size: 13.5px; padding: 8px 0; }
+
+.copybox {
+  margin: 0; padding: 11px; max-height: 260px; overflow: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+  white-space: pre-wrap; word-break: break-word; font-size: 13.5px;
+}
+
+/* ── Nhật ký ────────────────────────────────────────────────────────────── */
+.logpanel {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  background: var(--card); border-top: 1px solid var(--border);
+}
+.loghead {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+}
+.loghead .chk { margin: 0; font-size: 13px; }
+#logbox {
+  margin: 0; height: 190px; overflow: auto; padding: 10px 16px;
+  font: 12.5px/1.55 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.logpanel.collapsed #logbox { display: none; }
+
+@media (max-width: 620px) {
+  body { padding-bottom: 190px; }
+  main { padding: 14px; }
+  #logbox { height: 130px; }
+  .cards { grid-template-columns: 1fr; }
+}

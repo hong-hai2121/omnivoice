@@ -283,8 +283,10 @@ def probe_durations(videos, log=print) -> dict:
         try:
             PROBE_CACHE_FILE.write_text(
                 json.dumps(_probe_cache, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass      # không ghi được cache thì thôi, lần sau probe lại
+        except OSError as e:
+            # Không ghi được cache thì thôi, lần sau probe lại — nhưng vẫn báo một
+            # dòng, kẻo mỗi lần chạy đều probe lại từ đầu mà không hiểu vì sao chậm.
+            log(f"[Cảnh báo] Không lưu được cache thời lượng clip: {e}")
     return durations
 
 

@@ -411,8 +411,9 @@ def save_episode_number(n: int) -> None:
         THUMB_STATE_FILE.write_text(
             json.dumps({"episode_number": str(n).zfill(2)}, ensure_ascii=False, indent=2),
             encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        # Nuốt lỗi ở đây là lần chạy sau ĐÁNH SỐ TẬP SAI mà không ai biết → phải log.
+        logging.warning(f"⚠️ Không lưu được số tập ({n}) vào {THUMB_STATE_FILE.name}: {e}")
 
 
 # ── SỐ TẬP BỎ QUA (đặt trước cho tương lai) ──────────────────────────────────
@@ -1865,6 +1866,13 @@ class App(tk.Tk):
             b.pack(fill="x", pady=(0, 8))
             self._nav_buttons[key] = b
 
+        # Bảng điều khiển WEB — không phải một view của cửa sổ này mà là bản chạy
+        # trong trình duyệt (xem myvoice/web/), nên tách khỏi nhóm nút trên.
+        ttk.Separator(side, orient="horizontal").pack(fill="x", pady=(4, 10))
+        self.btn_web = ttk.Button(side, text="🌐  Bảng\nweb", width=11,
+                                  command=self._open_web_panel)
+        self.btn_web.pack(fill="x")
+
         # ── Vùng nội dung: 3 panel (pipeline · TTS · video) HIỆN/ẨN theo view ──
         # Mỗi panel chỉ dựng MỘT lần (không trùng widget); nút chỉ bật/tắt hiển thị
         # bằng grid()/grid_remove(). Home = hiện cả 3 → đúng giao diện gốc đầy đủ.
@@ -2596,8 +2604,9 @@ class App(tk.Tk):
                 logging.getLogger().addHandler(file_handler)
                 logging.info("\n" + "═" * 12 + f" CHẠY TIẾP TẬP {episode} "
                              f"({_dt.datetime.now():%Y-%m-%d %H:%M:%S}) " + "═" * 12)
-            except Exception:
-                pass
+            except Exception as e:
+                # Không mở được batch_log.txt → chạy xong không có nhật ký để dò lỗi.
+                logging.warning(f"⚠️ Không ghi được batch_log.txt (vẫn chạy tiếp): {e}")
 
             # Nguồn (lấy từ manifest nếu có) — chỉ để ghi log/manifest, KHÔNG cần để chạy.
             m = load_manifest()
@@ -2617,30 +2626,9 @@ class App(tk.Tk):
                 return
             logging.info(f"♻ Dùng lại nhận diện ({existing_zh.name}, {len(chunks)} đoạn).")
 
-            # 3) Dịch Gemini — đủ thì bỏ qua; thiếu thì tiếp tục.
-            if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-                # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại đoạn
-                # đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
-                translated_now = False
-                logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
-            else:
-                prior = (g.read_results_docx(gemini_docx, len(chunks))
-                         if gemini_docx.exists() else [None] * len(chunks))
-                n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-                translated_now = n_todo > 0
-                if n_todo == 0:
-                    logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
-                else:
-                    logging.info(f"🌐 Mở Firefox dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
-                    driver = g.init_firefox()
-                    results = g.send_chunks_to_gemini(
-                        chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                        driver=driver, keep_open=True, resume=True)
-                    g.save_results_docx(chunks, results, gemini_docx)
-
-            # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video. LUÔN kiểm, kể cả
-            # khi đã bỏ qua bước gửi ở trên (xem SKIP_TRANSLATE_DETAIL_CHECK).
-            translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+            # 3) Dịch Gemini — đủ thì bỏ qua; thiếu thì tiếp tục (xem _dich_gemini_cho_tap).
+            driver, translated_now, translation_ok = self._dich_gemini_cho_tap(
+                gemini_docx, chunks, prefix, episode, driver)
 
             if not translation_ok:
                 self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — dừng.")
@@ -2687,6 +2675,7 @@ class App(tk.Tk):
                 self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
                 self._batch_run_tts(folder, tts_settings, episode)
 
+            self._don_rac_audio(folder)     # 🧹 xoá audio trung gian (giữ output.wav)
             self._manifest_update(src, episode, folder, done=True)
             self.pipe_progress.set(100)
             self.pipe_link_status.set(f"✅ Tập {episode} đã chạy tiếp xong.")
@@ -3242,14 +3231,12 @@ class App(tk.Tk):
     def _recog_translate_all_worker(self, folders):
         """Với mỗi tập đã nhận diện: dịch Gemini (bỏ qua nếu đủ) rồi tạo input.txt.
         Dùng chung Firefox + hỗ trợ Tạm dừng/Dừng như batch. KHÔNG SEO/thumbnail/video."""
-        import time
         driver = None
         total = len(folders)
         ok_count = 0
 
-        def _on_driver(d):
-            nonlocal driver
-            driver = d
+        # (Gemini treo → Firefox mở lại → driver mới) nay do _dich_gemini_cho_tap trả về
+        # và được gán lại ngay tại chỗ gọi, khỏi cần closure _on_driver riêng.
 
         # map số tập → nguồn gốc (để cập nhật manifest ĐÚNG dòng, không tạo dòng trùng).
         m = load_manifest()
@@ -3283,33 +3270,10 @@ class App(tk.Tk):
                         continue
 
                     # ── ②) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì dịch tiếp (giống batch) ──
-                    if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-                        translated_now = False
-                        logging.info(f"♻ Tập {episode}: đã có {gemini_docx.name} — bỏ qua gửi Gemini.")
-                    else:
-                        prior = (g.read_results_docx(gemini_docx, len(chunks))
-                                 if gemini_docx.exists() else [None] * len(chunks))
-                        n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-                        translated_now = n_todo > 0
-                        if n_todo == 0:
-                            logging.info(f"♻ Tập {episode}: đã đủ {len(chunks)} đoạn — bỏ qua dịch.")
-                        else:
-                            if driver is None:
-                                logging.info("🌐 Mở Firefox + Gemini...")
-                                driver = g.init_firefox()
-                            else:
-                                driver.get(g.GEMINI_URL)   # chat mới cho tập này
-                                time.sleep(8)
-                            logging.info(f"🌐 Tập {episode}: dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
-                            results = g.send_chunks_to_gemini(
-                                chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                                driver=driver, keep_open=True, on_driver=_on_driver, resume=True,
-                                on_result=lambda i2, t2, _a: self.pipe_status.set(
-                                    f"🌐 Tập {episode} • Gemini {i2 + 1}/{t2}"))
-                            g.save_results_docx(chunks, results, gemini_docx)
-                            logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
-                    # ⛔ LUÔN kiểm đủ đoạn trước khi cho qua bước input.txt.
-                    translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+                    driver, translated_now, translation_ok = self._dich_gemini_cho_tap(
+                        gemini_docx, chunks, prefix, episode, driver,
+                        on_status=lambda i2, t2: self.pipe_status.set(
+                            f"🌐 Tập {episode} • Gemini {i2 + 1}/{t2}"))
                     if src:
                         self._manifest_update(src, episode, folder)
 
@@ -4049,46 +4013,12 @@ class App(tk.Tk):
     def _send_to_recycle_bin(paths):
         """Đưa danh sách file/thư mục vào THÙNG RÁC Windows (khôi phục được).
 
-        Dùng SHFileOperationW của shell32 với cờ FOF_ALLOWUNDO — không cần thư viện
-        ngoài (send2trash/winshell). Trả về (số thành công, số lỗi).
+        Phần cài đặt nằm ở module dùng chung xoa_antoan.py — để các script khác
+        (doiten_video.py...) cũng xoá an toàn được, không phải chép lại code.
+        Trả về (số thành công, số lỗi).
         """
-        import os
-        import ctypes
-        from ctypes import wintypes
-
-        class _SHFILEOPSTRUCTW(ctypes.Structure):
-            _fields_ = [
-                ("hwnd", wintypes.HWND),
-                ("wFunc", wintypes.UINT),
-                ("pFrom", wintypes.LPCWSTR),
-                ("pTo", wintypes.LPCWSTR),
-                ("fFlags", ctypes.c_ushort),
-                ("fAnyOperationsAborted", wintypes.BOOL),
-                ("hNameMappings", ctypes.c_void_p),
-                ("lpszProgressTitle", wintypes.LPCWSTR),
-            ]
-
-        FO_DELETE = 0x0003
-        # ALLOWUNDO(vào Thùng rác) | NOCONFIRMATION | SILENT | NOERRORUI
-        FLAGS = 0x0040 | 0x0010 | 0x0004 | 0x0400
-        ok = fail = 0
-        for p in paths:
-            try:
-                # pFrom phải kết thúc bằng NULL kép -> thêm "\x00" (buffer tự thêm 1 NULL nữa).
-                buf = ctypes.create_unicode_buffer(os.path.abspath(str(p)) + "\x00")
-                op = _SHFILEOPSTRUCTW()
-                op.wFunc = FO_DELETE
-                op.pFrom = ctypes.cast(buf, wintypes.LPCWSTR)
-                op.fFlags = FLAGS
-                rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
-                if rc == 0 and not op.fAnyOperationsAborted:
-                    ok += 1
-                else:
-                    fail += 1
-            except Exception as e:
-                logging.warning(f"Không đưa vào Thùng rác được {p}: {e}")
-                fail += 1
-        return ok, fail
+        import xoa_antoan
+        return xoa_antoan.send_to_recycle_bin(paths, on_log=logging.warning)
 
     def _clear_output(self):
         """Đưa output/, các thư mục tập và nội dung file kịch_bản/ vào THÙNG RÁC.
@@ -4181,6 +4111,89 @@ class App(tk.Tk):
             logging.info("🎙  Đã mở cửa sổ Nhận diện giọng nói.")
         except Exception as e:
             messagebox.showerror("Lỗi mở Nhận diện", str(e))
+
+    # ── BẢNG ĐIỀU KHIỂN WEB (myvoice/web) ─────────────────────────────────────
+    @staticmethod
+    def _web_port() -> int:
+        try:
+            return int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
+        except ValueError:
+            return 8765
+
+    @staticmethod
+    def _web_alive(port: int, timeout: float = 0.4) -> bool:
+        """Đã có server nghe ở cổng đó chưa (mở 2 lần cùng cổng là lỗi bind)."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    @staticmethod
+    def _lan_ip() -> str:
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("8.8.8.8", 80))     # không gửi gì, chỉ để hỏi IP nào ra ngoài
+                return s.getsockname()[0]
+        except Exception:
+            return "127.0.0.1"
+
+    def _open_web_panel(self):
+        """Bật bảng điều khiển web rồi mở trình duyệt.
+
+        Server chạy trong CỬA SỔ CONSOLE RIÊNG (không phải nền ẩn) để đóng nó là
+        tắt hẳn — và để lỡ có lỗi khởi động thì còn nhìn thấy. Đang chạy sẵn thì
+        chỉ mở lại trình duyệt, không bật thêm cái thứ hai.
+        """
+        import subprocess
+        import time
+        import webbrowser
+
+        port = self._web_port()
+        web_dir = BASE_DIR / "web"
+        server = web_dir / "server.py"
+        if not server.exists():
+            messagebox.showerror("Thiếu bảng web", f"Không thấy:\n{server}")
+            return
+
+        self.btn_web.config(state="disabled")
+        try:
+            if not self._web_alive(port):
+                logging.info("🌐 Đang bật bảng điều khiển web...")
+                # python.exe (KHÔNG phải pythonw) để có cửa sổ console tắt được.
+                exe = _VENV_PYTHON if os.path.exists(_VENV_PYTHON) else sys.executable
+                CREATE_NEW_CONSOLE = 0x00000010
+                subprocess.Popen([exe, "-m", "myvoice.web.server"],
+                                 cwd=str(BASE_DIR.parent),
+                                 creationflags=CREATE_NEW_CONSOLE)
+                for _ in range(40):            # chờ tối đa ~20 giây
+                    self.update()
+                    if self._web_alive(port, timeout=0.2):
+                        break
+                    time.sleep(0.5)
+                else:
+                    messagebox.showerror(
+                        "Không bật được bảng web",
+                        "Server chưa phản hồi sau 20 giây.\n"
+                        "Xem cửa sổ console vừa mở để biết lỗi.")
+                    return
+            else:
+                logging.info("🌐 Bảng điều khiển web đang chạy sẵn.")
+
+            token = ""
+            try:
+                token = (web_dir / "token.txt").read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+            query = f"?token={token}" if token else ""
+            webbrowser.open(f"http://127.0.0.1:{port}/{query}")
+            logging.info(f"🌐 Bảng web: http://127.0.0.1:{port}/{query}")
+            logging.info(f"📱 Mở từ điện thoại cùng WiFi: "
+                         f"http://{self._lan_ip()}:{port}/{query}")
+        except Exception as e:
+            messagebox.showerror("Lỗi mở bảng web", str(e))
+        finally:
+            self.btn_web.config(state="normal")
 
     def _prepare_input_from_gemini(self) -> bool:
         """Quy trình trước khi tạo audio: lấy nội dung từ gemini_result.docx.
@@ -4469,8 +4482,8 @@ class App(tk.Tk):
         var.set(False)                 # một lần duy nhất
         try:
             self._save_pipe_settings()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"⚠️ Không lưu được cài đặt pipeline trước khi tắt máy: {e}")
         try:
             import subprocess
             secs = int(SHUTDOWN_DELAY_MIN * 60)
@@ -4947,8 +4960,20 @@ class App(tk.Tk):
             try:
                 import dich_chuanbi_input as prep
                 content = prep.remove_annotations(content)   # bỏ chú thích () []
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"⚠️ Không bỏ được chú thích () []: {e}")
+            # ⛔ CHỐT ĐỘ DÀI: so với bản nhận diện tiếng Trung của cùng tập. Bắt các ca
+            # mất đoạn mà marker "(chưa dịch)" KHÔNG phủ được (vd Gemini trả về lời xin
+            # lỗi ngắn thay vì bản dịch, hoặc docx bị sửa tay hụt).
+            try:
+                import kiemtra_daura as kt
+                ok_len, msg = kt.check_ban_dich(content, Path(out_txt).parent)
+                if not ok_len:
+                    logging.error(f"⛔ {gemini_docx.parent.name}: {msg}\n"
+                                  "   → KHÔNG ghi input.txt (tránh ra audio/video thiếu).")
+                    return False
+            except Exception as e:
+                logging.warning(f"⚠️ Bỏ qua chốt kiểm độ dài bản dịch: {e}")
             Path(out_txt).write_text(content, encoding="utf-8")
             return True
         except Exception as e:
@@ -5019,7 +5044,41 @@ class App(tk.Tk):
             sub_max_chars=ts.get("sub_max_chars", 50),
         )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
+        # ⚠️ CHỐT ĐỘ DÀI AUDIO: so thời lượng output.wav với số ký tự input.txt. Bắt ca
+        # TTS hụt chunk / file bị cắt cụt — audio đã tạo xong nên chỉ CẢNH BÁO (kèm beep)
+        # chứ không chặn, để bạn tự quyết định render lại.
+        try:
+            import kiemtra_daura as kt
+            ok_len, msg = kt.check_audio(output, input_txt)
+            if not ok_len:
+                logging.error(f"⚠️ {folder.name}: {msg}")
+                try:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONHAND)
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.warning(f"⚠️ Bỏ qua chốt kiểm độ dài audio: {e}")
         return True
+
+    def _don_rac_audio(self, folder) -> None:
+        """🧹 Xoá audio TRUNG GIAN của 1 tập sau khi video đã xong (~215 MB/tập).
+
+        GIỮ output.wav — mọi file bị xoá (output_chunks/, *_sped*.wav, *_tiktok*.wav,
+        tiktok_bgm.wav) đều dựng lại được từ nó bằng ffmpeg trong vài giây, còn
+        output.wav thì phải chạy lại TTS hàng chục phút.
+
+        Xoá HẲN, không qua Thùng rác — file vào Thùng rác vẫn chiếm ổ đĩa nên sẽ làm
+        tính năng dọn rác thành vô nghĩa. Các chốt an toàn (phải có video, phải còn
+        output.wav) nằm trong don_rac.don_rac_audio.
+
+        Lỗi ở bước dọn KHÔNG được làm hỏng tập đã chạy xong → nuốt lỗi nhưng vẫn log.
+        """
+        try:
+            import don_rac
+            don_rac.don_rac_audio(folder, on_log=logging.info)
+        except Exception as e:
+            logging.warning(f"⚠️ Không dọn được audio trung gian của {Path(folder).name}: {e}")
 
     def _make_thumbnail_for_folder(self, folder, episode: str) -> bool:
         """Render thumbnail cho 1 tập — CẢ 2 bản, dùng CHUNG ảnh mèo + tiêu đề + số tập:
@@ -5171,6 +5230,66 @@ class App(tk.Tk):
         except Exception:
             return False
 
+    def _dich_gemini_cho_tap(self, gemini_docx, chunks, prefix, episode,
+                             driver=None, on_status=None):
+        """Dịch 1 tập sang Gemini: bỏ qua đoạn đã dịch, gửi phần thiếu, rồi KIỂM ĐỦ ĐOẠN.
+
+        Gộp 3 khối GIỐNG HỆT nhau trước đây nằm ở _resume_folder_worker /
+        _pipe_batch_worker / _batch_worker. Trước đây sửa 1 lỗi phải nhớ sửa cả 3 chỗ —
+        đúng cái làm lỗi tập 42 tồn tại được (chốt _translation_complete bị vô hiệu ở
+        cả 3 bản sao). Nay chỉ còn 1 nơi để sửa.
+
+        on_status(i, total): callback cập nhật dòng trạng thái GUI (None = không cập nhật).
+
+        Trả về (driver, translated_now, translation_ok):
+          • driver         — driver ĐANG dùng; có thể là bản MỚI nếu Firefox phải mở lại
+                             giữa chừng, nên bên gọi PHẢI gán lại biến driver của mình.
+          • translated_now — lượt này có thực sự gửi Gemini không (→ cần tạo lại input.txt)
+          • translation_ok — đã dịch đủ mọi đoạn chưa (False → KHÔNG tạo input/audio/video)
+        """
+        import time
+        import dich_gemini as g
+
+        # Firefox có thể bị đóng/mở lại trong send_chunks_to_gemini → giữ driver trong
+        # dict để callback cập nhật được, rồi trả bản mới nhất về cho bên gọi.
+        state = {"driver": driver}
+
+        def _on_driver(d):
+            state["driver"] = d
+
+        if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
+            # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại đoạn đã
+            # xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
+            translated_now = False
+            logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
+        else:
+            prior = (g.read_results_docx(gemini_docx, len(chunks))
+                     if gemini_docx.exists() else [None] * len(chunks))
+            n_todo = sum(1 for r in prior if not g.is_translation_done(r))
+            translated_now = n_todo > 0
+            if n_todo == 0:
+                logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+            else:
+                if state["driver"] is None:
+                    logging.info("🌐 Mở Firefox + Gemini...")
+                    state["driver"] = g.init_firefox()
+                else:
+                    state["driver"].get(g.GEMINI_URL)   # chat mới cho tập này
+                    time.sleep(8)
+                logging.info(f"🌐 Tập {episode}: dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
+                results = g.send_chunks_to_gemini(
+                    chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
+                    driver=state["driver"], keep_open=True, on_driver=_on_driver,
+                    resume=True,
+                    on_result=((lambda i2, t2, _a: on_status(i2, t2)) if on_status else None))
+                g.save_results_docx(chunks, results, gemini_docx)
+                logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
+
+        # ⛔ CHẶN: LUÔN kiểm đủ đoạn, kể cả khi đã bỏ qua bước gửi ở trên. Bỏ chốt này
+        # là ra audio/video thiếu nội dung mà không ai biết (lỗi tập 42).
+        translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+        return state["driver"], translated_now, translation_ok
+
     def _translation_complete(self, gemini_docx, chunks, episode) -> bool:
         """True nếu MỌI đoạn trong gemini_result.docx đã dịch xong (không rỗng, không
         '(chưa dịch)', hết chữ Hán). Thiếu đoạn nào thì ghi log rõ để biết mà sửa.
@@ -5295,11 +5414,9 @@ class App(tk.Tk):
         total = len(sources)
         ok_count = 0
 
-        # Gemini treo → dịch_gemini đóng & mở lại Firefox; cập nhật tham chiếu để
-        # SEO và link kế (driver.get / driver.quit) dùng đúng trình duyệt đang mở.
-        def _on_driver(d):
-            nonlocal driver
-            driver = d
+        # Gemini treo → dịch_gemini đóng & mở lại Firefox; tham chiếu driver mới nay do
+        # _dich_gemini_cho_tap trả về và được gán lại ngay tại chỗ gọi, nên SEO và link
+        # kế (driver.get / driver.quit) vẫn dùng đúng trình duyệt đang mở.
 
         # ④ Ghi nhật ký batch ra kịch_bản/batch_log.txt (append, giữ lịch sử) để sau
         # sự cố mở file là biết dừng ở link/bước nào.
@@ -5395,38 +5512,14 @@ class App(tk.Tk):
 
                     self._batch_pause_wait()          # ⏸ điểm tạm dừng trước khi dịch
                     # ── 3) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì TIẾP TỤC dịch ──
-                    if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-                        # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại
-                        # đoạn đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
-                        translated_now = False
-                        logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
-                    else:
-                        prior = (g.read_results_docx(gemini_docx, len(chunks))
-                                 if gemini_docx.exists() else [None] * len(chunks))
-                        n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-                        translated_now = n_todo > 0   # có gửi dịch trong lượt này không
-                        if n_todo == 0:
-                            logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
-                        else:
-                            if driver is None:
-                                logging.info("🌐 Mở Firefox + Gemini (dùng chung dịch + SEO)...")
-                                driver = g.init_firefox()
-                            else:
-                                driver.get(g.GEMINI_URL)   # chat mới cho link này
-                                time.sleep(8)
-                            logging.info(f"🌐 Dịch {n_todo}/{len(chunks)} đoạn còn thiếu sang Gemini...")
-                            results = g.send_chunks_to_gemini(
-                                chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
-                                driver=driver, keep_open=True, on_driver=_on_driver, resume=True,
-                                on_result=lambda i2, t2, _a: self.pipe_status.set(
-                                    f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
-                            g.save_results_docx(chunks, results, gemini_docx)
-                            logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
                     # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh tình
                     # trạng như tập 29 / tập 42: dịch dở vẫn ra audio/video thiếu thời
-                    # lượng). LUÔN kiểm, kể cả khi đã bỏ qua bước gửi ở trên. Lần sau chạy
-                    # lại (đặt SKIP_TRANSLATE_DETAIL_CHECK = False) sẽ dịch tiếp đoạn thiếu.
-                    translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+                    # lượng). Lần sau chạy lại (đặt SKIP_TRANSLATE_DETAIL_CHECK = False)
+                    # sẽ dịch tiếp các đoạn còn thiếu.
+                    driver, translated_now, translation_ok = self._dich_gemini_cho_tap(
+                        gemini_docx, chunks, prefix, episode, driver,
+                        on_status=lambda i2, t2: self.pipe_status.set(
+                            f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
                     self._manifest_update(src, episode, folder)   # ghi tiến độ sau dịch
 
                     if not translation_ok:
@@ -5494,6 +5587,7 @@ class App(tk.Tk):
                         self.pipe_status.set(f"🎧 Tập {episode}: đang tạo giọng + video...")
                         self._batch_run_tts(folder, tts_settings, episode)
 
+                    self._don_rac_audio(folder)   # 🧹 xoá audio trung gian (giữ output.wav)
                     self._manifest_update(src, episode, folder, done=True)  # link XONG
                     ok_count += 1
                     done_what = "dịch + SEO + video" if tts_settings else "dịch + SEO"

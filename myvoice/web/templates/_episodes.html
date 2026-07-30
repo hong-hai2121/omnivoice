@@ -1,0 +1,45 @@
+{% set step_job = {"recognize": "recognize", "translate": "translate", "input": "input",
+                   "seo": "seo", "thumbnail": "thumbnail", "audio": "tts",
+                   "video_ngang": "tts", "video_doc": "tts"} %}
+{% if not rows %}
+  <p class="empty">Chưa có tập nào trong <code>kịch_bản/</code>.
+     Sang tab <a href="/chay">▶ Chạy</a> để bắt đầu tập đầu tiên.</p>
+{% endif %}
+
+<div class="cards">
+{% for r in rows %}
+  <article class="card {{ 'full' if r.done_count == r.total_steps }}">
+    <div class="cardhead">
+      <span class="ep">{{ r.episode }}</span>
+      <div class="cardtitle">
+        <b>{{ r.title or r.name }}</b>
+        <div class="muted small">{{ r.source or '—' }}</div>
+      </div>
+      <span class="count {{ 'ok' if r.done_count == r.total_steps }}">{{ r.done_count }}/{{ r.total_steps }}</span>
+    </div>
+
+    <div class="chips">
+      {% for key, label in step_labels %}
+        {% if r.steps[key] %}
+          <span class="chip done" title="Đã xong">✓ {{ label }}</span>
+        {% else %}
+          <form method="post" action="/tap/{{ r.episode }}/buoc/{{ step_job[key] }}">
+            <button class="chip todo" title="Chạy bước này cho tập {{ r.episode }}">▶ {{ label }}</button>
+          </form>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="cardfoot">
+      {% if r.steps.thumbnail %}
+        <a class="thumblink" href="/tap/{{ r.episode }}/thumbnail" target="_blank">🖼 Xem thumbnail</a>
+      {% endif %}
+      {% if r.steps.seo %}
+        <a class="thumblink" href="/seo?tap={{ r.episode }}">📑 Copy SEO</a>
+      {% endif %}
+      <span class="spacer"></span>
+      {% if r.updated %}<span class="muted small">{{ r.updated }}</span>{% endif %}
+    </div>
+  </article>
+{% endfor %}
+</div>

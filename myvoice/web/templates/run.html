@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Chạy — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1>Chạy</h1>
+  <p class="muted">Mỗi dòng là một link hoặc đường dẫn file. Mỗi dòng thành một tập riêng,
+     chạy lần lượt — tập kế tiếp sẽ là <b>{{ next_episode }}</b>.</p>
+</div>
+
+<div class="two">
+  <form class="panel" method="post" action="/chay">
+    <label class="field">
+      <span>Link / file (mỗi dòng một nguồn)</span>
+      <textarea name="sources" rows="6" placeholder="https://www.bilibili.com/video/…&#10;D:\video\tap-moi.mp4"></textarea>
+    </label>
+
+    <fieldset class="field">
+      <legend>Bước sẽ chạy</legend>
+      {% for key, label in step_choices %}
+        <label class="chk"><input type="checkbox" name="steps" value="{{ key }}" checked> {{ label }}</label>
+      {% endfor %}
+      <label class="chk"><input type="checkbox" name="force" value="1"> Làm lại cả bước đã có kết quả</label>
+    </fieldset>
+
+    <div class="row">
+      <label class="field">
+        <span>Model nhận diện</span>
+        <select name="model">
+          {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+            <option value="{{ m }}" {{ 'selected' if pipe.model == m }}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Tốc độ khi nhận diện</span>
+        <input name="speed" value="{{ pipe.speed }}" inputmode="decimal">
+      </label>
+    </div>
+
+    {% if tts_error %}
+      <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
+         — sửa ở <a href="/caidat">Cài đặt</a>.</p>
+    {% endif %}
+
+    <button class="primary" type="submit">▶ Xếp vào hàng đợi</button>
+    <p class="muted small">Bước dịch và SEO điều khiển Firefox — hãy đóng Firefox đang mở
+       và đảm bảo đã đăng nhập Google trước khi chạy.</p>
+  </form>
+
+  <div class="panel">
+    <div class="panelhead">
+      <b>Hàng đợi</b>
+      <span class="spacer"></span>
+      <form method="post" action="/hangdoi/pause"><button class="ghost">⏸ Tạm dừng</button></form>
+      <form method="post" action="/hangdoi/resume"><button class="ghost">▶ Tiếp</button></form>
+      <form method="post" action="/hangdoi/skip"><button class="ghost">⏭ Bỏ việc này</button></form>
+      <form method="post" action="/hangdoi/stop"><button class="danger">⏹ Dừng hết</button></form>
+    </div>
+    <div id="queue" hx-get="/partials/queue" hx-trigger="every 2s" hx-swap="innerHTML">
+      {% include "_queue.html" %}
+    </div>
+  </div>
+</div>
+{% endblock %}

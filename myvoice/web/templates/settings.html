@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Cài đặt — myvoice{% endblock %}
+
+{# Hidden "_bools" khai báo ô này CÓ trên trang → server biết ô nào được phép sửa
+   (checkbox bỏ tick thì trình duyệt không gửi gì, xem chú thích ở server.py). #}
+{% macro chk(name, label, opts) %}
+  <label class="chk">
+    <input type="hidden" name="_bools" value="{{ name }}">
+    <input type="checkbox" name="{{ name }}" {{ 'checked' if opts.get(name) }}> {{ label }}
+  </label>
+{% endmacro %}
+
+{% macro num(name, label, opts, step='1') %}
+  <label class="field">
+    <span>{{ label }}</span>
+    <input name="{{ name }}" value="{{ opts.get(name, '') }}" inputmode="decimal" step="{{ step }}">
+  </label>
+{% endmacro %}
+
+{% block content %}
+<div class="pagehead">
+  <h1>Cài đặt</h1>
+  <p class="muted">Lưu vào <code>taogiong_options.json</code> và <code>taogiong_pipeline.json</code> —
+     <b>dùng chung với GUI</b>, nên đổi ở đây thì GUI mở lên cũng thấy.</p>
+</div>
+
+<form method="post" action="/caidat">
+  <div class="two">
+    <div class="panel">
+      <h2>Giọng đọc</h2>
+      <label class="field">
+        <span>Chế độ</span>
+        <select name="mode">
+          {% for value, label in [("clone", "Clone giọng mẫu"), ("design", "Thiết kế bằng mô tả"), ("default", "Giọng mặc định")] %}
+            <option value="{{ value }}" {{ 'selected' if web.mode == value }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Giọng mẫu (chế độ clone)</span>
+        <select name="voice">
+          {% for v in voices %}
+            <option value="{{ v }}" {{ 'selected' if web.voice == v or (not web.voice and loop.first) }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Mô tả giọng (chế độ thiết kế)</span>
+        <input name="instruct" value="{{ web.instruct }}" placeholder="giọng nữ trẻ, ấm, kể chuyện chậm rãi">
+      </label>
+      {{ num('chunk', 'Số ký tự mỗi đoạn', opts) }}
+
+      <h2>Nhận diện</h2>
+      <div class="row">
+        <label class="field">
+          <span>Model Whisper</span>
+          <select name="model">
+            {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+              <option value="{{ m }}" {{ 'selected' if pipe.model == m }}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="field"><span>Tốc độ audio</span><input name="speed" value="{{ pipe.speed }}" inputmode="decimal"></label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Video ngang (YouTube)</h2>
+      {{ chk('make_video', 'Dựng video ngang', opts) }}
+      <div class="row">
+        <label class="field"><span>Tốc độ</span><input name="ngang_speed" value="{{ opts.ngang_speed }}" inputmode="decimal"></label>
+        <label class="field">
+          <span>Kho clip</span>
+          <select name="ngang_source">
+            {% for s in ngang_sources %}<option value="{{ s }}" {{ 'selected' if opts.ngang_source == s }}>{{ s }}</option>{% endfor %}
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <span>Hiệu ứng phủ</span>
+        <select name="effect">
+          {% for e in effects %}<option value="{{ e }}" {{ 'selected' if opts.effect == e }}>{{ e }}</option>{% endfor %}
+        </select>
+      </label>
+      {{ chk('cut_audio', 'Cắt audio theo phút', opts) }}
+      <div class="row">
+        {{ num('cut_target', 'Đích (phút)', opts, '0.1') }}
+        {{ num('cut_min', 'Từ (phút)', opts, '0.1') }}
+        {{ num('cut_max', 'Đến (phút)', opts, '0.1') }}
+      </div>
+      {{ chk('cut_half', 'Cắt đôi', opts) }}
+
+      <h2>Phụ đề</h2>
+      {{ chk('make_sub', 'Tạo phụ đề cho video ngang', opts) }}
+      <div class="row">
+        <label class="field">
+          <span>Kiểu</span>
+          <select name="sub_mode">
+            {% for m in sub_modes %}<option value="{{ m }}" {{ 'selected' if opts.sub_mode == m }}>{{ m }}</option>{% endfor %}
+          </select>
+        </label>
+        <label class="field">
+          <span>Model</span>
+          <select name="sub_model">
+            {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+              <option value="{{ m }}" {{ 'selected' if opts.sub_model == m }}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        {{ num('sub_max_chars', 'Ký tự/dòng', opts) }}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Video dọc (Facebook)</h2>
+      {{ chk('make_video_doc', 'Dựng video dọc', opts) }}
+      {{ chk('doc_full_audio', 'Dùng trọn audio', opts) }}
+      {{ chk('doc_from_ngang', 'Lấy hình từ video ngang', opts) }}
+      {{ chk('doc_from_subfolder', 'Lấy clip theo thư mục con', opts) }}
+      {{ chk('doc_no_effect', 'Không phủ hiệu ứng', opts) }}
+      <div class="row">
+        <label class="field"><span>Tốc độ</span><input name="doc_speed" value="{{ opts.doc_speed }}" inputmode="decimal"></label>
+        {{ num('doc_percent', '% audio dùng', opts) }}
+      </div>
+
+      <h2>Video TikTok</h2>
+      {{ chk('make_tiktok', 'Dựng video TikTok', opts) }}
+      {{ chk('tiktok_no_effect', 'Không phủ hiệu ứng', opts) }}
+      {{ chk('tiktok_music', 'Chèn nhạc nền', opts) }}
+      <div class="row">
+        <label class="field"><span>Tốc độ</span><input name="tiktok_speed" value="{{ opts.tiktok_speed }}" inputmode="decimal"></label>
+        {{ num('tiktok_percent', '% audio dùng', opts) }}
+      </div>
+      <div class="row">
+        {{ num('tiktok_caption_pos', 'Vị trí chữ (%)', opts) }}
+        {{ num('tiktok_music_db', 'Nhạc nền (dB)', opts) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="savebar">
+    <button class="primary" type="submit">💾 Lưu cài đặt</button>
+  </div>
+</form>
+{% endblock %}

@@ -72,3 +72,12 @@ mt_cache/
 /myvoice/YOUTUBE/token_drive.json
 /myvoice/YOUTUBE/token*.json
 /myvoice/YOUTUBE/settings.json
+
+# Log/stderr sinh ra khi chạy tay script (rỗng, không có giá trị lịch sử)
+*.log
+*.err
+
+# Bảng điều khiển web: token đăng nhập, cài đặt riêng của máy, file tạm của hàng đợi
+/myvoice/web/token.txt
+/myvoice/web/web_settings.json
+/myvoice/web/.tmp/

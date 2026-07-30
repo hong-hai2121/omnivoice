@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Tiến độ — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1>Tiến độ các tập</h1>
+  <p class="muted">Đọc thẳng từ thư mục <code>kịch_bản/</code> — bước nào đã có file thì tick.
+     Bấm vào ô còn thiếu để chạy lại đúng bước đó.</p>
+</div>
+
+<div id="episodes"
+     hx-get="/partials/episodes"
+     hx-trigger="every 10s"
+     hx-swap="innerHTML">
+  {% include "_episodes.html" %}
+</div>
+{% endblock %}

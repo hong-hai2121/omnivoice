@@ -94,8 +94,9 @@ def save_prefix(text: str) -> None:
     """Lưu câu mở đầu ra file để lần sau mở app vẫn còn."""
     try:
         PREFIX_FILE.write_text(text.strip(), encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as e:
+        # Nuốt lỗi ở đây là lần sau mở app MẤT câu mở đầu (chỉ dẫn dịch) mà không báo.
+        log(f"⚠️ Không lưu được câu mở đầu vào {PREFIX_FILE.name}: {e}", "warn")
 
 
 def read_docx_body(path) -> str:

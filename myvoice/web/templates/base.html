@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}myvoice{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎧</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">🎧 <b>myvoice</b><span class="muted"> · bảng điều khiển</span></div>
+  <nav>
+    <a href="/"        class="{{ 'on' if active == 'progress' }}">📋 Tiến độ</a>
+    <a href="/chay"    class="{{ 'on' if active == 'run' }}">▶ Chạy</a>
+    <a href="/seo"     class="{{ 'on' if active == 'seo' }}">📑 Copy SEO</a>
+    <a href="/caidat"  class="{{ 'on' if active == 'settings' }}">⚙ Cài đặt</a>
+  </nav>
+</header>
+
+<main>
+  {% block content %}{% endblock %}
+</main>
+
+<section id="logpanel" class="logpanel">
+  <div class="loghead">
+    <b>Nhật ký</b>
+    <span class="muted" id="logstate">đang kết nối…</span>
+    <span class="spacer"></span>
+    <label class="chk"><input type="checkbox" id="autoscroll" checked> tự cuộn</label>
+    <button type="button" class="ghost" onclick="document.getElementById('logbox').textContent=''">Xoá màn hình</button>
+    <button type="button" class="ghost" onclick="document.getElementById('logpanel').classList.toggle('collapsed')">Thu/mở</button>
+  </div>
+  <pre id="logbox"></pre>
+</section>
+
+<script src="/static/app.js" defer></script>
+</body>
+</html>
