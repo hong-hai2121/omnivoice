@@ -50,6 +50,12 @@ SUSPECT_PHRASES = [
     "lưu ý:",
     "ghi chú:",
     "(lưu ý",
+    # Đánh dấu ĐOẠN CHƯA DỊCH do dich_gemini đệm vào khi Gemini treo/lỗi giữa chừng
+    # (_save_progress → "(chưa dịch)", save_results_docx → "(trống)"). PHẢI bắt ở đây:
+    # nếu lọt, bước tạo input.txt sẽ xoá chúng như chú thích trong ngoặc → mất nguyên
+    # đoạn mà không cảnh báo gì (tập 42: mất đoạn 4-7/7, video chỉ còn 45% thời lượng).
+    "(chưa dịch)",
+    "(trống)",
 ]
 
 

@@ -278,7 +278,16 @@ def worker(source: str, model_name: str, speed: float, on_seg, on_prog, on_done)
 def _prepare_input_txt(gemini_docx, out_txt) -> bool:
     try:
         import dich_chuanbi_input as prep
-        content = prep.remove_annotations(prep.extract_content(gemini_docx))
+        content = prep.extract_content(gemini_docx)
+        # ⛔ CHẶN: còn đoạn "(chưa dịch)"/"(trống)" thì KHÔNG ghi input.txt. Phải kiểm
+        # TRƯỚC remove_annotations — hàm đó xoá chúng như chú thích trong ngoặc, mất
+        # nguyên đoạn mà không còn dấu vết (xem tập 42: mất 4/7 đoạn).
+        marks = prep.find_untranslated(content)
+        if marks:
+            log(f"⛔ gemini_result.docx còn đoạn chưa dịch {marks} — KHÔNG tạo input.txt. "
+                "Chạy lại bước dịch Gemini cho các đoạn còn thiếu.", "err")
+            return False
+        content = prep.remove_annotations(content)
         if not content:
             log("⚠️ Bản dịch rỗng sau khi xử lý — không tạo được input.txt.", "warn")
             return False

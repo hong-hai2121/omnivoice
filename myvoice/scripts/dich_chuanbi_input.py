@@ -55,6 +55,19 @@ _ANNOTATION_RE = re.compile(
     r"\([^()]*\)|\[[^\[\]]*\]|（[^（）]*）|［[^［］]*］"
 )
 
+# Chuỗi đánh dấu ĐOẠN CHƯA DỊCH mà dich_gemini đệm vào docx khi Gemini treo/lỗi giữa
+# chừng (_save_progress → "(chưa dịch)", save_results_docx → "(trống)").
+# ⚠️ PHẢI kiểm TRƯỚC remove_annotations: chúng nằm trong ngoặc () nên bị _ANNOTATION_RE
+# xoá sạch → mất nguyên đoạn mà KHÔNG để lại dấu vết nào trong input.txt (tập 42: mất
+# đoạn 4-7/7, video ra chỉ 16 phút thay vì 35 phút).
+_UNTRANSLATED_MARKS = ("(chưa dịch)", "(trống)")
+
+
+def find_untranslated(text):
+    """Trả về list marker 'đoạn chưa dịch' còn sót trong text (rỗng = đã dịch đủ)."""
+    low = (text or "").lower()
+    return [m for m in _UNTRANSLATED_MARKS if m in low]
+
 
 # Sửa từ/cụm cố định để TTS đọc né bộ lọc: (từ_gốc, từ_thay). Áp dụng KHI tạo
 # input.txt. Khớp được cả cụm nhiều từ (vd "sát hại").
@@ -155,6 +168,17 @@ def main(argv=None):
     if not content:
         print(f"❌ Không lấy được nội dung nào từ: {docx_path}")
         sys.exit(2)
+
+    # ── CHẶN: còn đoạn CHƯA DỊCH thì dừng ngay, TRƯỚC khi bỏ chú thích ────────
+    marks = find_untranslated(content)
+    if marks and not args.force:
+        print(f"\n⛔ DỪNG: docx còn đoạn chưa dịch {marks} → CHƯA ghi input.txt, "
+              "CHƯA tạo audio.\n   Hãy chạy lại bước dịch Gemini cho các đoạn còn "
+              "thiếu (hoặc chạy lại với --force nếu chấp nhận mất đoạn đó).")
+        sys.exit(1)
+    if marks and args.force:
+        print(f"\n⚠️  Còn đoạn chưa dịch {marks} nhưng --force → vẫn ghi input.txt "
+              "(input.txt sẽ THIẾU nội dung các đoạn đó).")
 
     # ── Bỏ chú thích trong () và [] — áp dụng SAU các bước chuẩn bị ở trên ─────
     print("🧽 BƯỚC 2b — Bỏ chú thích trong dấu () và []...")

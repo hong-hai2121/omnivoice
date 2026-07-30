@@ -457,10 +457,14 @@ def next_episode_number(after: int, skip=None) -> int:
 # bỏ qua phần đã làm; dù NHẬP KHÁC THỨ TỰ / thiếu link vẫn đúng tập.
 MANIFEST_FILE = SCRIPT_DIR / "batch_manifest.json"
 
-# [TẠM] Tắt kiểm CHI TIẾT từng đoạn dịch khi chạy batch: nếu gemini_result.docx đã
-# TỒN TẠI thì coi như DỊCH XONG, KHÔNG dò từng đoạn is_translation_done nữa. Lý do:
-# check chi tiết hay báo nhầm "chưa xong" → gửi LẠI đoạn đã dịch lên Gemini. Đổi về
-# False để bật lại kiểm từng đoạn (chặt chẽ hơn nhưng có thể gửi lại đoạn đã dịch).
+# Bỏ qua việc GỬI LẠI Gemini khi gemini_result.docx đã TỒN TẠI: không dò từng đoạn
+# is_translation_done để quyết định gửi lại, vì check đó hay báo nhầm "chưa xong" →
+# gửi LẠI đoạn đã dịch lên Gemini. Đổi về False để dò từng đoạn và dịch tiếp phần thiếu.
+#
+# ⚠️ CỜ NÀY CHỈ ẢNH HƯỞNG VIỆC GỬI LẠI — KHÔNG bỏ qua chốt chặn _translation_complete.
+# Trước đây nó gán thẳng translation_ok = True, khiến tập dịch dở (vd tập 42: Gemini
+# chết ở đoạn 4/7, đoạn 4-7 còn "(chưa dịch)") vẫn chạy tiếp ra audio/video chỉ 45%
+# thời lượng. Nay _translation_complete LUÔN chạy trước khi tạo input.txt.
 SKIP_TRANSLATE_DETAIL_CHECK = True
 
 
@@ -2615,12 +2619,10 @@ class App(tk.Tk):
 
             # 3) Dịch Gemini — đủ thì bỏ qua; thiếu thì tiếp tục.
             if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-                # [TẠM] Đã có gemini_result.docx → coi như DỊCH XONG, không dò từng đoạn
-                # (tránh gửi lại đoạn đã dịch). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
+                # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại đoạn
+                # đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
                 translated_now = False
-                translation_ok = True
-                logging.info(f"♻ Bỏ qua dịch Gemini — đã có {gemini_docx.name} "
-                             f"(TẠM tắt kiểm từng đoạn).")
+                logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
             else:
                 prior = (g.read_results_docx(gemini_docx, len(chunks))
                          if gemini_docx.exists() else [None] * len(chunks))
@@ -2635,8 +2637,10 @@ class App(tk.Tk):
                         chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
                         driver=driver, keep_open=True, resume=True)
                     g.save_results_docx(chunks, results, gemini_docx)
-                # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video.
-                translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+
+            # ⛔ Dịch chưa xong → DỪNG, không tạo input/audio/video. LUÔN kiểm, kể cả
+            # khi đã bỏ qua bước gửi ở trên (xem SKIP_TRANSLATE_DETAIL_CHECK).
+            translation_ok = self._translation_complete(gemini_docx, chunks, episode)
 
             if not translation_ok:
                 self.pipe_status.set(f"⛔ Tập {episode}: dịch chưa xong — dừng.")
@@ -3281,8 +3285,7 @@ class App(tk.Tk):
                     # ── ②) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì dịch tiếp (giống batch) ──
                     if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
                         translated_now = False
-                        translation_ok = True
-                        logging.info(f"♻ Tập {episode}: đã có {gemini_docx.name} — bỏ qua dịch.")
+                        logging.info(f"♻ Tập {episode}: đã có {gemini_docx.name} — bỏ qua gửi Gemini.")
                     else:
                         prior = (g.read_results_docx(gemini_docx, len(chunks))
                                  if gemini_docx.exists() else [None] * len(chunks))
@@ -3305,7 +3308,8 @@ class App(tk.Tk):
                                     f"🌐 Tập {episode} • Gemini {i2 + 1}/{t2}"))
                             g.save_results_docx(chunks, results, gemini_docx)
                             logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
-                        translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+                    # ⛔ LUÔN kiểm đủ đoạn trước khi cho qua bước input.txt.
+                    translation_ok = self._translation_complete(gemini_docx, chunks, episode)
                     if src:
                         self._manifest_update(src, episode, folder)
 
@@ -4915,6 +4919,20 @@ class App(tk.Tk):
             content = "\n".join(t for _, t in chunks).strip()
             if not content:
                 return False
+            # ⛔ CHẶN: còn đoạn "(chưa dịch)"/"(trống)" thì KHÔNG ghi input.txt. Phải
+            # kiểm ở ĐÂY — sau đó remove_annotations sẽ xoá chúng như chú thích trong
+            # ngoặc, mất nguyên đoạn mà không còn dấu vết (xem tập 42).
+            try:
+                import dich_chuanbi_input as prep
+                marks = prep.find_untranslated(content)
+            except Exception:
+                marks = []
+            if marks:
+                logging.error(
+                    f"⛔ {gemini_docx.parent.name}: gemini_result.docx còn đoạn chưa dịch "
+                    f"{marks} → KHÔNG ghi input.txt (tránh ra audio/video thiếu thời "
+                    "lượng). Chạy lại bước dịch Gemini cho các đoạn còn thiếu.")
+                return False
             content, n_promo, n_add = replace_channel_promo(content)
             logging.info(f"🔁 Quảng bá kênh: xóa {n_promo} câu rải rác, "
                          f"chèn lại {n_add} câu.")
@@ -5378,12 +5396,10 @@ class App(tk.Tk):
                     self._batch_pause_wait()          # ⏸ điểm tạm dừng trước khi dịch
                     # ── 3) DỊCH GEMINI — đủ thì bỏ qua; thiếu thì TIẾP TỤC dịch ──
                     if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-                        # [TẠM] Đã có gemini_result.docx → coi như DỊCH XONG, KHÔNG dò
-                        # từng đoạn (tránh gửi lại đoạn đã dịch). Xem cờ ở đầu file.
+                        # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại
+                        # đoạn đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
                         translated_now = False
-                        translation_ok = True
-                        logging.info(f"♻ Bỏ qua dịch Gemini — đã có {gemini_docx.name} "
-                                     f"(TẠM tắt kiểm từng đoạn).")
+                        logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
                     else:
                         prior = (g.read_results_docx(gemini_docx, len(chunks))
                                  if gemini_docx.exists() else [None] * len(chunks))
@@ -5406,10 +5422,11 @@ class App(tk.Tk):
                                     f"🌐 Link {i}/{total} • Gemini {i2 + 1}/{t2}"))
                             g.save_results_docx(chunks, results, gemini_docx)
                             logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
-                        # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh
-                        # tình trạng như tập 29: dịch dở vẫn ra audio/video). Lần sau chạy
-                        # lại sẽ dịch tiếp các đoạn còn thiếu.
-                        translation_ok = self._translation_complete(gemini_docx, chunks, episode)
+                    # ⛔ CHẶN: DỊCH CHƯA XONG thì KHÔNG tạo input/audio/video (tránh tình
+                    # trạng như tập 29 / tập 42: dịch dở vẫn ra audio/video thiếu thời
+                    # lượng). LUÔN kiểm, kể cả khi đã bỏ qua bước gửi ở trên. Lần sau chạy
+                    # lại (đặt SKIP_TRANSLATE_DETAIL_CHECK = False) sẽ dịch tiếp đoạn thiếu.
+                    translation_ok = self._translation_complete(gemini_docx, chunks, episode)
                     self._manifest_update(src, episode, folder)   # ghi tiến độ sau dịch
 
                     if not translation_ok:
