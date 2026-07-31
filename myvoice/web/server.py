@@ -3,26 +3,24 @@
 Chạy:  myvoice\\chay_web.bat      (hoặc)
        venv\\Scripts\\python.exe -m myvoice.web.server
 
-Server này điều khiển máy thật (ffmpeg, GPU, Firefox, xoá file) nên mặc định
-nghe trên LAN kèm một token: mở lần đầu bằng đường dẫn có ?token=... in ra ở
-console, token được nhớ trong cookie. Đừng mở cổng này ra Internet.
+Server này điều khiển máy thật (ffmpeg, GPU, Firefox, xoá file) nên CHỈ nghe
+trên 127.0.0.1 — không có chế độ mở ra mạng LAN. Vẫn giữ một token trong cookie
+để trang web lạ đang mở trong cùng trình duyệt không gọi được vào đây.
+
+Nhật ký chạy in thẳng ra cửa sổ console của server (không còn panel nhật ký).
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
-import queue
 import secrets
-import socket
 import sys
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
-                               RedirectResponse, StreamingResponse)
+                               RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -31,7 +29,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, steps as steps_mod          # noqa: E402
-from .jobs import log, log_bus, runner          # noqa: E402
+from .jobs import log, runner                   # noqa: E402
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -80,20 +78,346 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     return templates.TemplateResponse(request, name, ctx)
 
 
-# ── Trang Tiến độ ───────────────────────────────────────────────────────────
+# ── Context dùng chung ──────────────────────────────────────────────────────
+# Trang Home ghép cả hai khối (giống view "Home (đầy đủ)" bên GUI) nên hai hàm
+# này là NGUỒN DUY NHẤT: sửa một chỗ, cả Home lẫn trang riêng cùng đổi.
+def _script_ctx() -> dict:
+    _, tts_err = core.tts_settings()
+    return {"pipe": core.load_pipeline(), "tts_error": tts_err,
+            "next_episode": core.next_episode(), "prefix": core.load_prefix(),
+            "skip_episodes": core.load_skip_episodes(),
+            "shutdown_delay": core.gui.SHUTDOWN_DELAY_MIN}
+
+
+def _voice_ctx() -> dict:
+    web = core.load_web_settings()
+    out_wav = web.get("output") or str(core.OUTPUT_DIR / "output.wav")
+    voices = core.list_voices()
+    return {
+        "opts": core.load_options(), "web": web, "voices": voices,
+        # Chưa chọn giọng bao giờ → lấy mục đầu danh sách, đúng như combobox của GUI.
+        "current_voice": web.get("voice") or (voices[0]["name"] if voices else ""),
+        "effects": core.list_effects(),
+        "ngang_sources": [core.NGANG_SOURCE_ALL] + core.list_ngang_sources(),
+        "effect_none": core.EFFECT_NONE,
+        "sub_modes": [core.SUB_MODE_SRT, core.SUB_MODE_BURN],
+        "input_txt": web.get("input") or str(core.SCRIPT_DIR / "input.txt"),
+        "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
+        "voice_dir": str(core.VOICE_DIR),
+        "tiktok_episode": core.thumbnail_episode() + 1,
+    }
+
+
+# ── Trang chủ: Home (view "🏠 Home (đầy đủ)" bên GUI) ───────────────────────
 @app.get("/", response_class=HTMLResponse)
-def page_progress(request: Request):
-    return _page(request, "progress.html", active="progress",
-                 rows=core.episode_rows(), step_labels=core.STEP_LABELS,
-                 single_steps=steps_mod.SINGLE_STEPS)
+def page_home(request: Request):
+    return _page(request, "home.html", active="home", q=runner.state(),
+                 **_script_ctx(), **_voice_ctx())
 
 
-@app.get("/partials/episodes", response_class=HTMLResponse)
-def partial_episodes(request: Request):
+# ── Trang Tạo kịch bản (view "script" bên GUI) ──────────────────────────────
+@app.get("/kichban", response_class=HTMLResponse)
+def page_script(request: Request):
+    return _page(request, "script.html", active="script", q=runner.state(),
+                 **_script_ctx())
+
+
+def _save_pipe_from_form(form) -> dict:
+    """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings)."""
+    pipe = core.load_pipeline()
+    for k in ("model", "speed"):
+        if form.get(k):
+            pipe[k] = str(form[k])
+    for k in ("auto2", "auto3", "auto_tts", "seo", "shutdown"):
+        pipe[k] = k in form
+    core.save_pipeline(pipe)
+    return pipe
+
+
+# Chuỗi chính ①→②→③→giọng. Mỗi nấc có một ô "⛓ tự động chạy tiếp"; ô tắt thì
+# chuỗi DỪNG ở đó, y như GUI. SEO + thumbnail là tuỳ chọn đi kèm bước ② (var_seo).
+_STAGES = ["recognize", "translate", "input", "tts"]
+_GATES = {"translate": "auto2", "input": "auto3", "tts": "auto_tts"}
+
+
+def _chain_from(start: str, pipe: dict) -> list[str]:
+    steps: list[str] = []
+    begin = _STAGES.index(start) if start in _STAGES else 0
+    for i, name in enumerate(_STAGES[begin:]):
+        if i > 0 and not pipe.get(_GATES[name]):
+            break
+        steps.append(name)
+    if pipe.get("seo") and "translate" in steps:
+        pos = steps.index("input") + 1 if "input" in steps else len(steps)
+        steps[pos:pos] = ["seo", "thumbnail"]
+    return steps
+
+
+@app.post("/kichban/chay")
+async def run_script(request: Request):
+    form = await request.form()
+    start = str(form.get("start", "recognize"))
+    if start not in _STAGES:
+        start = "recognize"
+    pipe = _save_pipe_from_form(form)
+    if "shutdown" in form:
+        log("⏻ Ô “xong thì tắt máy” chỉ có tác dụng bên GUI — bản web không tự tắt máy.")
+
+    lines = [s.strip() for s in str(form.get("sources", "")).splitlines() if s.strip()]
+    if not lines:
+        log("⚠️ Chưa nhập link hoặc đường dẫn file nào.")
+        return _back(request, "/kichban")
+
+    chain = _chain_from(start, pipe)
+    force = bool(form.get("force"))
+    steps_mod.cleanup_tmp()
+    for src in lines:
+        built, err = steps_mod.build_steps(chain, source=src, force=force)
+        if err:
+            log(f"⛔ {err}")
+            break
+        runner.enqueue(steps_mod.title_for(src, "", chain), built)
+    return _back(request, "/kichban")
+
+
+@app.post("/kichban/reset")
+def reset_pipeline():
+    core.save_pipeline(dict(core.PIPE_DEFAULTS))
+    log("↺ Đã đặt lại cài đặt quy trình về mặc định.")
+    return RedirectResponse("/kichban", status_code=303)
+
+
+@app.post("/kichban/tapboqua")
+def save_skip(skip: str = Form("")):
+    nums = core.save_skip_episodes(skip)
+    log(f"⏭ Tập bỏ qua: {', '.join(map(str, nums)) or '(không có)'}")
+    return RedirectResponse("/kichban", status_code=303)
+
+
+@app.post("/kichban/mocau")
+def save_prefix(prefix: str = Form("")):
+    core.save_prefix(prefix)
+    log("💾 Đã lưu câu mở đầu gửi Gemini.")
+    return RedirectResponse("/kichban", status_code=303)
+
+
+# ── Trang Giọng nói (view "voice" bên GUI: TTS + video) ─────────────────────
+@app.get("/giongnoi", response_class=HTMLResponse)
+def page_voice(request: Request):
+    return _page(request, "voice.html", active="voice", q=runner.state(),
+                 **_voice_ctx())
+
+
+@app.post("/giongnoi")
+async def run_voice(request: Request):
+    """Một form, nhiều nút: Chạy · Dựng lại ngang/dọc/tiktok. Bấm nút nào cũng LƯU
+    cài đặt trước rồi mới chạy — đúng thói quen của GUI."""
+    form = await request.form()
+    _save_opts_from_form(form)
+    core.save_web_settings({
+        "mode": str(form.get("mode", "clone")),
+        "voice": str(form.get("voice", "")),
+        "instruct": str(form.get("instruct", "")),
+        "input": str(form.get("input_txt", "")),
+        "output": str(form.get("output_wav", "")),
+    })
+
+    action = str(form.get("action", "run"))
+    rebuild = action if action in ("ngang", "doc", "tiktok") else ""
+    built, err = steps_mod.tts_steps(
+        input_txt=str(form.get("input_txt", "")),
+        output_wav=str(form.get("output_wav", "")),
+        from_gemini=bool(form.get("from_gemini")) and not rebuild,
+        reuse=bool(form.get("reuse")),
+        rebuild=rebuild,
+        episode=str(form.get("tiktok_episode", "")))
+    if err:
+        log(f"⛔ {err}")
+    else:
+        runner.enqueue(built[0].label, built)
+    return _back(request, "/giongnoi")
+
+
+@app.get("/giongnoi/nghe")
+def play_audio(file: str = ""):
+    """Phát audio ngay trong trình duyệt — bản web của nút “🔊 Nghe thử”.
+    Chỉ mở file nằm trong myvoice/ (chặn đọc lung tung ngoài dự án)."""
+    try:
+        path = Path(file).resolve()
+        path.relative_to(core.BASE_DIR.resolve())
+    except (ValueError, OSError):
+        return JSONResponse({"error": "đường dẫn không hợp lệ"}, status_code=400)
+    if not path.is_file():
+        return JSONResponse({"error": "chưa có file"}, status_code=404)
+    return FileResponse(str(path))
+
+
+@app.post("/giongnoi/yeuthich/{kind}")
+def toggle_favorite(kind: str, request: Request, name: str = Form("")):
+    """Nút ☆/★ cạnh giọng mẫu và hiệu ứng."""
+    if kind == "voice":
+        on = core.toggle_voice_favorite(name)
+    elif kind == "effect":
+        on = core.toggle_effect_favorite(name)
+    else:
+        return JSONResponse({"error": "loại không hợp lệ"}, status_code=400)
+    log(f"{'★' if on else '☆'} {name}")
+    return _back(request, "/giongnoi")
+
+
+@app.post("/giongnoi/xoaketqua")
+def clear_output(confirm: str = Form("")):
+    """Bản web của nút “🗑 Xóa output”: mọi thứ vào THÙNG RÁC Windows (khôi phục
+    được), file trong kịch_bản/ được tạo lại bản rỗng. Đòi tick xác nhận."""
+    if not confirm:
+        log("⚠️ Chưa tick xác nhận → không xoá gì.")
+        return RedirectResponse("/giongnoi", status_code=303)
+
+    out_items = list(core.OUTPUT_DIR.iterdir()) if core.OUTPUT_DIR.exists() else []
+    kb_files = [p for p in core.SCRIPT_DIR.iterdir() if p.is_file()] \
+        if core.SCRIPT_DIR.exists() else []
+    ep_dirs = core.gui.episode_dirs()
+    if not (out_items or kb_files or ep_dirs):
+        log("Không có gì để xoá.")
+        return RedirectResponse("/giongnoi", status_code=303)
+
+    bin_ = core.gui.App._send_to_recycle_bin
+    out_ok, out_fail = bin_(out_items)
+    ep_ok, ep_fail = bin_(ep_dirs)
+    kb_ok, kb_fail = bin_(kb_files)
+
+    emptied = 0
+    for p in kb_files:
+        if p.exists():          # chưa vào được Thùng rác → GIỮ NGUYÊN, không ghi đè
+            log(f"Giữ nguyên (chưa vào Thùng rác được): {p.name}")
+            continue
+        try:
+            if p.suffix.lower() == ".docx":
+                from docx import Document
+                Document().save(str(p))
+            else:
+                p.write_text("", encoding="utf-8")
+            emptied += 1
+        except Exception as e:
+            log(f"Không tạo lại được {p.name}: {e}")
+
+    log(f"🗑 Vào Thùng rác: {out_ok} mục output, {ep_ok} thư mục tập, {kb_ok} file "
+        f"kịch_bản; tạo lại {emptied} bản rỗng; lỗi {out_fail + ep_fail + kb_fail}.")
+    return RedirectResponse("/giongnoi", status_code=303)
+
+
+# ── Trang Nhận diện (view "recog" bên GUI: bảng tập + 5 nút hàng loạt) ──────
+_BATCH_BUTTONS = {
+    "recognize": ("① Nhận diện các link rồi ngưng", ["recognize"]),
+    "translate": ("② Dịch + tạo input.txt", ["translate", "input"]),
+    "seo":       ("③ Gửi SEO (Gemini)", ["seo"]),
+    "thumbnail": ("④ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
+    "tts":       ("⑤ Tạo giọng + video", ["tts"]),
+}
+# Tập "đủ điều kiện" cho từng nút khi KHÔNG tick tập nào — giống cách GUI lọc.
+_BATCH_READY = {
+    "translate": lambda s: s["recognize"] and not s["input"],
+    "seo":       lambda s: s["translate"] and not s["seo"],
+    "thumbnail": lambda s: s["seo"] and not s["thumbnail"],
+    "tts":       lambda s: s["input"] and not s["video_ngang"],
+}
+
+
+@app.get("/nhandien", response_class=HTMLResponse)
+def page_recog(request: Request):
+    return _page(request, "recog.html", active="recog", pipe=core.load_pipeline(),
+                 q=runner.state(), rows=core.episode_rows(),
+                 step_labels=core.STEP_LABELS, buttons=_BATCH_BUTTONS)
+
+
+@app.get("/partials/recog-table", response_class=HTMLResponse)
+def partial_recog_table(request: Request):
     return templates.TemplateResponse(
-        request, "_episodes.html",
-        {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS,
-         "single_steps": steps_mod.SINGLE_STEPS})
+        request, "_recog_table.html",
+        {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS})
+
+
+@app.post("/nhandien")
+async def run_recog(request: Request):
+    form = await request.form()
+    action = str(form.get("action", ""))
+    if action not in _BATCH_BUTTONS:
+        return RedirectResponse("/nhandien", status_code=303)
+
+    pipe = core.load_pipeline()
+    for k in ("model", "speed"):
+        if form.get(k):
+            pipe[k] = str(form[k])
+    core.save_pipeline(pipe)
+
+    label, chain = _BATCH_BUTTONS[action]
+    force = bool(form.get("force"))
+    steps_mod.cleanup_tmp()
+
+    if action == "recognize":
+        lines = [s.strip() for s in str(form.get("sources", "")).splitlines() if s.strip()]
+        if not lines:
+            log("⚠️ Chưa nhập link hoặc file nào để nhận diện.")
+            return RedirectResponse("/nhandien", status_code=303)
+        for src in lines:
+            built, err = steps_mod.build_steps(chain, source=src, force=force)
+            if err:
+                log(f"⛔ {err}")
+                break
+            runner.enqueue(steps_mod.title_for(src, "", chain), built)
+        return RedirectResponse("/nhandien", status_code=303)
+
+    picked = [str(e) for e in form.getlist("tap")]
+    rows = core.episode_rows()
+    if picked:
+        targets = [r for r in rows if r["episode"] in picked]
+    else:
+        ready = _BATCH_READY[action]
+        targets = [r for r in rows if ready(r["steps"])]
+        log(f"ℹ️ Không tick tập nào → chạy {len(targets)} tập đủ điều kiện cho “{label}”.")
+    if not targets:
+        log(f"⚠️ Không có tập nào để chạy “{label}”.")
+        return RedirectResponse("/nhandien", status_code=303)
+
+    for r in sorted(targets, key=lambda r: int(r["episode"])):
+        built, err = steps_mod.build_steps(chain, source=r["source"],
+                                           episode=r["episode"], force=force)
+        if err:
+            log(f"⛔ {err}")
+            break
+        runner.enqueue(steps_mod.title_for("", r["episode"], chain), built)
+    return RedirectResponse("/nhandien", status_code=303)
+
+
+# ── Trang Thumbnail ─────────────────────────────────────────────────────────
+@app.get("/thumbnail", response_class=HTMLResponse)
+def page_thumbnail(request: Request, tap: str = ""):
+    rows = core.episode_rows()
+    chosen = tap or (rows[0]["episode"] if rows else "")
+    title = ""
+    folder = core.episode_folder(chosen) if chosen else None
+    if folder:
+        blocks = core.seo_blocks(folder, chosen)
+        if blocks:                      # gợi ý sẵn tiêu đề SEO của tập đang chọn
+            title = blocks["title"]
+    return _page(request, "thumbnail.html", active="thumbnail", rows=rows,
+                 chosen=chosen, suggested=title, photos=core.list_photos(),
+                 q=runner.state(), episode_number=core.thumbnail_episode())
+
+
+@app.post("/thumbnail")
+async def make_thumbnail(request: Request):
+    form = await request.form()
+    title = str(form.get("title", "")).strip()
+    episode = str(form.get("episode", "")).strip()
+    if not title:
+        log("⚠️ Chưa nhập tiêu đề cho thumbnail.")
+        return RedirectResponse("/thumbnail", status_code=303)
+    built = steps_mod.thumbnail_steps(title, episode=episode,
+                                      photo=str(form.get("photo", "")),
+                                      doc=bool(form.get("doc")))
+    runner.enqueue(f"Thumbnail tập {episode or '—'}", built)
+    return RedirectResponse(f"/thumbnail?tap={episode}", status_code=303)
 
 
 @app.get("/tap/{episode}/thumbnail")
@@ -106,64 +430,14 @@ def episode_thumbnail(episode: str):
     return JSONResponse({"error": "chưa có thumbnail"}, status_code=404)
 
 
-# ── Trang Chạy ──────────────────────────────────────────────────────────────
-@app.get("/chay", response_class=HTMLResponse)
-def page_run(request: Request):
-    pipe = core.load_pipeline()
-    _, tts_err = core.tts_settings()
-    return _page(request, "run.html", active="run", pipe=pipe, q=runner.state(),
-                 step_choices=steps_mod.STEP_CHOICES, tts_error=tts_err,
-                 next_episode=core.next_episode())
-
-
-@app.post("/chay")
-def run_sources(sources: str = Form(""), steps: list[str] = Form(default=[]),
-                force: str = Form(""), model: str = Form(""), speed: str = Form("")):
-    """Xếp hàng: mỗi dòng nguồn (link/file) thành một việc chạy các bước đã chọn."""
-    lines = [s.strip() for s in sources.splitlines() if s.strip()]
-    chosen = [k for k, _ in steps_mod.STEP_CHOICES if k in steps]
-    if not lines:
-        log("⚠️ Chưa nhập link hoặc đường dẫn file nào.")
-        return RedirectResponse("/chay", status_code=303)
-    if not chosen:
-        log("⚠️ Chưa chọn bước nào để chạy.")
-        return RedirectResponse("/chay", status_code=303)
-
-    if model or speed:                       # nhớ cài đặt quy trình (chung với GUI)
-        pipe = core.load_pipeline()
-        if model:
-            pipe["model"] = model
-        if speed:
-            pipe["speed"] = speed
-        core.save_pipeline(pipe)
-
-    steps_mod.cleanup_tmp()
-    for src in lines:
-        built, err = steps_mod.build_steps(chosen, source=src, force=bool(force))
-        if err:
-            log(f"⛔ {err}")
-            break
-        runner.enqueue(steps_mod.title_for(src, "", chosen), built)
-    return RedirectResponse("/chay", status_code=303)
-
-
-@app.post("/tap/{episode}/buoc/{step}")
-def run_single_step(episode: str, step: str, force: str = Form("")):
-    """Chạy lại một bước cho một tập đã có (nút trong bảng tiến độ)."""
-    if step not in steps_mod.SINGLE_STEPS:
-        return JSONResponse({"error": "bước không hợp lệ"}, status_code=400)
-    source = ""
-    for key, entry in core.gui.load_manifest().items():
-        if str(entry.get("episode", "")).zfill(2) == str(episode).zfill(2):
-            source = entry.get("source", key)
-            break
-    built, err = steps_mod.build_steps([step], source=source, episode=episode,
-                                       force=bool(force))
-    if err:
-        log(f"⛔ {err}")
-    else:
-        runner.enqueue(steps_mod.title_for("", episode, [step]), built)
-    return RedirectResponse("/", status_code=303)
+@app.get("/tap/{episode}/thumbnail-doc")
+def episode_thumbnail_doc(episode: str):
+    folder = core.episode_folder(episode)
+    if folder:
+        png = folder / f"thumbnail{episode}_dọc.png"
+        if png.exists():
+            return FileResponse(str(png))
+    return JSONResponse({"error": "chưa có thumbnail dọc"}, status_code=404)
 
 
 # ── Hàng đợi ────────────────────────────────────────────────────────────────
@@ -172,43 +446,23 @@ def partial_queue(request: Request):
     return templates.TemplateResponse(request, "_queue.html", {"q": runner.state()})
 
 
+def _back(request: Request, fallback: str = "/") -> RedirectResponse:
+    """Về đúng trang vừa bấm — nút hàng đợi có mặt ở nhiều trang."""
+    ref = request.headers.get("referer", "")
+    return RedirectResponse(ref or fallback, status_code=303)
+
+
 @app.post("/hangdoi/{action}")
-def queue_action(action: str):
+def queue_action(action: str, request: Request):
     {"pause": runner.pause, "resume": runner.resume,
      "skip": runner.skip_current, "stop": runner.stop_all}.get(action, lambda: None)()
-    return RedirectResponse("/chay", status_code=303)
+    return _back(request)
 
 
 @app.post("/hangdoi/bo/{job_id}")
-def queue_remove(job_id: int):
+def queue_remove(job_id: int, request: Request):
     runner.remove(job_id)
-    return RedirectResponse("/chay", status_code=303)
-
-
-# ── Nhật ký (SSE) ───────────────────────────────────────────────────────────
-@app.get("/nhatky/stream")
-async def log_stream(request: Request):
-    q = log_bus.subscribe()
-
-    async def gen():
-        try:
-            for _, line in log_bus.tail(200):
-                yield f"data: {json.dumps(line)}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    _, line = q.get_nowait()
-                    yield f"data: {json.dumps(line)}\n\n"
-                except queue.Empty:
-                    await asyncio.sleep(0.4)
-                    yield ": ping\n\n"      # giữ kết nối sống qua proxy/điện thoại
-        finally:
-            log_bus.unsubscribe(q)
-
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+    return _back(request)
 
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
@@ -219,19 +473,8 @@ _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effec
               "sub_mode", "sub_model"]
 
 
-@app.get("/caidat", response_class=HTMLResponse)
-def page_settings(request: Request):
-    return _page(request, "settings.html", active="settings",
-                 opts=core.load_options(), pipe=core.load_pipeline(),
-                 web=core.load_web_settings(), voices=core.list_voices(),
-                 effects=[core.EFFECT_NONE] + core.list_effects(),
-                 ngang_sources=core.list_ngang_sources(),
-                 sub_modes=[core.SUB_MODE_SRT, core.SUB_MODE_BURN])
-
-
-@app.post("/caidat")
-async def save_settings(request: Request):
-    form = await request.form()
+def _save_opts_from_form(form) -> dict:
+    """Ghi các tuỳ chọn có trên form vào taogiong_options.json (chung với GUI)."""
     opts = core.load_options()
     # Checkbox không tick thì trình duyệt KHÔNG gửi gì cả, nên không thể suy ra
     # "vắng mặt = tắt": làm vậy sẽ tắt luôn các tuỳ chọn chỉ có bên GUI (from_gemini,
@@ -249,18 +492,7 @@ async def save_settings(request: Request):
         if k in form:
             opts[k] = str(form[k])
     core.save_options(opts)
-
-    pipe = core.load_pipeline()
-    for k in ("model", "speed"):
-        if form.get(k):
-            pipe[k] = str(form[k])
-    core.save_pipeline(pipe)
-
-    core.save_web_settings({"mode": str(form.get("mode", "clone")),
-                            "voice": str(form.get("voice", "")),
-                            "instruct": str(form.get("instruct", ""))})
-    log("💾 Đã lưu cài đặt (dùng chung với GUI).")
-    return RedirectResponse("/caidat", status_code=303)
+    return opts
 
 
 # ── Copy SEO ────────────────────────────────────────────────────────────────
@@ -278,30 +510,53 @@ def page_seo(request: Request, tap: str = ""):
 
 
 # ── Khởi động ───────────────────────────────────────────────────────────────
-def _lan_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+def _url(port: int) -> str:
+    return f"http://127.0.0.1:{port}/?token={quote(TOKEN)}"
+
+
+def _open_browser_when_ready(port: int) -> None:
+    """Chờ server nghe được rồi mới mở trình duyệt (chạy ở luồng riêng).
+
+    Bật server = có ngay giao diện, không phải copy địa chỉ. Ai không muốn mở
+    (vd GUI tự mở lấy) thì đặt MYVOICE_WEB_NO_OPEN=1.
+    """
+    import socket
+    import time
+    import webbrowser
+
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.3)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                webbrowser.open(_url(port))
+                return
+        time.sleep(0.3)
+    log("⚠️ Server chưa sẵn sàng — mở trình duyệt thủ công bằng địa chỉ ở trên.")
 
 
 def main() -> None:
+    import threading
+
     import uvicorn
 
     port = int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
-    url = f"http://{_lan_ip()}:{port}/?token={quote(TOKEN)}"
+
     print("=" * 68)
     print("  myvoice — bảng điều khiển web")
-    print(f"  Máy này   : http://127.0.0.1:{port}/?token={quote(TOKEN)}")
-    print(f"  Điện thoại: {url}")
+    print(f"  Địa chỉ: {_url(port)}")
+    print("  Chỉ mở được trên máy này (không nghe trên mạng LAN).")
     print(f"  Token nằm ở: {TOKEN_FILE}  (xoá file này = đổi token)")
+    print("  Nhật ký chạy hiện ngay trong cửa sổ này. Đóng cửa sổ = tắt server.")
     print("=" * 68)
+
+    if os.environ.get("MYVOICE_WEB_NO_OPEN", "").strip() in ("", "0", "false"):
+        threading.Thread(target=_open_browser_when_ready, args=(port,),
+                         daemon=True).start()
+
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
 if __name__ == "__main__":

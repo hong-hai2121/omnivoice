@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Thumbnail — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🖼</span> Thumbnail</h1>
+  <p class="muted">Dùng đúng bộ khung + font của GUI. Để trống tiêu đề thì lấy sẵn từ
+     <code>seoYoutube.docx</code> của tập đang chọn.
+     Số tập đã tạo gần nhất: <b>{{ '%02d' % episode_number }}</b>.</p>
+</div>
+
+<form class="panel" method="post" action="/thumbnail">
+  <div class="phead"><span class="num">1</span><h2>Tạo ảnh</h2></div>
+  <div class="grid">
+    <label class="field">
+      <span>Tập</span>
+      <select name="episode" onchange="location.href='/thumbnail?tap=' + this.value">
+        <option value="">— không gắn tập —</option>
+        {% for r in rows %}
+          <option value="{{ r.episode }}" {{ 'selected' if r.episode == chosen }}>
+            {{ r.episode }} — {{ r.title or r.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Ảnh nền (myvoice/Anh)</span>
+      <select name="photo">
+        <option value="">— ngẫu nhiên —</option>
+        {% for p in photos %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <label class="field">
+    <span>Tiêu đề</span>
+    <textarea name="title" rows="3">{{ suggested }}</textarea>
+  </label>
+
+  <div class="chks">
+    <label class="chk"><input type="checkbox" name="doc" value="1" checked>
+      Làm thêm bản dọc 1080×1920 (YouTube Shorts)</label>
+  </div>
+  <div class="actions"><button class="primary">🖼 Tạo thumbnail</button></div>
+  <p class="hint">Ảnh lưu vào thư mục của tập: <code>thumbnail&lt;tập&gt;.png</code>
+     và <code>thumbnail&lt;tập&gt;_dọc.png</code>.</p>
+</form>
+
+<div class="panel">
+  <div class="phead">
+    <span class="num">2</span><h2>Xem trước tập {{ chosen or '—' }}</h2>
+    <span class="spacer"></span>
+    <button class="ghost" type="button" onclick="location.reload()">🔄 Tải lại</button>
+  </div>
+  {% if chosen %}
+    <div class="previews">
+      <figure>
+        <img src="/tap/{{ chosen }}/thumbnail" alt="thumbnail ngang"
+             onerror="this.closest('figure').classList.add('missing')">
+        <figcaption class="muted small">Ngang 1920×1080</figcaption>
+      </figure>
+      <figure class="doc">
+        <img src="/tap/{{ chosen }}/thumbnail-doc" alt="thumbnail dọc"
+             onerror="this.closest('figure').classList.add('missing')">
+        <figcaption class="muted small">Dọc 1080×1920</figcaption>
+      </figure>
+    </div>
+  {% else %}
+    <p class="empty">Chọn một tập để xem ảnh đã tạo.</p>
+  {% endif %}
+</div>
+
+{% include "_queuepanel.html" %}
+{% endblock %}

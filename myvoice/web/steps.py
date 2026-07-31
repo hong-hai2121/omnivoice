@@ -15,6 +15,8 @@ from . import core
 from .jobs import Step
 
 RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
+RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
+RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
 # Bước hiện trên giao diện → (nhãn, danh sách bước của runner)
@@ -79,6 +81,45 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
                           # đó là kết quả hợp lệ của một chốt an toàn, không phải sự cố.
                           soft_fail_codes=(1,)))
     return steps, ""
+
+
+def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = False,
+              reuse: bool = False, rebuild: str = "", episode: str = "") -> tuple[list[Step], str]:
+    """Bước cho trang “Giọng nói”: chạy TTS thủ công hoặc dựng lại một loại video."""
+    tts_json, err = _write_tts_json()
+    if err:
+        return [], err
+    argv = [core.python_exe(), "-u", str(RUNNER_TTS), "--tts-json", tts_json]
+    if input_txt:
+        argv += ["--input", input_txt]
+    if output_wav:
+        argv += ["--output", output_wav]
+    if from_gemini:
+        argv.append("--from-gemini")
+    if reuse:
+        argv.append("--reuse")
+    if rebuild:
+        argv += ["--rebuild", rebuild]
+    if episode:
+        argv += ["--episode", str(episode)]
+    label = {"ngang": "Dựng lại video ngang", "doc": "Dựng lại video dọc",
+             "tiktok": "Dựng lại video TikTok"}.get(rebuild, "Tạo giọng + video")
+    return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
+                 env=core.subprocess_env(), soft_fail_codes=(1,))], ""
+
+
+def thumbnail_steps(title: str, episode: str = "", photo: str = "",
+                    doc: bool = True) -> list[Step]:
+    """Bước cho trang “Thumbnail”: tạo ảnh từ tiêu đề tự nhập."""
+    argv = [core.python_exe(), "-u", str(RUNNER_THUMB), "--title", title]
+    if episode:
+        argv += ["--episode", str(episode)]
+    if photo:
+        argv += ["--photo", photo]
+    if doc:
+        argv.append("--doc")
+    return [Step(label="Tạo thumbnail", argv=argv, cwd=str(core.SCRIPTS_DIR),
+                 env=core.subprocess_env())]
 
 
 def title_for(source: str, episode: str, step_keys: list[str]) -> str:

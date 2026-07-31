@@ -1,50 +1,80 @@
 # Bảng điều khiển web
 
-Bản web chạy **song song** với GUI Tkinter, không thay thế và không sửa gì trong
-`scripts/`. Sinh ra vì GUI đã hết chỗ: mỗi chức năng mới lại phải chen thêm một
-tab, còn web thì thêm một trang là xong — và xem được từ điện thoại.
+Đây là **cách dùng chính** của myvoice. GUI Tkinter vẫn còn nguyên trong
+`scripts/amain_taogiong_gui.py` (không xoá, vẫn mở được bằng `chay_gui.bat`) nhưng
+việc hằng ngày làm hết trên web. Bản web không sửa gì trong `scripts/` — nó gọi
+thẳng các hàm logic của GUI.
+
+Chỉ dùng **ngay trên máy này** — không có chế độ mở qua mạng LAN/điện thoại.
 
 ## Chạy
 
 ```
-myvoice\chay_web.bat
+myvoice\chay.bat          ← bật server + TỰ MỞ trình duyệt
+myvoice\chay_gui.bat      ← chỉ khi cần GUI Tkinter cũ
 ```
 
-Cửa sổ console in ra hai đường dẫn: một cho máy này, một cho điện thoại trong
-cùng WiFi. Mở đường dẫn kèm `?token=…`, token được nhớ trong cookie 30 ngày.
+Đóng cửa sổ console là tắt server. Server tự mở trình duyệt khi khởi động; không
+muốn thì đặt `MYVOICE_WEB_NO_OPEN=1` (nút **🌐 Bảng web** của GUI đặt sẵn cờ này
+vì nó tự mở lấy).
 
-Đổi cổng: đặt biến môi trường `MYVOICE_WEB_PORT` (mặc định `8765`).
-Đổi token: xoá `web/token.txt`, chạy lại.
+Cửa sổ console in ra đường dẫn kèm `?token=…`; token được nhớ trong cookie 30 ngày.
+Token giữ lại để trang web lạ đang mở trong cùng trình duyệt không gọi vào được.
 
-⚠️ Server này chạy ffmpeg, dùng GPU, mở Firefox và ghi file trên máy bạn. Chỉ để
-trong mạng nhà — **đừng mở cổng ra Internet**.
+Server **chỉ nghe trên 127.0.0.1**, không có tuỳ chọn mở ra LAN: nó chạy ffmpeg,
+dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 
-## Bốn trang
-
-| Trang | Làm gì |
+| Muốn gì | Làm sao |
 |---|---|
-| **Tiến độ** | Mọi tập trong `kịch_bản/` với 8 bước; bấm ô còn thiếu để chạy lại đúng bước đó |
-| **Chạy** | Dán nhiều link/file, chọn bước, xếp vào hàng đợi; tạm dừng · bỏ việc · dừng hết |
-| **Copy SEO** | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
-| **Cài đặt** | Giọng, nhận diện, video ngang/dọc/TikTok, phụ đề |
+| Đổi cổng (mặc định 8765) | đặt `MYVOICE_WEB_PORT` |
+| Không tự mở trình duyệt | đặt `MYVOICE_WEB_NO_OPEN=1` |
+| Đổi token | xoá `web/token.txt` rồi chạy lại |
 
-Nhật ký hiện ở đáy mọi trang, đẩy thẳng từ tiến trình đang chạy (SSE).
+## Sáu trang — menu trái, xếp theo thứ tự làm việc
+
+| Trang | Tab tương ứng bên GUI | Có gì |
+|---|---|---|
+| **🏠 Home** (trang chủ `/`) | 🏠 Home (đầy đủ) | Cả quy trình trên một màn hình: cột trái ①②③ + hàng đợi, cột phải tạo giọng + video |
+| **🛠 Tạo kịch bản** (`/kichban`) | Tạo kịch bản | Ba bước ①②③ với các ô ⛓ nối bước, hàng đợi, tập bỏ qua, câu mở đầu Gemini, reset quy trình |
+| **🎙 Nhận diện** | Nhận diện | ① nhận diện link → bảng tập tick chọn → các nút hàng loạt ②③④⑤ |
+| **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · cắt audio · dọc · TikTok, ba nút “Dựng lại”, xoá output |
+| **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
+| **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
+
+Trong mỗi trang, các khối xếp **dọc theo đúng thứ tự bấm** khi làm việc thật, căn
+giữa màn hình. Hàng đợi (tạm dừng · bỏ việc · dừng hết) nằm ở các trang chạy việc.
+
+Giao diện: menu trái tím gradient (giữ nguyên mọi trang) + mỗi trang một tông màu
+riêng để nhìn là biết đang ở đâu — Home chàm · kịch bản tím · nhận diện xanh dương · giọng nói
+hồng · thumbnail cam · SEO xanh ngọc. Tông màu khai báo ở đầu `static/app.css`
+(`body.p-<tên trang>` đặt `--accent`/`--accent2`/`--accent-soft`), đổi một dòng là
+đổi cả trang; sáng/tối tự theo cài đặt Windows.
+
+**Nhật ký nằm ở cửa sổ console của server**, không còn panel dưới trang web:
+mọi dòng của tiến trình con in thẳng ra đó.
+
+Không port sang web: ô “⏻ xong thì tắt máy” (web không tự tắt máy bạn) và
+“⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Hai tuỳ chọn đó vẫn còn
+nguyên bên GUI và không bị trang web ghi đè.
 
 ## Cấu trúc
 
 ```
 web/
-  server.py      FastAPI: route + token + SSE nhật ký
+  server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
-  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con
+  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/
-    run_episode.py  chạy các bước của một tập
+    run_episode.py    chạy các bước của một tập
+    run_tts.py        tạo giọng + dựng lại video (trang Giọng nói)
+    run_thumbnail.py  tạo thumbnail từ tiêu đề tự nhập
   templates/     Jinja2 + HTMX
+    _form_script.html / _form_voice.html   khối dùng chung cho Home và trang riêng
   static/        CSS, JS, htmx.min.js (kèm sẵn — chạy được khi không có mạng)
 ```
 
-## Hai điều cần biết khi sửa
+## Ba điều cần biết khi sửa
 
 **1. Không chép lại logic.** `runners/run_episode.py` tạo một `App` “rỗng”
 (`HeadlessApp` — cố ý không gọi `super().__init__()` nên không dựng cửa sổ Tk) rồi
@@ -56,7 +86,13 @@ KHÔNG ghi input.txt, không tạo audio/video) chỉ tồn tại ở MỘT nơi
 Hệ quả: method nào bên GUI đổi sang đọc `tk.Var` thì web sẽ **nổ ngay** chứ không
 âm thầm chạy sai. Đó là chủ ý.
 
-**2. Cài đặt dùng chung với GUI.** Trang Cài đặt ghi vào chính
+**2. Home không chép lại giao diện.** `home.html` chỉ `include` đúng hai partial
+`_form_script.html` + `_form_voice.html` mà trang Tạo kịch bản và trang Giọng nói
+đang dùng, còn context lấy từ `_script_ctx()` / `_voice_ctx()` trong `server.py`.
+Thêm một ô mới ở trang riêng là Home có ngay, không có bản sao nào phải giữ đồng bộ.
+Các nút chạy quay về đúng trang vừa bấm nhờ `_back(request, …)` (đọc Referer).
+
+**3. Cài đặt dùng chung với GUI.** Các trang ghi thẳng vào chính
 `taogiong_options.json` và `taogiong_pipeline.json`. Riêng chế độ giọng + giọng
 mẫu để ở `web/web_settings.json`, vì `_save_opt_settings` của GUI ghi đè file kia
 bằng một dict cố định nên khoá lạ sẽ bị xoá.

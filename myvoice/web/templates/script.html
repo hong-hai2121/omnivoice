@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Tạo kịch bản — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🛠</span> Tạo kịch bản</h1>
+  <p class="muted">Audio/Video → 中文 → Gemini → <code>input.txt</code>.
+     Mỗi dòng một link/file là một tập — tập kế tiếp sẽ là <b>{{ next_episode }}</b>.</p>
+</div>
+
+{% include "_form_script.html" %}
+
+{% include "_queuepanel.html" %}
+
+<form class="panel" method="post" action="/kichban/tapboqua">
+  <div class="phead"><h2>Tập bỏ qua</h2></div>
+  <label class="field">
+    <span>Không cấp những số này cho tập mới</span>
+    <input name="skip" value="{{ skip_episodes | join(', ') }}" placeholder="ví dụ: 7, 12, 15">
+  </label>
+  <div class="actions"><button>💾 Lưu danh sách</button></div>
+</form>
+
+<form class="panel" method="post" action="/kichban/mocau">
+  <div class="phead"><h2>Câu mở đầu gửi Gemini</h2></div>
+  <label class="field">
+    <span>Chèn vào đầu đoạn 1 của mỗi lần dịch</span>
+    <textarea name="prefix" rows="3">{{ prefix }}</textarea>
+  </label>
+  <div class="actions"><button>💾 Lưu câu mở đầu</button></div>
+</form>
+
+<form class="panel" method="post" action="/kichban/reset">
+  <div class="phead"><h2>Đặt lại quy trình</h2></div>
+  <p class="hint">Đưa model, tốc độ và các ô ⛓ về mặc định.</p>
+  <div class="actions"><button>↺ Reset cài đặt quy trình</button></div>
+</form>
+{% endblock %}

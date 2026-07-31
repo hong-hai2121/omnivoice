@@ -359,6 +359,25 @@ BURN_STYLE = (
 #
 # Toạ độ tính trong khung 1920x1080; ffmpeg tự co theo độ phân giải thật.
 ASS_PLAY_W, ASS_PLAY_H = 1920, 1080
+
+# ── Khung DỌC 1080x1920 (facebook.mp4 / tiktok.mp4) ──────────────────────────
+# Video dọc hẹp hơn nhiều (1080 thay vì 1920) nên PHẢI có bộ số riêng, không dùng
+# chung với khung ngang được:
+#   • Giữ nguyên SUB_FONT_SIZE=67 → chữ chiếm 6.2% BỀ RỘNG khung, đúng bằng tỉ lệ
+#     của khung ngang, nên nhìn to bằng nhau.
+#   • max_chars phải giảm 50 → 23. Con số này đo bằng Pillow trên DÒNG RỘNG NHẤT của
+#     cả 6 kịch bản thật, không phải ước lượng trung bình — chữ hoa và ký tự rộng làm
+#     dòng xấu nhất phình hơn hẳn mức trung bình:
+#         23 ký tự →  935px = 87% của 1080   ← chọn (khung ngang đang ở 91%)
+#         24 ký tự →  999px = 92%
+#         27 ký tự → 1084px = 100%  ← chạm sát mép, tràn
+#     Để nguyên 50 thì khung nền tràn ra ngoài mép video.
+#   • MarginV 380px (≈20% chiều cao) thay vì 173: đáy video dọc bị thanh công cụ
+#     của TikTok/Reels/Facebook che, để thấp quá là chữ bị khuất.
+ASS_PLAY_W_DOC, ASS_PLAY_H_DOC = 1080, 1920
+SUB_MARGIN_V_DOC = 380
+SUB_MAX_CHARS_DOC = 23
+
 SUB_FONT       = "Arial"
 SUB_FONT_FILE  = r"C:\Windows\Fonts\arialbd.ttf"   # Arial Bold — chỉ dùng để ĐO chữ
 SUB_FONT_SIZE  = 67       # px (bằng FontSize=18 của khung 384x288 mà ffmpeg dùng)
@@ -413,10 +432,16 @@ def _ass_ts(sec: float) -> str:
     return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-_ASS_HEADER = f"""[Script Info]
+def _ass_header(play_w=ASS_PLAY_W, play_h=ASS_PLAY_H, margin_v=SUB_MARGIN_V) -> str:
+    """Phần đầu file .ass cho MỘT khung hình cụ thể (ngang hay dọc).
+
+    Trước đây đây là hằng số dựng sẵn ở mức module nên chỉ ra được khung 1920x1080;
+    làm phụ đề cho video dọc thì phải đổi PlayRes + MarginV nên chuyển thành hàm.
+    """
+    return f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: {ASS_PLAY_W}
-PlayResY: {ASS_PLAY_H}
+PlayResX: {play_w}
+PlayResY: {play_h}
 ScaledBorderAndShadow: yes
 WrapStyle: 2
 
@@ -425,7 +450,7 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, \
 BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Sub,{SUB_FONT},{SUB_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,\
--1,0,0,0,100,100,0,0,1,0,0,2,20,20,{SUB_MARGIN_V},1
+-1,0,0,0,100,100,0,0,1,0,0,2,20,20,{margin_v},1
 Style: Box,{SUB_FONT},{SUB_FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,\
 0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 
@@ -434,14 +459,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def write_ass(cues, cue_times, ass_path: Path):
-    """Ghi .ass: mỗi dòng phụ đề = 1 hộp bo góc (lớp 0) + chữ trắng (lớp 1)."""
+def write_ass(cues, cue_times, ass_path: Path,
+              play_w=ASS_PLAY_W, play_h=ASS_PLAY_H, margin_v=SUB_MARGIN_V):
+    """Ghi .ass: mỗi dòng phụ đề = 1 hộp bo góc (lớp 0) + chữ trắng (lớp 1).
+
+    play_w/play_h/margin_v: khung hình đích. Mặc định = khung NGANG 1920x1080.
+    Video DỌC truyền ASS_PLAY_W_DOC / ASS_PLAY_H_DOC / SUB_MARGIN_V_DOC.
+    """
     ascent, descent = _line_metrics()
     line_h = ascent + descent
-    cx = ASS_PLAY_W / 2
+    cx = play_w / 2
     # libass đặt ĐÁY dòng chữ cách đáy khung đúng MarginV.
-    text_bottom = ASS_PLAY_H - SUB_MARGIN_V
-    out = [_ASS_HEADER]
+    text_bottom = play_h - margin_v
+    out = [_ass_header(play_w, play_h, margin_v)]
     for cue, (st, en) in zip(cues, cue_times):
         lines = cue.split("\n")
         w = max(_text_width(ln) for ln in lines)

@@ -1,0 +1,28 @@
+{% if not rows %}
+  <p class="empty">Chưa có tập nào trong <code>kịch_bản/</code>.</p>
+{% else %}
+<div class="tablewrap">
+  <table class="grid">
+    <thead>
+      <tr>
+        <th></th><th>Tập</th>
+        {% for key, label in step_labels %}<th>{{ label }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        <tr class="{{ 'done' if r.done_count == r.total_steps else 'need' }}">
+          <td><input type="checkbox" name="tap" value="{{ r.episode }}"></td>
+          <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
+          {% for key, label in step_labels %}
+            <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% set ns = namespace(pending=0) %}
+{% for r in rows %}{% if r.done_count < r.total_steps %}{% set ns.pending = ns.pending + 1 %}{% endif %}{% endfor %}
+<p class="hint">{{ rows|length }} tập · {{ ns.pending }} tập còn việc chưa xong.</p>
+{% endif %}

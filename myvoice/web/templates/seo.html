@@ -3,12 +3,14 @@
 
 {% block content %}
 <div class="pagehead">
-  <h1>Copy SEO</h1>
-  <p class="muted">Đúng nội dung của 3 nút Copy bên GUI (tiêu đề đã ghép số tập, mô tả có hashtag,
-     thẻ tag đã cắt dưới 500 ký tự).</p>
+  <h1><span class="ico">📑</span> Copy SEO</h1>
+  <p class="muted">Đúng nội dung của 3 nút Copy bên GUI: tiêu đề đã ghép số tập,
+     mô tả có hashtag, thẻ tag đã cắt dưới 500 ký tự.</p>
 </div>
 
-<form class="panel row" method="get" action="/seo">
+{# noscript đứng trước để ô chọn là phần tử cuối → panel không thừa khoảng trống. #}
+<form class="panel" method="get" action="/seo">
+  <noscript><div class="actions"><button>Xem</button></div></noscript>
   <label class="field">
     <span>Tập</span>
     <select name="tap" onchange="this.form.submit()">
@@ -19,7 +21,6 @@
       {% endfor %}
     </select>
   </label>
-  <noscript><button class="ghost">Xem</button></noscript>
 </form>
 
 {% if not rows %}
@@ -27,19 +28,18 @@
 {% elif not blocks %}
   <p class="warn">Không đọc được nội dung SEO của tập {{ chosen }}.</p>
 {% else %}
-  <div class="two">
-    {% for key, label in [("title", "Tiêu đề YouTube"), ("title_tiktok", "Tiêu đề TikTok"),
-                          ("desc", "Mô tả"), ("tags", "Thẻ tag")] %}
-      <div class="panel">
-        <div class="panelhead">
-          <b>{{ label }}</b>
-          <span class="spacer"></span>
-          <span class="muted small">{{ blocks[key]|length }} ký tự</span>
-          <button class="ghost" type="button" data-copy="seo-{{ key }}">📋 Copy</button>
-        </div>
-        <pre class="copybox" id="seo-{{ key }}">{{ blocks[key] }}</pre>
+  {# Xếp dọc theo đúng thứ tự dán lên YouTube: tiêu đề → mô tả → thẻ tag. #}
+  {% for key, label in [("title", "Tiêu đề YouTube"), ("title_tiktok", "Tiêu đề TikTok"),
+                        ("desc", "Mô tả"), ("tags", "Thẻ tag")] %}
+    <div class="panel">
+      <div class="phead">
+        <b>{{ label }}</b>
+        <span class="muted small">{{ blocks[key]|length }} ký tự</span>
+        <span class="spacer"></span>
+        <button class="ghost" type="button" data-copy="seo-{{ key }}">📋 Copy</button>
       </div>
-    {% endfor %}
-  </div>
+      <pre class="copybox" id="seo-{{ key }}">{{ blocks[key] }}</pre>
+    </div>
+  {% endfor %}
 {% endif %}
 {% endblock %}

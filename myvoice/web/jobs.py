@@ -13,8 +13,8 @@ bảng điều khiển.
 from __future__ import annotations
 
 import itertools
-import queue
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -23,50 +23,24 @@ from datetime import datetime
 
 CREATE_NO_WINDOW = 0x08000000
 
-# ── Nhật ký chung: vòng đệm để tải lại trang vẫn thấy, + kênh đẩy cho SSE ────
-_LOG_LIMIT = 4000
+# ── Nhật ký: in thẳng ra cửa sổ console của server ──────────────────────────
+# Trang web không còn panel nhật ký; chỗ xem tiến trình chi tiết là cửa sổ
+# console đã mở sẵn khi bật server (chay_web.bat / nút 🌐 Bảng web của GUI).
+_print_lock = threading.Lock()
 
-
-class LogBus:
-    def __init__(self):
-        self._lines: deque[tuple[int, str]] = deque(maxlen=_LOG_LIMIT)
-        self._subs: list[queue.Queue] = []
-        self._lock = threading.Lock()
-        self._seq = itertools.count(1)
-
-    def publish(self, text: str) -> None:
-        for line in str(text).splitlines() or [""]:
-            item = (next(self._seq), line)
-            with self._lock:
-                self._lines.append(item)
-                subs = list(self._subs)
-            for q in subs:
-                try:
-                    q.put_nowait(item)
-                except queue.Full:
-                    pass
-
-    def tail(self, n: int = 400) -> list[tuple[int, str]]:
-        with self._lock:
-            return list(self._lines)[-n:]
-
-    def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=2000)
-        with self._lock:
-            self._subs.append(q)
-        return q
-
-    def unsubscribe(self, q: queue.Queue) -> None:
-        with self._lock:
-            if q in self._subs:
-                self._subs.remove(q)
-
-
-log_bus = LogBus()
+try:        # console Windows thường là cp1252 → emoji/tiếng Việt sẽ nổ khi in
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[union-attr]
+except Exception:
+    pass
 
 
 def log(text: str) -> None:
-    log_bus.publish(text)
+    with _print_lock:                       # nhiều luồng cùng in → khỏi lẫn dòng
+        for line in str(text).splitlines() or [""]:
+            try:
+                print(line, flush=True)
+            except Exception:               # không có console (pythonw) → bỏ qua
+                return
 
 
 # ── Mô tả công việc ─────────────────────────────────────────────────────────

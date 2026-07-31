@@ -1,0 +1,84 @@
+{# Khối quy trình ①②③ — dùng chung cho trang Tạo kịch bản và trang Home.
+   Cần: pipe, tts_error. #}
+{# Một form chạy chung: bấm nút của bước nào thì chạy từ bước đó trở đi. #}
+<form method="post" action="/kichban/chay">
+
+  <div class="panel">
+    <div class="phead"><h2>Nguồn</h2></div>
+    <label class="field">
+      <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
+      <textarea name="sources" rows="4" placeholder="https://www.bilibili.com/video/…&#10;D:\video\tap-moi.mp4"></textarea>
+    </label>
+    <div class="grid">
+      <label class="field">
+        <span>Model nhận diện</span>
+        <select name="model">
+          {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+            <option value="{{ m }}" {{ 'selected' if pipe.model == m }}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Tốc độ</span>
+        <select name="speed">
+          {% for s in ["0.6", "0.7", "0.8", "0.9", "1.0"] %}
+            <option value="{{ s }}" {{ 'selected' if pipe.speed|string == s }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="force"> Làm lại cả bước đã có kết quả</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">1</span><h2>Nhận diện giọng nói</h2>
+      <p class="hint">Video/audio → <code>tiengTrung.docx</code>.</p>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="recognize">🎙 Nhận diện → tiếng Trung</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="auto2" {{ 'checked' if pipe.auto2 }}>
+        ⛓ Tự động chạy bước 2 sau khi xong</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">2</span><h2>Dịch qua Gemini</h2>
+      <p class="hint"><code>tiengTrung.docx</code> → <code>gemini_result.docx</code>.</p>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="translate">🌐 Gửi Gemini (Firefox)</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="seo" {{ 'checked' if pipe.seo }}>
+        🔎 Tạo SEO YouTube + thumbnail sau khi xong</label>
+      <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if pipe.auto3 }}>
+        ⛓ Tự động chạy bước 3 sau khi xong</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">3</span><h2>Chuẩn bị input.txt</h2>
+      <p class="hint">Kiểm tra bản dịch + <code>gemini_result.docx</code> → <code>input.txt</code>.</p>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="input">📝 Tạo input.txt</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="auto_tts" {{ 'checked' if pipe.auto_tts }}>
+        ⛓ Chạy tiếp tạo giọng (OmniVoice) sau khi xong</label>
+    </div>
+    {% if tts_error %}
+      <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
+         — sửa ở <a href="/giongnoi">Giọng nói</a>.</p>
+    {% endif %}
+    <p class="hint">Bước 2 và SEO điều khiển Firefox — đóng Firefox đang mở và đảm bảo
+       đã đăng nhập Google trước khi chạy.</p>
+  </div>
+</form>

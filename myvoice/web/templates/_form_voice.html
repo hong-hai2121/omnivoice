@@ -1,0 +1,214 @@
+{# Khối tạo giọng + video — dùng chung cho trang Giọng nói và trang Home.
+   Cần: opts, web, voices, effects, ngang_sources, sub_modes, effect_none,
+   current_voice, voice_dir, input_txt, output_wav, has_audio, tiktok_episode. #}
+{# Hidden "_bools" khai ô này CÓ trên trang → server chỉ sửa đúng những ô hiển thị
+   (checkbox bỏ tick thì trình duyệt không gửi gì — xem chú thích ở server.py). #}
+{% macro chk(name, label, opts) %}
+  <label class="chk">
+    <input type="hidden" name="_bools" value="{{ name }}">
+    <input type="checkbox" name="{{ name }}" {{ 'checked' if opts.get(name) }}> {{ label }}
+  </label>
+{% endmacro %}
+
+{% macro speed(name, value) %}
+  <label class="field">
+    <span>Tăng tốc</span>
+    <input name="{{ name }}" value="{{ value }}" list="speeds" inputmode="decimal">
+  </label>
+{% endmacro %}
+
+{% macro percent(name, value) %}
+  <label class="field">
+    <span>Lấy khoảng (%)</span>
+    <input name="{{ name }}" value="{{ value }}" list="percents" inputmode="numeric">
+  </label>
+{% endmacro %}
+
+<datalist id="speeds">{% for s in ["1.0","1.05","1.1","1.15","1.2","1.25"] %}<option value="{{ s }}">{% endfor %}</datalist>
+<datalist id="percents">{% for p in ["25","30","40","50","60","70","75","80","90","100"] %}<option value="{{ p }}">{% endfor %}</datalist>
+
+<form method="post" action="/giongnoi">
+
+  <div class="panel">
+    <div class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></div>
+    <div class="modes">
+      {% for value, label, desc in [("clone", "🎙 Clone", "Nhái giọng mẫu"),
+                                    ("design", "🎨 Thiết kế", "Mô tả giọng"),
+                                    ("default", "🔊 Mặc định", "Model tự chọn")] %}
+        <label class="mode {{ 'on' if web.mode == value }}">
+          <input type="radio" name="mode" value="{{ value }}" {{ 'checked' if web.mode == value }}>
+          <b>{{ label }}</b><span class="muted">{{ desc }}</span>
+        </label>
+      {% endfor %}
+    </div>
+
+    <label class="field">
+      <span>Giọng mẫu (chế độ Clone)</span>
+      <select name="voice">
+        {% for v in voices %}
+          <option value="{{ v.name }}" {{ 'selected' if current_voice == v.name }}>
+            {{ '★ ' if v.fav }}{{ v.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="inline">
+      {% if current_voice %}
+        <audio controls preload="none"
+               src="/giongnoi/nghe?file={{ (voice_dir ~ '\\' ~ current_voice) | urlencode }}"></audio>
+      {% endif %}
+      <button class="ghost" type="submit" form="fav-voice">☆ / ★ giọng đang chọn</button>
+    </div>
+
+    <label class="field">
+      <span>Mô tả giọng (chế độ Thiết kế)</span>
+      <input name="instruct" value="{{ web.instruct }}" placeholder="female, young adult">
+    </label>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">2</span><h2>Tệp vào / ra</h2></div>
+    <label class="field">
+      <span>Văn bản nguồn (.txt)</span>
+      <input name="input_txt" value="{{ input_txt }}">
+    </label>
+    <label class="field">
+      <span>Kết quả (.wav)</span>
+      <input name="output_wav" value="{{ output_wav }}">
+    </label>
+    {% if has_audio %}
+      <div class="field">
+        <span>Nghe thử kết quả gần nhất</span>
+        <audio controls preload="none" src="/giongnoi/nghe?file={{ output_wav | urlencode }}"></audio>
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">3</span><h2>Cài đặt tạo giọng</h2></div>
+    <div class="grid">
+      <label class="field">
+        <span>Độ dài đoạn (ký tự)</span>
+        <input name="chunk" value="{{ opts.chunk }}" inputmode="numeric">
+      </label>
+      <label class="field">
+        <span>Nguồn clip ngang</span>
+        <select name="ngang_source">
+          {% for s in ngang_sources %}
+            <option value="{{ s }}" {{ 'selected' if opts.ngang_source == s }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="chks">
+      {{ chk('from_gemini', '🌐 Lấy nội dung từ Gemini + kiểm tra trước khi tạo', opts) }}
+      <label class="chk"><input type="checkbox" name="reuse"> ♻ Dùng lại audio/video đã có</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">4</span><h2>Video ngang (YouTube)</h2></div>
+    <div class="chks">{{ chk('make_video', 'Tự dựng video ngang', opts) }}</div>
+    <div class="grid">
+      {{ speed('ngang_speed', opts.ngang_speed) }}
+      <label class="field">
+        <span>✨ Hiệu ứng phủ</span>
+        <select name="effect">
+          <option value="{{ effect_none }}" {{ 'selected' if opts.effect == effect_none }}>{{ effect_none }}</option>
+          {% for e in effects %}
+            <option value="{{ e.name }}" {{ 'selected' if opts.effect == e.name }}>{{ '★ ' if e.fav }}{{ e.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div class="actions"><button name="action" value="ngang">▶ Dựng lại video ngang</button></div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">5</span><h2>Phụ đề cho video ngang</h2></div>
+    <div class="chks">{{ chk('make_sub', 'Tạo phụ đề', opts) }}</div>
+    <div class="grid">
+      <label class="field">
+        <span>Kiểu</span>
+        <select name="sub_mode">
+          {% for m in sub_modes %}<option value="{{ m }}" {{ 'selected' if opts.sub_mode == m }}>{{ m }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <select name="sub_model">
+          {% for m in ["small", "medium", "large-v3"] %}
+            <option value="{{ m }}" {{ 'selected' if opts.sub_model == m }}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Dài mỗi dòng</span>
+        <input name="sub_max_chars" value="{{ opts.sub_max_chars }}" inputmode="numeric">
+      </label>
+    </div>
+    <p class="hint">.srt rời = tải lên YouTube Studio (nhanh) · vẽ cứng = mã hoá lại cả video (lâu).</p>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">6</span><h2>Cắt audio</h2></div>
+    <div class="chks">{{ chk('cut_audio', 'Cắt 10–15 phút (file phụ)', opts) }}</div>
+    <div class="grid">
+      <label class="field"><span>Đích (phút)</span><input name="cut_target" value="{{ opts.cut_target }}" inputmode="decimal"></label>
+      <label class="field"><span>Từ (phút)</span><input name="cut_min" value="{{ opts.cut_min }}" inputmode="decimal"></label>
+      <label class="field"><span>Đến (phút)</span><input name="cut_max" value="{{ opts.cut_max }}" inputmode="decimal"></label>
+    </div>
+    <div class="chks">{{ chk('cut_half', 'Cắt 1/2 (≈ nửa audio gốc → output_half.wav)', opts) }}</div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">7</span><h2>Video dọc (1080×1920)</h2></div>
+    <div class="grid">
+      {{ speed('doc_speed', opts.doc_speed) }}
+      {{ percent('doc_percent', opts.doc_percent) }}
+    </div>
+    <div class="chks">
+      {{ chk('make_video_doc', 'Dựng video dọc (từ bản cắt)', opts) }}
+      {{ chk('doc_full_audio', 'Dùng audio không cắt', opts) }}
+      {{ chk('doc_from_ngang', '♻ Dùng lại video ngang (phóng to khớp chiều cao)', opts) }}
+      {{ chk('doc_from_subfolder', '📁 Ghép từ thư mục con videodoc (theo videodoc/input.txt)', opts) }}
+      {{ chk('doc_no_effect', '🚫 Không áp hiệu ứng cho video dọc', opts) }}
+    </div>
+    <p class="hint">Hai ô ♻ và 📁 loại trừ nhau — bật cả hai thì 📁 thắng, y như GUI.</p>
+    <div class="actions"><button name="action" value="doc">▶ Dựng lại video dọc</button></div>
+  </div>
+
+  <div class="panel">
+    <div class="phead"><span class="num">8</span><h2>Video TikTok (cắt theo %)</h2></div>
+    <div class="grid">
+      {{ percent('tiktok_percent', opts.tiktok_percent) }}
+      {{ speed('tiktok_speed', opts.tiktok_speed) }}
+      <label class="field">
+        <span>Số tập (chữ trên video)</span>
+        <input name="tiktok_episode" value="{{ '%02d' % tiktok_episode }}" inputmode="numeric">
+      </label>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Vị trí chữ (% chiều cao)</span>
+        <input name="tiktok_caption_pos" value="{{ opts.tiktok_caption_pos }}" inputmode="numeric">
+      </label>
+      <label class="field">
+        <span>Nhạc nền nhỏ hơn giọng (dB)</span>
+        <input name="tiktok_music_db" value="{{ opts.tiktok_music_db }}" inputmode="numeric">
+      </label>
+    </div>
+    <div class="chks">
+      {{ chk('make_tiktok', 'Tạo video TikTok', opts) }}
+      {{ chk('tiktok_music', '🎼 Chèn nhạc nền (Music/)', opts) }}
+      {{ chk('tiktok_no_effect', '🚫 Không áp hiệu ứng cho TikTok', opts) }}
+    </div>
+    <div class="actions"><button name="action" value="tiktok">▶ Dựng lại video TikTok</button></div>
+  </div>
+
+  <div class="runbar">
+    <button class="primary" name="action" value="run">▶ Chạy — lưu cài đặt rồi tạo giọng</button>
+    <p class="hint">Mọi nút ở trên cũng lưu cài đặt trước khi chạy.</p>
+  </div>
+</form>
+
+

@@ -1,19 +1,19 @@
 {% if q.paused %}<p class="warn">⏸ Hàng đợi đang tạm dừng — bấm “▶ Tiếp” để chạy tiếp.</p>{% endif %}
 
 {% if q.current %}
-  <div class="job running">
+  <div class="job">
     <div class="jobtop">
       <span class="badge run">đang chạy</span>
       <b>{{ q.current.title }}</b>
     </div>
-    <div class="muted small">
+    <p class="hint">
       Bước {{ q.current.step_index + 1 }}/{{ q.current.step_total }}: {{ q.current.step_label }}
       · bắt đầu {{ q.current.started }}
-    </div>
+    </p>
     <div class="bar"><i style="width: {{ (100 * q.current.step_index / q.current.step_total) if q.current.step_total else 0 }}%"></i></div>
   </div>
 {% else %}
-  <p class="muted">Không có việc nào đang chạy.</p>
+  <p class="empty">Không có việc nào đang chạy.</p>
 {% endif %}
 
 {% for j in q.pending %}
@@ -37,7 +37,7 @@
             {'done': 'xong', 'failed': 'lỗi', 'stopped': 'đã dừng'}.get(j.status, j.status) }}</span>
           <b>{{ j.title }}</b>
         </div>
-        {% if j.message %}<div class="muted small">{{ j.message }}</div>{% endif %}
+        {% if j.message %}<p class="hint">{{ j.message }}</p>{% endif %}
       </div>
     {% endfor %}
   </details>

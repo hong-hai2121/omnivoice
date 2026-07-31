@@ -86,6 +86,19 @@ DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn s�
 SUB_MODE_SRT  = "file .srt rời"
 SUB_MODE_BURN = "vẽ cứng vào hình"
 
+
+def video_gansub_max_chars_doc(default: int = 27) -> int:
+    """Số ký tự/dòng phụ đề của khung DỌC 1080x1920 (lấy từ video_gansub).
+
+    Nạp muộn để dựng giao diện không phải kéo cả module vào; thiếu module thì lấy
+    số mặc định, chỉ ảnh hưởng dòng gợi ý trên UI chứ không đổi kết quả.
+    """
+    try:
+        import video_gansub as gs
+        return gs.SUB_MAX_CHARS_DOC
+    except Exception:
+        return default
+
 # Mặc định mục "Cài đặt" (dùng khi chưa có taogiong_options.json) — sau đó được
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
@@ -100,6 +113,9 @@ OPTS_DEFAULTS = dict(
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
     make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50,
+    # Phụ đề cho VIDEO DỌC (facebook.mp4) — dùng chung kiểu/model/chế độ với video
+    # ngang, chỉ khác khung hình (1080x1920) và số ký tự/dòng (tự rút xuống 27).
+    make_sub_doc=False,
 )
 
 
@@ -937,8 +953,14 @@ def _probe_duration(path: Path) -> float | None:
 
 def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                      model: str = "medium", max_chars: int = 50,
-                     progress=None) -> Path | None:
-    """Tạo phụ đề cho video ngang (YouTube). Trả về file .srt, None nếu lỗi.
+                     progress=None, doc: bool = False) -> Path | None:
+    """Tạo phụ đề cho 1 video. Trả về file .srt, None nếu lỗi.
+
+    doc=False (mặc định): khung NGANG 1920x1080 — YOUTUBE.mp4.
+    doc=True            : khung DỌC  1080x1920 — facebook.mp4 / tiktok.mp4. Đổi
+                          PlayRes + MarginV của file .ass, và ép max_chars xuống
+                          SUB_MAX_CHARS_DOC nếu bên gọi để số của khung ngang
+                          (50 ký tự đặt vào khung 1080 là khung nền tràn ra ngoài).
 
     Tái dùng nguyên module video_gansub: Whisper CHỈ để lấy mốc giờ, còn CHỮ lấy
     từ input.txt gốc nên không bao giờ sai chính tả. Chạy ngay trong tiến trình
@@ -962,6 +984,13 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
     try:
         import video_gansub as gs
         from nhandien_giongnoi import extract_audio, get_audio_duration
+
+        # Khung DỌC hẹp hơn → phải ngắt dòng ngắn lại, không thì khung nền tràn ra
+        # ngoài mép video. Chỉ ép khi bên gọi để nguyên số của khung ngang.
+        if doc and max_chars > gs.SUB_MAX_CHARS_DOC:
+            logging.info(f"📝 Video dọc: rút {max_chars} → {gs.SUB_MAX_CHARS_DOC} ký tự/dòng "
+                         "cho vừa khung 1080.")
+            max_chars = gs.SUB_MAX_CHARS_DOC
 
         cues = gs.build_cues(script_path.read_text(encoding="utf-8"), max_chars)
         if not cues:
@@ -987,7 +1016,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         logging.info(f"📝 Đã ghi phụ đề → {srt_path.name} ({len(cues)} dòng)")
 
         if mode == SUB_MODE_BURN:
-            ass_path = gs.write_ass(cues, cue_times, srt_path.with_suffix(".ass"))
+            geo = ((gs.ASS_PLAY_W_DOC, gs.ASS_PLAY_H_DOC, gs.SUB_MARGIN_V_DOC) if doc
+                   else (gs.ASS_PLAY_W, gs.ASS_PLAY_H, gs.SUB_MARGIN_V))
+            ass_path = gs.write_ass(cues, cue_times, srt_path.with_suffix(".ass"), *geo)
             tmp_mp4 = video_path.with_name(video_path.stem + "_subtmp.mp4")
             logging.info("📝 Đang vẽ CỨNG phụ đề vào hình (mã hoá lại, hơi lâu)...")
             if gs.burn_subs(video_path, ass_path, tmp_mp4):
@@ -1161,7 +1192,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, make_sub_doc=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -1673,6 +1704,28 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     except OSError:
                         pass
 
+        # ── (TÙY CHỌN) PHỤ ĐỀ CHO VIDEO DỌC (Facebook) ─────────────────────
+        # Đặt SAU cùng, sau cả TikTok — CỐ Ý: khi bật "ghép từ thư mục con", video
+        # TikTok lấy HÌNH của chính facebook.mp4 nhưng dùng AUDIO ngắn hơn (~50%).
+        # Burn sub vào facebook trước là TikTok thừa hưởng phụ đề lệch hẳn nhịp.
+        # Làm ở đây thì facebook.mp4 có phụ đề, tiktok.mp4 giữ hình sạch.
+        if make_sub_doc:
+            doc_video = (Path(doc_out) if doc_out
+                         else output_path.with_name(output_path.stem + "_doc.mp4"))
+            if doc_video.exists():
+                def _sub_doc_progress(frac):
+                    pct = int(frac * 100)
+                    progress_var.set(pct)
+                    status_var.set(f"📝 Nghe audio làm phụ đề video dọc... {pct}%")
+                status_var.set("📝 Đang tạo phụ đề cho video dọc...")
+                progress_var.set(0)
+                make_youtube_sub(doc_video, output_path.parent / "input.txt",
+                                 sub_mode, sub_model, sub_max_chars,
+                                 progress=_sub_doc_progress, doc=True)
+                progress_var.set(100)
+            else:
+                logging.warning(f"📝 Chưa có video dọc ({doc_video.name}) → bỏ qua phụ đề dọc.")
+
     except Exception as e:
         failed = True
         logging.error(f"Lỗi: {e}")
@@ -2126,6 +2179,18 @@ class App(tk.Tk):
                     textvariable=self.var_sub_max_chars).pack(side="left")
         ttk.Label(sub_row2, text="ký tự · .srt rời = tải lên YouTube Studio (nhanh); "
                                  "vẽ cứng = mã hoá lại cả video (lâu)",
+                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
+
+        # Phụ đề cho VIDEO DỌC (facebook.mp4) — tick riêng, dùng chung Kiểu/Model ở trên.
+        # Khung 1080x1920 nên tự rút số ký tự/dòng xuống 27 cho khỏi tràn mép.
+        sub_row3 = ttk.Frame(sec_opt)
+        sub_row3.pack(anchor="w", fill="x", pady=(4, 0))
+        self.var_make_sub_doc = tk.BooleanVar(value=self._opt_settings["make_sub_doc"])
+        ttk.Checkbutton(sub_row3, text="📝  Phụ đề cho video DỌC (Facebook)",
+                        variable=self.var_make_sub_doc).pack(side="left")
+        ttk.Label(sub_row3, text="dùng chung Kiểu/Model ở trên · tự rút còn "
+                                 f"{video_gansub_max_chars_doc()} ký tự/dòng cho khung 1080 · "
+                                 "làm SAU TikTok nên tiktok.mp4 giữ hình sạch",
                   style="Hint.TLabel").pack(side="left", padx=(6, 0))
 
         # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
@@ -4005,6 +4070,7 @@ class App(tk.Tk):
                 sub_mode=self.var_sub_mode.get(),
                 sub_model=self.var_sub_model.get(),
                 sub_max_chars=int(self.var_sub_max_chars.get()),
+                make_sub_doc=self.var_make_sub_doc.get(),
             ))
         except Exception as e:
             logging.warning(f"Không lưu được cài đặt: {e}")
@@ -4128,22 +4194,14 @@ class App(tk.Tk):
             s.settimeout(timeout)
             return s.connect_ex(("127.0.0.1", port)) == 0
 
-    @staticmethod
-    def _lan_ip() -> str:
-        import socket
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("8.8.8.8", 80))     # không gửi gì, chỉ để hỏi IP nào ra ngoài
-                return s.getsockname()[0]
-        except Exception:
-            return "127.0.0.1"
-
     def _open_web_panel(self):
         """Bật bảng điều khiển web rồi mở trình duyệt.
 
         Server chạy trong CỬA SỔ CONSOLE RIÊNG (không phải nền ẩn) để đóng nó là
         tắt hẳn — và để lỡ có lỗi khởi động thì còn nhìn thấy. Đang chạy sẵn thì
         chỉ mở lại trình duyệt, không bật thêm cái thứ hai.
+
+        Bảng web CHỈ nghe trên 127.0.0.1 — máy khác trong mạng không vào được.
         """
         import subprocess
         import time
@@ -4163,8 +4221,12 @@ class App(tk.Tk):
                 # python.exe (KHÔNG phải pythonw) để có cửa sổ console tắt được.
                 exe = _VENV_PYTHON if os.path.exists(_VENV_PYTHON) else sys.executable
                 CREATE_NEW_CONSOLE = 0x00000010
+                # Server tự mở trình duyệt khi chạy một mình; ở đây TẮT đi vì
+                # hàm này mở lấy (còn lo cả trường hợp server đã chạy sẵn) —
+                # không thì ra hai tab.
+                env = {**os.environ, "MYVOICE_WEB_NO_OPEN": "1"}
                 subprocess.Popen([exe, "-m", "myvoice.web.server"],
-                                 cwd=str(BASE_DIR.parent),
+                                 cwd=str(BASE_DIR.parent), env=env,
                                  creationflags=CREATE_NEW_CONSOLE)
                 for _ in range(40):            # chờ tối đa ~20 giây
                     self.update()
@@ -4188,8 +4250,6 @@ class App(tk.Tk):
             query = f"?token={token}" if token else ""
             webbrowser.open(f"http://127.0.0.1:{port}/{query}")
             logging.info(f"🌐 Bảng web: http://127.0.0.1:{port}/{query}")
-            logging.info(f"📱 Mở từ điện thoại cùng WiFi: "
-                         f"http://{self._lan_ip()}:{port}/{query}")
         except Exception as e:
             messagebox.showerror("Lỗi mở bảng web", str(e))
         finally:
@@ -4822,6 +4882,7 @@ class App(tk.Tk):
             make_sub=self.var_make_sub.get(), sub_mode=self.var_sub_mode.get(),
             sub_model=self.var_sub_model.get(),
             sub_max_chars=self._parse_sub_max_chars(),
+            make_sub_doc=self.var_make_sub_doc.get(),
         )
 
     # ── CHẾ ĐỘ NHIỀU LINK: mỗi link 1 thư mục kịch_bản/NN, full pipeline ───────
@@ -5042,6 +5103,8 @@ class App(tk.Tk):
             sub_mode=ts.get("sub_mode", SUB_MODE_SRT),
             sub_model=ts.get("sub_model", "medium"),
             sub_max_chars=ts.get("sub_max_chars", 50),
+            # Phụ đề cho facebook.mp4 (khung dọc) — chạy SAU TikTok, xem run_tts.
+            make_sub_doc=ts.get("make_sub_doc", False),
         )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         # ⚠️ CHỐT ĐỘ DÀI AUDIO: so thời lượng output.wav với số ký tự input.txt. Bắt ca
@@ -5953,7 +6016,8 @@ class App(tk.Tk):
                     "make_sub": self.var_make_sub.get(),
                     "sub_mode": self.var_sub_mode.get(),
                     "sub_model": self.var_sub_model.get(),
-                    "sub_max_chars": self._parse_sub_max_chars()},
+                    "sub_max_chars": self._parse_sub_max_chars(),
+                    "make_sub_doc": self.var_make_sub_doc.get()},
             daemon=True,
         ).start()
 
@@ -6224,6 +6288,8 @@ class App(tk.Tk):
                 tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
                 # Chỉ nút "Dựng lại" của video NGANG mới làm phụ đề (2 video kia không có).
                 make_sub=(kind == "ngang" and self.var_make_sub.get()),
+                # Nút "Dựng lại" video DỌC thì làm phụ đề khung dọc cho chính nó.
+                make_sub_doc=(kind == "doc" and self.var_make_sub_doc.get()),
                 sub_mode=self.var_sub_mode.get(), sub_model=self.var_sub_model.get(),
                 sub_max_chars=self._parse_sub_max_chars(),
             ),

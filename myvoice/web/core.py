@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -50,7 +51,7 @@ PREFIX_FILE   = gui.PREFIX_FILE
 # _save_opt_settings của GUI ghi đè taogiong_options.json bằng một dict cố định →
 # khoá lạ thêm vào đó sẽ bị xoá mất ở lần GUI lưu kế tiếp.
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
-WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", auto_seo=True, auto_thumbnail=True)
+WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="")
 
 STEP_LABELS = [
     ("recognize",   "Nhận diện"),
@@ -98,12 +99,93 @@ def save_web_settings(data: dict) -> None:
 
 
 # ── Danh sách lựa chọn cho các form ─────────────────────────────────────────
-def list_voices() -> list[str]:
-    return [gui.strip_star(v) for v in gui.list_voice_files()]
+def list_voices() -> list[dict]:
+    """Giọng mẫu kèm cờ yêu thích — ★ lên đầu, đúng thứ tự combobox bên GUI."""
+    favs = gui.load_favorites()
+    names = [gui.strip_star(v) for v in gui.list_voice_files()]
+    rows = [{"name": n, "fav": n in favs} for n in names]
+    rows.sort(key=lambda r: (not r["fav"], r["name"].lower()))
+    return rows
 
 
-def list_effects() -> list[str]:
-    return [gui.strip_star(e) for e in gui.list_effect_files()]
+def list_voice_names() -> list[str]:
+    return [r["name"] for r in list_voices()]
+
+
+def toggle_voice_favorite(name: str) -> bool:
+    """Bật/tắt ★ cho một giọng — chung file voice_favorites.json với GUI."""
+    favs = gui.load_favorites()
+    name = gui.strip_star(name)
+    if name in favs:
+        favs.discard(name)
+        on = False
+    else:
+        favs.add(name)
+        on = True
+    gui.save_favorites(favs)
+    return on
+
+
+def list_effects() -> list[dict]:
+    favs = gui.load_effect_favorites()
+    names = [gui.strip_star(e) for e in gui.list_effect_files()]
+    rows = [{"name": n, "fav": n in favs} for n in names]
+    rows.sort(key=lambda r: (not r["fav"], r["name"].lower()))
+    return rows
+
+
+def list_effect_names() -> list[str]:
+    return [r["name"] for r in list_effects()]
+
+
+def toggle_effect_favorite(name: str) -> bool:
+    favs = gui.load_effect_favorites()
+    name = gui.strip_star(name)
+    if name in favs:
+        favs.discard(name)
+        on = False
+    else:
+        favs.add(name)
+        on = True
+    gui.save_effect_favorites(favs)
+    return on
+
+
+# ── Tập bỏ qua · câu mở đầu · số tập thumbnail (đều dùng chung file với GUI) ──
+def load_skip_episodes() -> list[int]:
+    return sorted(gui.load_skip_episodes())
+
+
+def save_skip_episodes(text: str) -> list[int]:
+    """Nhận chuỗi người dùng gõ ("7, 12 15") → lưu danh sách số tập bỏ qua."""
+    nums = {int(n) for n in re.findall(r"\d+", text or "") if int(n) > 0}
+    gui.save_skip_episodes(nums)
+    return sorted(nums)
+
+
+def load_prefix() -> str:
+    return gui.load_prefix()
+
+
+def save_prefix(text: str) -> None:
+    gui.PREFIX_FILE.write_text((text or "").strip(), encoding="utf-8")
+
+
+def thumbnail_episode() -> int:
+    return gui.load_episode_number()
+
+
+def save_thumbnail_episode(n: int) -> None:
+    gui.save_episode_number(int(n))
+
+
+def list_photos() -> list[str]:
+    """Ảnh mèo dùng cho thumbnail (myvoice/Anh)."""
+    try:
+        import dien_tieu_de_thumbnail as renderer
+        return sorted(p.name for p in renderer.list_photo_files(renderer.CAT_IMAGE_DIR))
+    except Exception:
+        return []
 
 
 def list_ngang_sources() -> list[str]:
@@ -261,7 +343,7 @@ def tts_settings() -> tuple[dict | None, str]:
     mode = web.get("mode", "clone")
     if mode == "clone":
         voice = (web.get("voice") or "").strip()
-        available = list_voices()
+        available = list_voice_names()
         if voice not in available:
             voice = available[0] if available else ""
         if not voice:

@@ -2,7 +2,13 @@
 
 Thư mục này chứa các công cụ và dữ liệu tự viết thêm cho quy trình tạo video/lồng tiếng. Phần lõi của OmniVoice nằm ở các thư mục cấp trên; phần việc thực tế hằng ngày nằm chủ yếu trong `myvoice/`.
 
-## Chạy script
+## Chạy
+
+**Cách dùng chính: bản WEB.** Bấm đúp `myvoice\chay.bat` — server bật và trình
+duyệt tự mở bảng điều khiển (xem `web/README.md`). GUI Tkinter cũ vẫn giữ nguyên,
+mở bằng `myvoice\chay_gui.bat` khi cần.
+
+## Chạy script lẻ
 
 Chạy từ thư mục gốc `OmniVoice/` để dùng đúng môi trường Python:
 
@@ -31,7 +37,7 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 
 | Script | Mục đích |
 | --- | --- |
-| `scripts/taogiong_gui.py` | **Giao diện chính, tất-cả-trong-một.** Cột trái: quy trình tạo kịch bản (① nhận diện giọng nói → ② dịch Gemini → ③ tạo `input.txt`). Cột giữa: tạo/clone giọng. Có tùy chọn **cắt bản 10–15 phút**, dựng **video ngang** và **video dọc**. |
+| `scripts/amain_taogiong_gui.py` | **GUI Tkinter (bản cũ, vẫn dùng được — `chay_gui.bat`).** Cột trái: quy trình tạo kịch bản (① nhận diện giọng nói → ② dịch Gemini → ③ tạo `input.txt`). Cột giữa: tạo/clone giọng. Có tùy chọn **cắt bản 10–15 phút**, dựng **video ngang** và **video dọc**. |
 | `scripts/taogiong.py` | Bản chạy dòng lệnh của quy trình clone giọng. |
 | `scripts/taogiong_kiemtra_audio.py` | Rà các đoạn WAV lỗi/spike sau khi tạo audio. |
 | `scripts/video_khung.py` | Dựng **video NGANG**: ghép random clip trong `videongang/` rồi lồng vào khung PNG (`Backbround/`). Đầu ra `<audio>_videodone.mp4`. |

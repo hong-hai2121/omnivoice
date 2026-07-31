@@ -1,0 +1,14 @@
+{# Khối hàng đợi dùng chung cho mọi trang chạy việc (cần biến q trong context). #}
+<div class="panel">
+  <div class="phead">
+    <b>Hàng đợi</b>
+    <span class="spacer"></span>
+    <form method="post" action="/hangdoi/pause"><button class="ghost">⏸ Tạm dừng</button></form>
+    <form method="post" action="/hangdoi/resume"><button class="ghost">▶ Tiếp</button></form>
+    <form method="post" action="/hangdoi/skip"><button class="ghost">⏭ Bỏ việc này</button></form>
+    <form method="post" action="/hangdoi/stop"><button class="ghost">⏹ Dừng hết</button></form>
+  </div>
+  <div id="queue" hx-get="/partials/queue" hx-trigger="every 2s" hx-swap="innerHTML">
+    {% include "_queue.html" %}
+  </div>
+</div>

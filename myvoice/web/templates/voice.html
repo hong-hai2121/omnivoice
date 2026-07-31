@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Giọng nói — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🎧</span> Giọng nói</h1>
+  <p class="muted">Văn bản → giọng nói → video. Các khối xếp đúng thứ tự chạy;
+     nút <b>Chạy</b> ở cuối trang lưu mọi cài đặt rồi mới bắt đầu.
+     Tuỳ chọn lưu vào <code>taogiong_options.json</code>, dùng chung với GUI.</p>
+</div>
+
+{% include "_form_voice.html" %}
+
+{% include "_queuepanel.html" %}
+
+<form class="panel" method="post" action="/giongnoi/xoaketqua">
+  <div class="phead"><h2>Xóa output</h2></div>
+  <p class="hint">Đưa <code>output/</code>, các thư mục tập và file trong
+     <code>kịch_bản/</code> vào <b>Thùng rác Windows</b> (khôi phục được); file trong
+     <code>kịch_bản/</code> được tạo lại bản rỗng.</p>
+  <div class="chks">
+    <label class="chk"><input type="checkbox" name="confirm" value="1"> Tôi hiểu và muốn xoá</label>
+  </div>
+  <div class="actions"><button class="danger">🗑 Đưa vào Thùng rác</button></div>
+</form>
+{% endblock %}
