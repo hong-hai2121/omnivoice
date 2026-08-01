@@ -10,7 +10,7 @@ Cách gọi (jobs.py lo phần này):
         --source "<link|file>" [--episode 07] [--model medium] [--speed 0.7] \
         [--tts-json <file>] [--force]
 
-Mã thoát: 0 = xong · 1 = dừng có chủ ý (bước chặn, vd dịch chưa đủ) · 2 = lỗi.
+Mã thoát: 0 = xong · 77 = dừng có chủ ý (bước chặn, vd dịch chưa đủ) · 2 = lỗi.
 """
 
 from __future__ import annotations
@@ -32,7 +32,10 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 
 import amain_taogiong_gui as gui                # noqa: E402
 
-STOP = 1        # dừng có chủ ý — không phải sự cố
+# KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
+# main() (vd lỗi import) — dùng chung số là nhầm crash thành chốt an toàn.
+# Đổi số này thì đổi cả STOP_CODE trong web/steps.py.
+STOP = 77       # dừng có chủ ý — không phải sự cố
 ERROR = 2
 
 ALL_STEPS = ["recognize", "translate", "input", "seo", "thumbnail", "tts"]

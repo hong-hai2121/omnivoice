@@ -19,6 +19,11 @@ RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
+# Mã "dừng có chủ ý" của runner — phải khớp STOP trong runners/run_episode.py.
+# Không import từ đó được: module runner khởi tạo nặng (kéo cả amain_taogiong_gui),
+# nó sinh ra để chạy làm tiến trình riêng chứ không phải để import.
+STOP_CODE = 77
+
 # Bước hiện trên giao diện → (nhãn, danh sách bước của runner)
 STEP_CHOICES = [
     ("recognize", "① Nhận diện tiếng Trung"),
@@ -77,9 +82,9 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
                 return [], err
             argv += ["--tts-json", tts_json]
         steps.append(Step(label=label, argv=argv, cwd=cwd, env=env,
-                          # runner trả 1 khi CHỦ ĐỘNG dừng (vd dịch còn thiếu đoạn):
-                          # đó là kết quả hợp lệ của một chốt an toàn, không phải sự cố.
-                          soft_fail_codes=(1,)))
+                          # runner trả STOP_CODE khi CHỦ ĐỘNG dừng (vd dịch còn thiếu
+                          # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
+                          soft_fail_codes=(STOP_CODE,)))
     return steps, ""
 
 
@@ -105,7 +110,7 @@ def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = Fal
     label = {"ngang": "Dựng lại video ngang", "doc": "Dựng lại video dọc",
              "tiktok": "Dựng lại video TikTok"}.get(rebuild, "Tạo giọng + video")
     return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
-                 env=core.subprocess_env(), soft_fail_codes=(1,))], ""
+                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,))], ""
 
 
 def thumbnail_steps(title: str, episode: str = "", photo: str = "",

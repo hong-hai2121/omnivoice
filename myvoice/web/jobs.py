@@ -51,7 +51,7 @@ class Step:
     cwd: str | None = None
     env: dict | None = None
     # Mã thoát được coi là "bỏ qua có chủ ý" chứ không phải lỗi (vd bước chuẩn bị
-    # input.txt trả 1 khi bản dịch còn thiếu đoạn → dừng tập này, không phải hỏng).
+    # input.txt trả mã dừng khi bản dịch còn thiếu đoạn → dừng tập này, không phải hỏng).
     soft_fail_codes: tuple[int, ...] = ()
 
 
@@ -251,17 +251,24 @@ class JobRunner:
 
 
 def _terminate(proc: subprocess.Popen | None) -> None:
-    """Kết thúc tiến trình con: xin lịch sự trước, cứng rắn sau 5 giây."""
+    """Kết thúc việc đang chạy — phải diệt CẢ CÂY tiến trình, không riêng runner.
+
+    Runner còn mở Firefox (dịch/SEO) và ffmpeg (render) làm tiến trình CHÁU;
+    trên Windows terminate()/kill() chỉ chạm tới đúng runner, các cháu vẫn sống:
+    profile Firefox bị khoá làm hỏng lần dịch sau, ffmpeg tiếp tục chiếm GPU và
+    giữ file output. taskkill /T là cách chuẩn của Windows để quét cả cây.
+    """
     if proc is None or proc.poll() is not None:
         return
     try:
-        proc.terminate()
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
     except Exception:
-        return
+        pass
     deadline = time.time() + 5
     while time.time() < deadline and proc.poll() is None:
         time.sleep(0.2)
-    if proc.poll() is None:
+    if proc.poll() is None:       # taskkill không diệt được → ít nhất kill runner
         try:
             proc.kill()
         except Exception:

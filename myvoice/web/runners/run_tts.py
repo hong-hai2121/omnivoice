@@ -28,7 +28,7 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
         sys.path.insert(0, _p)
 
 import amain_taogiong_gui as gui                       # noqa: E402
-from run_episode import _Var, HeadlessApp, _setup_logging   # noqa: E402
+from run_episode import _Var, HeadlessApp, _setup_logging, STOP   # noqa: E402
 
 ERROR = 2
 
@@ -120,7 +120,7 @@ def main(argv=None) -> int:
         else:
             if args.from_gemini and not app._prepare_input_from_gemini():
                 logging.error("⛔ Nội dung từ Gemini chưa đạt → không tạo audio.")
-                return 1
+                return STOP
             if not input_txt.exists():
                 logging.error(f"❌ Không thấy file văn bản: {input_txt}")
                 return ERROR
