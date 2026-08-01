@@ -9,42 +9,7 @@
      Số tập đã tạo gần nhất: <b>{{ '%02d' % episode_number }}</b>.</p>
 </div>
 
-<form class="panel" method="post" action="/thumbnail">
-  <div class="phead"><span class="num">1</span><h2>Tạo ảnh</h2></div>
-  <div class="grid">
-    <label class="field">
-      <span>Tập</span>
-      <select name="episode" onchange="location.href='/thumbnail?tap=' + this.value">
-        <option value="">— không gắn tập —</option>
-        {% for r in rows %}
-          <option value="{{ r.episode }}" {{ 'selected' if r.episode == chosen }}>
-            {{ r.episode }} — {{ r.title or r.name }}
-          </option>
-        {% endfor %}
-      </select>
-    </label>
-    <label class="field">
-      <span>Ảnh nền (myvoice/Anh)</span>
-      <select name="photo">
-        <option value="">— ngẫu nhiên —</option>
-        {% for p in photos %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
-      </select>
-    </label>
-  </div>
-
-  <label class="field">
-    <span>Tiêu đề</span>
-    <textarea name="title" rows="3">{{ suggested }}</textarea>
-  </label>
-
-  <div class="chks">
-    <label class="chk"><input type="checkbox" name="doc" value="1" checked>
-      Làm thêm bản dọc 1080×1920 (YouTube Shorts)</label>
-  </div>
-  <div class="actions"><button class="primary">🖼 Tạo thumbnail</button></div>
-  <p class="hint">Ảnh lưu vào thư mục của tập: <code>thumbnail&lt;tập&gt;.png</code>
-     và <code>thumbnail&lt;tập&gt;_dọc.png</code>.</p>
-</form>
+{% include "_form_thumbnail.html" %}
 
 <div class="panel">
   <div class="phead">

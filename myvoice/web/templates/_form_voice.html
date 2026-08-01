@@ -27,7 +27,7 @@
 <datalist id="speeds">{% for s in ["1.0","1.05","1.1","1.15","1.2","1.25"] %}<option value="{{ s }}">{% endfor %}</datalist>
 <datalist id="percents">{% for p in ["25","30","40","50","60","70","75","80","90","100"] %}<option value="{{ p }}">{% endfor %}</datalist>
 
-<form method="post" action="/giongnoi">
+<form class="form-grid" method="post" action="/giongnoi">
 
   <div class="panel">
     <div class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></div>
@@ -205,8 +205,11 @@
     <div class="actions"><button name="action" value="tiktok">▶ Dựng lại video TikTok</button></div>
   </div>
 
-  <div class="runbar">
-    <button class="primary" name="action" value="run">▶ Chạy — lưu cài đặt rồi tạo giọng</button>
+  <div class="runbar span-all">
+    <div class="runrow">
+      <button class="primary" name="action" value="run">▶ Chạy — lưu cài đặt rồi tạo giọng</button>
+      <button formaction="/giongnoi/luu">💾 Chỉ lưu cài đặt</button>
+    </div>
     <p class="hint">Mọi nút ở trên cũng lưu cài đặt trước khi chạy.</p>
   </div>
 </form>

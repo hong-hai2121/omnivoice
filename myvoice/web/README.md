@@ -14,6 +14,12 @@ myvoice\chay.bat          ← bật server + TỰ MỞ trình duyệt
 myvoice\chay_gui.bat      ← chỉ khi cần GUI Tkinter cũ
 ```
 
+Trong **VS Code** (nút ▶ không chạy được file .bat): mở `myvoice/chay.py` rồi bấm
+▶ Run, hoặc bấm **F5** và chọn “▶ myvoice — bảng điều khiển WEB”
+(`.vscode/launch.json`). `chay.py` tự chạy lại bằng python của venv nếu interpreter
+đang chọn là cái khác, nên bấm ▶ ở bất kỳ đâu cũng ra đúng môi trường.
+Thêm cờ `--gui` để mở GUI cũ.
+
 Đóng cửa sổ console là tắt server. Server tự mở trình duyệt khi khởi động; không
 muốn thì đặt `MYVOICE_WEB_NO_OPEN=1` (nút **🌐 Bảng web** của GUI đặt sẵn cờ này
 vì nó tự mở lấy).
@@ -34,15 +40,22 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 
 | Trang | Tab tương ứng bên GUI | Có gì |
 |---|---|---|
-| **🏠 Home** (trang chủ `/`) | 🏠 Home (đầy đủ) | Cả quy trình trên một màn hình: cột trái ①②③ + hàng đợi, cột phải tạo giọng + video |
+| **🏠 Home** (trang chủ `/`) | 🏠 Home (đầy đủ) | **Mọi nút chức năng**: hàng đợi · ① kịch bản ①②③ · ② hàng loạt theo tập (bảng tập + ②③④⑤) · ③ giọng nói & video · ④ thumbnail |
 | **🛠 Tạo kịch bản** (`/kichban`) | Tạo kịch bản | Ba bước ①②③ với các ô ⛓ nối bước, hàng đợi, tập bỏ qua, câu mở đầu Gemini, reset quy trình |
 | **🎙 Nhận diện** | Nhận diện | ① nhận diện link → bảng tập tick chọn → các nút hàng loạt ②③④⑤ |
 | **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · cắt audio · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 | **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
 
-Trong mỗi trang, các khối xếp **dọc theo đúng thứ tự bấm** khi làm việc thật, căn
-giữa màn hình. Hàng đợi (tạm dừng · bỏ việc · dừng hết) nằm ở các trang chạy việc.
+Làm việc hằng ngày chỉ cần trang **Home** — các trang còn lại là chỗ xem kỹ từng
+phần và vài tuỳ chọn ít dùng (tập bỏ qua, câu mở đầu Gemini, reset quy trình, xóa
+output, xem trước thumbnail, copy SEO).
+
+Ở Home, mỗi khối tự dàn thành nhiều cột bằng **CSS columns** (`body.p-home
+.form-grid`) — grid xếp theo hàng nên khối cao thấp lệch nhau để lại lỗ hổng, còn
+columns thì rót khối sau vào ngay chỗ trống. Riêng khối hàng loạt dùng
+`.batch-grid`: cột hẹp (nhập link · nút chạy) | cột rộng (bảng tập 10 cột).
+Các trang riêng vẫn xếp **dọc một cột theo đúng thứ tự bấm**, căn giữa màn hình.
 
 Giao diện: menu trái tím gradient (giữ nguyên mọi trang) + mỗi trang một tông màu
 riêng để nhìn là biết đang ở đâu — Home chàm · kịch bản tím · nhận diện xanh dương · giọng nói

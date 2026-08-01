@@ -1,35 +1,37 @@
 {% extends "base.html" %}
 {% block title %}Home — myvoice{% endblock %}
 
-{# Bản web của view “🏠 Home (đầy đủ)” bên GUI: cả quy trình trên MỘT màn hình —
-   cột trái ①②③ tạo kịch bản, cột phải tạo giọng + video. Hai form độc lập, dùng
-   đúng các partial của trang Tạo kịch bản và trang Giọng nói nên không có bản
-   sao markup nào phải giữ đồng bộ. #}
+{# Bản web của view “🏠 Home (đầy đủ)” bên GUI: MỌI nút chức năng nằm ở đây, xếp
+   theo đúng thứ tự làm việc. Mỗi khối tự chia cột (form-grid) nên không cột nào
+   bị hẫng một khoảng trống dài. Các trang riêng bên menu chỉ còn là chỗ xem kỹ
+   từng phần + vài tuỳ chọn ít dùng. #}
 {% block content %}
 <div class="pagehead">
   <h1><span class="ico">🏠</span> Home</h1>
-  <p class="muted">Cả quy trình trên một màn hình, y như view <b>Home (đầy đủ)</b> của GUI:
-     bên trái nhận diện → dịch → <code>input.txt</code>, bên phải tạo giọng + dựng video.
+  <p class="muted">Tất cả chức năng trên một màn hình, theo thứ tự chạy:
+     kịch bản → hàng loạt theo tập → giọng &amp; video → thumbnail.
      Tập kế tiếp sẽ là <b>{{ next_episode }}</b>.</p>
 </div>
 
-<div class="cols2">
-  <section>
-    <p class="colhead">🛠 Tạo kịch bản</p>
-    {% include "_form_script.html" %}
-    <p class="hint">Tập bỏ qua · câu mở đầu Gemini · reset quy trình nằm ở trang
-       <a href="/kichban">Tạo kịch bản</a>.</p>
+{# Hàng đợi để NGAY ĐẦU: nhìn phát biết đang chạy việc gì, khỏi cuộn xuống đáy. #}
+<p class="colhead">⏱ Việc đang chạy</p>
+{% include "_queuepanel.html" %}
 
-    {# Hàng đợi đặt ở cột trái: cột phải dài hơn nhiều nên vừa cân trang, vừa
-       luôn nhìn thấy việc đang chạy mà không phải cuộn xuống đáy. #}
-    <p class="colhead later">⏱ Việc đang chạy</p>
-    {% include "_queuepanel.html" %}
-  </section>
+<p class="colhead later"><span class="num">1</span> Tạo kịch bản — từ link/file</p>
+{% include "_form_script.html" %}
 
-  <section>
-    <p class="colhead">🎧 Giọng nói &amp; video</p>
-    {% include "_form_voice.html" %}
-    <p class="hint">Nút “Xóa output” nằm ở trang <a href="/giongnoi">Giọng nói</a>.</p>
-  </section>
-</div>
+<p class="colhead later"><span class="num">2</span> Chạy hàng loạt theo tập</p>
+{% include "_form_batch.html" %}
+
+<p class="colhead later"><span class="num">3</span> Giọng nói &amp; video</p>
+{% include "_form_voice.html" %}
+
+<p class="colhead later"><span class="num">4</span> Thumbnail</p>
+{% include "_form_thumbnail.html" %}
+
+<p class="hint">Ít dùng hơn nên để ở trang riêng:
+   <a href="/kichban">tập bỏ qua · câu mở đầu Gemini · reset quy trình</a> ·
+   <a href="/giongnoi">xóa output</a> ·
+   <a href="/thumbnail">xem trước thumbnail</a> ·
+   <a href="/seo">copy SEO</a>.</p>
 {% endblock %}

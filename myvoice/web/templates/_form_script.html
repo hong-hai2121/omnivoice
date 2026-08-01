@@ -1,7 +1,7 @@
 {# Khối quy trình ①②③ — dùng chung cho trang Tạo kịch bản và trang Home.
    Cần: pipe, tts_error. #}
 {# Một form chạy chung: bấm nút của bước nào thì chạy từ bước đó trở đi. #}
-<form method="post" action="/kichban/chay">
+<form class="form-grid" method="post" action="/kichban/chay">
 
   <div class="panel">
     <div class="phead"><h2>Nguồn</h2></div>
@@ -80,5 +80,10 @@
     {% endif %}
     <p class="hint">Bước 2 và SEO điều khiển Firefox — đóng Firefox đang mở và đảm bảo
        đã đăng nhập Google trước khi chạy.</p>
+  </div>
+
+  <div class="savebar span-all">
+    <button formaction="/kichban/luu">💾 Lưu cài đặt</button>
+    <span class="hint">Nhớ model · tốc độ · các ô ⛓. Bấm nút chạy ở trên cũng tự lưu trước khi chạy.</span>
   </div>
 </form>

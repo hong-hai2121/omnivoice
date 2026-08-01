@@ -79,7 +79,7 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
 
 
 # ── Context dùng chung ──────────────────────────────────────────────────────
-# Trang Home ghép cả hai khối (giống view "Home (đầy đủ)" bên GUI) nên hai hàm
+# Trang Home gom cả bốn khối (giống view "Home (đầy đủ)" bên GUI) nên bốn hàm
 # này là NGUỒN DUY NHẤT: sửa một chỗ, cả Home lẫn trang riêng cùng đổi.
 def _script_ctx() -> dict:
     _, tts_err = core.tts_settings()
@@ -93,10 +93,15 @@ def _voice_ctx() -> dict:
     web = core.load_web_settings()
     out_wav = web.get("output") or str(core.OUTPUT_DIR / "output.wav")
     voices = core.list_voices()
+    # Chưa chọn giọng bao giờ (hoặc giọng đã lưu không còn trong myvoice/voice/)
+    # → lấy giọng có ★. Đổi ★ sang giọng khác là mặc định đi theo, khỏi sửa file.
+    names = {v["name"] for v in voices}
+    saved = str(web.get("voice", ""))
+    starred = next((v["name"] for v in voices if v["fav"]), "")
     return {
         "opts": core.load_options(), "web": web, "voices": voices,
-        # Chưa chọn giọng bao giờ → lấy mục đầu danh sách, đúng như combobox của GUI.
-        "current_voice": web.get("voice") or (voices[0]["name"] if voices else ""),
+        "current_voice": (saved if saved in names
+                          else starred or (voices[0]["name"] if voices else "")),
         "effects": core.list_effects(),
         "ngang_sources": [core.NGANG_SOURCE_ALL] + core.list_ngang_sources(),
         "effect_none": core.EFFECT_NONE,
@@ -108,11 +113,29 @@ def _voice_ctx() -> dict:
     }
 
 
-# ── Trang chủ: Home (view "🏠 Home (đầy đủ)" bên GUI) ───────────────────────
+def _recog_ctx() -> dict:
+    return {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS}
+
+
+def _thumb_ctx(tap: str = "") -> dict:
+    rows = core.episode_rows()
+    chosen = tap or (rows[0]["episode"] if rows else "")
+    title = ""
+    folder = core.episode_folder(chosen) if chosen else None
+    if folder:
+        blocks = core.seo_blocks(folder, chosen)
+        if blocks:                      # gợi ý sẵn tiêu đề SEO của tập đang chọn
+            title = blocks["title"]
+    return {"rows": rows, "chosen": chosen, "suggested": title,
+            "photos": core.list_photos(), "episode_number": core.thumbnail_episode()}
+
+
+# ── Trang chủ: Home — MỌI nút chức năng (view "🏠 Home (đầy đủ)" bên GUI) ───
 @app.get("/", response_class=HTMLResponse)
 def page_home(request: Request):
-    return _page(request, "home.html", active="home", q=runner.state(),
-                 **_script_ctx(), **_voice_ctx())
+    # Gộp bằng dict (không phải **a, **b) vì các phần dùng chung khoá "rows".
+    ctx = {**_script_ctx(), **_voice_ctx(), **_recog_ctx(), **_thumb_ctx()}
+    return _page(request, "home.html", active="home", q=runner.state(), **ctx)
 
 
 # ── Trang Tạo kịch bản (view "script" bên GUI) ──────────────────────────────
@@ -123,13 +146,28 @@ def page_script(request: Request):
 
 
 def _save_pipe_from_form(form) -> dict:
-    """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings)."""
+    """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
+
+    KHÔNG đụng khoá "shutdown": trang web không có ô “xong thì tắt máy” nên nó
+    không có quyền quyết định — ghi đè mỗi lần chạy là âm thầm tắt cài đặt của GUI.
+    """
     pipe = core.load_pipeline()
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
-    for k in ("auto2", "auto3", "auto_tts", "seo", "shutdown"):
+    for k in ("auto2", "auto3", "auto_tts", "seo"):
         pipe[k] = k in form
+    core.save_pipeline(pipe)
+    return pipe
+
+
+def _save_model_speed(form) -> dict:
+    """Chỉ model + tốc độ. Dùng cho form hàng loạt — form đó KHÔNG có các ô ⛓,
+    gọi _save_pipe_from_form sẽ tắt sạch chúng."""
+    pipe = core.load_pipeline()
+    for k in ("model", "speed"):
+        if form.get(k):
+            pipe[k] = str(form[k])
     core.save_pipeline(pipe)
     return pipe
 
@@ -159,15 +197,15 @@ async def run_script(request: Request):
     start = str(form.get("start", "recognize"))
     if start not in _STAGES:
         start = "recognize"
-    pipe = _save_pipe_from_form(form)
-    if "shutdown" in form:
-        log("⏻ Ô “xong thì tắt máy” chỉ có tác dụng bên GUI — bản web không tự tắt máy.")
 
     lines = [s.strip() for s in str(form.get("sources", "")).splitlines() if s.strip()]
     if not lines:
+        # Chưa có gì để chạy thì KHÔNG lưu gì cả — nếu lưu, một lần bấm nhầm sẽ
+        # tắt hết các ô ⛓ đang bật.
         log("⚠️ Chưa nhập link hoặc đường dẫn file nào.")
         return _back(request, "/kichban")
 
+    pipe = _save_pipe_from_form(form)
     chain = _chain_from(start, pipe)
     force = bool(form.get("force"))
     steps_mod.cleanup_tmp()
@@ -177,6 +215,14 @@ async def run_script(request: Request):
             log(f"⛔ {err}")
             break
         runner.enqueue(steps_mod.title_for(src, "", chain), built)
+    return _back(request, "/kichban")
+
+
+@app.post("/kichban/luu")
+async def save_pipe_only(request: Request):
+    """Nút 💾 của khối Tạo kịch bản: chỉ lưu, không xếp việc nào vào hàng đợi."""
+    _save_pipe_from_form(await request.form())
+    log("💾 Đã lưu cài đặt quy trình (model · tốc độ · các ô ⛓).")
     return _back(request, "/kichban")
 
 
@@ -213,14 +259,7 @@ async def run_voice(request: Request):
     """Một form, nhiều nút: Chạy · Dựng lại ngang/dọc/tiktok. Bấm nút nào cũng LƯU
     cài đặt trước rồi mới chạy — đúng thói quen của GUI."""
     form = await request.form()
-    _save_opts_from_form(form)
-    core.save_web_settings({
-        "mode": str(form.get("mode", "clone")),
-        "voice": str(form.get("voice", "")),
-        "instruct": str(form.get("instruct", "")),
-        "input": str(form.get("input_txt", "")),
-        "output": str(form.get("output_wav", "")),
-    })
+    _save_voice_from_form(form)
 
     action = str(form.get("action", "run"))
     rebuild = action if action in ("ngang", "doc", "tiktok") else ""
@@ -235,6 +274,14 @@ async def run_voice(request: Request):
         log(f"⛔ {err}")
     else:
         runner.enqueue(built[0].label, built)
+    return _back(request, "/giongnoi")
+
+
+@app.post("/giongnoi/luu")
+async def save_voice_only(request: Request):
+    """Nút 💾 của khối Giọng nói & video: chỉ lưu, không tạo giọng."""
+    _save_voice_from_form(await request.form())
+    log("💾 Đã lưu cài đặt giọng nói + video.")
     return _back(request, "/giongnoi")
 
 
@@ -323,11 +370,18 @@ _BATCH_READY = {
 }
 
 
+@app.post("/nhandien/luu")
+async def save_recog_only(request: Request):
+    """Nút 💾 của khối chạy hàng loạt (chỉ có model + tốc độ để nhớ)."""
+    _save_model_speed(await request.form())
+    log("💾 Đã lưu model + tốc độ nhận diện.")
+    return _back(request, "/nhandien")
+
+
 @app.get("/nhandien", response_class=HTMLResponse)
 def page_recog(request: Request):
-    return _page(request, "recog.html", active="recog", pipe=core.load_pipeline(),
-                 q=runner.state(), rows=core.episode_rows(),
-                 step_labels=core.STEP_LABELS, buttons=_BATCH_BUTTONS)
+    return _page(request, "recog.html", active="recog", q=runner.state(),
+                 pipe=core.load_pipeline(), **_recog_ctx())
 
 
 @app.get("/partials/recog-table", response_class=HTMLResponse)
@@ -342,14 +396,9 @@ async def run_recog(request: Request):
     form = await request.form()
     action = str(form.get("action", ""))
     if action not in _BATCH_BUTTONS:
-        return RedirectResponse("/nhandien", status_code=303)
+        return _back(request, "/nhandien")
 
-    pipe = core.load_pipeline()
-    for k in ("model", "speed"):
-        if form.get(k):
-            pipe[k] = str(form[k])
-    core.save_pipeline(pipe)
-
+    _save_model_speed(form)
     label, chain = _BATCH_BUTTONS[action]
     force = bool(form.get("force"))
     steps_mod.cleanup_tmp()
@@ -358,14 +407,14 @@ async def run_recog(request: Request):
         lines = [s.strip() for s in str(form.get("sources", "")).splitlines() if s.strip()]
         if not lines:
             log("⚠️ Chưa nhập link hoặc file nào để nhận diện.")
-            return RedirectResponse("/nhandien", status_code=303)
+            return _back(request, "/nhandien")
         for src in lines:
             built, err = steps_mod.build_steps(chain, source=src, force=force)
             if err:
                 log(f"⛔ {err}")
                 break
             runner.enqueue(steps_mod.title_for(src, "", chain), built)
-        return RedirectResponse("/nhandien", status_code=303)
+        return _back(request, "/nhandien")
 
     picked = [str(e) for e in form.getlist("tap")]
     rows = core.episode_rows()
@@ -377,7 +426,7 @@ async def run_recog(request: Request):
         log(f"ℹ️ Không tick tập nào → chạy {len(targets)} tập đủ điều kiện cho “{label}”.")
     if not targets:
         log(f"⚠️ Không có tập nào để chạy “{label}”.")
-        return RedirectResponse("/nhandien", status_code=303)
+        return _back(request, "/nhandien")
 
     for r in sorted(targets, key=lambda r: int(r["episode"])):
         built, err = steps_mod.build_steps(chain, source=r["source"],
@@ -386,23 +435,14 @@ async def run_recog(request: Request):
             log(f"⛔ {err}")
             break
         runner.enqueue(steps_mod.title_for("", r["episode"], chain), built)
-    return RedirectResponse("/nhandien", status_code=303)
+    return _back(request, "/nhandien")
 
 
 # ── Trang Thumbnail ─────────────────────────────────────────────────────────
 @app.get("/thumbnail", response_class=HTMLResponse)
 def page_thumbnail(request: Request, tap: str = ""):
-    rows = core.episode_rows()
-    chosen = tap or (rows[0]["episode"] if rows else "")
-    title = ""
-    folder = core.episode_folder(chosen) if chosen else None
-    if folder:
-        blocks = core.seo_blocks(folder, chosen)
-        if blocks:                      # gợi ý sẵn tiêu đề SEO của tập đang chọn
-            title = blocks["title"]
-    return _page(request, "thumbnail.html", active="thumbnail", rows=rows,
-                 chosen=chosen, suggested=title, photos=core.list_photos(),
-                 q=runner.state(), episode_number=core.thumbnail_episode())
+    return _page(request, "thumbnail.html", active="thumbnail", q=runner.state(),
+                 **_thumb_ctx(tap))
 
 
 @app.post("/thumbnail")
@@ -412,12 +452,12 @@ async def make_thumbnail(request: Request):
     episode = str(form.get("episode", "")).strip()
     if not title:
         log("⚠️ Chưa nhập tiêu đề cho thumbnail.")
-        return RedirectResponse("/thumbnail", status_code=303)
+        return _back(request, "/thumbnail")
     built = steps_mod.thumbnail_steps(title, episode=episode,
                                       photo=str(form.get("photo", "")),
                                       doc=bool(form.get("doc")))
     runner.enqueue(f"Thumbnail tập {episode or '—'}", built)
-    return RedirectResponse(f"/thumbnail?tap={episode}", status_code=303)
+    return _back(request, f"/thumbnail?tap={episode}")
 
 
 @app.get("/tap/{episode}/thumbnail")
@@ -493,6 +533,19 @@ def _save_opts_from_form(form) -> dict:
             opts[k] = str(form[k])
     core.save_options(opts)
     return opts
+
+
+def _save_voice_from_form(form) -> None:
+    """Toàn bộ cài đặt của khối Giọng nói: tuỳ chọn chung (taogiong_options.json)
+    + chế độ/giọng/tệp của riêng bản web (web_settings.json)."""
+    _save_opts_from_form(form)
+    core.save_web_settings({
+        "mode": str(form.get("mode", "clone")),
+        "voice": str(form.get("voice", "")),
+        "instruct": str(form.get("instruct", "")),
+        "input": str(form.get("input_txt", "")),
+        "output": str(form.get("output_wav", "")),
+    })
 
 
 # ── Copy SEO ────────────────────────────────────────────────────────────────

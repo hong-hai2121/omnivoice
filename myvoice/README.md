@@ -8,6 +8,9 @@ Thư mục này chứa các công cụ và dữ liệu tự viết thêm cho quy
 duyệt tự mở bảng điều khiển (xem `web/README.md`). GUI Tkinter cũ vẫn giữ nguyên,
 mở bằng `myvoice\chay_gui.bat` khi cần.
 
+Trong VS Code thì mở `myvoice/chay.py` bấm ▶ Run (hoặc F5 → “▶ myvoice — bảng
+điều khiển WEB”); nút ▶ của VS Code không chạy được file .bat.
+
 ## Chạy script lẻ
 
 Chạy từ thư mục gốc `OmniVoice/` để dùng đúng môi trường Python:

@@ -9,76 +9,7 @@
      trong hàng đợi nên “Dừng hết” luôn dừng gọn ở ranh giới tập.</p>
 </div>
 
-<form method="post" action="/nhandien">
-
-  <div class="panel">
-    <div class="phead">
-      <span class="num">1</span><h2>Nhận diện link → tiếng Trung</h2>
-    </div>
-    <label class="field">
-      <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
-      <textarea name="sources" rows="3" placeholder="https://www.bilibili.com/video/…"></textarea>
-    </label>
-    <div class="grid">
-      <label class="field">
-        <span>Model nhận diện</span>
-        <select name="model">
-          {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
-            <option value="{{ m }}" {{ 'selected' if pipe.model == m }}>{{ m }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="field">
-        <span>Tốc độ</span>
-        <select name="speed">
-          {% for s in ["0.6", "0.7", "0.8", "0.9", "1.0"] %}
-            <option value="{{ s }}" {{ 'selected' if pipe.speed|string == s }}>{{ s }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
-    <div class="actions">
-      <button class="primary" name="action" value="recognize">🎧 Nhận diện các link rồi ngưng</button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="phead">
-      <span class="num">2</span><h2>Chọn tập trong kịch_bản/</h2>
-      <span class="spacer"></span>
-      <button class="ghost" type="button" onclick="tickAll(true)">Chọn tất cả</button>
-      <button class="ghost" type="button" onclick="tickAll(false)">Bỏ chọn</button>
-      <button class="ghost" type="button"
-              onclick="htmx.trigger('#recogtable', 'refresh')">🔄 Làm mới</button>
-    </div>
-    <div id="recogtable" hx-get="/partials/recog-table"
-         hx-trigger="refresh, every 15s" hx-swap="innerHTML">
-      {% include "_recog_table.html" %}
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="phead">
-      <span class="num">3</span><h2>Chạy cho những tập đã tick</h2>
-    </div>
-    <div class="actions col">
-      <button name="action" value="translate">🌐 ② Dịch + tạo input.txt</button>
-      <button name="action" value="seo">🔎 ③ Gửi SEO (Gemini)</button>
-      <button name="action" value="thumbnail">🖼 ④ Tạo thumbnail (ngang + dọc)</button>
-      <button name="action" value="tts">🎬 ⑤ Tạo giọng + video</button>
-    </div>
-    <div class="chks">
-      <label class="chk"><input type="checkbox" name="force"> Làm lại cả bước đã có kết quả</label>
-    </div>
-    <p class="hint">Bước ② và ③ điều khiển Firefox — đóng Firefox đang mở trước khi chạy.</p>
-  </div>
-</form>
+{% include "_form_batch.html" %}
 
 {% include "_queuepanel.html" %}
-
-<script>
-  function tickAll(on) {
-    document.querySelectorAll('#recogtable input[name="tap"]').forEach(c => { c.checked = on; });
-  }
-</script>
 {% endblock %}

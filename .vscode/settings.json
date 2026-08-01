@@ -49,5 +49,8 @@
     "**/myvoice/voice/**"
   ],
   "python.analysis.indexing": true,
-  "python.analysis.diagnosticMode": "openFilesOnly"
+  "python.analysis.diagnosticMode": "openFilesOnly",
+
+  // Nút ▶ Run dùng luôn python của dự án (nơi có fastapi/uvicorn/torch).
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe"
 }
