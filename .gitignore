@@ -72,6 +72,7 @@ mt_cache/
 /myvoice/YOUTUBE/token_drive.json
 /myvoice/YOUTUBE/token*.json
 /myvoice/YOUTUBE/settings.json
+/myvoice/YOUTUBE/kenh_video_cache.json
 
 # Log/stderr sinh ra khi chạy tay script (rỗng, không có giá trị lịch sử)
 *.log

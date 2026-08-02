@@ -268,6 +268,10 @@ def main(argv=None) -> int:
     parser.add_argument("--tts-json", default="", help="File JSON cài đặt tạo giọng/video.")
     parser.add_argument("--force", action="store_true",
                         help="Làm lại cả khi bước đó đã có kết quả.")
+    parser.add_argument("--episode-out", default="",
+                        help="Ghi SỐ TẬP đã cấp ra file này (để bên gọi nối việc "
+                             "đăng YouTube — với nguồn là link thì số tập chỉ biết "
+                             "được ở đây, lúc chạy).")
     args = parser.parse_args(argv)
 
     _setup_logging()
@@ -290,6 +294,11 @@ def main(argv=None) -> int:
         logging.error(f"❌ {e}")
         return ERROR
     logging.info(f"📂 Tập {episode} — {folder}")
+    if args.episode_out:
+        try:
+            Path(args.episode_out).write_text(episode, encoding="utf-8")
+        except OSError as e:
+            logging.warning(f"⚠️ Không ghi được số tập ra {args.episode_out}: {e}")
 
     state: dict = {"force": args.force}
     if args.tts_json:

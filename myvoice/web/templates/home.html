@@ -9,7 +9,7 @@
 <div class="pagehead">
   <h1><span class="ico">🏠</span> Home</h1>
   <p class="muted">Tất cả chức năng trên một màn hình, theo thứ tự chạy:
-     kịch bản → hàng loạt theo tập → giọng &amp; video → thumbnail.
+     kịch bản → giọng &amp; video → thumbnail.
      Tập kế tiếp sẽ là <b>{{ next_episode }}</b>.</p>
 </div>
 
@@ -20,16 +20,14 @@
 <p class="colhead later"><span class="num">1</span> Tạo kịch bản — từ link/file</p>
 {% include "_form_script.html" %}
 
-<p class="colhead later"><span class="num">2</span> Chạy hàng loạt theo tập</p>
-{% include "_form_batch.html" %}
-
-<p class="colhead later"><span class="num">3</span> Giọng nói &amp; video</p>
+<p class="colhead later"><span class="num">2</span> Giọng nói &amp; video</p>
 {% include "_form_voice.html" %}
 
-<p class="colhead later"><span class="num">4</span> Thumbnail</p>
+<p class="colhead later"><span class="num">3</span> Thumbnail</p>
 {% include "_form_thumbnail.html" %}
 
 <p class="hint">Ít dùng hơn nên để ở trang riêng:
+   <a href="/nhandien">chạy hàng loạt theo tập · bảng trạng thái các tập</a> ·
    <a href="/kichban">tập bỏ qua · câu mở đầu Gemini · reset quy trình</a> ·
    <a href="/giongnoi">xóa output</a> ·
    <a href="/thumbnail">xem trước thumbnail</a> ·

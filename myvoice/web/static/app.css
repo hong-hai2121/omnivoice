@@ -383,6 +383,25 @@ audio { max-width: 100%; height: 36px; }
 .history { margin-top: 6px; border-top: 1px solid var(--line); }
 .history summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 9px 0 4px; }
 
+/* Gợi ý số tập còn thiếu trên kênh (làm bù) */
+.epsuggest { margin-top: 8px; }
+.epsuggest .hint { margin: 6px 0 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 40px; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--accent-soft);
+  color: var(--accent); font: 600 13px/1 inherit; text-decoration: none;
+}
+.chip:hover { border-color: var(--accent); }
+/* Tập đã dựng xong ở máy — chỉ còn thiếu trên kênh, không cấp cho link mới. */
+.chip.done { background: var(--ok-bg); color: var(--ok); }
+#epnote:empty { display: none; }
+
+/* Hàng đợi ĐĂNG — chạy song song với hàng đợi chính, tách khối cho khỏi lẫn. */
+.uploadq { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.uploadq .colhead { margin-bottom: 4px; }
+
 /* ── Bảng trạng thái tập ─────────────────────────────────────────────────── */
 .tablewrap { overflow-x: auto; margin: 0 -4px; }   /* bảng rộng tự cuộn, trang không lệch */
 table.grid { border-collapse: collapse; width: 100%; font-size: 13px; display: table; }

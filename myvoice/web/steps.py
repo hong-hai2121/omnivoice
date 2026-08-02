@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 
 from . import core
-from .jobs import Step
+from .jobs import Step, log, upload_runner
 
 RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
+RUNNER_UPLOAD = core.WEB_DIR / "runners" / "run_upload.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
 # Mã "dừng có chủ ý" của runner — phải khớp STOP trong runners/run_episode.py.
@@ -38,6 +39,7 @@ SINGLE_STEPS = {
     "seo":       "SEO YouTube",
     "thumbnail": "Thumbnail",
     "tts":       "Tạo giọng + video",
+    "upload":    "Đăng YouTube",
 }
 
 
@@ -66,25 +68,74 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
     return argv
 
 
+def upload_steps(episode: str) -> list[Step]:
+    """Bước ĐĂNG YouTube cho 1 tập (chạy ở hàng đợi riêng upload_runner)."""
+    argv = [core.python_exe(), "-u", str(RUNNER_UPLOAD), "--episode", str(episode)]
+    return [Step(label=f"Đăng YouTube tập {episode}", argv=argv,
+                 cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
+                 # STOP_CODE = bỏ qua có chủ ý (đã đăng rồi, kênh đã có tập này…).
+                 soft_fail_codes=(STOP_CODE,))]
+
+
+def queue_upload(episode: str) -> None:
+    """Xếp việc đăng 1 tập vào hàng đợi RIÊNG — trả về ngay, không chờ tải xong."""
+    episode = str(episode).strip().zfill(2)
+    upload_runner.enqueue(f"⬆ Đăng YouTube tập {episode}", upload_steps(episode))
+
+
+def _queue_upload_from_file(ep_file: Path) -> None:
+    """Đọc số tập mà runner vừa ghi ra rồi xếp việc đăng.
+
+    Phải đi qua file vì với nguồn là link/file, SỐ TẬP do chính runner cấp lúc chạy
+    (theo manifest) — lúc dựng danh sách bước ở đây thì chưa ai biết là tập mấy.
+    """
+    try:
+        episode = ep_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        episode = ""
+    if not episode:
+        log("⚠️ Không rõ vừa dựng xong tập nào → chưa xếp được việc đăng YouTube.")
+        return
+    queue_upload(episode)
+
+
 def build_steps(step_keys: list[str], source: str = "", episode: str = "",
-                force: bool = False) -> tuple[list[Step], str]:
-    """→ (danh sách Step, lỗi). Lỗi khác rỗng nghĩa là chưa chạy được."""
+                force: bool = False, upload: bool = False) -> tuple[list[Step], str]:
+    """→ (danh sách Step, lỗi). Lỗi khác rỗng nghĩa là chưa chạy được.
+
+    upload=True: dựng xong video thì XẾP việc đăng sang hàng đợi riêng rồi đi tiếp
+    ngay — tập kế không phải đợi video này tải lên xong.
+    """
     steps: list[Step] = []
     env = core.subprocess_env()
     cwd = str(core.SCRIPTS_DIR)
 
     for key in step_keys:
+        # "upload" chạy runner KHÁC (run_upload.py), không phải run_episode.py.
+        # Thường thì bên gọi xếp thẳng vào upload_runner cho chạy song song; nhánh
+        # này để build_steps(["upload"]) vẫn ra đúng bước chứ không tạo lệnh sai.
+        if key == "upload":
+            if not episode:
+                return [], "Bước đăng YouTube cần biết số tập."
+            steps.extend(upload_steps(episode))
+            continue
         label = dict(STEP_CHOICES).get(key) or SINGLE_STEPS.get(key, key)
         argv = _base_argv(key, source, episode, force)
+        on_success = None
         if key in ("tts", "all"):
             tts_json, err = _write_tts_json()
             if err:
                 return [], err
             argv += ["--tts-json", tts_json]
+            if upload:
+                TMP_DIR.mkdir(parents=True, exist_ok=True)
+                ep_file = TMP_DIR / f"ep_{int(time.time() * 1000)}.txt"
+                argv += ["--episode-out", str(ep_file)]
+                on_success = lambda f=ep_file: _queue_upload_from_file(f)   # noqa: E731
         steps.append(Step(label=label, argv=argv, cwd=cwd, env=env,
                           # runner trả STOP_CODE khi CHỦ ĐỘNG dừng (vd dịch còn thiếu
                           # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
-                          soft_fail_codes=(STOP_CODE,)))
+                          soft_fail_codes=(STOP_CODE,), on_success=on_success))
     return steps, ""
 
 
@@ -138,9 +189,10 @@ def cleanup_tmp(keep_hours: int = 24) -> None:
     if not TMP_DIR.exists():
         return
     cutoff = time.time() - keep_hours * 3600
-    for p in TMP_DIR.glob("tts_*.json"):
-        try:
-            if p.stat().st_mtime < cutoff:
-                p.unlink()
-        except OSError:
-            pass
+    for pattern in ("tts_*.json", "ep_*.txt"):
+        for p in TMP_DIR.glob(pattern):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass

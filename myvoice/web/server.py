@@ -29,7 +29,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, steps as steps_mod          # noqa: E402
-from .jobs import log, runner                   # noqa: E402
+from .jobs import log, runner, upload_runner    # noqa: E402
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -75,6 +75,10 @@ async def require_token(request: Request, call_next):
 
 def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.setdefault("active", "")
+    ctx.setdefault("on_home", False)
+    # Hàng đợi ĐĂNG chạy song song với hàng đợi chính nên trang nào cũng cần thấy.
+    ctx.setdefault("qu", upload_runner.state())
+    ctx.setdefault("slots", core.upload_slots_text())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -127,15 +131,21 @@ def _thumb_ctx(tap: str = "") -> dict:
         if blocks:                      # gợi ý sẵn tiêu đề SEO của tập đang chọn
             title = blocks["title"]
     return {"rows": rows, "chosen": chosen, "suggested": title,
-            "photos": core.list_photos(), "episode_number": core.thumbnail_episode()}
+            "photos": core.list_photos(), "episode_number": core.thumbnail_episode(),
+            "missing": core.missing_episodes()}
 
 
 # ── Trang chủ: Home — MỌI nút chức năng (view "🏠 Home (đầy đủ)" bên GUI) ───
 @app.get("/", response_class=HTMLResponse)
 def page_home(request: Request):
     # Gộp bằng dict (không phải **a, **b) vì các phần dùng chung khoá "rows".
-    ctx = {**_script_ctx(), **_voice_ctx(), **_recog_ctx(), **_thumb_ctx()}
-    return _page(request, "home.html", active="home", q=runner.state(), **ctx)
+    # KHÔNG gọi _recog_ctx: khối "chạy hàng loạt theo tập" đã chuyển hẳn sang trang
+    # /nhandien, mà gọi thừa thì episode_rows() bị quét hai lần mỗi lần mở Home.
+    # on_home=True: ô "Số tập (chữ trên video)" hiện ở khối Thumbnail thay vì trong
+    # khối Giọng nói (xem _field_tiktok_episode.html).
+    ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx()}
+    return _page(request, "home.html", active="home", q=runner.state(),
+                 on_home=True, **ctx)
 
 
 # ── Trang Tạo kịch bản (view "script" bên GUI) ──────────────────────────────
@@ -155,7 +165,7 @@ def _save_pipe_from_form(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
-    for k in ("auto2", "auto3", "auto_tts", "seo"):
+    for k in ("auto2", "auto3", "auto_tts", "seo", "upload"):
         pipe[k] = k in form
     core.save_pipeline(pipe)
     return pipe
@@ -170,6 +180,23 @@ def _save_model_speed(form) -> dict:
             pipe[k] = str(form[k])
     core.save_pipeline(pipe)
     return pipe
+
+
+def _upload_ready() -> bool:
+    """Kiểm tra TRƯỚC khi xếp việc: đủ thư viện + đã đăng nhập YouTube.
+
+    Làm ngay lúc bấm nút thay vì để runner phát hiện lúc 2 giờ sáng. Đồng thời đọc
+    lại kênh: vừa báo rõ sẽ đăng lên kênh nào (một Gmail có thể nhiều kênh), vừa nạp
+    cache các giờ đã hẹn để xếp khung 08:00/18:00 không bị trùng.
+    """
+    chan, err = core.refresh_channel()
+    if err:
+        log(f"⛔ Chưa đăng YouTube được: {err}")
+        return False
+    slot = core.next_publish_slot_text()
+    log(f"⬆ Sẽ đăng lên kênh: {chan['title']} ({chan['id']}) — {chan['video_count']} video."
+        + (f" Khung giờ trống kế tiếp: {slot}." if slot else ""))
+    return True
 
 
 # Chuỗi chính ①→②→③→giọng. Mỗi nấc có một ô "⛓ tự động chạy tiếp"; ô tắt thì
@@ -208,13 +235,29 @@ async def run_script(request: Request):
     pipe = _save_pipe_from_form(form)
     chain = _chain_from(start, pipe)
     force = bool(form.get("force"))
+    upload = bool(pipe.get("upload")) and "tts" in chain
+    if upload and not _upload_ready():
+        upload = False           # lý do đã ghi ra nhật ký; vẫn dựng video như thường
+    # LÀM BÙ: bắt đầu từ số tập đã chọn rồi vét tiếp các số kênh còn thiếu; hết thì
+    # cấp số mới. Tính TRƯỚC cho cả mẻ để ghi ra nhật ký, khỏi phải đoán.
+    start_ep = str(form.get("episode", "")).strip()
+    if start_ep and not start_ep.isdecimal():
+        log(f"⚠️ Số tập '{start_ep}' không phải số → bỏ qua, để tự cấp số.")
+        start_ep = ""
+    plan = core.plan_episodes(lines, start_ep)
+    if start_ep:
+        log("🔖 Cấp số tập: " + " · ".join(
+            f"link {i + 1} → " + (f"tập {ep}" if ep else "tập cũ (nguồn đã chạy)")
+            for i, ep in enumerate(plan)))
+
     steps_mod.cleanup_tmp()
-    for src in lines:
-        built, err = steps_mod.build_steps(chain, source=src, force=force)
+    for src, ep in zip(lines, plan):
+        built, err = steps_mod.build_steps(chain, source=src, episode=ep,
+                                           force=force, upload=upload)
         if err:
             log(f"⛔ {err}")
             break
-        runner.enqueue(steps_mod.title_for(src, "", chain), built)
+        runner.enqueue(steps_mod.title_for(src, ep, chain), built)
     return _back(request, "/kichban")
 
 
@@ -360,6 +403,7 @@ _BATCH_BUTTONS = {
     "seo":       ("③ Gửi SEO (Gemini)", ["seo"]),
     "thumbnail": ("④ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
     "tts":       ("⑤ Tạo giọng + video", ["tts"]),
+    "upload":    ("⑥ Đăng YouTube", ["upload"]),
 }
 # Tập "đủ điều kiện" cho từng nút khi KHÔNG tick tập nào — giống cách GUI lọc.
 _BATCH_READY = {
@@ -367,6 +411,7 @@ _BATCH_READY = {
     "seo":       lambda s: s["translate"] and not s["seo"],
     "thumbnail": lambda s: s["seo"] and not s["thumbnail"],
     "tts":       lambda s: s["input"] and not s["video_ngang"],
+    "upload":    lambda s: s["video_ngang"] and s["seo"] and not s["upload"],
 }
 
 
@@ -416,6 +461,9 @@ async def run_recog(request: Request):
             runner.enqueue(steps_mod.title_for(src, "", chain), built)
         return _back(request, "/nhandien")
 
+    if action == "upload" and not _upload_ready():
+        return _back(request, "/nhandien")
+
     picked = [str(e) for e in form.getlist("tap")]
     rows = core.episode_rows()
     if picked:
@@ -424,11 +472,24 @@ async def run_recog(request: Request):
         ready = _BATCH_READY[action]
         targets = [r for r in rows if ready(r["steps"])]
         log(f"ℹ️ Không tick tập nào → chạy {len(targets)} tập đủ điều kiện cho “{label}”.")
+
+    if action == "upload":
+        # Loại tập mà KÊNH đã có (đăng tay từ trước, không có youtube_upload.json).
+        on_channel = core.episodes_on_channel()
+        skipped = [r["episode"] for r in targets if int(r["episode"]) in on_channel]
+        targets = [r for r in targets if int(r["episode"]) not in on_channel]
+        if skipped:
+            log(f"♻ Bỏ qua {len(skipped)} tập kênh đã có: {', '.join(skipped)}.")
+
     if not targets:
         log(f"⚠️ Không có tập nào để chạy “{label}”.")
         return _back(request, "/nhandien")
 
     for r in sorted(targets, key=lambda r: int(r["episode"])):
+        # Đăng đi hàng đợi RIÊNG (song song), các bước khác đi hàng đợi chính.
+        if action == "upload":
+            steps_mod.queue_upload(r["episode"])
+            continue
         built, err = steps_mod.build_steps(chain, source=r["source"],
                                            episode=r["episode"], force=force)
         if err:
@@ -483,7 +544,9 @@ def episode_thumbnail_doc(episode: str):
 # ── Hàng đợi ────────────────────────────────────────────────────────────────
 @app.get("/partials/queue", response_class=HTMLResponse)
 def partial_queue(request: Request):
-    return templates.TemplateResponse(request, "_queue.html", {"q": runner.state()})
+    return templates.TemplateResponse(
+        request, "_queue.html",
+        {"q": runner.state(), "qu": upload_runner.state()})
 
 
 def _back(request: Request, fallback: str = "/") -> RedirectResponse:
@@ -502,6 +565,22 @@ def queue_action(action: str, request: Request):
 @app.post("/hangdoi/bo/{job_id}")
 def queue_remove(job_id: int, request: Request):
     runner.remove(job_id)
+    return _back(request)
+
+
+@app.post("/hangdoidang/{action}")
+def upload_queue_action(action: str, request: Request):
+    """Điều khiển RIÊNG hàng đợi đăng — dừng việc tải lên không đụng gì tới việc
+    dựng video đang chạy, và ngược lại."""
+    {"pause": upload_runner.pause, "resume": upload_runner.resume,
+     "skip": upload_runner.skip_current,
+     "stop": upload_runner.stop_all}.get(action, lambda: None)()
+    return _back(request)
+
+
+@app.post("/hangdoidang/bo/{job_id}")
+def upload_queue_remove(job_id: int, request: Request):
+    upload_runner.remove(job_id)
     return _back(request)
 
 
@@ -588,12 +667,35 @@ def _open_browser_when_ready(port: int) -> None:
     log("⚠️ Server chưa sẵn sàng — mở trình duyệt thủ công bằng địa chỉ ở trên.")
 
 
+def _port_busy(port: int, timeout: float = 0.4) -> bool:
+    """Đã có ai nghe ở cổng này chưa (nhiều khả năng là server đang chạy sẵn)."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _should_open_browser() -> bool:
+    """Có tự mở trình duyệt không. Đặt MYVOICE_WEB_NO_OPEN=1 để tắt — GUI dùng cờ
+    này vì nó tự mở lấy, bật cả hai bên sẽ ra hai tab."""
+    return os.environ.get("MYVOICE_WEB_NO_OPEN", "").strip() in ("", "0", "false")
+
+
 def main() -> None:
     import threading
 
     import uvicorn
 
     port = int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
+
+    # Bấm shortcut lần thứ hai khi server đã chạy: mở luôn trình duyệt vào bản đang
+    # chạy rồi thoát, thay vì để uvicorn văng traceback "địa chỉ đang bận".
+    if _port_busy(port):
+        print(f"Bảng điều khiển đã chạy sẵn — mở lại: {_url(port)}")
+        if _should_open_browser():
+            import webbrowser
+            webbrowser.open(_url(port))
+        return
 
     print("=" * 68)
     print("  myvoice — bảng điều khiển web")
@@ -603,7 +705,7 @@ def main() -> None:
     print("  Nhật ký chạy hiện ngay trong cửa sổ này. Đóng cửa sổ = tắt server.")
     print("=" * 68)
 
-    if os.environ.get("MYVOICE_WEB_NO_OPEN", "").strip() in ("", "0", "false"):
+    if _should_open_browser():
         threading.Thread(target=_open_browser_when_ready, args=(port,),
                          daemon=True).start()
 

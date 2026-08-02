@@ -21,6 +21,9 @@
         {% for p in photos %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
       </select>
     </label>
+    {# Số in lên video TikTok — để cạnh số tập của thumbnail cho dễ đối chiếu (hai
+       số này phải khớp nhau). Ô thuộc form GIỌNG NÓI, xem chú thích trong mảnh. #}
+    {% if on_home %}{% include "_field_tiktok_episode.html" %}{% endif %}
   </div>
 
   <label class="field">

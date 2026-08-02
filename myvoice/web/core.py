@@ -62,7 +62,12 @@ STEP_LABELS = [
     ("audio",       "Giọng"),
     ("video_ngang", "Video ngang"),
     ("video_doc",   "Video dọc"),
+    ("upload",      "Đăng"),
 ]
+
+# Bước KHÔNG tính vào "tập đã xong": đăng YouTube là tuỳ chọn (mặc định tắt), tính
+# vào sẽ làm mọi tập đã dựng xong từ trước hoá "còn việc".
+DONE_EXCLUDE = {"upload"}
 
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
@@ -241,6 +246,8 @@ def folder_steps(folder, episode: str) -> dict:
                         or bool(list(folder.glob("*_videodone.mp4"))),
         "video_doc": (folder / "facebook.mp4").exists()
                       or bool(list(folder.glob("*_doc.mp4"))),
+        # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
+        "upload": (folder / "youtube_upload.json").exists(),
     }
 
 
@@ -259,6 +266,7 @@ def episode_rows() -> list[dict]:
         ep = gui.episode_of(folder.name)
         info = by_episode.get(ep, {})
         steps = folder_steps(folder, ep)
+        core_steps = {k: v for k, v in steps.items() if k not in DONE_EXCLUDE}
         rows.append({
             "episode": ep,
             "name": folder.name,
@@ -267,8 +275,8 @@ def episode_rows() -> list[dict]:
             "source": info.get("source", ""),
             "updated": info.get("updated", ""),
             "steps": steps,
-            "done_count": sum(1 for _, v in steps.items() if v),
-            "total_steps": len(steps),
+            "done_count": sum(1 for v in core_steps.values() if v),
+            "total_steps": len(core_steps),
         })
     rows.sort(key=lambda r: int(r["episode"]), reverse=True)
     return rows
@@ -278,14 +286,70 @@ def episode_folder(episode: str) -> Path | None:
     return gui.find_episode_dir(episode)
 
 
-def next_episode() -> str:
-    """Số tập sẽ cấp cho nguồn MỚI (dùng đúng quy tắc của GUI, kể cả tập bỏ qua)."""
+def last_used_episode() -> int:
+    """Số tập LỚN NHẤT đã dùng: manifest + thư mục tập + số thumbnail đã lưu."""
     used = {int(v["episode"]) for v in gui.load_manifest().values()
             if str(v.get("episode", "")).isdecimal()}
     for p in gui.episode_dirs():
         used.add(int(gui.episode_of(p.name)))
     used.add(gui.load_episode_number())
-    return str(gui.next_episode_number(max(used) if used else 0)).zfill(2)
+    return max(used) if used else 0
+
+
+def next_episode() -> str:
+    """Số tập sẽ cấp cho nguồn MỚI (dùng đúng quy tắc của GUI, kể cả tập bỏ qua)."""
+    return str(gui.next_episode_number(last_used_episode())).zfill(2)
+
+
+def plan_episodes(sources: list[str], start_ep: str = "") -> list[str]:
+    """Số tập cấp cho từng nguồn khi chạy hàng loạt (danh sách CÙNG ĐỘ DÀI sources).
+
+    Ô rỗng ở một vị trí = không chỉ định, để runner tự cấp như thường lệ.
+
+    start_ep rỗng → trả về toàn ô rỗng (giữ nguyên nếp cũ).
+    Có start_ep (bấm một số ở danh sách "kênh còn thiếu") → LÀM BÙ: lấy lần lượt các
+    số kênh còn thiếu KỂ TỪ số đó; hết danh sách thì cấp tiếp sau số tập lớn nhất.
+
+    Hai chỗ luôn nhảy qua: số đã có thư mục trong kịch_bản (tập dựng rồi mà chưa đăng
+    — cấp lại sẽ đụng thư mục cũ) và số nằm trong danh sách "tập bỏ qua".
+
+    Nguồn ĐÃ có trong manifest thì để rỗng: runner nhận lại đúng tập cũ (chạy tiếp),
+    và nó KHÔNG được tiêu mất một số làm bù vốn dành cho tập mới.
+    """
+    n = len(sources)
+    start = str(start_ep or "").strip()
+    if not start.isdecimal():
+        return [""] * n
+
+    start = start.zfill(2)
+    todo = missing_episodes()["todo"]
+    # Bấm số nào thì bắt đầu từ ĐÚNG chỗ đó trong danh sách; số gõ tay (không nằm
+    # trong danh sách) thì chỉ dùng riêng nó rồi chuyển sang cấp số mới.
+    pool = todo[todo.index(start):] if start in todo else [start]
+
+    known = {gui.norm_source(k) for k in gui.load_manifest()}
+    taken = {gui.episode_of(p.name) for p in gui.episode_dirs()}
+    skip = gui.load_skip_episodes()
+    cursor = gui.next_episode_number(last_used_episode(), skip)
+
+    out: list[str] = []
+    for src in sources:
+        if gui.norm_source(src) in known:
+            out.append("")
+            continue
+        ep = ""
+        while pool and not ep:              # ưu tiên vét danh sách làm bù
+            cand = pool.pop(0)
+            if cand not in taken:
+                ep = cand
+        while not ep:                       # hết danh sách → cấp số mới
+            cand = str(cursor).zfill(2)
+            cursor = gui.next_episode_number(cursor, skip)
+            if cand not in taken:
+                ep = cand
+        taken.add(ep)                       # tránh 2 link trong cùng mẻ trùng số
+        out.append(ep)
+    return out
 
 
 # ── Nội dung SEO để copy khi đăng video ─────────────────────────────────────
@@ -396,6 +460,111 @@ def tts_settings() -> tuple[dict | None, str]:
         sub_model=opts.get("sub_model") or "medium",
         sub_max_chars=_i(opts.get("sub_max_chars"), 50, 10, 200),
     ), ""
+
+
+# ── Đăng YouTube ────────────────────────────────────────────────────────────
+def upload_slots_text(default: str = "08:00 & 18:00") -> str:
+    """Các khung giờ đăng, lấy từ dang_video_youtube.UPLOAD_SLOTS (nguồn duy nhất)."""
+    try:
+        import dang_video_youtube as yt
+        return " & ".join(f"{h:02d}:{m:02d}" for h, m in yt.UPLOAD_SLOTS)
+    except Exception:
+        return default
+
+
+def upload_check() -> tuple[bool, str]:
+    """Đủ điều kiện đăng YouTube chưa? → (ok, thông báo lỗi).
+
+    KHÔNG BAO GIỜ mở trình duyệt đăng nhập: việc đó sẽ chặn cứng server web (và
+    hộp thoại Google hiện ra sau lưng thì không ai bấm). Chưa có token dùng được
+    thì báo để đăng nhập một lần bên app 'Đăng video YouTube' của GUI.
+    """
+    try:
+        import dang_video_youtube as yt
+    except Exception as e:
+        return False, f"Không nạp được phần đăng YouTube: {e}"
+
+    missing = yt._check_deps()
+    if missing:
+        return False, ("Thiếu thư viện Google API (" + missing + "). Cài bằng: pip "
+                       "install google-api-python-client google-auth-oauthlib "
+                       "google-auth-httplib2")
+    if not yt.CLIENT_SECRET_FILE.exists():
+        return False, f"Chưa có {yt.CLIENT_SECRET_FILE.name} trong myvoice/YOUTUBE/."
+    try:
+        creds = yt.get_credentials(lambda *a, **k: None, interactive=False)
+    except Exception as e:
+        return False, f"Không đọc được token YouTube: {e}"
+    if creds is None:
+        return False, ("Chưa đăng nhập YouTube. Mở app 'Đăng video YouTube' "
+                       "(myvoice/YOUTUBE/dang_video_youtube.py) đăng nhập một lần "
+                       "rồi chạy lại — web không tự mở cửa sổ đăng nhập được.")
+    return True, ""
+
+
+def refresh_channel() -> tuple[dict | None, str]:
+    """Đọc lại kênh + video đã hẹn giờ (nạp cache cho việc xếp lịch đăng).
+
+    → (thông tin kênh, lỗi). Gọi TRƯỚC khi xếp việc đăng, để biết đăng lên kênh nào
+    và để khung giờ 08:00/18:00 không đè lên lịch sẵn có.
+    """
+    ok, err = upload_check()
+    if not ok:
+        return None, err
+    try:
+        import dang_video_youtube as yt
+        chan, _videos = yt.fetch_channel_videos(lambda *a, **k: None)
+        return chan, ""
+    except Exception as e:
+        return None, f"Không đọc được kênh YouTube: {e}"
+
+
+def episodes_on_channel() -> set:
+    """Số tập ĐÃ CÓ trên kênh (tách 'Số N' từ tiêu đề video trong cache).
+
+    Chốt chặn đăng trùng cho tập đã đăng tay: tập đó không có youtube_upload.json
+    nên chỉ nhìn file trong thư mục là không biết.
+    """
+    try:
+        import dang_video_youtube as yt
+        data = yt.load_video_cache()
+        entry = data["channels"].get(data.get("current"))
+        return yt.episode_numbers(entry["videos"]) if entry else set()
+    except Exception:
+        return set()
+
+
+def missing_episodes() -> dict:
+    """Các số tập KÊNH CÒN THIẾU (đọc kenh_video_cache.json), chia làm hai nhóm:
+
+      todo  — chưa có thư mục ở máy → cấp được cho link mới (làm bù thật sự).
+      built — ĐÃ có thư mục (dựng xong rồi, chỉ chưa đăng) → không cấp cho link mới
+              vì sẽ đụng thư mục đã có; việc cần làm với chúng là bấm ⑥ Đăng YouTube.
+
+    Số tập lấy bằng cách đọc 'Số N' trong tiêu đề video trên kênh, nên chỉ đúng
+    trong phạm vi cache (~50 video gần nhất) và chỉ mới tới lần đọc kênh gần nhất.
+    """
+    try:
+        import dang_video_youtube as yt
+        missing, lo, hi = yt.cached_missing_episodes()
+    except Exception:
+        return {"todo": [], "built": [], "lo": None, "hi": None}
+    # Liệt kê thư mục tập MỘT lần rồi tra, thay vì dò lại cho từng số.
+    have = {gui.episode_of(p.name) for p in gui.episode_dirs()}
+    todo, built = [], []
+    for n in missing:
+        ep = str(n).zfill(2)
+        (built if ep in have else todo).append(ep)
+    return {"todo": todo, "built": built, "lo": lo, "hi": hi}
+
+
+def next_publish_slot_text() -> str:
+    """Khung giờ đăng trống kế tiếp, dạng 'dd/mm/YYYY HH:MM' (rỗng nếu chưa tính được)."""
+    try:
+        import dang_video_youtube as yt
+        return f"{yt.next_publish_slot():%d/%m/%Y %H:%M}"
+    except Exception:
+        return ""
 
 
 def python_exe() -> str:

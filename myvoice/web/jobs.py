@@ -20,6 +20,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Callable
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -53,6 +54,10 @@ class Step:
     # Mã thoát được coi là "bỏ qua có chủ ý" chứ không phải lỗi (vd bước chuẩn bị
     # input.txt trả mã dừng khi bản dịch còn thiếu đoạn → dừng tập này, không phải hỏng).
     soft_fail_codes: tuple[int, ...] = ()
+    # Gọi sau khi bước này CHẠY XONG KHÔNG LỖI. Dùng để nối việc sang hàng đợi khác
+    # (dựng video xong → xếp việc đăng YouTube vào upload_runner) mà không bắt hàng
+    # đợi chính đứng chờ. Lỗi trong callback không được làm hỏng công việc.
+    on_success: Callable[[], None] | None = None
 
 
 @dataclass
@@ -219,6 +224,11 @@ class JobRunner:
                 job.message = f"Bước “{step.label}” lỗi (mã {code})."
                 log(f"❌ {job.title}: bước “{step.label}” lỗi (mã {code}).")
                 return
+            if step.on_success is not None:
+                try:
+                    step.on_success()
+                except Exception as e:      # nối việc hỏng ≠ bước vừa chạy hỏng
+                    log(f"⚠️ Không nối được việc sau bước “{step.label}”: {e}")
         job.step_index = len(job.steps)
         job.status = "done"
         job.message = "Hoàn tất."
@@ -276,3 +286,14 @@ def _terminate(proc: subprocess.Popen | None) -> None:
 
 
 runner = JobRunner()
+
+# Hàng đợi RIÊNG cho việc đăng YouTube, chạy SONG SONG với hàng đợi trên.
+#
+# Vì sao được phép song song trong khi cả file này chủ trương một worker: lý do có
+# một worker là tranh chấp tài nguyên ĐỘC QUYỀN (GPU, profile Firefox, CPU cho
+# ffmpeg). Đăng video chỉ tốn BĂNG THÔNG — không đụng cái nào trong số đó. Bắt tập
+# sau đợi tập trước tải lên xong là để GPU nằm không hàng chục phút mỗi mẻ.
+#
+# Vẫn chỉ MỘT worker cho riêng hàng này: tải hai video cùng lúc chỉ chia nhỏ băng
+# thông chứ không nhanh hơn.
+upload_runner = JobRunner()

@@ -27,6 +27,52 @@
   </div>
 {% endfor %}
 
+{# Hàng đợi ĐĂNG chạy song song — chỉ hiện khi có việc, để lúc không đăng thì
+   khối hàng đợi vẫn gọn như cũ. #}
+{% if qu and (qu.current or qu.pending) %}
+  <div class="uploadq">
+    <p class="colhead">⬆ Đăng YouTube (chạy song song)</p>
+    {% if qu.paused %}<p class="warn">⏸ Hàng đợi đăng đang tạm dừng.</p>{% endif %}
+    {% if qu.current %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge run">đang tải lên</span>
+          <b>{{ qu.current.title }}</b>
+          <span class="spacer"></span>
+          <form method="post" action="/hangdoidang/skip"><button class="ghost small">⏭ Bỏ</button></form>
+        </div>
+        <p class="hint">bắt đầu {{ qu.current.started }}</p>
+      </div>
+    {% endif %}
+    {% for j in qu.pending %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge wait">chờ đăng</span>
+          <b>{{ j.title }}</b>
+          <span class="spacer"></span>
+          <form method="post" action="/hangdoidang/bo/{{ j.id }}"><button class="ghost small">✕</button></form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if qu and qu.history %}
+  <details class="history">
+    <summary>Đã đăng gần đây ({{ qu.history|length }})</summary>
+    {% for j in qu.history %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge {{ j.status }}">{{
+            {'done': 'đã đăng', 'failed': 'lỗi', 'stopped': 'bỏ qua'}.get(j.status, j.status) }}</span>
+          <b>{{ j.title }}</b>
+        </div>
+        {% if j.message %}<p class="hint">{{ j.message }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  </details>
+{% endif %}
+
 {% if q.history %}
   <details class="history">
     <summary>Việc đã xong gần đây ({{ q.history|length }})</summary>

@@ -27,6 +27,14 @@
         </select>
       </label>
     </div>
+    <label class="field">
+      <span>Số tập bắt đầu (làm bù)</span>
+      <input id="firstepisode" name="episode" value="" inputmode="numeric"
+             placeholder="để trống = tự cấp số kế tiếp">
+    </label>
+    <p class="hint">Link đầu mang số này, các link sau lấy tiếp những số kênh còn
+       thiếu; hết danh sách thì tự cấp số mới. Bấm số đề xuất ở khối Thumbnail bên
+       dưới để điền nhanh và xem trước cách chia.</p>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="force"> Làm lại cả bước đã có kết quả</label>
     </div>
@@ -73,7 +81,12 @@
     <div class="chks">
       <label class="chk"><input type="checkbox" name="auto_tts" {{ 'checked' if pipe.auto_tts }}>
         ⛓ Chạy tiếp tạo giọng (OmniVoice) sau khi xong</label>
+      <label class="chk"><input type="checkbox" name="upload" {{ 'checked' if pipe.upload }}>
+        ⬆ Đăng YouTube sau khi dựng xong video</label>
     </div>
+    <p class="hint">Đăng chạy ở hàng đợi RIÊNG nên tập kế cứ dựng tiếp, không phải đợi
+       tải lên xong. Mỗi tập tự nhận một khung giờ trống ({{ slots }}), để riêng tư
+       tới giờ mới tự công khai.</p>
     {% if tts_error %}
       <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
          — sửa ở <a href="/giongnoi">Giọng nói</a>.</p>

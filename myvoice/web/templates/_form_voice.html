@@ -27,7 +27,9 @@
 <datalist id="speeds">{% for s in ["1.0","1.05","1.1","1.15","1.2","1.25"] %}<option value="{{ s }}">{% endfor %}</datalist>
 <datalist id="percents">{% for p in ["25","30","40","50","60","70","75","80","90","100"] %}<option value="{{ p }}">{% endfor %}</datalist>
 
-<form class="form-grid" method="post" action="/giongnoi">
+{# id để ô "Số tập" đặt bên khối Thumbnail vẫn gửi kèm được (xem
+   _field_tiktok_episode.html). #}
+<form id="voiceform" class="form-grid" method="post" action="/giongnoi">
 
   <div class="panel">
     <div class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></div>
@@ -182,10 +184,9 @@
     <div class="grid">
       {{ percent('tiktok_percent', opts.tiktok_percent) }}
       {{ speed('tiktok_speed', opts.tiktok_speed) }}
-      <label class="field">
-        <span>Số tập (chữ trên video)</span>
-        <input name="tiktok_episode" value="{{ '%02d' % tiktok_episode }}" inputmode="numeric">
-      </label>
+      {# Trên Home, ô "Số tập" nằm ở khối Thumbnail; ở trang Giọng nói riêng thì
+         hiện tại đây, vì trang đó không có khối Thumbnail. #}
+      {% if not on_home %}{% include "_field_tiktok_episode.html" %}{% endif %}
     </div>
     <div class="grid">
       <label class="field">

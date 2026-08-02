@@ -60,9 +60,11 @@ FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
 PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
 OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài đặt" (nhớ lần chạy trước)
-# Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice)
+# Mặc định quy trình: ① tự chạy ②, ② tự chạy ③, ③ tự chạy tạo giọng (OmniVoice).
+# upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
+# khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False)
+                     shutdown=False, upload=False)
 # Số phút chờ trước khi tắt máy khi bật ô "Xong thì tắt máy" (huỷ bằng: shutdown /a).
 SHUTDOWN_DELAY_MIN = 5
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
@@ -85,6 +87,24 @@ DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn s�
 #     tốn thêm dung lượng đĩa bằng đúng một bản video nữa trong lúc ghi đè.
 SUB_MODE_SRT  = "file .srt rời"
 SUB_MODE_BURN = "vẽ cứng vào hình"
+
+
+def _ensure_youtube_path():
+    """Cho phép import các module trong myvoice/YOUTUBE (seo_docx_parser, đăng video...)."""
+    youtube_dir = str(YOUTUBE_DIR)
+    if youtube_dir not in sys.path:
+        sys.path.insert(0, youtube_dir)
+
+
+def upload_slots_text(default: str = "08:00 & 18:00") -> str:
+    """Mô tả các khung giờ đăng, lấy từ dang_video_youtube.UPLOAD_SLOTS (nguồn DUY
+    NHẤT quy định giờ) để dòng gợi ý trên giao diện không bị lệch với lúc chạy thật."""
+    try:
+        _ensure_youtube_path()
+        import dang_video_youtube as yt
+        return " & ".join(f"{h:02d}:{m:02d}" for h, m in yt.UPLOAD_SLOTS)
+    except Exception:
+        return default
 
 
 def video_gansub_max_chars_doc(default: int = 27) -> int:
@@ -1763,6 +1783,14 @@ class App(tk.Tk):
         # gom vào list để bật/tắt/đổi chữ ĐỒNG BỘ mọi nơi (cùng điều khiển 1 batch).
         self._batch_pause_widgets = []
         self._batch_stop_widgets = []
+        # ĐĂNG YOUTUBE chạy trong luồng RIÊNG, song song với việc dựng video tập kế:
+        # tải lên tốn MẠNG, dựng video tốn GPU — bắt tập sau đợi tập trước tải xong
+        # là phí cả tiếng đồng hồ mỗi mẻ. Hàng đợi để một luồng đăng lần lượt (không
+        # tải 2 video cùng lúc cho khỏi chia nhỏ băng thông).
+        self._upload_q = queue.Queue()
+        self._upload_thread = None
+        self._upload_lock = threading.Lock()   # giữ nhịp put ↔ luồng đăng tự kết thúc
+        self._upload_done = 0                  # số tập đã đăng xong trong mẻ hiện tại
         self._setup_logging()
         self._build_ui()
         self._poll_log()
@@ -2188,10 +2216,6 @@ class App(tk.Tk):
         self.var_make_sub_doc = tk.BooleanVar(value=self._opt_settings["make_sub_doc"])
         ttk.Checkbutton(sub_row3, text="📝  Phụ đề cho video DỌC (Facebook)",
                         variable=self.var_make_sub_doc).pack(side="left")
-        ttk.Label(sub_row3, text="dùng chung Kiểu/Model ở trên · tự rút còn "
-                                 f"{video_gansub_max_chars_doc()} ký tự/dòng cho khung 1080 · "
-                                 "làm SAU TikTok nên tiktok.mp4 giữ hình sạch",
-                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
 
         # Hiệu ứng phủ lên toàn bộ video (từ đầu đến cuối) — lấy từ scripts/hieuung/
         fx_row = ttk.Frame(sec_opt)
@@ -2530,7 +2554,7 @@ class App(tk.Tk):
     # Thứ tự bước hiển thị trong cột "Tiến độ" (nhãn ngắn + khoá trong steps dict).
     _REPORT_STEPS = (("Dịch", "translate"), ("SEO", "seo"), ("Thumb", "thumbnail"),
                      ("Giọng", "audio"), ("Vid ngang", "video_ngang"),
-                     ("Vid dọc", "video_doc"))
+                     ("Vid dọc", "video_doc"), ("Đăng", "upload"))
 
     def _build_report_panel(self, parent):
         wrap = ttk.Frame(parent, padding=4)
@@ -2603,8 +2627,11 @@ class App(tk.Tk):
             episode = str(ep).zfill(2)
             folder = find_episode_dir(episode) or (SCRIPT_DIR / episode)
             steps = (e or {}).get("steps") or self._folder_steps(folder, episode)
+            # "Hoàn tất" vẫn tính theo việc DỰNG xong (video dọc và đăng YouTube là
+            # tuỳ chọn) — thêm 2 bước đó vào điều kiện sẽ làm mọi tập cũ hoá dở dang.
             done = bool((e or {}).get("done")) if e else all(
-                steps.get(k) for _, k in self._REPORT_STEPS if k != "video_doc")
+                steps.get(k) for _, k in self._REPORT_STEPS
+                if k not in ("video_doc", "upload"))
             prog = "  ".join(("✅" if steps.get(k) else "⬜") + lbl
                              for lbl, k in self._REPORT_STEPS)
             mark = "✅" if done else ("🟡" if any(steps.values()) else "🔴")
@@ -2641,14 +2668,18 @@ class App(tk.Tk):
         tts_settings = self._collect_tts_settings()   # main thread (đọc tk.Var)
         if tts_settings is None:
             return   # cấu hình giọng sai → đã cảnh báo
+        # Đăng YouTube (nếu đang tick): kiểm tra đăng nhập ngay trên main thread.
+        upload = bool(self.var_upload.get())
+        if upload and not self._upload_check_ready():
+            return
         self._pipe_set_busy(True)
         self.pipe_progress.set(0)
         self.pipe_link_status.set(f"▶ Chuẩn bị chạy tiếp tập {episode}...")
         self._show_view("script")   # chuyển sang tab có thanh tiến trình + nhật ký
         threading.Thread(target=self._resume_folder_worker,
-                         args=(folder, episode, tts_settings), daemon=True).start()
+                         args=(folder, episode, tts_settings, upload), daemon=True).start()
 
-    def _resume_folder_worker(self, folder, episode, tts_settings):
+    def _resume_folder_worker(self, folder, episode, tts_settings, upload=False):
         """Chạy tiếp 1 thư mục tập đã có sẵn (bỏ qua bước đã xong, làm phần còn thiếu).
         Dùng lại toàn bộ logic resume/bỏ-qua như batch nhưng cho ĐÚNG 1 tập."""
         import datetime as _dt
@@ -2742,6 +2773,8 @@ class App(tk.Tk):
 
             self._don_rac_audio(folder)     # 🧹 xoá audio trung gian (giữ output.wav)
             self._manifest_update(src, episode, folder, done=True)
+            if upload:
+                self._upload_enqueue(folder, episode)
             self.pipe_progress.set(100)
             self.pipe_link_status.set(f"✅ Tập {episode} đã chạy tiếp xong.")
             self.pipe_status.set(f"✅ Tập {episode} hoàn tất.")
@@ -2763,6 +2796,7 @@ class App(tk.Tk):
                 recog.free_model()
             except Exception:
                 pass
+            self._upload_wait_drain()   # đăng nốt trước khi hạ cờ bận (có thể hẹn tắt máy)
             if file_handler is not None:
                 try:
                     logging.getLogger().removeHandler(file_handler)
@@ -2998,12 +3032,12 @@ class App(tk.Tk):
                             "· ½ = thumbnail mới có 1 bản)",
                   style="Sub.TLabel").pack(side="left", padx=(10, 0))
 
-        cols = ("sel", "ep", "zh", "input", "seo", "thumb", "audio", "video")
+        cols = ("sel", "ep", "zh", "input", "seo", "thumb", "audio", "video", "up")
         self._recog_tree = tree = ttk.Treeview(tbl, columns=cols, show="headings",
                                                height=8, selectmode="none")
         heads = {"sel": ("", 34), "ep": ("Tập", 54), "zh": ("Tiếng Trung", 100),
                  "input": ("input.txt", 88), "seo": ("SEO", 62), "thumb": ("Thumbnail", 78),
-                 "audio": ("Giọng", 72), "video": ("Video", 72)}
+                 "audio": ("Giọng", 72), "video": ("Video", 72), "up": ("Đăng", 62)}
         for c, (txt, w) in heads.items():
             tree.heading(c, text=txt)
             tree.column(c, width=w, anchor="center", stretch=(c in ("zh", "input")))
@@ -3050,6 +3084,10 @@ class App(tk.Tk):
             btnrow, text="🎬  ⑤  Tạo giọng + video (clone như Home)",
             style="Accent.TButton", command=self._recog_make_video_all)
         self.recog_tts_btn.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.recog_upload_btn = ttk.Button(
+            btnrow, text=f"⬆  ⑥  Đăng YouTube (hẹn {upload_slots_text()})",
+            style="Accent.TButton", command=self._recog_upload_all)
+        self.recog_upload_btn.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         # ── Tiến trình + Tạm dừng/Dừng (dùng chung biến với batch) ──────────────
         pf = ttk.Frame(left)
@@ -3071,6 +3109,8 @@ class App(tk.Tk):
         b_stop.pack(side="left", padx=(8, 0))
         self._batch_pause_widgets.append(b_pause)
         self._batch_stop_widgets.append(b_stop)
+        ttk.Label(pf, textvariable=self.upload_status, style="Sub.TLabel",
+                  foreground=UI["accent"]).grid(row=4, column=0, sticky="w", pady=(2, 0))
 
         # ── Nhật ký ─────────────────────────────────────────────────────────────
         logf = ttk.LabelFrame(right, text="  Nhật ký  ")
@@ -3145,6 +3185,7 @@ class App(tk.Tk):
             has_aud = (folder / "output.wav").is_file()
             has_vid = any((folder / n).is_file()
                           for n in ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4"))
+            has_up = (folder / "youtube_upload.json").is_file()
             # "Cần làm": có tiếng Trung mà chưa có input.txt (②); đã dịch mà chưa có
             # SEO (③); đã có SEO mà thiếu thumbnail (④ — thumbnail lấy tiêu đề từ SEO
             # nên chưa SEO thì chưa tính là cần); có input.txt mà chưa có video (⑤).
@@ -3169,6 +3210,7 @@ class App(tk.Tk):
                 yes if n_thumb == 2 else ("½" if n_thumb else no),
                 yes if has_aud else no,
                 yes if has_vid else no,
+                yes if has_up else no,
             ))
         var = getattr(self, "_recog_count_var", None)
         if var is not None:
@@ -3644,6 +3686,75 @@ class App(tk.Tk):
             self._pipe_set_busy(False)
             self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
+
+    # ── ⑥ ĐĂNG YOUTUBE hàng loạt cho các tập đã dựng xong video ─────────────────
+    def _folders_ready_to_upload(self) -> list:
+        """Tập đã có YOUTUBE.mp4 + SEO hợp lệ và CHƯA đăng.
+
+        Loại cả tập mà KÊNH đã có video cùng số (đăng tay từ trước) — xem
+        _episodes_on_channel. Cần cache kênh còn mới, nên gọi sau _upload_check_ready.
+        """
+        _ensure_youtube_path()
+        import dang_tap_youtube as up
+        on_channel = self._episodes_on_channel()
+
+        def _new(p):
+            ep = episode_of(p.name)
+            return ep is not None and int(ep) not in on_channel
+
+        return [p for p in episode_dirs()
+                if up.find_video(p) is not None
+                and up.already_uploaded(p) is None
+                and _new(p)
+                and self._recog_seo_ok(p)]
+
+    def _recog_upload_all(self):
+        """Nút '⑥ Đăng YouTube': đăng các tập đã dựng xong mà chưa đăng, mỗi tập hẹn
+        vào một khung giờ trống (08:00 / 18:00). Tập đã đăng rồi thì bỏ qua."""
+        if self._pipe_busy:
+            return
+        # Kiểm tra đăng nhập TRƯỚC: vừa chặn sớm, vừa nạp lại cache kênh để danh sách
+        # dưới đây loại đúng những tập đã có trên kênh.
+        if not self._upload_check_ready():
+            return
+        folders = self._recog_apply_selection(self._folders_ready_to_upload())
+        if not folders:
+            self.pipe_status.set("⚠️ Không có tập nào cần đăng (thiếu video/SEO, "
+                                 "hoặc kênh đã có hết).")
+            logging.warning("Không có tập nào đủ điều kiện đăng YouTube.")
+            return
+        names = ", ".join(f.name for f in folders)
+        if not messagebox.askyesno(
+                "Đăng YouTube",
+                f"Sẽ đăng {len(folders)} tập lên kênh đang đăng nhập:\n\n{names}\n\n"
+                f"Mỗi tập hẹn vào một khung giờ trống ({upload_slots_text()}), để chế "
+                "độ riêng tư tới giờ mới tự công khai.\n\nTiếp tục?"):
+            return
+        self._recog_log_preview("⑥ Đăng YouTube", folders)
+        self._pipe_set_busy(True)
+        self.pipe_link_status.set(f"⏳ Đăng {len(folders)} tập lên YouTube...")
+        threading.Thread(target=self._recog_upload_all_worker,
+                         args=(folders,), daemon=True).start()
+
+    def _recog_upload_all_worker(self, folders):
+        """Xếp hết vào hàng đợi đăng rồi chờ chạy xong (luồng đăng lo phần tải lên)."""
+        self._upload_done = 0
+        try:
+            logging.info("\n" + "═" * 10 +
+                         f" ĐĂNG YOUTUBE cho {len(folders)} tập " + "═" * 10)
+            for folder in folders:
+                self._upload_enqueue(folder, episode_of(folder.name))
+            self._upload_wait_drain()
+            self.pipe_link_status.set(
+                f"✅ Đã đăng {self._upload_done}/{len(folders)} tập.")
+            self.pipe_status.set(f"✅ Đăng xong {self._upload_done}/{len(folders)} tập.")
+        except Exception as e:
+            logging.error(f"Lỗi đăng YouTube hàng loạt: {e}")
+            self.pipe_status.set(f"Lỗi đăng YouTube: {e}")
+        finally:
+            self._pipe_set_busy(False)
+            self._batch_controls_reset()
+            self._recog_schedule_table_refresh()
 
     def _manifest_update_if_known(self, folder, episode):
         """Cập nhật tiến độ manifest cho tập (tìm nguồn gốc theo số tập; không có → bỏ)."""
@@ -4436,6 +4547,16 @@ class App(tk.Tk):
         ttk.Checkbutton(s3, text="⛓  Chạy tiếp tạo giọng (OmniVoice) sau khi xong",
                         variable=self.var_auto_tts).grid(row=2, column=0, sticky="w", pady=(6, 0))
 
+        # ⬆ ĐĂNG YOUTUBE — dựng xong video tập nào là xếp hàng đăng tập đó NGAY, chạy
+        # song song với việc dựng tập kế (xem _upload_enqueue). Video để riêng tư tới
+        # giờ hẹn mới tự công khai nên còn kịp sửa/xoá.
+        self.var_upload = tk.BooleanVar(value=self._pipe_settings.get("upload", False))
+        ttk.Checkbutton(s3, text="⬆  Đăng YouTube sau khi dựng xong video",
+                        variable=self.var_upload).grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(s3, text=f"(tự hẹn giờ vào khung {upload_slots_text()} còn trống — "
+                           "mỗi ngày 2 tập)",
+                  style="Hint.TLabel").grid(row=6, column=0, sticky="w", pady=(2, 0))
+
         # TẮT MÁY khi chạy xong — để chạy batch qua đêm rồi máy tự tắt. Một lần duy
         # nhất: hẹn xong là tự bỏ tick, khỏi lỡ tắt máy ở lần chạy sau. Biến dùng
         # chung với ô tick bên tab Giọng nói (tạo ở __init__).
@@ -4464,6 +4585,11 @@ class App(tk.Tk):
         self.pipe_status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
             row=2, column=0, sticky="w", pady=(2, 0))
+        # Dòng RIÊNG cho việc đăng YouTube: nó chạy song song với dựng video nên
+        # không được dùng chung pipe_status (hai bên sẽ ghi đè lẫn nhau).
+        self.upload_status = tk.StringVar(value="")
+        ttk.Label(pf, textvariable=self.upload_status, style="Sub.TLabel",
+                  foreground=UI["accent"]).grid(row=4, column=0, sticky="w", pady=(2, 0))
 
         # ── Điều khiển batch NHIỀU LINK: Tạm dừng/Tiếp tục + Xong link này rồi dừng ──
         # CHỈ hiện ở tab "Tạo kịch bản" (view script) — ẩn ở Home cho đỡ chật (do
@@ -4567,7 +4693,8 @@ class App(tk.Tk):
                   getattr(self, "recog_translate_btn", None),
                   getattr(self, "recog_seo_btn", None),
                   getattr(self, "recog_thumb_btn", None),
-                  getattr(self, "recog_tts_btn", None)):
+                  getattr(self, "recog_tts_btn", None),
+                  getattr(self, "recog_upload_btn", None)):
             if b is not None:
                 b.config(state=state)
         # Mọi luồng dài (batch nhiều link, các bước ①②③④⑤) đều đi qua đây khi kết
@@ -4582,6 +4709,7 @@ class App(tk.Tk):
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
+            upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
         ))
 
     def _reset_pipe_settings(self):
@@ -4592,6 +4720,8 @@ class App(tk.Tk):
         self.var_seo.set(PIPE_DEFAULTS["seo"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
+        if hasattr(self, "var_upload"):
+            self.var_upload.set(PIPE_DEFAULTS["upload"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])
         self.pipe_var_speed.set(PIPE_DEFAULTS["speed"])
         self.pipe_txt_sources.delete("1.0", "end")
@@ -4897,10 +5027,16 @@ class App(tk.Tk):
             tts_settings = self._collect_tts_settings()
             if tts_settings is None:
                 return
+        # Đăng YouTube: kiểm tra thư viện + đăng nhập NGAY BÂY GIỜ (main thread), vì
+        # giữa mẻ mà phải mở trình duyệt đăng nhập là treo cả mẻ chạy qua đêm.
+        upload = bool(self.var_upload.get())
+        if upload and not self._upload_check_ready():
+            return
         # Chạy ngay, KHÔNG hỏi xác nhận. Lưu ý: bước dịch & SEO dùng Firefox — hãy
         # ĐÓNG Firefox đang mở (profile bị khoá khi đang chạy) và đảm bảo đã đăng nhập.
         logging.info(f"⛓ Xử lý {len(sources)} link theo thứ tự (mỗi link 1 tập)"
-                     + (" + tạo giọng." if tts_settings else "."))
+                     + (" + tạo giọng." if tts_settings else ".")
+                     + (" Đăng YouTube: BẬT." if upload else ""))
         self._pipe_set_busy(True)
         # Bật điều khiển batch: xoá cờ cũ + cho phép 2 nút Tạm dừng / Dừng-sau-link.
         self._batch_pause_evt.clear()
@@ -4914,7 +5050,7 @@ class App(tk.Tk):
         threading.Thread(
             target=self._pipe_batch_worker,
             args=(sources, self.pipe_var_model.get(), self.pipe_var_speed.get(),
-                  tts_settings),
+                  tts_settings, upload),
             daemon=True).start()
 
     # ── Điều khiển batch nhiều link: tạm dừng / dừng-sau-link ──────────────────
@@ -5277,6 +5413,216 @@ class App(tk.Tk):
             logging.warning(f"Không lưu được file copy YouTube SEO: {e}")
             return False
 
+    # ── ĐĂNG YOUTUBE: kiểm tra trước + hàng đợi chạy SONG SONG với dựng video ────
+    @staticmethod
+    def _upload_log(msg, level="info"):
+        """Bộ log cho phần đăng YouTube: đổi mức của dang_video_youtube sang logging."""
+        fn = {"err": logging.error, "warn": logging.warning}.get(level, logging.info)
+        fn(msg)
+
+    def _upload_check_ready(self) -> bool:
+        """Kiểm tra TRƯỚC KHI chạy: đủ thư viện Google API + đã đăng nhập đúng kênh.
+
+        BẮT BUỘC gọi trên MAIN THREAD. Lý do: token hỏng thì get_credentials sẽ MỞ
+        TRÌNH DUYỆT đòi đăng nhập — nếu việc đó rơi vào giữa mẻ chạy lúc 2 giờ sáng
+        thì cả mẻ đứng im chờ người bấm. Thà hỏi ngay lúc bạn còn ngồi đây.
+
+        Tiện thể đọc luôn danh sách video của kênh: vừa xác nhận token dùng được,
+        vừa cho biết ĐĂNG LÊN KÊNH NÀO (1 Gmail có thể có nhiều kênh), vừa nạp cache
+        các giờ đã hẹn để xếp lịch 08:00/18:00 không bị trùng.
+        """
+        try:
+            _ensure_youtube_path()
+            import dang_video_youtube as yt
+        except Exception as e:
+            messagebox.showerror("Không nạp được phần đăng YouTube", str(e))
+            return False
+
+        missing = yt._check_deps()
+        if missing:
+            messagebox.showerror(
+                "Thiếu thư viện Google API",
+                f"Chưa cài thư viện để đăng YouTube:\n{missing}\n\nCài bằng lệnh:\n"
+                "pip install google-api-python-client google-auth-oauthlib "
+                "google-auth-httplib2")
+            return False
+        if not yt.CLIENT_SECRET_FILE.exists():
+            messagebox.showerror(
+                "Thiếu client_secret.json",
+                f"Chưa có file:\n{yt.CLIENT_SECRET_FILE}\n\n"
+                "Mở app 'Đăng video YouTube' và xem nút 'Hướng dẫn' để lấy file này.")
+            return False
+
+        try:
+            creds = yt.get_credentials(self._upload_log, interactive=False)
+        except Exception as e:
+            logging.warning(f"Không đọc được token YouTube: {e}")
+            creds = None
+        if creds is None:
+            if not messagebox.askyesno(
+                    "Chưa đăng nhập YouTube",
+                    "Chưa có đăng nhập YouTube dùng được (token thiếu/hết hạn).\n\n"
+                    "Bấm Yes để đăng nhập NGAY bây giờ — trình duyệt sẽ mở ra và cửa "
+                    "sổ này đứng yên tới khi bạn đăng nhập xong.\n\n"
+                    "⚠ Một Gmail có thể có NHIỀU KÊNH: hãy chọn đúng kênh muốn đăng."):
+                return False
+            try:
+                yt.get_credentials(self._upload_log)
+            except Exception as e:
+                messagebox.showerror("Đăng nhập thất bại", str(e))
+                return False
+
+        # Đọc kênh + video đã hẹn giờ (nạp cache cho việc xếp lịch, và để báo rõ kênh).
+        try:
+            chan, _videos = yt.fetch_channel_videos(self._upload_log)
+        except Exception as e:
+            messagebox.showerror(
+                "Không đọc được kênh YouTube",
+                f"Đăng nhập được nhưng không đọc được kênh:\n{e}\n\n"
+                "Chưa chạy tiếp để tránh đăng nhầm chỗ.")
+            return False
+        n_sched = len(yt.cached_scheduled_videos())
+        logging.info(f"⬆ Sẽ đăng lên kênh: {chan['title']} ({chan['id']}) — "
+                     f"{chan['video_count']} video, {n_sched} video đang hẹn giờ.")
+        try:
+            slot = yt.next_publish_slot()
+            logging.info(f"⬆ Tập đầu tiên của mẻ này sẽ hẹn: {slot:%d/%m/%Y %H:%M}")
+        except Exception as e:
+            logging.warning(f"Không tính được khung giờ đăng: {e}")
+        return True
+
+    @staticmethod
+    def _episodes_on_channel() -> set:
+        """Số tập ĐÃ CÓ trên kênh, tách từ tiêu đề video trong cache ('... Số 47 ...').
+
+        Chốt chặn thứ hai chống đăng trùng: tập đã đăng TAY bằng app 'Đăng video
+        YouTube' thì thư mục không có youtube_upload.json, chỉ nhìn file là không
+        biết. Cache giữ ~50 video gần nhất — thừa sức phủ các tập đang làm.
+        """
+        try:
+            _ensure_youtube_path()
+            import dang_video_youtube as yt
+            data = yt.load_video_cache()
+            entry = data["channels"].get(data.get("current"))
+            return yt.episode_numbers(entry["videos"]) if entry else set()
+        except Exception:
+            return set()
+
+    def _upload_enqueue(self, folder, episode):
+        """Xếp 1 tập vào hàng đợi đăng rồi TRẢ VỀ NGAY.
+
+        Không chờ tải xong: quy trình chạy tiếp tập kế (dựng video dùng GPU, tải lên
+        dùng mạng — chạy chồng nhau mới hết thời gian chết). Luồng đăng tự khởi động
+        khi có việc và tự kết thúc khi hết hàng đợi."""
+        with self._upload_lock:
+            self._upload_q.put((Path(folder), str(episode)))
+            if self._upload_thread is None:
+                self._upload_thread = threading.Thread(target=self._upload_worker,
+                                                       daemon=True)
+                self._upload_thread.start()
+        logging.info(f"⬆ Đã xếp tập {episode} vào hàng đợi đăng "
+                     f"({self._upload_q.qsize()} tập đang chờ).")
+
+    def _upload_worker(self):
+        """Luồng đăng: xử lý lần lượt từng tập, MỘT video một lúc (tải song song chỉ
+        chia nhỏ băng thông chứ không nhanh hơn). Hết hàng đợi thì tự kết thúc —
+        việc gỡ cờ _upload_thread nằm trong lock để không bỏ sót tập vừa được xếp
+        vào đúng lúc luồng đang thoát."""
+        import time
+        try:
+            while True:
+                try:
+                    folder, episode = self._upload_q.get(timeout=2)
+                except queue.Empty:
+                    with self._upload_lock:
+                        if self._upload_q.empty():
+                            self._upload_thread = None
+                            return
+                    continue
+                try:
+                    if self._upload_one(folder, episode):
+                        self._upload_done += 1
+                except Exception as e:
+                    import traceback
+                    logging.error(f"❌ Lỗi đăng tập {episode}: {e}")
+                    logging.error(traceback.format_exc())
+                    self.upload_status.set(f"❌ Lỗi đăng tập {episode} — xem nhật ký.")
+                finally:
+                    self._upload_q.task_done()
+                    self._recog_schedule_table_refresh()
+                    time.sleep(0.5)   # nghỉ nhẹ giữa 2 lượt gọi API
+        finally:
+            # Luồng chết vì lỗi NGOÀI DỰ KIẾN vẫn phải gỡ cờ. Không gỡ thì
+            # _upload_enqueue tưởng còn luồng nên không dựng luồng mới, hàng đợi nằm
+            # đó mãi và _upload_wait_drain chờ vô tận → treo cả mẻ.
+            with self._upload_lock:
+                if self._upload_thread is threading.current_thread():
+                    self._upload_thread = None
+
+    def _upload_one(self, folder, episode) -> bool:
+        """Đăng YOUTUBE.mp4 của 1 tập. Trả về True nếu ĐÃ đăng lượt này."""
+        _ensure_youtube_path()
+        import dang_tap_youtube as up
+
+        folder = Path(folder)
+        if up.already_uploaded(folder):
+            logging.info(f"♻ Bỏ qua đăng tập {episode} (đã có "
+                         f"{up.RECORD_NAME} — không đăng trùng).")
+            return False
+        if str(episode).isdecimal() and int(episode) in self._episodes_on_channel():
+            logging.warning(f"⚠ Bỏ qua đăng tập {episode}: trên kênh ĐÃ CÓ video "
+                            f"'Số {int(episode)}' (nhiều khả năng đã đăng tay) — "
+                            "tránh đăng trùng. Muốn đăng lại thì xoá video cũ trên kênh.")
+            return False
+        blocks = self._seo_copy_blocks(folder / "seoYoutube.docx", str(episode))
+        if not blocks:
+            logging.error(f"❌ Tập {episode}: không đọc được SEO → không đăng.")
+            return False
+
+        self.upload_status.set(f"⬆ Đang đăng tập {episode}...")
+        rec = up.upload_episode(
+            folder, episode, blocks, self._upload_log,
+            progress_cb=lambda p: self.upload_status.set(
+                f"⬆ Đang đăng tập {episode} — {p}%"))
+        if rec is None:
+            self.upload_status.set(f"⚠ Tập {episode}: chưa đăng (xem nhật ký).")
+            return False
+        self.upload_status.set(
+            f"✅ Tập {episode} đã đăng — công khai {rec['publish_at_text']}")
+        return True
+
+    def _upload_wait_drain(self):
+        """Chờ hàng đợi đăng chạy hết. Gọi ở CUỐI mẻ, TRƯỚC khi báo xong/hẹn tắt máy —
+        tắt máy giữa lúc còn video đang tải lên là mất công cả mẻ.
+
+        ⚠ CHỈ gọi từ LUỒNG NỀN, tuyệt đối không từ luồng Tk. Hàm này chặn luồng gọi
+        nó; mà luồng đăng lại phải cập nhật StringVar — lời gọi Tcl từ luồng khác chỉ
+        được phục vụ khi luồng Tk đang chạy mainloop. Chặn luồng Tk ở đây là kẹt cả
+        hai bên: luồng đăng đứng chờ Tcl, còn hàm này đứng chờ luồng đăng.
+        """
+        import time
+        if self._upload_q.empty() and self._upload_thread is None:
+            return
+        logging.info("⬆ Chờ tải nốt các video còn trong hàng đợi đăng...")
+        while True:
+            with self._upload_lock:
+                left = self._upload_q.qsize()
+                t = self._upload_thread
+                alive = t is not None and t.is_alive()
+                if left == 0 and not alive:
+                    break
+                if left and not alive:
+                    # Luồng đăng chết bất thường mà hàng đợi còn việc: dựng lại luồng
+                    # thay vì chờ mãi một luồng đã chết.
+                    logging.warning("⬆ Luồng đăng đã dừng bất thường — chạy lại.")
+                    self._upload_thread = threading.Thread(target=self._upload_worker,
+                                                           daemon=True)
+                    self._upload_thread.start()
+            self.pipe_link_status.set(
+                f"⬆ Đang đăng nốt {left + 1} video (dựng video đã xong)...")
+            time.sleep(2)
+        logging.info(f"⬆ Đã đăng xong {self._upload_done} video trong mẻ này.")
+
     def _seo_docx_valid(self, seo_docx) -> bool:
         """True nếu seoYoutube.docx đã có nội dung SEO thật (tiêu đề khác rỗng).
 
@@ -5413,6 +5759,8 @@ class App(tk.Tk):
             "seo": self._seo_docx_valid(folder / "seoYoutube.docx"),
             "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
             "audio": (folder / "output.wav").exists(),
+            # Đã đăng YouTube chưa — suy từ bản ghi youtube_upload.json của tập.
+            "upload": (folder / "youtube_upload.json").exists(),
             # Bản tự động đặt tên YOUTUBE.mp4 / facebook.mp4; vẫn nhận tên cũ
             # (*_videodone.mp4 / *_doc.mp4) cho các tập tạo trước đây.
             "video_ngang": (folder / "YOUTUBE.mp4").exists()
@@ -5471,11 +5819,12 @@ class App(tk.Tk):
         used.add(load_episode_number())
         return max(used) if used else 0
 
-    def _pipe_batch_worker(self, sources, model, speed, tts_settings=None):
+    def _pipe_batch_worker(self, sources, model, speed, tts_settings=None, upload=False):
         import time
         driver = None
         total = len(sources)
         ok_count = 0
+        self._upload_done = 0
 
         # Gemini treo → dịch_gemini đóng & mở lại Firefox; tham chiếu driver mới nay do
         # _dich_gemini_cho_tap trả về và được gán lại ngay tại chỗ gọi, nên SEO và link
@@ -5652,6 +6001,10 @@ class App(tk.Tk):
 
                     self._don_rac_audio(folder)   # 🧹 xoá audio trung gian (giữ output.wav)
                     self._manifest_update(src, episode, folder, done=True)  # link XONG
+                    # ── 9) ĐĂNG YOUTUBE — chỉ XẾP HÀNG rồi đi tiếp: luồng đăng tải
+                    # lên trong lúc link kế đang dựng video (mạng ↔ GPU chạy chồng).
+                    if upload:
+                        self._upload_enqueue(folder, episode)
                     ok_count += 1
                     done_what = "dịch + SEO + video" if tts_settings else "dịch + SEO"
                     logging.info(f"✅ Link {i}/{total} (tập {episode}) HOÀN TẤT ({done_what}).")
@@ -5689,6 +6042,9 @@ class App(tk.Tk):
                 logging.info("🧹 Đã giải phóng model nhận diện khỏi VRAM.")
             except Exception:
                 pass
+            # Chờ đăng nốt TRƯỚC khi hạ cờ bận: _pipe_set_busy(False) là chỗ móc lệnh
+            # hẹn TẮT MÁY — tắt lúc còn video đang tải lên thì mất công cả mẻ.
+            self._upload_wait_drain()
             if file_handler is not None:        # ngừng ghi nhật ký batch ra file
                 try:
                     logging.info("──────── KẾT THÚC BATCH ────────")
