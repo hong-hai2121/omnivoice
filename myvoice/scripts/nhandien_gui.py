@@ -289,6 +289,7 @@ def _prepare_input_txt(gemini_docx, out_txt) -> bool:
                 "Chạy lại bước dịch Gemini cho các đoạn còn thiếu.", "err")
             return False
         content = prep.remove_annotations(content)
+        content = prep.apply_word_fixes(content)   # giết→giớt, máu→máo, tỳ→tì…
         if not content:
             log("⚠️ Bản dịch rỗng sau khi xử lý — không tạo được input.txt.", "warn")
             return False

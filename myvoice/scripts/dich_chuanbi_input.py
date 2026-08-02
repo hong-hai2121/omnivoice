@@ -69,8 +69,11 @@ def find_untranslated(text):
     return [m for m in _UNTRANSLATED_MARKS if m in low]
 
 
-# Sửa từ/cụm cố định để TTS đọc né bộ lọc: (từ_gốc, từ_thay). Áp dụng KHI tạo
-# input.txt. Khớp được cả cụm nhiều từ (vd "sát hại").
+# Sửa từ/cụm cố định KHI tạo input.txt: (từ_gốc, từ_thay). Gồm 2 loại:
+#   • né bộ lọc  : giết→giớt, máu→máo… (TTS/nền tảng chặn từ nhạy cảm)
+#   • chính tả   : tỳ→tì (tì tay · tì vết · đàn tì bà)
+# Khớp được cả cụm nhiều từ (vd "sát hại"). MỘT danh sách duy nhất — thêm chữ mới
+# chỉ cần nối vào đây, mọi đường tạo input.txt tự có (xem apply_word_fixes).
 _WORD_FIXES = [
     ("giết", "giớt"),
     ("chết", "chớt"),
@@ -78,20 +81,25 @@ _WORD_FIXES = [
     ("máu", "máo"),
     ("ma túy", "mai thúy"),
     ("cưỡng hiếp", "cưỡng híp"),
+    ("tỳ", "tì"),
 ]
 
 
-def apply_word_fixes(text):
-    """Thay một số từ/cụm cố định (vd 'giết'→'giớt', 'sát hại'→'giới hại') để TTS
-    đọc né bộ lọc. Khớp nguyên từ (word boundary), giữ nguyên kiểu viết hoa, và ưu
-    tiên cụm DÀI trước để tránh thay nhầm phần trùng."""
-    def _match_case(src, new):
-        if src.isupper():
-            return new.upper()
-        if src[:1].isupper():
-            return new[:1].upper() + new[1:]
-        return new
+def _match_case(src, new):
+    """Chép kiểu hoa/thường của từ gốc sang từ thay: GIẾT→GIỚT, Giết→Giớt."""
+    if src.isupper():
+        return new.upper()
+    if src[:1].isupper():
+        return new[:1].upper() + new[1:]
+    return new
 
+
+def apply_word_fixes(text):
+    """Thay các từ/cụm trong _WORD_FIXES (vd 'giết'→'giớt', 'tỳ'→'tì').
+
+    Khớp NGUYÊN TỪ/TIẾNG (word boundary) nên 'tỷ' (tỷ đồng), 'tý', 'tỵ' không bị
+    đụng; giữ nguyên kiểu viết hoa; ưu tiên cụm DÀI trước để tránh thay nhầm phần
+    trùng (vd 'sát hại' xử lý trước 'hại')."""
     for old, new in sorted(_WORD_FIXES, key=lambda p: len(p[0]), reverse=True):
         pattern = re.compile(r"\b" + re.escape(old) + r"\b", re.IGNORECASE)
         text = pattern.sub(lambda m, n=new: _match_case(m.group(0), n), text)
@@ -187,8 +195,9 @@ def main(argv=None):
         print(f"❌ Sau khi bỏ chú thích không còn nội dung nào từ: {docx_path}")
         sys.exit(2)
 
-    # ── Sửa từ cố định để TTS đọc đúng (vd 'giết' → 'giớt') ───────────────────
-    print(f"✏️  BƯỚC 2c — Sửa {len(_WORD_FIXES)} từ/cụm cố định cho TTS (giết→giớt, chết→chớt, ...)...")
+    # ── Sửa từ cố định để TTS đọc đúng (vd 'giết' → 'giớt', 'tỳ' → 'tì') ──────
+    print(f"✏️  BƯỚC 2c — Sửa {len(_WORD_FIXES)} từ/cụm cố định cho TTS "
+          "(giết→giớt, chết→chớt, tỳ→tì, ...)...")
     content = apply_word_fixes(content)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -4442,6 +4442,13 @@ class App(tk.Tk):
         except Exception as e:
             logging.warning(f"⚠️ Bỏ qua xử lý chữ Hán: {e}")
 
+        # 2e) SỬA từ/cụm cố định cho TTS: giết→giớt, máu→máo, tỳ→tì… (_WORD_FIXES)
+        try:
+            import dich_chuanbi_input as prep
+            content = prep.apply_word_fixes(content)
+        except Exception as e:
+            logging.warning(f"⚠️ Bỏ qua sửa từ cố định (giết→giớt, tỳ→tì): {e}")
+
         # 3) GHI VÀO input.txt (đường dẫn ở ô 'Văn bản')
         try:
             out = Path(self.var_txt.get())
@@ -5145,9 +5152,11 @@ class App(tk.Tk):
                 logging.warning(f"⚠️ Bỏ qua xử lý chữ Hán: {e}")
             try:
                 import dich_chuanbi_input as prep
-                content = prep.remove_annotations(content)   # bỏ chú thích () []
+                content = prep.remove_annotations(content)  # bỏ chú thích () []
+                # Sửa từ cố định: giết→giớt, máu→máo, tỳ→tì… (_WORD_FIXES)
+                content = prep.apply_word_fixes(content)
             except Exception as e:
-                logging.warning(f"⚠️ Không bỏ được chú thích () []: {e}")
+                logging.warning(f"⚠️ Không dọn được chú thích () [] / sửa từ cố định: {e}")
             # ⛔ CHỐT ĐỘ DÀI: so với bản nhận diện tiếng Trung của cùng tập. Bắt các ca
             # mất đoạn mà marker "(chưa dịch)" KHÔNG phủ được (vd Gemini trả về lời xin
             # lỗi ngắn thay vì bản dịch, hoặc docx bị sửa tay hụt).

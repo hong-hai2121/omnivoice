@@ -51,7 +51,11 @@ PREFIX_FILE   = gui.PREFIX_FILE
 # _save_opt_settings của GUI ghi đè taogiong_options.json bằng một dict cố định →
 # khoá lạ thêm vào đó sẽ bị xoá mất ở lần GUI lưu kế tiếp.
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
-WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="")
+WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
+                    # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
+                    # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
+                    # ảnh nền mặc định, và có làm thêm bản dọc không.
+                    epsrc="manual", thumb_photo="", thumb_doc=True)
 
 STEP_LABELS = [
     ("recognize",   "Nhận diện"),
@@ -301,14 +305,30 @@ def next_episode() -> str:
     return str(gui.next_episode_number(last_used_episode())).zfill(2)
 
 
-def plan_episodes(sources: list[str], start_ep: str = "") -> list[str]:
+def latest_channel_episode() -> int:
+    """Số tập LỚN NHẤT đang có trên kênh (theo cache). Không đọc được → 0."""
+    try:
+        import dang_video_youtube as yt
+        data = yt.load_video_cache()
+        entry = data["channels"].get(data.get("current"))
+        nums = yt.episode_numbers(entry["videos"]) if entry else set()
+        return max(nums) if nums else 0
+    except Exception:
+        return 0
+
+
+def plan_episodes(sources: list[str], start_ep: str = "",
+                  mode: str = "manual") -> list[str]:
     """Số tập cấp cho từng nguồn khi chạy hàng loạt (danh sách CÙNG ĐỘ DÀI sources).
 
     Ô rỗng ở một vị trí = không chỉ định, để runner tự cấp như thường lệ.
 
-    start_ep rỗng → trả về toàn ô rỗng (giữ nguyên nếp cũ).
-    Có start_ep (bấm một số ở danh sách "kênh còn thiếu") → LÀM BÙ: lấy lần lượt các
-    số kênh còn thiếu KỂ TỪ số đó; hết danh sách thì cấp tiếp sau số tập lớn nhất.
+    mode="auto"  — TỰ LÀM BÙ: không cần chọn gì, link 1 lấy số kênh còn thiếu BÉ
+                   NHẤT, các link sau tăng dần theo danh sách; hết danh sách thì
+                   tiếp tục từ (tập mới nhất kênh đã có + 1).
+    mode="manual" — theo số tự nhập: link 1 mang `start_ep`, các link sau vét tiếp
+                   danh sách còn thiếu kể từ đó rồi mới cấp số mới. start_ep rỗng
+                   → không chỉ định gì (giữ nguyên nếp cũ).
 
     Hai chỗ luôn nhảy qua: số đã có thư mục trong kịch_bản (tập dựng rồi mà chưa đăng
     — cấp lại sẽ đụng thư mục cũ) và số nằm trong danh sách "tập bỏ qua".
@@ -317,20 +337,26 @@ def plan_episodes(sources: list[str], start_ep: str = "") -> list[str]:
     và nó KHÔNG được tiêu mất một số làm bù vốn dành cho tập mới.
     """
     n = len(sources)
-    start = str(start_ep or "").strip()
-    if not start.isdecimal():
-        return [""] * n
-
-    start = start.zfill(2)
     todo = missing_episodes()["todo"]
-    # Bấm số nào thì bắt đầu từ ĐÚNG chỗ đó trong danh sách; số gõ tay (không nằm
-    # trong danh sách) thì chỉ dùng riêng nó rồi chuyển sang cấp số mới.
-    pool = todo[todo.index(start):] if start in todo else [start]
+    skip = gui.load_skip_episodes()
+
+    if mode == "auto":
+        pool = list(todo)                       # bé nhất trước
+        # Hết tập còn thiếu → nối tiếp sau tập MỚI NHẤT KÊNH ĐÃ CÓ (không dùng bộ
+        # đếm thumbnail ở máy — số đó có thể vống lên vì vài lần tạo ảnh thử).
+        cursor = gui.next_episode_number(latest_channel_episode(), skip)
+    else:
+        start = str(start_ep or "").strip()
+        if not start.isdecimal():
+            return [""] * n
+        start = start.zfill(2)
+        # Gõ/bấm số nào thì bắt đầu từ ĐÚNG chỗ đó trong danh sách; số không nằm
+        # trong danh sách thì chỉ dùng riêng nó rồi chuyển sang cấp số mới.
+        pool = todo[todo.index(start):] if start in todo else [start]
+        cursor = gui.next_episode_number(last_used_episode(), skip)
 
     known = {gui.norm_source(k) for k in gui.load_manifest()}
     taken = {gui.episode_of(p.name) for p in gui.episode_dirs()}
-    skip = gui.load_skip_episodes()
-    cursor = gui.next_episode_number(last_used_episode(), skip)
 
     out: list[str] = []
     for src in sources:
@@ -532,6 +558,52 @@ def episodes_on_channel() -> set:
         return yt.episode_numbers(entry["videos"]) if entry else set()
     except Exception:
         return set()
+
+
+def upload_settings() -> dict:
+    """Cài đặt đăng tự động (danh mục · chế độ · trẻ em · AI) — chung với bản GUI."""
+    try:
+        import dang_tap_youtube as up
+        return up.load_settings()
+    except Exception:
+        return {}
+
+
+def save_upload_settings(data: dict) -> dict:
+    try:
+        import dang_tap_youtube as up
+        return up.save_settings(data)
+    except Exception:
+        return {}
+
+
+def upload_choices() -> dict:
+    """Danh sách lựa chọn cho form đăng: danh mục YouTube + các chế độ đăng."""
+    try:
+        import dang_tap_youtube as up
+        import dang_video_youtube as yt
+        return {"categories": [{"id": i, "label": lb} for lb, i in yt.CATEGORIES.items()],
+                "privacy": [{"id": k, "label": v} for k, v in up.PRIVACY_LABELS.items()]}
+    except Exception:
+        return {"categories": [], "privacy": []}
+
+
+def episodes_pending_upload() -> list[str]:
+    """Tập đã dựng xong video + có SEO mà CHƯA đăng, và kênh cũng chưa có."""
+    try:
+        import dang_tap_youtube as up
+    except Exception:
+        return []
+    on_channel = episodes_on_channel()
+    out = []
+    for folder in gui.episode_dirs():
+        ep = gui.episode_of(folder.name)
+        if (ep and up.find_video(folder) is not None
+                and up.already_uploaded(folder) is None
+                and int(ep) not in on_channel
+                and seo_docx_valid(folder / "seoYoutube.docx")):
+            out.append(ep)
+    return out
 
 
 def missing_episodes() -> dict:

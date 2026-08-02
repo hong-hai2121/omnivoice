@@ -22,7 +22,42 @@ from pathlib import Path
 
 RECORD_NAME = "youtube_upload.json"   # bản ghi lần đăng, nằm trong thư mục tập
 VIDEO_NAME = "YOUTUBE.mp4"            # bản NGANG — chỉ video này lên YouTube
-CATEGORY_ID = "22"                    # Người & Blog
+TIKTOK_NAME = "tiktok.mp4"            # bản dọc mồi, đăng TikTok bằng tay
+
+# Cài đặt cho việc ĐĂNG TỰ ĐỘNG (quy trình tổng). Để file riêng, KHÔNG dùng chung
+# settings.json của app đăng tay — file đó nhớ cả tiêu đề/mô tả của lần đăng gần
+# nhất, trộn vào đây thì mỗi lần đăng tay lại đổi luôn cấu hình chạy tự động.
+SETTINGS_FILE = Path(__file__).resolve().parent / "dang_tudong.json"
+DEFAULTS = dict(
+    category_id="22",        # Người & Blog
+    privacy="schedule",      # schedule = riêng tư tới giờ hẹn | public | unlisted
+    made_for_kids=False,     # video có phải làm cho trẻ em không
+    contains_ai=True,        # khai báo nội dung do AI tạo (kênh dùng giọng TTS)
+)
+PRIVACY_LABELS = {
+    "schedule": "Hẹn giờ (riêng tư tới giờ rồi tự công khai)",
+    "public": "Công khai ngay",
+    "unlisted": "Không công khai / ai có link",
+}
+
+
+def load_settings() -> dict:
+    """Cài đặt đăng tự động; thiếu khoá nào lấy mặc định."""
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {**DEFAULTS, **data}
+    except (OSError, ValueError):
+        pass
+    return dict(DEFAULTS)
+
+
+def save_settings(data: dict) -> dict:
+    """Ghi đè cài đặt đăng tự động (giữ các khoá không truyền vào)."""
+    merged = {**load_settings(), **(data or {})}
+    SETTINGS_FILE.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+    return merged
 
 
 def record_path(folder):
@@ -59,6 +94,33 @@ def find_thumbnail(folder, episode):
         if p.is_file():
             return p
     return None
+
+
+def rename_tiktok(folder, when, log):
+    """Đổi tên tiktok.mp4 → 'tiktok <ngày giờ YouTube>.mp4'. Trả về Path mới / None.
+
+    Video TikTok là bản MỒI trỏ về bản đầy đủ trên YouTube ("Full ở Mimi audio Số
+    N"), nên đăng TikTok phải canh theo lúc bản YouTube lên sóng. Giờ đó chỉ biết
+    được SAU khi đăng (mới xếp được khung giờ), nên gắn vào tên file ngay lúc này —
+    mở thư mục là thấy, khỏi phải tra lại từng video trên kênh.
+
+    Không có file (chưa bật tạo video TikTok) → bỏ qua im lặng.
+    """
+    src = Path(folder) / TIKTOK_NAME
+    if not src.is_file():
+        return None
+    # Windows cấm dấu ':' trong tên file → dùng '08h00'.
+    dst = src.with_name(f"tiktok {when:%d-%m-%Y %Hh%M}.mp4")
+    if dst.exists():
+        log(f"⚠️ Đã có {dst.name} → giữ nguyên {src.name}.", "warn")
+        return None
+    try:
+        src.rename(dst)
+        log(f"🎞 Video TikTok → {dst.name} (giờ bản YouTube lên sóng).", "info")
+        return dst
+    except OSError as e:
+        log(f"⚠️ Không đổi được tên video TikTok: {e}", "warn")
+        return None
 
 
 def _current_channel_id():
@@ -115,39 +177,53 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
             "warn")
         desc = desc[:yt.MAX_DESC]
 
-    publish_local = yt.next_publish_slot()
+    cfg = load_settings()
+    mode = cfg.get("privacy", "schedule")
+    # Hẹn giờ ⇒ YouTube bắt buộc để private, tới giờ mới tự công khai. Đây cũng là
+    # mức an toàn nhất: video đã lên kênh nhưng chưa ai thấy, còn kịp sửa/xoá.
+    publish_local = yt.next_publish_slot() if mode == "schedule" else None
+    privacy = "private" if mode == "schedule" else mode
+
     thumb = find_thumbnail(folder, ep)
     if thumb is None:
         log(f"⚠️ Tập {ep}: không thấy thumbnail{ep}.png — đăng không kèm ảnh bìa.", "warn")
 
-    log(f"⬆ Đăng tập {ep}: {video.name} → hẹn công khai "
-        f"{publish_local:%d/%m/%Y %H:%M}", "info")
+    when = (f"hẹn công khai {publish_local:%d/%m/%Y %H:%M}" if publish_local
+            else PRIVACY_LABELS.get(mode, mode))
+    log(f"⬆ Đăng tập {ep}: {video.name} → {when}", "info")
     video_id = yt.upload_video({
         "video_path": str(video),
         "title": title,
         "description": desc,
         "tags": tags,
-        "category_id": CATEGORY_ID,
-        # Hẹn giờ ⇒ YouTube bắt buộc để private, tới giờ mới tự công khai. Đây cũng
-        # là mức an toàn: video đã lên kênh nhưng chưa ai thấy, còn kịp sửa/xoá.
-        "privacy": "private",
-        "publish_at": yt.to_rfc3339(publish_local),
-        "made_for_kids": False,
-        "contains_ai": True,
+        "category_id": str(cfg.get("category_id") or DEFAULTS["category_id"]),
+        "privacy": privacy,
+        "publish_at": yt.to_rfc3339(publish_local) if publish_local else None,
+        "made_for_kids": bool(cfg.get("made_for_kids", False)),
+        "contains_ai": bool(cfg.get("contains_ai", True)),
         "thumbnail_path": str(thumb) if thumb else None,
     }, log, progress_cb or (lambda _p: None))
+
+    # Gắn giờ bản YouTube lên sóng vào tên video TikTok. Chỉ làm được SAU khi đăng
+    # vì tới lúc đó mới biết khung giờ nào được xếp. Không hẹn giờ (công khai ngay /
+    # unlisted) thì lấy chính thời điểm đăng.
+    tiktok = rename_tiktok(folder, publish_local or datetime.now().astimezone(), log)
 
     rec = {
         "episode": ep,
         "video_id": video_id,
         "url": f"https://youtu.be/{video_id}",
         "title": title,
-        "privacy": "private",
-        "publish_at": publish_local.isoformat(timespec="seconds"),
-        "publish_at_text": publish_local.strftime("%d/%m/%Y %H:%M"),
+        "privacy": privacy,
+        "publish_at": publish_local.isoformat(timespec="seconds") if publish_local else "",
+        "publish_at_text": (publish_local.strftime("%d/%m/%Y %H:%M") if publish_local
+                            else PRIVACY_LABELS.get(mode, mode)),
         "uploaded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "video_file": video.name,
+        "tiktok_file": tiktok.name if tiktok else "",
         "thumbnail": thumb.name if thumb else "",
+        "made_for_kids": bool(cfg.get("made_for_kids", False)),
+        "contains_ai": bool(cfg.get("contains_ai", True)),
         "channel_id": _current_channel_id(),
     }
     try:
@@ -158,5 +234,5 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
         # trùng → báo thật to để còn xử lý tay.
         log(f"❌ Tập {ep}: ĐÃ ĐĂNG ({rec['url']}) nhưng KHÔNG ghi được "
             f"{RECORD_NAME}: {e}. Chạy lại có thể đăng TRÙNG!", "err")
-    log(f"✅ Tập {ep} đã đăng: {rec['url']} — công khai {rec['publish_at_text']}", "ok")
+    log(f"✅ Tập {ep} đã đăng: {rec['url']} — {rec['publish_at_text']}", "ok")
     return rec

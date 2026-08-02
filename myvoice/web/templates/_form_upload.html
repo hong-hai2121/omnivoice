@@ -1,0 +1,59 @@
+{# Khối ĐĂNG YOUTUBE — cài đặt + nút đăng. Dùng chung Home và trang riêng.
+   Cần: up (cài đặt), up_choices, pipe, slots, pending, chan_note. #}
+<form class="panel" method="post" action="/dangyoutube/luu">
+  <div class="phead">
+    <h2>Đăng YouTube</h2>
+    <p class="hint">Video ngang (<code>YOUTUBE.mp4</code>) của từng tập, kèm thumbnail,
+       tiêu đề · mô tả · thẻ tag lấy từ SEO của chính tập đó.</p>
+  </div>
+
+  <div class="chks">
+    {# Ô này quyết định quy trình ở khối 1 có tự đăng sau khi dựng xong video không.
+       Lưu ở taogiong_pipeline.json (khoá "upload") — chung với bản GUI. #}
+    <label class="chk"><input type="checkbox" name="upload" {{ 'checked' if pipe.upload }}>
+      ⬆ Tự động đăng sau khi dựng xong video</label>
+  </div>
+  <p class="hint">Đăng chạy ở hàng đợi RIÊNG nên tập kế cứ dựng tiếp, không phải đợi
+     tải lên xong. Mỗi tập tự nhận một khung giờ trống ({{ slots }}), mỗi ngày 2 tập.</p>
+
+  <div class="grid">
+    <label class="field">
+      <span>Danh mục</span>
+      <select name="category_id">
+        {% for c in up_choices.categories %}
+          <option value="{{ c.id }}" {{ 'selected' if up.category_id == c.id }}>{{ c.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span>Chế độ đăng</span>
+      <select name="privacy">
+        {% for p in up_choices.privacy %}
+          <option value="{{ p.id }}" {{ 'selected' if up.privacy == p.id }}>{{ p.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="chks">
+    <label class="chk"><input type="checkbox" name="made_for_kids" {{ 'checked' if up.made_for_kids }}>
+      👶 Nội dung làm cho trẻ em (dưới 14 tuổi)</label>
+    <label class="chk"><input type="checkbox" name="contains_ai" {{ 'checked' if up.contains_ai }}>
+      🤖 Khai báo nội dung có dùng AI (giọng đọc tổng hợp)</label>
+  </div>
+  <p class="hint">Kênh dùng giọng TTS nên ô 🤖 thường để BẬT. Bật ô 👶 sẽ tắt bình luận
+     và giảm đề xuất — chỉ bật khi video thật sự dành cho trẻ em.</p>
+
+  <div class="actions">
+    <button class="primary" formaction="/dangyoutube/luu">💾 Lưu cài đặt</button>
+    <button formaction="/dangyoutube/chay">⬆ Đăng ngay các tập chưa đăng</button>
+  </div>
+
+  {% if pending %}
+    <p class="hint">Đang chờ đăng ({{ pending|length }} tập): {{ pending|join(', ') }}.
+       Bấm “Đăng ngay” sẽ lưu cài đặt rồi xếp lần lượt vào hàng đợi đăng.</p>
+  {% else %}
+    <p class="hint">Không có tập nào chờ đăng (thiếu video/SEO, hoặc kênh đã có hết).</p>
+  {% endif %}
+  {% if chan_note %}<p class="hint">{{ chan_note }}</p>{% endif %}
+</form>

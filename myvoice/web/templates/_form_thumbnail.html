@@ -4,7 +4,7 @@
   <div class="phead"><span class="num">1</span><h2>Tạo ảnh</h2></div>
   <div class="grid">
     <label class="field">
-      <span>Tập</span>
+      <span>Tập {% if on_home %}(lấy sẵn tiêu đề SEO){% endif %}</span>
       <select name="episode" onchange="location.href='/thumbnail?tap=' + this.value">
         <option value="">— không gắn tập —</option>
         {% for r in rows %}
@@ -18,7 +18,9 @@
       <span>Ảnh nền (myvoice/Anh)</span>
       <select name="photo">
         <option value="">— ngẫu nhiên —</option>
-        {% for p in photos %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+        {% for p in photos %}
+          <option value="{{ p }}" {{ 'selected' if thumb_photo == p }}>{{ p }}</option>
+        {% endfor %}
       </select>
     </label>
     {# Số in lên video TikTok — để cạnh số tập của thumbnail cho dễ đối chiếu (hai
@@ -26,16 +28,44 @@
     {% if on_home %}{% include "_field_tiktok_episode.html" %}{% endif %}
   </div>
 
+  {# NGOÀI lưới: dãy chip cần trọn bề ngang, để trong cột hẹp thì mỗi số một dòng. #}
+  {% include "_field_episode_suggest.html" %}
+
+  {% if on_home %}
+    {# CHẾ ĐỘ ĐÁNH SỐ TẬP cho cả lần chạy quy trình (khối 1), không riêng ảnh này —
+       thumbnail chỉ là một bước trong đó. Số chọn ra dùng luôn cho tên thư mục,
+       số in trên ảnh, tiêu đề, mô tả và thẻ tag.
+
+       Radio nằm trong form thumbnail nên form đó gửi kèm sẵn; khối 1 là form khác
+       nên giá trị được JS chép sang input ẩn #epmode bên đó. #}
+    <div class="chks">
+      <span class="field"><span>Số tập khi chạy quy trình</span></span>
+      <label class="chk"><input type="radio" name="epsrc" value="auto"
+             {{ 'checked' if epsrc == 'auto' }}
+             onchange="onEpModeChange()"> Tự lấy tập kênh còn thiếu — link 1 lấy số
+        bé nhất, các link sau tăng dần; hết thì nối sau tập mới nhất kênh đã có</label>
+      <label class="chk"><input type="radio" name="epsrc" value="manual"
+             {{ 'checked' if epsrc != 'auto' }}
+             onchange="onEpModeChange()"> Theo số tự nhập ở ô “Số tập” / ô “Tập” ở trên</label>
+    </div>
+    <input type="hidden" name="episode_manual" id="epmanual" value="{{ '%02d' % tiktok_episode }}">
+    <p class="hint" id="thumbepnote"></p>
+  {% endif %}
+
   <label class="field">
     <span>Tiêu đề</span>
     <textarea name="title" rows="3">{{ suggested }}</textarea>
   </label>
 
   <div class="chks">
-    <label class="chk"><input type="checkbox" name="doc" value="1" checked>
+    <label class="chk"><input type="checkbox" name="doc" value="1" {{ 'checked' if thumb_doc }}>
       Làm thêm bản dọc 1080×1920 (YouTube Shorts)</label>
   </div>
-  <div class="actions"><button class="primary">🖼 Tạo thumbnail</button></div>
+  <div class="actions">
+    <button class="primary">🖼 Tạo thumbnail</button>
+    <button formaction="/thumbnail/luu">💾 Lưu tuỳ chọn</button>
+  </div>
   <p class="hint">Ảnh lưu vào thư mục của tập: <code>thumbnail&lt;tập&gt;.png</code>
-     và <code>thumbnail&lt;tập&gt;_dọc.png</code>.</p>
+     và <code>thumbnail&lt;tập&gt;_dọc.png</code>. Nút 💾 nhớ chế độ đánh số · ảnh nền ·
+     ô bản dọc; bấm “Tạo thumbnail” cũng tự lưu trước khi chạy.</p>
 </form>

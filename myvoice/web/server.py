@@ -90,7 +90,10 @@ def _script_ctx() -> dict:
     return {"pipe": core.load_pipeline(), "tts_error": tts_err,
             "next_episode": core.next_episode(), "prefix": core.load_prefix(),
             "skip_episodes": core.load_skip_episodes(),
-            "shutdown_delay": core.gui.SHUTDOWN_DELAY_MIN}
+            "shutdown_delay": core.gui.SHUTDOWN_DELAY_MIN,
+            # Chế độ đánh số đã lưu — trang Tạo kịch bản riêng không có khối
+            # Thumbnail (nơi đặt radio) nên vẫn phải theo lựa chọn đã nhớ.
+            "epsrc": core.load_web_settings().get("epsrc", "manual")}
 
 
 def _voice_ctx() -> dict:
@@ -121,6 +124,28 @@ def _recog_ctx() -> dict:
     return {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS}
 
 
+def _upload_ctx() -> dict:
+    """Khối "Đăng YouTube": cài đặt + danh sách chọn + tập đang chờ đăng.
+
+    Tên kênh lấy từ CACHE, không gọi API ở đây — mở trang mà đi gọi mạng thì trang
+    chậm theo đường truyền, mà thông tin này chỉ để xem.
+    """
+    chan_note = ""
+    try:
+        import dang_video_youtube as yt
+        data = yt.load_video_cache()
+        entry = data["channels"].get(data.get("current"))
+        if entry:
+            ch = entry["channel"]
+            slot = core.next_publish_slot_text()
+            chan_note = (f"Kênh: {ch['title']} · {ch['video_count']} video"
+                         + (f" · khung giờ trống kế tiếp {slot}" if slot else ""))
+    except Exception:
+        pass
+    return {"up": core.upload_settings(), "up_choices": core.upload_choices(),
+            "pending": core.episodes_pending_upload(), "chan_note": chan_note}
+
+
 def _thumb_ctx(tap: str = "") -> dict:
     rows = core.episode_rows()
     chosen = tap or (rows[0]["episode"] if rows else "")
@@ -130,9 +155,13 @@ def _thumb_ctx(tap: str = "") -> dict:
         blocks = core.seo_blocks(folder, chosen)
         if blocks:                      # gợi ý sẵn tiêu đề SEO của tập đang chọn
             title = blocks["title"]
+    web = core.load_web_settings()
     return {"rows": rows, "chosen": chosen, "suggested": title,
             "photos": core.list_photos(), "episode_number": core.thumbnail_episode(),
-            "missing": core.missing_episodes()}
+            "missing": core.missing_episodes(),
+            "epsrc": web.get("epsrc", "manual"),
+            "thumb_photo": web.get("thumb_photo", ""),
+            "thumb_doc": bool(web.get("thumb_doc", True))}
 
 
 # ── Trang chủ: Home — MỌI nút chức năng (view "🏠 Home (đầy đủ)" bên GUI) ───
@@ -143,7 +172,7 @@ def page_home(request: Request):
     # /nhandien, mà gọi thừa thì episode_rows() bị quét hai lần mỗi lần mở Home.
     # on_home=True: ô "Số tập (chữ trên video)" hiện ở khối Thumbnail thay vì trong
     # khối Giọng nói (xem _field_tiktok_episode.html).
-    ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx()}
+    ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx(), **_upload_ctx()}
     return _page(request, "home.html", active="home", q=runner.state(),
                  on_home=True, **ctx)
 
@@ -165,7 +194,10 @@ def _save_pipe_from_form(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
-    for k in ("auto2", "auto3", "auto_tts", "seo", "upload"):
+    # KHÔNG đụng khoá "upload": ô tick đó nằm ở khối "Đăng YouTube", không có trên
+    # form này. Checkbox vắng mặt bị hiểu là tắt → mỗi lần bấm chạy ở khối 1 sẽ âm
+    # thầm tắt chế độ tự đăng.
+    for k in ("auto2", "auto3", "auto_tts", "seo"):
         pipe[k] = k in form
     core.save_pipeline(pipe)
     return pipe
@@ -244,8 +276,12 @@ async def run_script(request: Request):
     if start_ep and not start_ep.isdecimal():
         log(f"⚠️ Số tập '{start_ep}' không phải số → bỏ qua, để tự cấp số.")
         start_ep = ""
-    plan = core.plan_episodes(lines, start_ep)
-    if start_ep:
+    mode = "auto" if str(form.get("epsrc", "manual")) == "auto" else "manual"
+    plan = core.plan_episodes(lines, start_ep, mode=mode)
+    if mode == "auto":
+        log("🔖 Tự làm bù: lấy tập kênh còn thiếu từ số bé nhất, hết thì nối sau "
+            f"tập mới nhất kênh đã có ({core.latest_channel_episode()}).")
+    if start_ep or mode == "auto":
         log("🔖 Cấp số tập: " + " · ".join(
             f"link {i + 1} → " + (f"tập {ep}" if ep else "tập cũ (nguồn đã chạy)")
             for i, ep in enumerate(plan)))
@@ -499,6 +535,49 @@ async def run_recog(request: Request):
     return _back(request, "/nhandien")
 
 
+# ── Khối Đăng YouTube ───────────────────────────────────────────────────────
+def _save_upload_from_form(form) -> dict:
+    """Lưu cài đặt đăng + ô 'tự động đăng'. Mọi checkbox trên form này đều hiển thị
+    nên suy 'vắng mặt = tắt' ở đây là đúng."""
+    cfg = core.save_upload_settings({
+        "category_id": str(form.get("category_id", "") or "22"),
+        "privacy": str(form.get("privacy", "") or "schedule"),
+        "made_for_kids": "made_for_kids" in form,
+        "contains_ai": "contains_ai" in form,
+    })
+    pipe = core.load_pipeline()
+    pipe["upload"] = "upload" in form
+    core.save_pipeline(pipe)
+    return cfg
+
+
+@app.post("/dangyoutube/luu")
+async def save_upload(request: Request):
+    form = await request.form()
+    cfg = _save_upload_from_form(form)
+    auto = "BẬT" if core.load_pipeline().get("upload") else "TẮT"
+    log(f"💾 Đã lưu cài đặt đăng YouTube (tự động đăng: {auto} · danh mục "
+        f"{cfg.get('category_id')} · {cfg.get('privacy')} · trẻ em: "
+        f"{cfg.get('made_for_kids')} · AI: {cfg.get('contains_ai')}).")
+    return _back(request, "/")
+
+
+@app.post("/dangyoutube/chay")
+async def run_upload_now(request: Request):
+    """Nút '⬆ Đăng ngay': lưu cài đặt rồi xếp các tập chưa đăng vào hàng đợi đăng."""
+    _save_upload_from_form(await request.form())
+    if not _upload_ready():
+        return _back(request, "/")
+    pending = core.episodes_pending_upload()
+    if not pending:
+        log("⚠️ Không có tập nào cần đăng (thiếu video/SEO, hoặc kênh đã có hết).")
+        return _back(request, "/")
+    log(f"⬆ Xếp {len(pending)} tập vào hàng đợi đăng: {', '.join(pending)}")
+    for ep in pending:
+        steps_mod.queue_upload(ep)
+    return _back(request, "/")
+
+
 # ── Trang Thumbnail ─────────────────────────────────────────────────────────
 @app.get("/thumbnail", response_class=HTMLResponse)
 def page_thumbnail(request: Request, tap: str = ""):
@@ -506,14 +585,46 @@ def page_thumbnail(request: Request, tap: str = ""):
                  **_thumb_ctx(tap))
 
 
+def _save_thumb_from_form(form) -> None:
+    """Nhớ tuỳ chọn khối Thumbnail. Mọi ô ở đây đều hiển thị trên form nên suy
+    'checkbox vắng mặt = tắt' là đúng."""
+    core.save_web_settings({
+        "epsrc": "auto" if str(form.get("epsrc", "")) == "auto" else "manual",
+        "thumb_photo": str(form.get("photo", "")),
+        "thumb_doc": "doc" in form,
+    })
+
+
+@app.post("/thumbnail/luu")
+async def save_thumb_only(request: Request):
+    """Nút 💾 của khối Thumbnail: chỉ lưu tuỳ chọn, không tạo ảnh."""
+    _save_thumb_from_form(await request.form())
+    web = core.load_web_settings()
+    log(f"💾 Đã lưu tuỳ chọn thumbnail (đánh số: {web['epsrc']} · ảnh nền: "
+        f"{web['thumb_photo'] or 'ngẫu nhiên'} · bản dọc: "
+        f"{'có' if web['thumb_doc'] else 'không'}).")
+    return _back(request, "/thumbnail")
+
+
 @app.post("/thumbnail")
 async def make_thumbnail(request: Request):
     form = await request.form()
+    _save_thumb_from_form(form)     # bấm tạo ảnh cũng nhớ lựa chọn, như các khối khác
     title = str(form.get("title", "")).strip()
-    episode = str(form.get("episode", "")).strip()
+    # Số in lên ảnh lấy từ ô "Số tập" — ô đó phản ánh TẬP ĐANG LÀM (chế độ tự làm bù
+    # điền số kênh còn thiếu, chế độ tự nhập thì bạn gõ). Ô "Tập" chỉ dùng để chọn
+    # tập lấy sẵn tiêu đề SEO, và là nguồn dự phòng ở trang /thumbnail riêng (trang
+    # đó không có ô "Số tập").
+    episode = str(form.get("episode_manual", "")).strip()
+    if not episode.isdecimal():
+        episode = str(form.get("episode", "")).strip()
+    episode = episode.zfill(2) if episode.isdecimal() else ""
     if not title:
         log("⚠️ Chưa nhập tiêu đề cho thumbnail.")
         return _back(request, "/thumbnail")
+    if episode and not core.episode_folder(episode):
+        log(f"ℹ️ Tập {episode} chưa có thư mục → ảnh lưu tạm vào kịch_bản/; "
+            "quy trình sẽ tạo lại đúng chỗ khi chạy tập này.")
     built = steps_mod.thumbnail_steps(title, episode=episode,
                                       photo=str(form.get("photo", "")),
                                       doc=bool(form.get("doc")))
@@ -542,6 +653,20 @@ def episode_thumbnail_doc(episode: str):
 
 
 # ── Hàng đợi ────────────────────────────────────────────────────────────────
+@app.get("/api/trangthai")
+def api_state():
+    """Trạng thái gọn dạng JSON — cho cửa sổ bật server (myvoice/chay.py) biết còn
+    việc đang chạy không, phục vụ ô '⏻ Tự động tắt máy khi xong'. Chỉ coi là RẢNH
+    khi CẢ hàng đợi chính lẫn hàng đợi đăng YouTube đều hết việc."""
+    q = runner.state()
+    return {
+        "busy": runner.busy(),
+        "upload_busy": upload_runner.busy(),
+        "current": (q.get("current") or {}).get("title", ""),
+        "pending": len(q.get("pending") or []),
+    }
+
+
 @app.get("/partials/queue", response_class=HTMLResponse)
 def partial_queue(request: Request):
     return templates.TemplateResponse(
