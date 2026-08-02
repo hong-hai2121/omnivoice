@@ -2030,19 +2030,11 @@ class App(tk.Tk):
         left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
 
-        # ── Header ──
-        hdr = ttk.Frame(left)
-        hdr.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        title = ttk.Frame(hdr)
-        title.pack(anchor="w", fill="x")
-        ttk.Label(title, text="🎧", style="Header.TLabel").pack(side="left", padx=(0, 8))
-        ttk.Label(title, text="OmniVoice", style="Header.TLabel").pack(side="left")
-        ttk.Label(title, text="TTS", style="Brand.TLabel").pack(side="left", padx=(6, 0))
-        ttk.Label(hdr, text="Chuyển văn bản thành giọng nói — Clone · Thiết kế · Mặc định",
-                  style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
+        # (Header '🎧 OmniVoice TTS' + dòng mô tả đã bỏ cho tiết kiệm chỗ dọc.
+        #  Row 0 để trống — grid không cấp chiều cao cho hàng rỗng.)
 
-        # ── Chế độ ──
-        sec_mode = ttk.LabelFrame(left, text="  Chế độ  ")
+        # ── Chế độ ── (bỏ chữ tiêu đề group, chỉ giữ viền)
+        sec_mode = ttk.LabelFrame(left, text="")
         sec_mode.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         sec_mode.columnconfigure(0, weight=1)
 
@@ -2110,8 +2102,8 @@ class App(tk.Tk):
 
         self._on_mode_change()
 
-        # ── Tệp ──
-        sec_file = ttk.LabelFrame(left, text="  Tệp  ")
+        # ── Tệp ── (bỏ chữ tiêu đề group, chỉ giữ viền)
+        sec_file = ttk.LabelFrame(left, text="")
         sec_file.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         sec_file.columnconfigure(1, weight=1)
 
@@ -2130,8 +2122,8 @@ class App(tk.Tk):
             ttk.Button(sec_file, text="Chọn…", width=8, command=cmd).grid(
                 row=r, column=2, padx=(8, 0), pady=4)
 
-        # ── Cài đặt ──
-        sec_opt = ttk.LabelFrame(left, text="  Cài đặt  ")
+        # ── Cài đặt ── (bỏ chữ tiêu đề group, chỉ giữ viền)
+        sec_opt = ttk.LabelFrame(left, text="")
         sec_opt.grid(row=3, column=0, sticky="ew", pady=(0, 12))
 
         # Nguồn nội dung: lấy từ Gemini (gemini_result.docx) + kiểm tra trước khi tạo
@@ -2205,9 +2197,6 @@ class App(tk.Tk):
         self.var_sub_max_chars = tk.IntVar(value=self._opt_settings["sub_max_chars"])
         ttk.Spinbox(sub_row2, from_=20, to=90, increment=1, width=5,
                     textvariable=self.var_sub_max_chars).pack(side="left")
-        ttk.Label(sub_row2, text="ký tự · .srt rời = tải lên YouTube Studio (nhanh); "
-                                 "vẽ cứng = mã hoá lại cả video (lâu)",
-                  style="Hint.TLabel").pack(side="left", padx=(6, 0))
 
         # Phụ đề cho VIDEO DỌC (facebook.mp4) — tick riêng, dùng chung Kiểu/Model ở trên.
         # Khung 1080x1920 nên tự rút số ký tự/dòng xuống 27 cho khỏi tràn mép.
