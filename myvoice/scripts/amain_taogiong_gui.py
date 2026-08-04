@@ -2512,6 +2512,10 @@ class App(tk.Tk):
         • horizontal=False → cột dọc hẹp, ẩn nhật ký (Home/Giọng nói)."""
         w = self._pipe_wrap
         s1, s2, s3 = self._pipe_steps
+        # Chặn bề ngang 3 dòng trạng thái theo kiểu dàn trang: chữ dài thì XUỐNG DÒNG
+        # chứ không được kéo cột rộng ra (xem ghi chú ở _build_pipeline_column).
+        for lb in getattr(self, "_pipe_status_labels", ()):
+            lb.configure(wraplength=900 if horizontal else 430)
         if horizontal:
             for c, wt in ((0, 0), (1, 0), (2, 0), (3, 1)):
                 w.columnconfigure(c, weight=wt)
@@ -3077,16 +3081,28 @@ class App(tk.Tk):
             btnrow, text=f"⬆  ⑥  Đăng YouTube (hẹn {upload_slots_text()})",
             style="Accent.TButton", command=self._recog_upload_all)
         self.recog_upload_btn.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        # ⚡ 1 nút chạy TRỌN quy trình: tập thiếu bước nào thì tự chạy bước đó ②→⑤
+        # (hỏi trước có kèm ⑥), khỏi phải bấm lần lượt từng nút.
+        self.recog_chain_btn = ttk.Button(
+            btnrow, text="⚡  Chạy TIẾP các bước còn thiếu (②→⑥)",
+            style="Accent.TButton", command=self._recog_run_missing)
+        self.recog_chain_btn.grid(row=4, column=0, sticky="ew", pady=(14, 0))
 
         # ── Tiến trình + Tạm dừng/Dừng (dùng chung biến với batch) ──────────────
         pf = ttk.Frame(left)
         pf.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         pf.columnconfigure(0, weight=1)
         ttk.Progressbar(pf, variable=self.pipe_progress, maximum=100).grid(row=0, column=0, sticky="ew")
+        # wraplength BẮT BUỘC: label không giới hạn bề ngang sẽ ĐÒI đúng bề ngang của
+        # chữ; cột trái để weight=0 nên nó phình theo → bảng bên phải co lại, cả giao
+        # diện "nhảy" mỗi lần tick tập (dòng trạng thái liệt kê tên các tập đang tick).
+        # 430 < minsize 460 của cột trái → chữ dài mấy cũng không đẩy được cột.
         ttk.Label(pf, textvariable=self.pipe_link_status,
-                  font=("Segoe UI", 10, "bold"), foreground=UI["accent"]).grid(
+                  font=("Segoe UI", 10, "bold"), foreground=UI["accent"],
+                  wraplength=430, justify="left").grid(
             row=1, column=0, sticky="w", pady=(4, 0))
-        ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
+        ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel",
+                  wraplength=430, justify="left").grid(
             row=2, column=0, sticky="w", pady=(2, 0))
         bctl = ttk.Frame(pf)
         bctl.grid(row=3, column=0, sticky="ew", pady=(8, 0))
@@ -3099,7 +3115,8 @@ class App(tk.Tk):
         self._batch_pause_widgets.append(b_pause)
         self._batch_stop_widgets.append(b_stop)
         ttk.Label(pf, textvariable=self.upload_status, style="Sub.TLabel",
-                  foreground=UI["accent"]).grid(row=4, column=0, sticky="w", pady=(2, 0))
+                  foreground=UI["accent"], wraplength=430, justify="left").grid(
+            row=4, column=0, sticky="w", pady=(2, 0))
 
         # ── Nhật ký ─────────────────────────────────────────────────────────────
         logf = ttk.LabelFrame(right, text="  Nhật ký  ")
@@ -3211,6 +3228,24 @@ class App(tk.Tk):
                         f"cần ⑤ (giọng+video): {need5}   •   dòng tô vàng = còn việc")
         self._recog_selection_hint()
 
+    @staticmethod
+    def _ep_list_short(names, max_chars: int = 22) -> str:
+        """Danh sách tên tập RÚT GỌN cho dòng trạng thái (nhật ký vẫn ghi đủ tên).
+
+        Liệt kê hết tên tập thì dòng trạng thái dài vô tận → label đòi bề ngang đúng
+        bằng chữ, kéo cả cột/cửa sổ rộng ra mỗi lần tick (giao diện nhảy). Cắt theo
+        SỐ KÝ TỰ (tên tập có thể là '01 - 95') để dòng luôn gói gọn trong 1 hàng."""
+        names = list(names)
+        out, used = [], 0
+        for n in names:
+            add = len(n) + (2 if out else 0)
+            if out and used + add > max_chars:
+                break
+            out.append(n)
+            used += add
+        rest = len(names) - len(out)
+        return ", ".join(out) + (f" …+{rest}" if rest > 0 else "")
+
     def _recog_selection_hint(self):
         """Ghi rõ ĐANG tick tập nào ra dòng trạng thái — để biết chắc bấm ②→⑤ sẽ
         chạy tập nào TRƯỚC khi bấm (không tick = chạy hết). Đang chạy thì không ghi
@@ -3219,7 +3254,7 @@ class App(tk.Tk):
             return
         eps = sorted(getattr(self, "_recog_checked", set()))
         if eps:
-            self.pipe_status.set(f"☑ Đang tick {len(eps)} tập: {', '.join(eps)} → "
+            self.pipe_status.set(f"☑ Đang tick {len(eps)} tập: {self._ep_list_short(eps)} → "
                                  "②→⑤ CHỈ chạy các tập này.")
         else:
             self.pipe_status.set("Chưa tick tập nào → ②→⑤ sẽ chạy HẾT tập đủ điều kiện.")
@@ -3261,9 +3296,10 @@ class App(tk.Tk):
 
     def _recog_log_preview(self, label: str, folders: list):
         """Xem trước: ghi danh sách tập SẼ chạy ra nhật ký + dòng trạng thái."""
-        names = ", ".join(f.name for f in folders)
-        logging.info(f"▶ {label}: sẽ chạy {len(folders)} tập → {names}")
-        self.pipe_status.set(f"▶ {label}: {len(folders)} tập → {names}")
+        names = [f.name for f in folders]
+        logging.info(f"▶ {label}: sẽ chạy {len(folders)} tập → {', '.join(names)}")
+        # Dòng trạng thái chỉ ghi vài tên đầu (danh sách đủ đã có trong nhật ký).
+        self.pipe_status.set(f"▶ {label}: {len(folders)} tập → {self._ep_list_short(names)}")
 
     def _recog_schedule_table_refresh(self):
         """Refresh bảng an toàn từ thread nền (đẩy về main thread)."""
@@ -3324,9 +3360,12 @@ class App(tk.Tk):
         threading.Thread(target=self._recog_translate_all_worker,
                          args=(folders,), daemon=True).start()
 
-    def _recog_translate_all_worker(self, folders):
+    def _recog_translate_all_worker(self, folders, chained=False):
         """Với mỗi tập đã nhận diện: dịch Gemini (bỏ qua nếu đủ) rồi tạo input.txt.
-        Dùng chung Firefox + hỗ trợ Tạm dừng/Dừng như batch. KHÔNG SEO/thumbnail/video."""
+        Dùng chung Firefox + hỗ trợ Tạm dừng/Dừng như batch. KHÔNG SEO/thumbnail/video.
+
+        chained=True → đang chạy trong chuỗi ⚡ (nút 'Chạy TIẾP các bước còn thiếu'):
+        KHÔNG nhả cờ busy/nút điều khiển ở finally — chuỗi ⚡ tự nhả khi xong hết."""
         driver = None
         total = len(folders)
         ok_count = 0
@@ -3402,8 +3441,9 @@ class App(tk.Tk):
                     driver.quit()
                 except Exception:
                     pass
-            self._pipe_set_busy(False)
-            self._batch_controls_reset()
+            if not chained:
+                self._pipe_set_busy(False)
+                self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
 
     # ── Bước ③: GỬI SEO (Gemini) cho MỌI tập đã dịch ─────────────────────────────
@@ -3445,10 +3485,11 @@ class App(tk.Tk):
         threading.Thread(target=self._recog_seo_all_worker,
                          args=(folders,), daemon=True).start()
 
-    def _recog_seo_all_worker(self, folders):
+    def _recog_seo_all_worker(self, folders, chained=False):
         """Với mỗi tập đã dịch: gửi SEO lên Gemini (bỏ qua nếu seoYoutube.docx đã có
         tiêu đề) → lưu youtube_seo.txt. Dùng CHUNG 1 Firefox cho mọi tập + hỗ trợ
-        Tạm dừng/Dừng như batch. Thumbnail do nút ④ lo."""
+        Tạm dừng/Dừng như batch. Thumbnail do nút ④ lo.
+        chained=True → chạy trong chuỗi ⚡, không nhả busy ở finally."""
         driver = None
         total = len(folders)
         ok_count = 0
@@ -3514,8 +3555,9 @@ class App(tk.Tk):
                     driver.quit()
                 except Exception:
                     pass
-            self._pipe_set_busy(False)
-            self._batch_controls_reset()
+            if not chained:
+                self._pipe_set_busy(False)
+                self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
 
     # ── Bước ④: TẠO THUMBNAIL (ngang + dọc) cho MỌI tập đã có SEO ────────────────
@@ -3548,9 +3590,10 @@ class App(tk.Tk):
         threading.Thread(target=self._recog_thumb_all_worker,
                          args=(folders,), daemon=True).start()
 
-    def _recog_thumb_all_worker(self, folders):
+    def _recog_thumb_all_worker(self, folders, chained=False):
         """Với mỗi tập đã có SEO: render thumbnail ngang + dọc (bỏ qua nếu đã đủ 2 bản)
-        → cập nhật số tập + manifest. Hỗ trợ Tạm dừng/Dừng."""
+        → cập nhật số tập + manifest. Hỗ trợ Tạm dừng/Dừng.
+        chained=True → chạy trong chuỗi ⚡, không nhả busy ở finally."""
         total = len(folders)
         ok_count = 0
         try:
@@ -3592,8 +3635,9 @@ class App(tk.Tk):
             logging.error(f"Lỗi thumbnail hàng loạt: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
-            self._pipe_set_busy(False)
-            self._batch_controls_reset()
+            if not chained:
+                self._pipe_set_busy(False)
+                self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
 
     # ── Bước ⑤: TẠO GIỌNG (clone) + VIDEO cho MỌI tập đã có input.txt ─────────────
@@ -3637,9 +3681,10 @@ class App(tk.Tk):
         threading.Thread(target=self._recog_make_video_all_worker,
                          args=(folders, tts_settings), daemon=True).start()
 
-    def _recog_make_video_all_worker(self, folders, tts_settings):
+    def _recog_make_video_all_worker(self, folders, tts_settings, chained=False):
         """Với mỗi tập: đọc input.txt → tạo giọng OmniVoice + dựng video vào thư mục tập
-        (tái dùng _batch_run_tts như chế độ nhiều link). Hỗ trợ Tạm dừng/Dừng."""
+        (tái dùng _batch_run_tts như chế độ nhiều link). Hỗ trợ Tạm dừng/Dừng.
+        chained=True → chạy trong chuỗi ⚡, không nhả busy ở finally."""
         total = len(folders)
         ok_count = 0
         try:
@@ -3672,8 +3717,9 @@ class App(tk.Tk):
             logging.error(f"Lỗi tạo giọng/video hàng loạt: {e}")
             self.pipe_status.set(f"Lỗi: {e}")
         finally:
-            self._pipe_set_busy(False)
-            self._batch_controls_reset()
+            if not chained:
+                self._pipe_set_busy(False)
+                self._batch_controls_reset()
             self._recog_schedule_table_refresh()   # cập nhật bảng trạng thái tab Nhận diện
 
     # ── ⑥ ĐĂNG YOUTUBE hàng loạt cho các tập đã dựng xong video ─────────────────
@@ -3725,8 +3771,9 @@ class App(tk.Tk):
         threading.Thread(target=self._recog_upload_all_worker,
                          args=(folders,), daemon=True).start()
 
-    def _recog_upload_all_worker(self, folders):
-        """Xếp hết vào hàng đợi đăng rồi chờ chạy xong (luồng đăng lo phần tải lên)."""
+    def _recog_upload_all_worker(self, folders, chained=False):
+        """Xếp hết vào hàng đợi đăng rồi chờ chạy xong (luồng đăng lo phần tải lên).
+        chained=True → chạy trong chuỗi ⚡, không nhả busy ở finally."""
         self._upload_done = 0
         try:
             logging.info("\n" + "═" * 10 +
@@ -3740,6 +3787,158 @@ class App(tk.Tk):
         except Exception as e:
             logging.error(f"Lỗi đăng YouTube hàng loạt: {e}")
             self.pipe_status.set(f"Lỗi đăng YouTube: {e}")
+        finally:
+            if not chained:
+                self._pipe_set_busy(False)
+                self._batch_controls_reset()
+            self._recog_schedule_table_refresh()
+
+    # ── ⚡ CHẠY TIẾP các bước còn thiếu (②→⑥) — 1 nút chạy trọn quy trình ─────────
+    # Tiêu chí "còn thiếu" của từng bước Y HỆT cột "cần ..." trong bảng trạng thái
+    # (_recog_refresh_table): dòng tô vàng cần gì thì nút ⚡ chạy đúng cái đó.
+    def _recog_need_translate(self) -> list:
+        """Tập cần ②: đã nhận diện (có *_zh.docx) mà CHƯA có input.txt."""
+        out = []
+        for p in self._recognized_folders():
+            inp = p / "input.txt"
+            try:
+                if not (inp.is_file() and inp.stat().st_size > 0):
+                    out.append(p)
+            except OSError:
+                out.append(p)
+        return out
+
+    def _recog_need_seo(self) -> list:
+        """Tập cần ③: đã dịch (gemini_result.docx) mà SEO chưa có tiêu đề thật."""
+        return [p for p in self._folders_with_gemini() if not self._recog_seo_ok(p)]
+
+    def _recog_need_thumb(self) -> list:
+        """Tập cần ④: đã có SEO mà chưa đủ 2 bản thumbnail (ngang + dọc)."""
+        return [p for p in self._folders_with_seo()
+                if self._thumb_count(p, episode_of(p.name)) < 2]
+
+    def _recog_need_video(self) -> list:
+        """Tập cần ⑤: đã có input.txt mà chưa có video nào (ngang/dọc/facebook)."""
+        return [p for p in self._folders_with_input()
+                if not any((p / n).is_file()
+                           for n in ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4"))]
+
+    def _recog_run_missing(self):
+        """Nút '⚡ Chạy TIẾP các bước còn thiếu': nhìn từng tập thiếu bước nào thì chạy
+        đúng bước đó, LẦN LƯỢT ②→⑤ (hỏi trước có kèm ⑥ đăng YouTube không). Danh sách
+        tập của mỗi bước TÍNH LẠI sau khi bước trước xong — tập vừa được ② dịch xong sẽ
+        được ③④⑤ làm nốt ngay trong cùng lượt bấm. Tập đã đủ thì bước đó tự bỏ qua."""
+        if self._pipe_busy:
+            return
+        # Chụp lại danh sách tick LÚC BẤM: đổi tick giữa chừng không ảnh hưởng lượt đang chạy.
+        sel = set(getattr(self, "_recog_checked", set()))
+
+        def _pick(folders):
+            return [f for f in folders if f.name in sel] if sel else list(folders)
+
+        n2 = len(_pick(self._recog_need_translate()))
+        n3 = len(_pick(self._recog_need_seo()))
+        n4 = len(_pick(self._recog_need_thumb()))
+        n5 = len(_pick(self._recog_need_video()))
+        scope = f"{len(sel)} tập đang tick" if sel else "TẤT CẢ tập trong kịch_bản/"
+        ans = messagebox.askyesnocancel(
+            "⚡ Chạy tiếp các bước còn thiếu",
+            f"Phạm vi: {scope}.\n"
+            f"Đang thiếu:  ② dịch+input: {n2}   •   ③ SEO: {n3}   •   "
+            f"④ thumbnail: {n4}   •   ⑤ giọng+video: {n5}\n"
+            "(tập vừa dịch xong ở ② sẽ được làm tiếp ③④⑤ trong cùng lượt này)\n\n"
+            f"Có kèm bước ⑥ ĐĂNG YOUTUBE khi xong không?\n"
+            f"• Yes  = chạy ②→⑤ rồi TỰ ĐĂNG các tập đủ điều kiện (hẹn {upload_slots_text()}, "
+            "KHÔNG hỏi lại từng tập)\n"
+            "• No   = chỉ chạy ②→⑤, không đăng\n"
+            "• Cancel = không chạy gì cả")
+        if ans is None:
+            return
+        include_upload = bool(ans)
+        # Kiểm tra đăng nhập YouTube NGAY (main thread) — token hỏng thì hỏi lúc còn
+        # ngồi đây, đừng để nửa đêm chuỗi ⚡ đứng im chờ đăng nhập.
+        if include_upload and not self._upload_check_ready():
+            self.pipe_status.set("⛔ Chưa sẵn sàng đăng YouTube — bấm ⚡ lại, hoặc chọn No để bỏ ⑥.")
+            return
+        # Cài đặt giọng/video đọc từ tk.Var → phải lấy trên MAIN THREAD ngay bây giờ.
+        # ② có thể tạo input.txt mới nên dù n5=0 vẫn có thể tới ⑤ → cứ đòi hợp lệ khi
+        # có khả năng chạy ⑤; chỉ ③/④ thì cho qua (⑤ sẽ bị bỏ nếu thiếu cài đặt).
+        tts_settings = self._collect_tts_settings() if (n2 or n5) else None
+        if (n2 or n5) and tts_settings is None:
+            return   # cấu hình sai (đã hiện cảnh báo trong _collect_tts_settings)
+
+        self._save_pipe_settings()
+        self._pipe_set_busy(True)
+        self._batch_pause_evt.clear()
+        self._batch_stop_evt.clear()
+        self._batch_running = True
+        self._set_batch_pause_btns(state="normal", text="⏸  Tạm dừng")
+        self._set_batch_stop_btns(state="normal")
+        self.pipe_progress.set(0)
+        self.pipe_link_status.set("⚡ Bắt đầu chạy tiếp các bước còn thiếu...")
+        threading.Thread(target=self._recog_run_missing_worker,
+                         args=(sel, tts_settings, include_upload), daemon=True).start()
+
+    def _recog_run_missing_worker(self, sel, tts_settings, include_upload):
+        """Chạy LẦN LƯỢT ②→⑤(→⑥) bằng chính các worker của từng nút (chained=True →
+        chúng không nhả busy; chuỗi này nhả 1 lần ở cuối). Trước mỗi bước tính lại
+        danh sách tập còn thiếu; Tạm dừng/Dừng tác dụng ở ranh giới tập VÀ bước."""
+        def _pick(folders):
+            return [f for f in folders if f.name in sel] if sel else list(folders)
+
+        ran = []
+        try:
+            logging.info("\n" + "═" * 10 + " ⚡ CHẠY TIẾP CÁC BƯỚC CÒN THIẾU " + "═" * 10)
+            steps = [
+                ("② Dịch + input.txt", self._recog_need_translate,
+                 lambda fs: self._recog_translate_all_worker(fs, chained=True)),
+                ("③ Gửi SEO", self._recog_need_seo,
+                 lambda fs: self._recog_seo_all_worker(fs, chained=True)),
+                ("④ Tạo thumbnail", self._recog_need_thumb,
+                 lambda fs: self._recog_thumb_all_worker(fs, chained=True)),
+                ("⑤ Tạo giọng + video", self._recog_need_video,
+                 lambda fs: self._recog_make_video_all_worker(fs, tts_settings, chained=True)),
+            ]
+            if include_upload:
+                # Đã _upload_check_ready ở nút bấm (cache kênh còn mới) + người dùng
+                # đã chọn Yes → không hỏi lại từng tập như nút ⑥ rời.
+                steps.append(("⑥ Đăng YouTube", self._folders_ready_to_upload,
+                              lambda fs: self._recog_upload_all_worker(fs, chained=True)))
+
+            stopped = False
+            for label, compute, run in steps:
+                self._batch_pause_wait()
+                if self._batch_stop_evt.is_set():
+                    stopped = True
+                    break
+                if label.startswith("⑤") and tts_settings is None:
+                    # Chỉ xảy ra khi lúc bấm không có gì cần ②/⑤ nhưng giữa chừng lại
+                    # phát sinh (hiếm) — thiếu cài đặt giọng thì đành bỏ bước này.
+                    logging.warning("⚠️ Bỏ qua ⑤: chưa lấy cài đặt giọng/video ở lúc bấm nút.")
+                    continue
+                folders = _pick(compute())
+                if not folders:
+                    logging.info(f"♻ {label}: không tập nào thiếu — bỏ qua.")
+                    continue
+                self.pipe_progress.set(0)
+                self._recog_log_preview(f"⚡ {label}", folders)
+                run(folders)   # worker tự lo Tạm dừng/Dừng + log từng tập
+                ran.append(f"{label}: {len(folders)} tập")
+
+            done = " · ".join(ran) if ran else "không có bước nào thiếu"
+            if stopped:
+                logging.info(f"⏹ ĐÃ DỪNG chuỗi ⚡ — đã chạy: {done}.")
+                self.pipe_link_status.set("⏹ Đã dừng chuỗi ⚡ theo yêu cầu.")
+                self.pipe_status.set(f"⏹ Chuỗi ⚡ dừng — đã chạy: {done}.")
+            else:
+                logging.info(f"🎉 ⚡ XONG chuỗi — đã chạy: {done}.")
+                self.pipe_link_status.set("✅ ⚡ Xong: đã chạy hết các bước còn thiếu.")
+                self.pipe_status.set(f"✅ ⚡ Đã chạy: {done}.")
+        except Exception as e:
+            import traceback
+            logging.error(f"Lỗi chuỗi ⚡: {e}")
+            logging.error(traceback.format_exc())
+            self.pipe_status.set(f"Lỗi chuỗi ⚡: {e}")
         finally:
             self._pipe_set_busy(False)
             self._batch_controls_reset()
@@ -4575,17 +4774,26 @@ class App(tk.Tk):
         # Dòng ĐANG CHẠY LINK MẤY — luôn hiển thị (không bị các thông báo bước con
         # ghi đè) ngay dưới thanh tiến trình.
         self.pipe_link_status = tk.StringVar(value="")
-        ttk.Label(pf, textvariable=self.pipe_link_status,
-                  font=("Segoe UI", 10, "bold"), foreground=UI["accent"]).grid(
-            row=1, column=0, sticky="w", pady=(4, 0))
+        lb_link = ttk.Label(pf, textvariable=self.pipe_link_status,
+                            font=("Segoe UI", 10, "bold"), foreground=UI["accent"],
+                            justify="left")
+        lb_link.grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.pipe_status = tk.StringVar(value="Sẵn sàng.")
-        ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(2, 0))
+        lb_stt = ttk.Label(pf, textvariable=self.pipe_status, style="Sub.TLabel",
+                           justify="left")
+        lb_stt.grid(row=2, column=0, sticky="w", pady=(2, 0))
         # Dòng RIÊNG cho việc đăng YouTube: nó chạy song song với dựng video nên
         # không được dùng chung pipe_status (hai bên sẽ ghi đè lẫn nhau).
         self.upload_status = tk.StringVar(value="")
-        ttk.Label(pf, textvariable=self.upload_status, style="Sub.TLabel",
-                  foreground=UI["accent"]).grid(row=4, column=0, sticky="w", pady=(2, 0))
+        lb_up = ttk.Label(pf, textvariable=self.upload_status, style="Sub.TLabel",
+                          foreground=UI["accent"], justify="left")
+        lb_up.grid(row=4, column=0, sticky="w", pady=(2, 0))
+        # Ba dòng trạng thái này dùng CHUNG biến với tab '🎧 Nhận diện' (②→⑤ ghi vào
+        # đây). Label không wraplength thì đòi bề ngang đúng bằng chữ → cột quy trình
+        # nở ra theo câu trạng thái, nhìn như giao diện bị nhảy. wraplength đặt lại
+        # theo kiểu dàn trang ở _pipeline_set_layout (dọc hẹp ở Home / ngang rộng ở
+        # tab Tạo kịch bản).
+        self._pipe_status_labels = (lb_link, lb_stt, lb_up)
 
         # ── Điều khiển batch NHIỀU LINK: Tạm dừng/Tiếp tục + Xong link này rồi dừng ──
         # CHỈ hiện ở tab "Tạo kịch bản" (view script) — ẩn ở Home cho đỡ chật (do
@@ -4690,7 +4898,8 @@ class App(tk.Tk):
                   getattr(self, "recog_seo_btn", None),
                   getattr(self, "recog_thumb_btn", None),
                   getattr(self, "recog_tts_btn", None),
-                  getattr(self, "recog_upload_btn", None)):
+                  getattr(self, "recog_upload_btn", None),
+                  getattr(self, "recog_chain_btn", None)):
             if b is not None:
                 b.config(state=state)
         # Mọi luồng dài (batch nhiều link, các bước ①②③④⑤) đều đi qua đây khi kết

@@ -139,6 +139,33 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
     return steps, ""
 
 
+def resume_steps(missing: list[str], source: str, episode: str,
+                 upload: bool = False) -> tuple[list[Step], str]:
+    """MỘT bước chạy LIỀN MẠCH các bước còn thiếu của một tập → (Step, lỗi).
+
+    Gộp cả chuỗi vào một lần gọi runner (--steps "a,b,c") thay vì mỗi bước một
+    tiến trình: dịch → SEO dùng chung một phiên Firefox (mở hai lần thì phiên sau
+    vấp profile đang khoá), và tập chạy trọn vẹn không bị việc khác chen ngang.
+    """
+    if not missing:
+        return [], f"Tập {episode}: không còn bước nào thiếu."
+    argv = _base_argv(",".join(missing), source, episode, force=False)
+    on_success = None
+    if "tts" in missing:
+        tts_json, err = _write_tts_json()
+        if err:
+            return [], err
+        argv += ["--tts-json", tts_json]
+        if upload:
+            # Số tập đã biết sẵn (chạy tiếp thư mục có rồi) → nối thẳng việc đăng,
+            # không cần đi vòng qua file --episode-out như lúc nguồn là link mới.
+            on_success = lambda ep=episode: queue_upload(ep)    # noqa: E731
+    label = "⏩ " + " → ".join(SINGLE_STEPS.get(k, k) for k in missing)
+    return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
+                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,),
+                 on_success=on_success)], ""
+
+
 def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = False,
               reuse: bool = False, rebuild: str = "", episode: str = "") -> tuple[list[Step], str]:
     """Bước cho trang “Giọng nói”: chạy TTS thủ công hoặc dựng lại một loại video."""

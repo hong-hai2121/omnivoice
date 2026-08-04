@@ -255,6 +255,20 @@ def folder_steps(folder, episode: str) -> dict:
     }
 
 
+def missing_steps(steps: dict) -> list[str]:
+    """Các bước runner CÒN THIẾU của 1 tập, đúng thứ tự chạy — cho nút ⏩ Chạy tiếp
+    (bản web của '▶ Chạy tiếp tập đang chọn' bên GUI). Nhận dict của folder_steps.
+
+    "tts" gộp giọng + video: chỉ cần thiếu audio HOẶC video ngang là phải chạy lại
+    bước đó — _batch_run_tts tự dùng lại phần đã có, chỉ render phần thiếu.
+    """
+    out = [k for k in ("recognize", "translate", "input", "seo", "thumbnail")
+           if not steps.get(k)]
+    if not (steps.get("audio") and steps.get("video_ngang")):
+        out.append("tts")
+    return out
+
+
 def episode_rows() -> list[dict]:
     """Mọi tập trong kịch_bản/ kèm trạng thái từng bước + nguồn (từ manifest)."""
     manifest = gui.load_manifest()

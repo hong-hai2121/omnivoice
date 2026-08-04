@@ -39,6 +39,7 @@
     <div class="panel">
       <div class="phead"><h2>Chạy cho những tập đã tick</h2></div>
       <div class="actions col">
+        <button class="primary" name="action" value="resume">⏩ Chạy tiếp các bước còn thiếu</button>
         <button name="action" value="translate">🌐 ② Dịch + tạo input.txt</button>
         <button name="action" value="seo">🔎 ③ Gửi SEO (Gemini)</button>
         <button name="action" value="thumbnail">🖼 ④ Tạo thumbnail (ngang + dọc)</button>
@@ -48,8 +49,10 @@
       <div class="chks">
         <label class="chk"><input type="checkbox" name="force"> Làm lại cả bước đã có kết quả</label>
       </div>
-      <p class="hint">Không tick tập nào = chạy hết tập đủ điều kiện.
-         Bước ② và ③ điều khiển Firefox — đóng Firefox đang mở trước khi chạy.</p>
+      <p class="hint">⏩ tự dò tập đang dở (vd đã dịch xong) rồi chạy nốt các bước
+         còn thiếu theo đúng thứ tự, mỗi tập một việc — không tick thì chạy mọi tập
+         còn việc. Các nút ②–⑥ chạy đúng một bước; không tick = chạy hết tập đủ
+         điều kiện. Bước dịch/SEO điều khiển Firefox — đóng Firefox trước khi chạy.</p>
     </div>
   </div>
 

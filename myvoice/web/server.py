@@ -472,10 +472,54 @@ def partial_recog_table(request: Request):
         {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS})
 
 
+def _run_resume(request: Request, form) -> RedirectResponse:
+    """Nút ⏩ Chạy tiếp: mỗi tập MỘT việc chạy liền mạch ĐÚNG các bước còn thiếu
+    (vd tập dịch xong rồi thì chỉ chạy input → SEO → thumbnail → giọng + video).
+    Bản web của '▶ Chạy tiếp tập đang chọn' bên GUI, nhưng chạy được nhiều tập."""
+    picked = [str(e) for e in form.getlist("tap")]
+    rows = core.episode_rows()
+    if picked:
+        targets = [r for r in rows if r["episode"] in picked]
+    else:
+        targets = [r for r in rows if r["done_count"] < r["total_steps"]]
+        log(f"ℹ️ Không tick tập nào → chạy tiếp {len(targets)} tập còn việc.")
+
+    # Tôn trọng ô '⬆ tự động đăng' của quy trình: bật thì dựng xong video là nối
+    # việc đăng, y như chuỗi ①→③. Chưa đăng nhập được thì vẫn dựng, chỉ báo lý do.
+    upload = bool(core.load_pipeline().get("upload"))
+    if upload and not _upload_ready():
+        upload = False
+
+    steps_mod.cleanup_tmp()
+    queued = 0
+    for r in sorted(targets, key=lambda r: int(r["episode"])):
+        missing = core.missing_steps(r["steps"])
+        if not missing:
+            continue
+        if "recognize" in missing and not r["source"]:
+            log(f"⚠️ Tập {r['episode']}: chưa có bản nhận diện mà không rõ link gốc "
+                "→ dán lại link vào ô nhận diện để chạy tập này.")
+            continue
+        built, err = steps_mod.resume_steps(missing, r["source"], r["episode"],
+                                            upload=upload)
+        if err:
+            log(f"⛔ {err}")
+            continue
+        runner.enqueue(f"Tập {r['episode']} — ⏩ chạy tiếp "
+                       f"({len(missing)} bước thiếu)", built)
+        queued += 1
+    if not queued:
+        log("✅ Không có tập nào cần chạy tiếp — các tập đã đủ bước.")
+    return _back(request, "/nhandien")
+
+
 @app.post("/nhandien")
 async def run_recog(request: Request):
     form = await request.form()
     action = str(form.get("action", ""))
+    if action == "resume":
+        _save_model_speed(form)      # nhớ model + tốc độ như các nút khác
+        return _run_resume(request, form)
     if action not in _BATCH_BUTTONS:
         return _back(request, "/nhandien")
 
