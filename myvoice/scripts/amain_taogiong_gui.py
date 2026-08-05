@@ -650,6 +650,52 @@ TAIL_SILENCE_SEC = 0.7
 # Thời gian fade-out NHẠC NỀN ở cuối bản trộn (giây).
 BGM_FADE_OUT_SEC = 3.0
 
+# ── CHUẨN HOÁ ÂM LƯỢNG ───────────────────────────────────────────────────────
+# Giọng clone nghe "lúc to lúc nhỏ". Đo trên 6 tập đã dựng thì thủ phạm KHÔNG
+# phải chuyện đoạn nọ to hơn đoạn kia (các chunk chỉ lệch nhau 1,6–2,9 dB) mà là
+# CÂU nọ to hơn CÂU kia trong cùng một đoạn: mức từng câu trải 3,7–3,9 dB
+# (p5–p95), cực trị chênh nhau tới 11 dB. Nên xử lý 3 lớp:
+#   ① CÂN ĐOẠN (numpy, lúc ghép chunk) — kéo mọi đoạn về cùng mức rồi đặt cả bài
+#      vào một mốc RMS cố định, để ngưỡng của lớp ② luôn ăn đúng chỗ.
+#   ② NÉN GIỮA CÁC CÂU (ffmpeg acompressor) — lớp trị đúng bệnh: câu to bị ghìm
+#      lại, câu nhỏ nổi lên.
+#   ③ CHUẨN R128 (ffmpeg loudnorm 2 lượt) — đưa cả file về mức phát hành chuẩn.
+# Cả giọng lẫn bản trộn đều để -14 LUFS: đó đúng là mốc YouTube/TikTok/Facebook
+# kéo mọi video về. Nộp sẵn đúng mốc thì nền tảng không hạ mà cũng không phải
+# nâng, video này so với video khác nghe đều nhau.
+# (-16 LUFS là mốc của podcast/Spotify — để mức đó thì lên YouTube nghe nhỏ hơn
+# video người khác 2 dB, nên KHÔNG dùng ở đây.)
+# Đặt None để TẮT lớp ③.
+VOICE_LUFS   = -14.0   # audio giọng (output.wav và mọi bản cắt/tăng tốc từ nó)
+MIX_LUFS     = -14.0   # bản trộn giọng + nhạc nền
+TRUE_PEAK_DB = -1.5    # chừa 1.5dB đỉnh thật, tránh méo khi nén AAC lúc dựng video
+LOUDNORM_LRA = 11.0    # dải động cho phép (mức khuyến nghị của EBU cho lời nói)
+# Trần kéo mỗi đoạn khi cân ở lớp ① (dB). Đoạn lệch hơn mức này gần như luôn là
+# đoạn generate lỗi — kéo hết cỡ chỉ tổ khuếch đại tiếng ồn nền.
+CHUNK_GAIN_MAX_DB = 12.0
+# Mốc RMS (dBFS) của phần CÓ TIẾNG sau khi cân đoạn. Ngưỡng bộ nén ở lớp ② tính
+# theo mức tuyệt đối, nên phải đặt bài nào cũng vào đúng một mốc thì nén mới ăn
+# đều; -18 dBFS còn chừa dư đỉnh cho những chữ bật mạnh.
+SPEECH_RMS_DBFS = -18.0
+# Lớp ②, ba khâu nối tiếp:
+#   • acompressor — nén CHẬM và NHẸ: ngưỡng thấp hơn mốc trên 2dB, tỉ lệ 2,5:1,
+#     ra/vào chậm (50ms/400ms) nên nó bám theo mức của CẢ CÂU chứ không ghìm
+#     từng âm tiết. Đo trên 5 phút giữa tập 38: dải mức giữa các câu 3,9 → 2,1 dB,
+#     max-min 6,3 → 3,6 dB, mà nhấn nhá TRONG câu gần như nguyên vẹn (3,7 → 3,6).
+#     (Đã thử dynaudnorm và speechnorm: dynaudnorm bám theo ĐỈNH nên còn làm dải
+#     mức giữa các câu RỘNG THÊM 3,9 → 4,4 dB; speechnorm chỉ xuống 3,2 dB.)
+#   • volume=9dB — nén xong thì cả bài tụt xuống ≈ -23 LUFS, nâng lại đúng 9dB
+#     là về sát -14. Con số cố định được vì đầu vào luôn ở mốc SPEECH_RMS_DBFS.
+#   • alimiter — attack 50ms của bộ nén cố tình cho tiếng bật (p, t, k) lọt qua
+#     để giọng không mất độ nảy, nhưng chính mấy tiếng đó đội ĐỈNH lên. Bộ chặn
+#     gọt riêng chúng, nhờ vậy loudnorm ở lớp ③ đủ chỗ để chỉ nâng MỘT mức gain
+#     (chế độ Linear). Không có khâu này, loudnorm phải bung chế độ Dynamic —
+#     vẫn ra -14 LUFS nhưng gain chạy qua lại trong bài.
+# Đặt "" để tắt lớp ②.
+SPEECH_COMPRESSOR = ("acompressor=threshold=-20dB:ratio=2.5:attack=50:release=400,"
+                     "volume=9dB,"
+                     "alimiter=limit=-2dB:attack=5:release=50:level=disabled")
+
 
 def detect_spike(path: Path, sr: int) -> list[float]:
     """Trả về danh sách thời điểm (giây) bị spike, rỗng nếu OK."""
@@ -669,13 +715,146 @@ def detect_spike(path: Path, sr: int) -> list[float]:
     return [round(float(t) * _FRAME_MS / 1000, 2) for t in bad]
 
 
+def _speech_rms(data: np.ndarray, sr: int) -> float:
+    """Mức to của phần CÓ TIẾNG trong `data` (RMS, bỏ khoảng lặng). 0.0 nếu câm.
+
+    Lấy RMS trung bình cả đoạn thì đoạn nào nhiều khoảng nghỉ sẽ bị chấm là "nhỏ"
+    rồi kéo to lên oan. Nên chỉ tính trên các khung vượt 20% khung to nhất — đủ
+    để loại khoảng nghỉ giữa câu mà vẫn giữ được chữ nói nhẹ.
+    """
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+    frame = max(1, int(sr * _FRAME_MS / 1000))
+    n = len(data) // frame
+    if n < 1:
+        return float(np.sqrt(np.mean(data ** 2))) if len(data) else 0.0
+    rms = np.sqrt(np.mean(data[:n * frame].reshape(n, frame).astype("float64") ** 2, axis=1))
+    gate = float(np.percentile(rms, 95)) * 0.2
+    speech = rms[rms >= gate]
+    if speech.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(speech ** 2)))
+
+
+def _balance_chunk_levels(parts: list, sr: int) -> list:
+    """Kéo mọi đoạn về CÙNG mức to trước khi ghép — hết cảnh đoạn to đoạn nhỏ.
+
+    Mốc là TRUNG VỊ mức tiếng nói của cả bài (không phải trung bình): vài đoạn
+    lỗi to/nhỏ bất thường sẽ không kéo lệch mốc của toàn bài. Mỗi đoạn chỉ được
+    chỉnh tối đa ±CHUNK_GAIN_MAX_DB, và không bao giờ kéo tới mức vỡ tiếng.
+
+    Xong thì kéo CẢ BÀI về mốc SPEECH_RMS_DBFS (một mức gain chung cho tất cả,
+    không đổi tương quan giữa các đoạn) — bước này để bộ nén ở sau luôn nhận
+    được đầu vào cùng một mức, bài nào cũng nén y như bài nào.
+
+    Chỉ đổi ÂM LƯỢNG tổng của từng đoạn, không đụng gì bên trong đoạn → nhấn nhá
+    trong câu giữ nguyên, không có tiếng "bơm" như khi nén động.
+    """
+    levels = [_speech_rms(p, sr) for p in parts]
+    ok = [lv for lv in levels if lv > 1e-4]
+    if len(ok) < 2:
+        return parts
+    target = float(np.median(ok))
+    lim = 10 ** (CHUNK_GAIN_MAX_DB / 20)
+    out, gains = [], []
+    for p, lv in zip(parts, levels):
+        if lv <= 1e-4:                       # đoạn câm: để nguyên, kéo chỉ ra tiếng ồn
+            out.append(p)
+            continue
+        g = min(max(target / lv, 1 / lim), lim)
+        peak = float(np.max(np.abs(p))) if p.size else 0.0
+        if peak * g > 0.99:                  # không để vỡ tiếng sau khi kéo
+            g = 0.99 / peak
+        out.append((p * g).astype("float32", copy=False))
+        gains.append(20 * float(np.log10(max(g, 1e-6))))
+    if gains:
+        logging.info(f"🔊 Cân âm lượng {len(gains)} đoạn về cùng mức "
+                     f"(chỉnh {min(gains):+.1f} … {max(gains):+.1f} dB).")
+
+    # Đưa cả bài về mốc cố định, nhưng không bao giờ để chạm trần 0dBFS.
+    g_all = 10 ** (SPEECH_RMS_DBFS / 20) / max(target, 1e-6)
+    peak_all = max((float(np.max(np.abs(p))) for p in out if p.size), default=0.0)
+    if peak_all * g_all > 0.97:
+        g_all = 0.97 / peak_all
+    if abs(20 * np.log10(max(g_all, 1e-6))) > 0.05:
+        out = [(p * g_all).astype("float32", copy=False) for p in out]
+        logging.info(f"🔊 Đặt cả bài về mốc {SPEECH_RMS_DBFS:g} dBFS "
+                     f"({20 * np.log10(g_all):+.1f} dB).")
+    return out
+
+
+# ── ĐỘ DÀI MỖI ĐOẠN, TÍNH THEO ÂM TIẾT TIẾNG VIỆT ────────────────────────────
+# OmniVoice sinh song song: nó CHỐT trước số token audio rồi mới nhồi chữ vào
+# đúng khung đó. Khung này để mặc định thì do RuleDurationEstimator đoán theo
+# TRỌNG SỐ KÝ TỰ (chữ cái latin 1.0, dấu câu 0.5, chữ số 3.5...). Nhưng thời
+# gian nói tiếng Việt phụ thuộc SỐ ÂM TIẾT chứ không phải số chữ cái: "nghiêng"
+# 7 chữ mà chỉ 1 âm tiết, "ừ" 1 chữ cũng 1 âm tiết. Nên đoạn nhiều từ dài bị
+# cho khung quá rộng (đọc lê thê), đoạn nhiều từ ngắn bị khung quá hẹp (đọc gấp)
+# → giọng lúc nhanh lúc chậm giữa các đoạn.
+#
+# Đo trên tập 38 (10 đoạn rải đều, cùng ngochuyen.mp3):
+#   để model tự đoán : 3.76–4.39 âm tiết/giây, lệch 17%
+#   tự tính bên dưới : 4.05–4.30 âm tiết/giây, lệch 6%
+# Ba hằng số đã hiệu chỉnh để nhịp đọc TRUNG BÌNH giữ nguyên như trước (~4.2
+# âm tiết/giây) — chỉ hết dao động, không làm audio dài/ngắn hơn tổng thể.
+# Muốn đọc chậm lại thì giảm VN_RATE, đọc nhanh hơn thì tăng.
+VN_RATE      = 4.65   # âm tiết/giây khi đang nói liên tục
+VN_PAUSE_MID = 0.112  # giây nghỉ thêm cho mỗi dấu , ; :
+VN_PAUSE_END = 0.262  # giây nghỉ thêm cho mỗi dấu . ! ?
+
+_VN_TOKEN    = re.compile(r'[0-9A-Za-zÀ-ỹà-ỹ]+')
+_VN_MID_RE   = re.compile(r'[,;:]')
+_VN_END_RE   = re.compile(r'[.!?]')
+# "26" đọc là "hai mươi sáu" — 2 chữ số thành 3 âm tiết. Đếm mỗi chữ số 1.5 âm
+# tiết để đoạn có số không bị khung quá hẹp rồi đọc vội/nuốt chữ.
+_VN_SYL_PER_DIGIT = 1.5
+
+
+def vn_duration(text: str):
+    """Số giây nên dành cho đoạn `text`, tính theo số âm tiết + số dấu câu.
+
+    Trả None khi đoạn không có âm tiết nào (chỉ dấu câu) — lúc đó để model tự
+    đoán như cũ, vì ép duration=0 sẽ lỗi.
+    """
+    syllables = 0.0
+    for tok in _VN_TOKEN.findall(text):
+        syllables += len(tok) * _VN_SYL_PER_DIGIT if tok.isdigit() else 1
+    if not syllables:
+        return None
+    return (syllables / VN_RATE
+            + len(_VN_MID_RE.findall(text)) * VN_PAUSE_MID
+            + len(_VN_END_RE.findall(text)) * VN_PAUSE_END)
+
+
+def _voice_prompt(model, ref_audio):
+    """VoiceClonePrompt dựng 1 lần rồi dùng lại cho mọi đoạn.
+
+    Gọi model.generate(ref_audio=...) sẽ dựng LẠI prompt cho TỪNG đoạn: đọc
+    mp3, cắt lặng, chạy Whisper large-v3-turbo phiên âm, mã hoá token. Bài 159
+    đoạn tức là chạy Whisper 159 lần cho đúng một file — đo được ~7s thừa mỗi
+    đoạn.
+    """
+    cache = getattr(model, "_vn_prompt_cache", None)
+    if cache is None:
+        cache = model._vn_prompt_cache = {}
+    if ref_audio not in cache:
+        cache[ref_audio] = model.create_voice_clone_prompt(ref_audio=ref_audio)
+        logging.info(f"🎙️  Đã dựng prompt giọng mẫu (dùng lại cho mọi đoạn): "
+                     f"{Path(str(ref_audio)).name}")
+    return cache[ref_audio]
+
+
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
 def _generate_chunk(model, mode, voice_param, chunk):
+    # language="vi": cả pipeline này chỉ sinh tiếng Việt, khai báo rõ giúp model
+    # phát âm chuẩn hơn là để chế độ đoán ngôn ngữ.
+    kw = {"language": "vi", "duration": vn_duration(chunk)}
     if mode == "clone":
-        return model.generate(text=chunk, ref_audio=voice_param)
+        return model.generate(text=chunk,
+                              voice_clone_prompt=_voice_prompt(model, voice_param), **kw)
     elif mode == "design":
-        return model.generate(text=chunk, instruct=voice_param)
-    return model.generate(text=chunk)
+        return model.generate(text=chunk, instruct=voice_param, **kw)
+    return model.generate(text=chunk, **kw)
 
 
 SPLIT_CHARS = re.compile(r'(?<=[.!?。！？\n])\s*')
@@ -953,6 +1132,139 @@ def _detect_peak_db(path: Path, ffmpeg: str, seconds: int = 150):
     return float(m.group(1)) if m else None
 
 
+def _measure_loudness(path: Path, ffmpeg: str, seconds: int | None = None,
+                      target: float = -16.0, pre_filter: str = ""):
+    """Đo độ to cảm nhận theo EBU R128 (lượt 1 của loudnorm).
+
+    Trả dict {input_i, input_tp, input_lra, input_thresh, target_offset} (đơn vị
+    LUFS/dBTP, kiểu float) hoặc None nếu không đo được. `seconds` giới hạn số giây
+    đầu đem đo — đủ dùng cho nhạc nền, còn giọng thì đo cả bài cho chuẩn.
+
+    `target` là mức LUFS mà lượt 2 sẽ nhắm tới: chỉ ảnh hưởng target_offset (số
+    hiệu chỉnh cho lượt 2), nên phải truyền đúng mức sẽ dùng ở lượt sau.
+
+    `pre_filter` là chuỗi filter chạy TRƯỚC loudnorm (vd bộ nén). Phải đo trên
+    tín hiệu ĐÃ qua filter đó, vì chính nó làm đổi độ to — đo bản chưa nén rồi
+    đem số đó chỉnh bản đã nén là lệch mức.
+
+    Vì sao LUFS mà không phải đỉnh (max_volume): đỉnh chỉ là một mẫu to nhất,
+    một tiếng "p" bật hơi cũng đội đỉnh lên trong khi cả bài vẫn nhỏ. LUFS đo
+    đúng cái tai nghe thấy.
+    """
+    import json
+    import subprocess
+    cmd = [ffmpeg, "-hide_banner", "-nostats"]
+    if seconds:
+        cmd += ["-t", str(seconds)]
+    cmd += ["-i", str(path), "-af",
+            (pre_filter + "," if pre_filter else "") +
+            f"loudnorm=I={target:g}:TP={TRUE_PEAK_DB:g}:LRA={LOUDNORM_LRA:g}:"
+            f"print_format=json", "-f", "null", "-"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", creationflags=CREATE_NO_WINDOW)
+    except OSError:
+        return None
+    # JSON nằm ở CUỐI stderr; lấy khối { } cuối cùng có chứa input_i.
+    blocks = re.findall(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr or "", re.S)
+    if not blocks:
+        return None
+    try:
+        raw = json.loads(blocks[-1])
+        d = {k: float(raw[k]) for k in
+             ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+    except (ValueError, KeyError, TypeError):
+        return None                       # file câm → "-inf"/"nan", float() ném lỗi
+    if any(not np.isfinite(v) for v in d.values()):
+        return None
+    return d
+
+
+def _loudnorm_file(src: Path, target_lufs, out: Path | None = None,
+                   label: str = "", pre_filter: str = "") -> Path:
+    """Đưa file audio về đúng mức to chuẩn `target_lufs` (LUFS) — loudnorm 2 lượt.
+
+    2 lượt = đo cả file trước rồi mới chỉnh, nên đúng mức ngay lần đầu (chạy 1
+    lượt thì loudnorm vừa nghe vừa dò, đầu file luôn lệch). Thêm linear=true để
+    cả file chỉ ăn MỘT mức gain duy nhất: giữ nguyên nhấn nhá, chỉ đổi to/nhỏ
+    tổng thể — khác hẳn nén động (dynaudnorm) vốn hay làm giọng bị "bơm".
+
+    `pre_filter` (vd SPEECH_COMPRESSOR) chạy trước loudnorm ở CẢ hai lượt, nên
+    san bằng câu và chuẩn mức gộp chung một lần chạy, không tốn thêm lượt nào.
+
+    out=None → ghi đè chính file nguồn. `target_lufs=None` hoặc đo/chỉnh lỗi →
+    giữ nguyên file cũ (không làm hỏng bước sau), trả về đường dẫn kết quả.
+    """
+    import shutil
+    import subprocess
+    src = Path(src)
+    out = Path(out) if out else src
+    if target_lufs is None:
+        return src
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        logging.warning("🔊 Không thấy ffmpeg → bỏ qua chuẩn hoá âm lượng.")
+        return src
+    name = label or src.name
+
+    d = _measure_loudness(src, ffmpeg, target=target_lufs, pre_filter=pre_filter)
+    if not d:
+        logging.warning(f"🔊 Không đo được độ to ({name}) → giữ nguyên âm lượng.")
+        return src
+
+    try:
+        sr = sf.info(str(src)).samplerate
+    except Exception:
+        sr = 44100
+    # loudnorm chạy nội bộ ở 192kHz; không ép -ar là file ra bị đổi tần số lấy mẫu.
+    filt = ((pre_filter + "," if pre_filter else "") +
+            f"loudnorm=I={target_lufs}:TP={TRUE_PEAK_DB}:LRA={LOUDNORM_LRA}:"
+            f"measured_I={d['input_i']:.2f}:measured_TP={d['input_tp']:.2f}:"
+            f"measured_LRA={d['input_lra']:.2f}:measured_thresh={d['input_thresh']:.2f}:"
+            f"offset={d['target_offset']:.2f}:linear=true:print_format=summary")
+    tmp = out.with_name(out.stem + "_chuanam.tmp.wav")
+    cmd = [ffmpeg, "-y", "-hide_banner", "-nostats", "-i", str(src),
+           "-af", filt, "-ar", str(sr), "-c:a", "pcm_s16le", str(tmp)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 4096:
+        tmp.unlink(missing_ok=True)
+        logging.warning(f"🔊 Chuẩn hoá âm lượng lỗi ({name}), giữ nguyên bản cũ: "
+                        f"{(r.stderr or '')[-200:]}")
+        return src
+    os.replace(tmp, out)
+    logging.info(f"🔊 Chuẩn âm {name}: {d['input_i']:.1f} → {target_lufs:.1f} LUFS "
+                 f"(đỉnh {TRUE_PEAK_DB:g} dBTP)")
+    return out
+
+
+def _chuan_am_neu_can(wav: Path, status_var=None) -> bool:
+    """Chuẩn hoá `wav` NẾU nó chưa đạt mức đích — dùng cho luồng ♻ dùng lại audio.
+    Trả True nếu có sửa file.
+
+    Không cần cờ đánh dấu, cứ ĐO rồi quyết: file đã qua chuẩn hoá thì độ to nằm
+    sát VOICE_LUFS (sai số < 0.7 LUFS) → bỏ qua. Nhờ vậy chạy lại bao nhiêu lần
+    cũng không nén chồng lên nhau (nén hai lần là giọng bẹt), mà tập cũ dựng từ
+    trước khi có tính năng này vẫn được chuẩn lại.
+    """
+    import shutil
+    wav = Path(wav)
+    if VOICE_LUFS is None or not wav.exists():
+        return False
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    d = _measure_loudness(wav, ffmpeg, seconds=300, target=VOICE_LUFS)
+    if d and abs(d["input_i"] - VOICE_LUFS) <= 0.7:
+        logging.info(f"🔊 {wav.name} đã đúng mức chuẩn ({d['input_i']:.1f} LUFS) "
+                     "→ không chỉnh lại.")
+        return False
+    if status_var is not None:
+        status_var.set("Đang chuẩn hoá âm lượng bản cũ...")
+    logging.info("🔊 Audio cũ chưa chuẩn âm lượng → chuẩn lại (nén câu + R128).")
+    return _loudnorm_file(wav, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR) == wav
+
+
 def _probe_duration(path: Path) -> float | None:
     """Độ dài file (giây) bằng ffprobe. None nếu không đo được."""
     import shutil
@@ -1066,13 +1378,18 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
 
 def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
                   out_wav: Path) -> Path:
-    """Trộn NHẠC NỀN vào giọng: nhạc được hạ để đỉnh nhỏ hơn đỉnh GIỌNG đúng
-    |below_db| dB (vd giọng -6dB, below=-12 → nhạc ≈ -18dB). Nhạc LẶP cho đủ dài,
-    fade-in 1s + fade-out cuối bài, cắt bằng độ dài giọng. Trả về out_wav (giữ
-    nguyên độ dài giọng).
+    """Trộn NHẠC NỀN vào giọng rồi CHUẨN HOÁ cả bản trộn về mức phát hành.
 
-    Đo đỉnh giọng + nhạc để tự tính gain → nhỏ hơn giọng ổn định dù nhạc to/nhỏ.
-    Đo lỗi thì lùi về giả định giọng -6dB / nhạc 0dB.
+    Nhạc được hạ xuống thấp hơn GIỌNG đúng |below_db| LUFS (vd giọng -16 LUFS,
+    below=-12 → nhạc ≈ -28 LUFS). Nhạc LẶP cho đủ dài, fade-in 1s + fade-out cuối
+    bài, cắt bằng độ dài giọng. Trả về out_wav (giữ nguyên độ dài giọng).
+
+    Cân theo LUFS chứ không theo đỉnh: nhạc có đỉnh cao mà nghe rất nhỏ là chuyện
+    thường (trống, tiếng gảy dây), lấy đỉnh làm mốc thì bài nào cũng ra một mức
+    nhạc khác nhau. Đo lỗi thì lùi về cách cũ (so đỉnh) chứ không bỏ nhạc.
+
+    Trộn ra file tạm 32-bit float (không có trần 0dBFS nên cộng hai nguồn không
+    thể vỡ tiếng), xong mới chuẩn về MIX_LUFS rồi ghi ra out_wav 16-bit.
 
     Fade-out CHỈ áp cho nhạc, KHÔNG áp cho giọng — nếu fade cả bản trộn thì câu
     kết bị nhỏ dần đi.
@@ -1084,13 +1401,23 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
         raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
     voice_wav, music_file, out_wav = Path(voice_wav), Path(music_file), Path(out_wav)
 
-    voice_peak = _detect_peak_db(voice_wav, ffmpeg)
-    music_peak = _detect_peak_db(music_file, ffmpeg)
-    if voice_peak is None:
-        voice_peak = -6.0                         # giọng OmniVoice chuẩn hoá ≈ -6dBFS
-    target_db = voice_peak + below_db             # đỉnh nhạc mong muốn (dưới giọng)
-    gain_db = (target_db - music_peak) if music_peak is not None else target_db
-    gain_db = min(gain_db, 0.0)                    # không khuếch đại nhạc vượt gốc
+    # Mốc so sánh: độ to cảm nhận (LUFS). Nhạc chỉ cần đo 5 phút đầu là đủ đại diện.
+    voice_l = _measure_loudness(voice_wav, ffmpeg)
+    music_l = _measure_loudness(music_file, ffmpeg, seconds=300)
+    if voice_l and music_l:
+        gain_db = (voice_l["input_i"] + below_db) - music_l["input_i"]
+        gain_db = max(-45.0, min(gain_db, 12.0))   # chặn hai đầu, tránh số vô lý
+        logging.info(f"🎼 Nhạc {music_l['input_i']:.1f} LUFS, giọng "
+                     f"{voice_l['input_i']:.1f} LUFS → chỉnh nhạc {gain_db:+.1f} dB")
+    else:
+        voice_peak = _detect_peak_db(voice_wav, ffmpeg)
+        music_peak = _detect_peak_db(music_file, ffmpeg)
+        if voice_peak is None:
+            voice_peak = -6.0                     # giọng OmniVoice chuẩn hoá ≈ -6dBFS
+        target_db = voice_peak + below_db         # đỉnh nhạc mong muốn (dưới giọng)
+        gain_db = (target_db - music_peak) if music_peak is not None else target_db
+        gain_db = min(gain_db, 0.0)               # không khuếch đại nhạc vượt gốc
+        logging.warning(f"🎼 Không đo được LUFS → cân nhạc theo đỉnh ({gain_db:+.1f} dB).")
 
     # Độ dài giọng = độ dài bản trộn (amix duration=first) → biết mốc bắt đầu fade.
     voice_sec = _probe_duration(voice_wav)
@@ -1104,14 +1431,27 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
     filt = (f"[1:a]volume={gain_db:.2f}dB,afade=t=in:d=1.0,{fade_out}"
             f"aresample=44100[bg];"
             f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[a]")
+    raw_mix = out_wav.with_name(out_wav.stem + "_tronthô.tmp.wav")
     cmd = [ffmpeg, "-y", "-i", str(voice_wav),
            "-stream_loop", "-1", "-i", str(music_file),   # lặp nhạc cho đủ dài
            "-filter_complex", filt, "-map", "[a]",
-           "-c:a", "pcm_s16le", str(out_wav)]
+           "-c:a", "pcm_f32le", str(raw_mix)]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", creationflags=CREATE_NO_WINDOW)
-    if r.returncode != 0 or not out_wav.exists():
+    if r.returncode != 0 or not raw_mix.exists():
+        raw_mix.unlink(missing_ok=True)
         raise RuntimeError(f"ffmpeg mix nhạc lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+
+    try:
+        # Bản trộn to hơn giọng trần (cộng thêm nhạc) → chuẩn lại lần cuối cho
+        # đúng mức nền tảng, đây mới là audio đi vào video.
+        done = _loudnorm_file(raw_mix, MIX_LUFS, out=out_wav, label=out_wav.name)
+        if done != out_wav:
+            os.replace(raw_mix, out_wav)          # chuẩn hoá lỗi → dùng bản trộn thô
+    finally:
+        raw_mix.unlink(missing_ok=True)
+    if not out_wav.exists():
+        raise RuntimeError("Không tạo được file trộn nhạc nền.")
     return out_wav
 
 
@@ -1266,6 +1606,13 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         if reuse_audio:
             logging.info(f"♻ Dùng lại audio đã có (bỏ qua tạo giọng): {output_path.name}")
             status_var.set(f"♻ Dùng audio đã có → {output_path.name}")
+            # Audio của các tập dựng bằng bản cũ chưa qua chuẩn hoá → chuẩn nốt,
+            # không thì tập cũ dựng lại vẫn to nhỏ thất thường. Chỉ đụng vào file
+            # còn LỆCH mức đích: file đã chuẩn rồi mà nén thêm lần nữa là bẹt giọng.
+            if _chuan_am_neu_can(output_path, status_var):
+                # Audio gốc vừa đổi mức → bản cắt/tăng tốc/trộn nhạc làm từ bản
+                # CŨ không còn khớp nữa, phải dựng lại từ bản vừa chuẩn.
+                reuse_derived = False
             progress_var.set(100)
             btn_preview.config(state="normal")
         else:
@@ -1350,6 +1697,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 for i in range(total)
             ]
 
+            # Cân âm lượng GIỮA các đoạn trước khi ghép (xem _balance_chunk_levels).
+            # Phải làm ở đây chứ không phải trên file đã ghép: sau khi ghép thì
+            # không còn biết ranh giới đoạn nào với đoạn nào nữa.
+            status_var.set("Đang cân âm lượng các đoạn...")
+            parts = _balance_chunk_levels(parts, sr)
+
             # Crossfade ngắn giữa các chunk để tránh click/vấp tại ranh giới
             fade = min(256, min(len(p) for p in parts) // 2)
             fade_in  = np.linspace(0, 1, fade, dtype="float32")
@@ -1368,6 +1721,14 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 [merged, np.zeros(int(TAIL_SILENCE_SEC * sr), dtype="float32")])
 
             sf.write(output, merged, sr)
+
+            # San bằng mức GIỮA CÁC CÂU + chuẩn độ to cả bài về mức phát hành.
+            # Làm NGAY tại đây vì mọi bản dẫn xuất (cắt 1/2, cắt TikTok, tăng
+            # tốc, trộn nhạc) đều lấy từ output.wav — chuẩn một lần ở gốc là cả
+            # dây chuyền chuẩn theo.
+            status_var.set("Đang chuẩn hoá âm lượng...")
+            _loudnorm_file(output_path, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
+
             progress_var.set(100)
             status_var.set(f"Xong!  →  {output}")
             logging.info(f"Đã lưu → {output}")
