@@ -248,7 +248,10 @@ def folder_steps(folder, episode: str) -> dict:
         "audio": (folder / "output.wav").exists(),
         "video_ngang": (folder / "YOUTUBE.mp4").exists()
                         or bool(list(folder.glob("*_videodone.mp4"))),
+        # "facebook <ngày giờ>.mp4": tên sau khi đăng YouTube (xem rename_doc) —
+        # thiếu nhánh này là tập đã đăng lại hiện "chưa có video dọc".
         "video_doc": (folder / "facebook.mp4").exists()
+                      or bool(list(folder.glob("facebook *.mp4")))
                       or bool(list(folder.glob("*_doc.mp4"))),
         # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
         "upload": (folder / "youtube_upload.json").exists(),

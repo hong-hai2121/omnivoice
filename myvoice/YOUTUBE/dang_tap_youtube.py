@@ -17,12 +17,19 @@ chỉ có MỘT nơi quy định.
 """
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
 RECORD_NAME = "youtube_upload.json"   # bản ghi lần đăng, nằm trong thư mục tập
 VIDEO_NAME = "YOUTUBE.mp4"            # bản NGANG — chỉ video này lên YouTube
 TIKTOK_NAME = "tiktok.mp4"            # bản dọc mồi, đăng TikTok bằng tay
+FACEBOOK_NAME = "facebook.mp4"        # bản dọc mồi, đăng Facebook bằng tay
+# Hai bản DỌC đều đăng tay, đều được đổi tên sau khi đăng — xem rename_doc().
+DOC_LABELS = {TIKTOK_NAME: "TikTok", FACEBOOK_NAME: "Facebook"}
+
+BAD_CHARS = '<>:"/\\|?*'   # Windows cấm các ký tự này trong tên file
+MAX_STEM = 120            # cắt tên cho đường dẫn không chạm giới hạn 260 của Windows
 
 # Cài đặt cho việc ĐĂNG TỰ ĐỘNG (quy trình tổng). Để file riêng, KHÔNG dùng chung
 # settings.json của app đăng tay — file đó nhớ cả tiêu đề/mô tả của lần đăng gần
@@ -96,30 +103,52 @@ def find_thumbnail(folder, episode):
     return None
 
 
-def rename_tiktok(folder, when, log):
-    """Đổi tên tiktok.mp4 → 'tiktok <ngày giờ YouTube>.mp4'. Trả về Path mới / None.
+def safe_stem(text: str) -> str:
+    """Một dòng chữ → phần tên file hợp lệ trên Windows (chưa có đuôi); '' nếu rỗng.
 
-    Video TikTok là bản MỒI trỏ về bản đầy đủ trên YouTube ("Full ở Mimi audio Số
-    N"), nên đăng TikTok phải canh theo lúc bản YouTube lên sóng. Giờ đó chỉ biết
-    được SAU khi đăng (mới xếp được khung giờ), nên gắn vào tên file ngay lúc này —
-    mở thư mục là thấy, khỏi phải tra lại từng video trên kênh.
-
-    Không có file (chưa bật tạo video TikTok) → bỏ qua im lặng.
+    '|' đổi thành '-' cho còn đọc được ('… Số 12 | Tên truyện' → '… Số 12 - Tên
+    truyện'); các ký tự cấm khác bỏ hẳn. Windows cũng không cho tên kết thúc bằng
+    '.' hoặc khoảng trắng nên cắt luôn.
     """
-    src = Path(folder) / TIKTOK_NAME
-    if not src.is_file():
+    stem = (text or "").replace("|", "-")
+    stem = "".join(c for c in stem if c not in BAD_CHARS and c >= " ")
+    stem = re.sub(r"\s{2,}", " ", stem).strip()
+    if len(stem) > MAX_STEM:
+        stem = stem[:MAX_STEM].rstrip()
+    return stem.rstrip(". ")
+
+
+def time_stem(name, when) -> str:
+    """Tên theo GIỜ BẢN YOUTUBE LÊN SÓNG: 'facebook 09-08-2026 18h00'.
+
+    Video dọc là bản MỒI trỏ về bản đầy đủ trên YouTube ("Full ở Mimi audio Số
+    N"), nên đăng tay phải canh theo lúc bản YouTube lên sóng. Giờ đó chỉ biết
+    được SAU khi đăng (mới xếp được khung giờ), nên gắn vào tên file ngay lúc này
+    — mở thư mục là thấy, khỏi phải tra lại từng video trên kênh.
+    """
+    # Windows cấm dấu ':' trong tên file → dùng '18h00'.
+    return f"{Path(name).stem} {when:%d-%m-%Y %Hh%M}"
+
+
+def rename_doc(folder, name, stem, log):
+    """Đổi tên video dọc <name> → '<stem>.mp4'. Trả về Path mới / None.
+
+    Không có file (chưa bật tạo video dọc đó) hoặc stem rỗng → bỏ qua im lặng.
+    """
+    src = Path(folder) / name
+    label = DOC_LABELS.get(name, src.stem)
+    if not src.is_file() or not stem:
         return None
-    # Windows cấm dấu ':' trong tên file → dùng '08h00'.
-    dst = src.with_name(f"tiktok {when:%d-%m-%Y %Hh%M}.mp4")
+    dst = src.with_name(f"{stem}.mp4")
     if dst.exists():
         log(f"⚠️ Đã có {dst.name} → giữ nguyên {src.name}.", "warn")
         return None
     try:
         src.rename(dst)
-        log(f"🎞 Video TikTok → {dst.name} (giờ bản YouTube lên sóng).", "info")
+        log(f"🎞 Video {label} → {dst.name}", "info")
         return dst
     except OSError as e:
-        log(f"⚠️ Không đổi được tên video TikTok: {e}", "warn")
+        log(f"⚠️ Không đổi được tên video {label}: {e}", "warn")
         return None
 
 
@@ -140,6 +169,7 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
     """Đăng video của 1 tập, hẹn giờ vào khung trống kế tiếp (08:00 / 18:00).
 
     blocks: {'title', 'desc', 'tags'} đã chuẩn hoá; 'tags' là chuỗi ngăn dấu phẩy.
+    'title_tiktok' (nếu có) dùng để đặt tên file video TikTok — xem rename_doc.
     log(msg, level): level dùng chung với dang_video_youtube ('info'/'warn'/'err'/'ok').
 
     Trả về bản ghi đã lưu (dict), hoặc None nếu BỎ QUA — đã đăng rồi, thiếu video,
@@ -204,10 +234,19 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
         "thumbnail_path": str(thumb) if thumb else None,
     }, log, progress_cb or (lambda _p: None))
 
-    # Gắn giờ bản YouTube lên sóng vào tên video TikTok. Chỉ làm được SAU khi đăng
-    # vì tới lúc đó mới biết khung giờ nào được xếp. Không hẹn giờ (công khai ngay /
-    # unlisted) thì lấy chính thời điểm đăng.
-    tiktok = rename_tiktok(folder, publish_local or datetime.now().astimezone(), log)
+    # Đổi tên hai bản dọc — chỉ làm được SAU khi đăng, vì tới lúc đó mới biết khung
+    # giờ nào được xếp. Không hẹn giờ (công khai ngay / unlisted) thì lấy chính thời
+    # điểm đăng.
+    #   • TikTok  → ĐÚNG tiêu đề SEO TikTok ('Full ở Mimi audio Số 12 - Tên truyện'),
+    #     đăng tay chỉ việc nhìn tên file mà điền. Chưa có tiêu đề thì lùi về tên
+    #     theo giờ, hơn là để nguyên tiktok.mp4.
+    #   • Facebook → theo giờ bản YouTube lên sóng, để trong thư mục vẫn còn một chỗ
+    #     nhìn ra lịch đăng.
+    live_at = publish_local or datetime.now().astimezone()
+    tiktok = rename_doc(folder, TIKTOK_NAME,
+                        safe_stem(blocks.get("title_tiktok")) or time_stem(TIKTOK_NAME, live_at),
+                        log)
+    facebook = rename_doc(folder, FACEBOOK_NAME, time_stem(FACEBOOK_NAME, live_at), log)
 
     rec = {
         "episode": ep,
@@ -221,6 +260,7 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
         "uploaded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "video_file": video.name,
         "tiktok_file": tiktok.name if tiktok else "",
+        "facebook_file": facebook.name if facebook else "",
         "thumbnail": thumb.name if thumb else "",
         "made_for_kids": bool(cfg.get("made_for_kids", False)),
         "contains_ai": bool(cfg.get("contains_ai", True)),
