@@ -1,3 +1,21 @@
+{# 🌙 Xong hết thì cho máy ngủ — để TRONG khối tự làm mới 2 giây/lần, nhờ vậy
+   đếm ngược hiện ngay tại đây. Bỏ tick là huỷ, kể cả lúc đang đếm. #}
+<form class="sleeprow" method="post" action="/hangdoi/ngu"
+      hx-post="/hangdoi/ngu" hx-target="#queue" hx-swap="innerHTML">
+  <label class="chk">
+    <input type="checkbox" name="on" value="1" {{ 'checked' if sleepq and sleepq.armed }}
+           onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+    🌙 Xong hết thì cho máy ngủ
+  </label>
+  <span class="spacer"></span>
+  <noscript><button class="ghost small">Lưu</button></noscript>
+  {% if sleepq and sleepq.counting %}
+    <span class="badge run">ngủ sau {{ sleepq.left }}</span>
+  {% elif sleepq and sleepq.armed %}
+    <span class="badge">chờ xong hết · rảnh {{ sleepq.delay_min }} phút thì ngủ</span>
+  {% endif %}
+</form>
+
 {% if q.paused %}<p class="warn">⏸ Hàng đợi đang tạm dừng — bấm “▶ Tiếp” để chạy tiếp.</p>{% endif %}
 
 {% if q.current %}

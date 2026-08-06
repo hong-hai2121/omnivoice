@@ -496,6 +496,9 @@ def tts_settings() -> tuple[dict | None, str]:
         tiktok_music=bool(opts.get("tiktok_music")),
         tiktok_music_db=_i(opts.get("tiktok_music_db"), -12, -40, 0),
         make_sub=bool(opts.get("make_sub")),
+        # Phụ đề video DỌC (facebook.mp4) — cùng kiểu/model/số ký tự với video
+        # ngang, khung 1080x1920 tự rút dòng ngắn lại (xem make_youtube_sub).
+        make_sub_doc=bool(opts.get("make_sub_doc")),
         sub_mode=opts.get("sub_mode") or SUB_MODE_SRT,
         sub_model=opts.get("sub_model") or "medium",
         sub_max_chars=_i(opts.get("sub_max_chars"), 50, 10, 200),

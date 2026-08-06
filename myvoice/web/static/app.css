@@ -402,6 +402,13 @@ audio { max-width: 100%; height: 36px; }
 .chip.done { background: var(--ok-bg); color: var(--ok); }
 #epnote:empty { display: none; }
 
+/* Hàng “🌙 Xong hết thì cho máy ngủ” — nằm trên cùng khối hàng đợi. */
+.sleeprow {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin: -2px 0 6px; padding-bottom: 8px; border-bottom: 1px dashed var(--line);
+}
+.sleeprow .chk { margin-left: -7px; }
+
 /* Hàng đợi ĐĂNG — chạy song song với hàng đợi chính, tách khối cho khỏi lẫn. */
 .uploadq { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .uploadq .colhead { margin-bottom: 4px; }

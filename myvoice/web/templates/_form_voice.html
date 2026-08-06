@@ -126,8 +126,14 @@
   </div>
 
   <div class="panel">
-    <div class="phead"><span class="num">5</span><h2>Phụ đề cho video ngang</h2></div>
-    <div class="chks">{{ chk('make_sub', 'Tạo phụ đề', opts) }}</div>
+    <div class="phead"><span class="num">5</span><h2>Phụ đề</h2></div>
+    {# Hai khung dùng CHUNG kiểu/model/độ dài dòng bên dưới — khung dọc tự rút
+       số ký tự/dòng xuống cho vừa 1080 (xem make_youtube_sub). TikTok cố ý
+       không có ô: nó mượn hình facebook.mp4 nhưng audio ngắn hơn → sub lệch. #}
+    <div class="chks">
+      {{ chk('make_sub', 'Video ngang (YouTube)', opts) }}
+      {{ chk('make_sub_doc', 'Video dọc (Facebook)', opts) }}
+    </div>
     <div class="grid">
       <label class="field">
         <span>Kiểu</span>

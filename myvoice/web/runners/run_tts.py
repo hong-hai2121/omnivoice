@@ -114,8 +114,11 @@ def main(argv=None) -> int:
                 make_video=(kind == "ngang"),
                 make_video_doc=(kind == "doc"),
                 make_tiktok=(kind == "tiktok"),
-                # Chỉ bản NGANG mới làm phụ đề — hai video kia không có, y như GUI.
+                # Mỗi nút "Dựng lại" chỉ làm phụ đề cho chính khung của nó, y như
+                # GUI: ngang → phụ đề ngang, dọc → phụ đề khung dọc. TikTok cố ý
+                # KHÔNG có (nó mượn hình của facebook.mp4 nhưng audio ngắn hơn).
                 make_sub=(kind == "ngang" and ts.get("make_sub", False)),
+                make_sub_doc=(kind == "doc" and ts.get("make_sub_doc", False)),
                 **common)
         else:
             if args.from_gemini and not app._prepare_input_from_gemini():
@@ -138,6 +141,7 @@ def main(argv=None) -> int:
                 make_video_doc=ts.get("make_video_doc", False),
                 make_tiktok=ts.get("make_tiktok", False),
                 make_sub=ts.get("make_sub", False),
+                make_sub_doc=ts.get("make_sub_doc", False),
                 **common)
         if status.get():
             logging.info(status.get())

@@ -28,7 +28,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     __package__ = "myvoice.web"
 
-from . import core, steps as steps_mod          # noqa: E402
+from . import core, power, steps as steps_mod   # noqa: E402
 from .jobs import log, runner, upload_runner    # noqa: E402
 
 WEB_DIR = core.WEB_DIR
@@ -79,6 +79,9 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     # Hàng đợi ĐĂNG chạy song song với hàng đợi chính nên trang nào cũng cần thấy.
     ctx.setdefault("qu", upload_runner.state())
     ctx.setdefault("slots", core.upload_slots_text())
+    # Ô "🌙 Xong hết thì cho máy ngủ" nằm trong khối hàng đợi → trang nào có khối
+    # đó cũng cần trạng thái này.
+    ctx.setdefault("sleepq", power.watcher.state())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -187,8 +190,9 @@ def page_script(request: Request):
 def _save_pipe_from_form(form) -> dict:
     """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
 
-    KHÔNG đụng khoá "shutdown": trang web không có ô “xong thì tắt máy” nên nó
-    không có quyền quyết định — ghi đè mỗi lần chạy là âm thầm tắt cài đặt của GUI.
+    KHÔNG đụng hai khoá "shutdown"/"sleep": trang web không có ô “xong thì tắt máy”,
+    còn ô “🌙 xong thì cho máy ngủ” của nó chỉ nhớ trong bộ nhớ server chứ không ghi
+    ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻/🌙 của GUI.
     """
     pipe = core.load_pipeline()
     for k in ("model", "speed"):
@@ -701,13 +705,19 @@ def episode_thumbnail_doc(episode: str):
 def api_state():
     """Trạng thái gọn dạng JSON — cho cửa sổ bật server (myvoice/chay.py) biết còn
     việc đang chạy không, phục vụ ô '⏻ Tự động tắt máy khi xong'. Chỉ coi là RẢNH
-    khi CẢ hàng đợi chính lẫn hàng đợi đăng YouTube đều hết việc."""
+    khi CẢ hàng đợi chính lẫn hàng đợi đăng YouTube đều hết việc.
+
+    Kèm luôn trạng thái chế độ ngủ: ô 🌙 bên cửa sổ đó chỉ là công tắc từ xa của ô 🌙
+    trên trang web, nên nó cần soi lại chỗ này để vẽ đúng tick + đếm ngược."""
     q = runner.state()
+    sleep = power.watcher.state()
     return {
         "busy": runner.busy(),
         "upload_busy": upload_runner.busy(),
         "current": (q.get("current") or {}).get("title", ""),
         "pending": len(q.get("pending") or []),
+        "sleep_armed": sleep["armed"],
+        "sleep_left": sleep["left"],
     }
 
 
@@ -715,7 +725,26 @@ def api_state():
 def partial_queue(request: Request):
     return templates.TemplateResponse(
         request, "_queue.html",
-        {"q": runner.state(), "qu": upload_runner.state()})
+        {"q": runner.state(), "qu": upload_runner.state(),
+         "sleepq": power.watcher.state()})
+
+
+@app.post("/hangdoi/ngu", response_class=HTMLResponse)
+async def queue_sleep(request: Request):
+    """Ô "🌙 Xong hết thì cho máy ngủ".
+
+    Form này CHỈ có mỗi ô đó, nên ở đây suy được "vắng mặt = bỏ tick" — điều
+    không làm được ở các form nhiều ô khác trong file này.
+
+    Trả thẳng khối hàng đợi (htmx thay tại chỗ) để tick xong thấy đếm ngược ngay,
+    không nhảy trang; trình duyệt tắt JS thì rơi về kiểu chuyển hướng như các nút
+    hàng đợi khác.
+    """
+    form = await request.form()
+    power.watcher.arm(bool(form.get("on")))
+    if request.headers.get("HX-Request"):
+        return partial_queue(request)
+    return _back(request)
 
 
 def _back(request: Request, fallback: str = "/") -> RedirectResponse:

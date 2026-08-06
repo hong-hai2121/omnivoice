@@ -14,7 +14,8 @@ thiếu fastapi/uvicorn/torch.
 Cửa sổ nhỏ (mặc định) tự bật server rồi ĐỢI bạn bấm nút mới mở trình duyệt — không
 tự mở như bản console. Đóng cửa sổ = tắt server (nếu server do cửa sổ này bật).
 Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào Thùng rác) ·
-⏻ tự động tắt máy khi hàng đợi web chạy xong.
+và hai chế độ khi hàng đợi web chạy xong hết — ⏻ tắt máy hoặc 🌙 cho máy ngủ
+(chọn một, tick cái này thì cái kia tự bỏ).
 """
 
 from __future__ import annotations
@@ -137,7 +138,10 @@ def _run_launcher(port: int) -> int:
     owner = False                      # server có phải do cửa sổ này bật không
     lines: "queue.Queue[str]" = queue.Queue()
     # Cờ dùng CHUNG với luồng nền — không đọc biến Tk ngoài luồng Tk (không an toàn).
-    flags = {"auto_shutdown": False, "saw_busy": False, "scheduled": False}
+    # sleep_armed/sleep_left: trạng thái chế độ ngủ ĐỌC VỀ TỪ SERVER (server mới là
+    # nơi giữ bộ đếm), luồng nền ghi vào đây rồi _sleep_sync bên luồng Tk đọc ra.
+    flags = {"auto_shutdown": False, "saw_busy": False, "scheduled": False,
+             "sleep_armed": None, "sleep_left": ""}
 
     root = tk.Tk()
     root.title("myvoice — bảng điều khiển web")
@@ -147,7 +151,7 @@ def _run_launcher(port: int) -> int:
     wrap = ttk.Frame(root, padding=12)
     wrap.pack(fill="both", expand=True)
     wrap.columnconfigure(0, weight=1)
-    wrap.rowconfigure(4, weight=1)          # hàng nhật ký giãn
+    wrap.rowconfigure(5, weight=1)          # hàng nhật ký giãn
 
     status = tk.StringVar(value="⏳ Đang bật server…")
     ttk.Label(wrap, textvariable=status, font=("Segoe UI", 11, "bold")).grid(
@@ -168,9 +172,13 @@ def _run_launcher(port: int) -> int:
     btn_quit = ttk.Button(btns, text="⏹  Tắt & thoát")
     btn_quit.pack(side="left", padx=(8, 0))
 
-    # ⏻ Tự động tắt máy: hỏi server 15 giây/lần, hàng đợi xong hết thì hẹn tắt máy.
+    # Hai chế độ "xong hết thì…", CHỌN MỘT (tick cái này thì cái kia tự bỏ):
+    #   ⏻ tắt máy  — cửa sổ này tự canh: hỏi server 15 giây/lần rồi hẹn `shutdown /s`.
+    #   🌙 cho ngủ — GIAO CHO SERVER: bảng web đã có sẵn bộ đếm (web/power.py), ở đây
+    #                chỉ bật/tắt hộ (POST /hangdoi/ngu) và soi lại trạng thái. Làm thêm
+    #                một bộ đếm thứ hai ở đây thì hai bên đá nhau.
     sd_row = ttk.Frame(wrap)
-    sd_row.grid(row=3, column=0, sticky="w", pady=(0, 8))
+    sd_row.grid(row=3, column=0, sticky="w", pady=(0, 2))
     var_shutdown = tk.BooleanVar(value=False)
     chk_shutdown = ttk.Checkbutton(
         sd_row, text=f"⏻  Tự động tắt máy khi chạy xong (sau {SHUTDOWN_DELAY_MIN} phút)",
@@ -179,11 +187,22 @@ def _run_launcher(port: int) -> int:
     ttk.Label(sd_row, text="huỷ: mở CMD gõ  shutdown /a",
               foreground="#888").pack(side="left", padx=(10, 0))
 
+    sl_row = ttk.Frame(wrap)
+    sl_row.grid(row=4, column=0, sticky="w", pady=(0, 8))
+    var_sleep = tk.BooleanVar(value=False)
+    chk_sleep = ttk.Checkbutton(
+        sl_row, text="🌙  Tự động cho máy NGỦ khi chạy xong",
+        variable=var_sleep, state="disabled")
+    chk_sleep.pack(side="left")
+    sleep_note = tk.StringVar(value="")
+    ttk.Label(sl_row, textvariable=sleep_note,
+              foreground="#888").pack(side="left", padx=(10, 0))
+
     log_box = tk.Text(wrap, height=10, wrap="word", state="disabled",
                       font=("Consolas", 9))
-    log_box.grid(row=4, column=0, sticky="nsew")
+    log_box.grid(row=5, column=0, sticky="nsew")
     scroll = ttk.Scrollbar(wrap, orient="vertical", command=log_box.yview)
-    scroll.grid(row=4, column=1, sticky="ns")
+    scroll.grid(row=5, column=1, sticky="ns")
     log_box.config(yscrollcommand=scroll.set)
 
     def log(msg: str) -> None:
@@ -213,7 +232,7 @@ def _run_launcher(port: int) -> int:
         url_var.set(_web_url(port))
         status.set(f"● Đang chạy — cổng {port}"
                    + ("" if owner else "  (tiến trình khác bật sẵn)"))
-        for w in (btn_open, btn_copy, btn_clear, chk_shutdown):
+        for w in (btn_open, btn_copy, btn_clear, chk_shutdown, chk_sleep):
             w.config(state="normal")
         if not owner:
             btn_quit.config(text="✖  Đóng cửa sổ")
@@ -328,11 +347,48 @@ def _run_launcher(port: int) -> int:
 
         threading.Thread(target=work, daemon=True).start()
 
+    # ── 🌙 Tự động cho máy ngủ khi hàng đợi chạy xong ────────────────────────
+    # Việc canh hàng đợi + đếm ngược do SERVER làm (myvoice/web/power.py) — ô tick ở
+    # đây chỉ là cái công tắc từ xa của ô 🌙 trên trang web, nên tick ở đâu cũng ra
+    # một kết quả và nhật ký ngủ tự hiện trong ô log này (log server chảy vào đây).
+    def _post_sleep(on: bool) -> None:
+        """Bật/tắt chế độ ngủ ở server. Chạy luồng nền — có chạm mạng."""
+        def work() -> None:
+            try:
+                _http("/hangdoi/ngu", {"on": "1"} if on else {})
+            except Exception as e:
+                lines.put(f"❌ Không đặt được chế độ ngủ: {e}\n")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _toggle_sleep() -> None:
+        if var_sleep.get() and var_shutdown.get():   # hai chế độ loại trừ nhau
+            var_shutdown.set(False)
+            _toggle_shutdown()          # huỷ luôn lệnh tắt máy đã hẹn (nếu có)
+        _post_sleep(bool(var_sleep.get()))
+        log("🌙 Bật cho máy ngủ: hàng đợi web xong hết là máy ngủ (huỷ: bỏ tick)."
+            if var_sleep.get() else "🌙 Đã tắt chế độ tự động cho máy ngủ.")
+
+    def _sleep_sync() -> None:
+        """Soi lại ô 🌙 theo SERVER — nguồn sự thật là nó: tick/bỏ tick bên trang web,
+        hay ngủ xong server tự bỏ tick, thì ô ở đây cũng đổi theo. Chạy trên luồng Tk,
+        chỉ đọc `flags` mà luồng nền đã ghi sẵn."""
+        armed = flags.get("sleep_armed")
+        if armed is not None and bool(armed) != bool(var_sleep.get()):
+            var_sleep.set(bool(armed))
+        left = flags.get("sleep_left") or ""
+        sleep_note.set(f"⏳ ngủ sau {left} — huỷ: bỏ tick" if left else
+                       ("chờ hàng đợi xong hết" if var_sleep.get() else ""))
+        root.after(1000, _sleep_sync)
+
     # ── ⏻ Tự động tắt máy khi hàng đợi chạy xong ────────────────────────────
     def _toggle_shutdown() -> None:
         flags["auto_shutdown"] = bool(var_shutdown.get())
         if flags["auto_shutdown"]:
             flags["saw_busy"] = False        # phải THẤY BẬN rồi rảnh mới tắt
+            if var_sleep.get():              # hai chế độ loại trừ nhau
+                var_sleep.set(False)
+                _post_sleep(False)
+                log("🌙 Bỏ chế độ cho máy ngủ (đã chọn tắt máy).")
             log(f"⏻ Bật tự động tắt máy: hàng đợi web xong hết thì tắt máy sau "
                 f"{SHUTDOWN_DELAY_MIN} phút.")
             return
@@ -347,18 +403,23 @@ def _run_launcher(port: int) -> int:
             flags["scheduled"] = False
 
     def _shutdown_watcher() -> None:
-        """Luồng nền: 15 giây hỏi /api/trangthai một lần. CHỈ hẹn tắt khi đã từng
-        thấy bận rồi mới rảnh — tick lúc chưa chạy gì thì không tắt máy ngay."""
+        """Luồng nền: 15 giây hỏi /api/trangthai một lần — vừa canh giờ tắt máy, vừa
+        lấy trạng thái chế độ ngủ của server về cho _sleep_sync vẽ lại ô 🌙.
+
+        CHỈ hẹn tắt khi đã từng thấy bận rồi mới rảnh — tick lúc chưa chạy gì thì
+        không tắt máy ngay."""
         import time
         while True:
             time.sleep(15)
-            if not flags["auto_shutdown"] or flags["scheduled"]:
-                continue
             try:
                 st = _http("/api/trangthai")
             except Exception:
                 continue                     # server tắt/chưa lên → thử lại lượt sau
             if not isinstance(st, dict):
+                continue
+            flags["sleep_armed"] = st.get("sleep_armed")
+            flags["sleep_left"] = st.get("sleep_left") or ""
+            if not flags["auto_shutdown"] or flags["scheduled"]:
                 continue
             if st.get("busy") or st.get("upload_busy"):
                 flags["saw_busy"] = True
@@ -380,6 +441,9 @@ def _run_launcher(port: int) -> int:
     def _close() -> None:
         if flags["scheduled"]:
             log("⚠️ Đã hẹn tắt máy — đóng cửa sổ KHÔNG huỷ lệnh đó (huỷ: shutdown /a).")
+        if var_sleep.get() and owner:
+            # Bộ đếm ngủ nằm TRONG server, mà đóng cửa sổ là tắt server → hết ngủ.
+            log("🌙 Tắt server = huỷ luôn lệnh cho máy ngủ.")
         if owner:
             log("⏹ Đang tắt server…")
             root.update_idletasks()
@@ -391,10 +455,12 @@ def _run_launcher(port: int) -> int:
     btn_clear.config(command=_clear_output)
     btn_quit.config(command=_close)
     chk_shutdown.config(command=_toggle_shutdown)
+    chk_sleep.config(command=_toggle_sleep)
     root.protocol("WM_DELETE_WINDOW", _close)
     url_entry.bind("<Double-Button-1>", lambda _e: _open())
 
     threading.Thread(target=_shutdown_watcher, daemon=True).start()
+    _sleep_sync()
     root.after(100, _start)
     _drain()
     root.mainloop()

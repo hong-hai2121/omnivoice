@@ -66,8 +66,19 @@ hồng · thumbnail cam · SEO xanh ngọc. Tông màu khai báo ở đầu `sta
 **Nhật ký nằm ở cửa sổ console của server**, không còn panel dưới trang web:
 mọi dòng của tiến trình con in thẳng ra đó.
 
-Không port sang web: ô “⏻ xong thì tắt máy” (web không tự tắt máy bạn) và
-“⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Hai tuỳ chọn đó vẫn còn
+**🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*. Chạy xong CẢ
+hàng đợi chính lẫn hàng đợi đăng YouTube, rảnh thêm 3 phút thì máy ngủ; có việc
+mới chen vào là huỷ đếm; ngủ xong tự bỏ tick (một lần duy nhất). Bỏ tick là huỷ,
+kể cả lúc đang đếm ngược. Ngủ chứ không tắt máy: sáng chạm chuột là server, hàng
+đợi và các phiên đăng nhập còn nguyên.
+
+Code ở `power.py`, nhưng **lệnh ngủ + số phút chờ nằm bên GUI**
+(`suspend_computer` / `SLEEP_DELAY_MIN` trong `amain_taogiong_gui.py`) — ô 🌙 bên
+GUI và ô 🌙 trên web phải cư xử y hệt nhau. Máy nào bật sẵn ngủ đông có thể vào
+hibernate thay vì sleep — muốn ngủ thật thì `powercfg -h off`.
+
+Không port sang web: ô “⏻ xong thì TẮT MÁY” (web chỉ cho ngủ, không tắt máy bạn)
+và “⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Hai tuỳ chọn đó vẫn còn
 nguyên bên GUI và không bị trang web ghi đè.
 
 ## Cấu trúc
@@ -77,6 +88,7 @@ web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
   jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
+  power.py       ô “🌙 xong hết thì cho máy ngủ” — luồng nền canh hai hàng đợi
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/
     run_episode.py    chạy các bước của một tập
