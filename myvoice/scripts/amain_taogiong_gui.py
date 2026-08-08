@@ -162,6 +162,9 @@ OPTS_DEFAULTS = dict(
     doc_from_subfolder=False,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
     tiktok_percent=50,
+    # YouTube Short: cắt ≤2:50 từ chính video TikTok rồi đăng tự động sau bản chính
+    # 1 giờ. Bật sẵn — cắt bằng `-c copy` nên gần như không tốn thêm thời gian dựng.
+    make_short=True,
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
     make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50,
@@ -1584,7 +1587,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, make_sub_doc=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2040,6 +2043,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 except Exception as e:
                     logging.warning(f"Không tăng tốc được audio TikTok (giữ tốc độ gốc): {e}")
 
+            # Giữ lại bản GIỌNG TRẦN (trước khi trộn nhạc) để bước cắt Short còn dò
+            # được khoảng lặng cuối câu — trộn nhạc xong thì nhạc chạy suốt, không
+            # còn chỗ nào im lặng để nhận ra ranh giới câu. Xem video_short.
+            tk_voice = tk_audio
+
             # 1c) Chèn NHẠC NỀN (từ Music/), mix nhỏ hơn giọng |tiktok_music_db| dB.
             if tiktok_music:
                 musics = list_music_files()
@@ -2116,6 +2124,22 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         Path(cap_png).unlink(missing_ok=True)
                     except OSError:
                         pass
+
+            # ── (TÙY CHỌN) YOUTUBE SHORT — cắt ≤2:50 từ CHÍNH video TikTok ────
+            # Cắt `-c copy` nên gần như tức thì và giữ nguyên chất lượng; short thừa
+            # hưởng luôn khung dọc, chữ 'Mimi audio Số N', ảnh bìa frame đầu, nhạc
+            # nền. Bước ⑥ đăng YouTube sẽ tự đăng file này sau bản chính 1 giờ.
+            if make_short and tk_video_out.exists():
+                from video_short import build_short, SHORT_NAME
+                sh_out = Path(short_out) if short_out else tk_video_out.with_name(SHORT_NAME)
+                status_var.set("Đang cắt video YouTube Short...")
+                try:
+                    build_short(tk_video_out, sh_out, voice_audio=tk_voice,
+                                skip_existing=skip_video, log=logging.info)
+                    status_var.set(f"Xong! YouTube Short → {sh_out.name}")
+                except Exception as e:
+                    # Short là video PHỤ — hỏng thì bỏ, không kéo đổ cả mẻ video.
+                    logging.error(f"Lỗi cắt video Short: {e}")
 
         # ── (TÙY CHỌN) PHỤ ĐỀ CHO VIDEO DỌC (Facebook) ─────────────────────
         # Đặt SAU cùng, sau cả TikTok — CỐ Ý: khi bật "ghép từ thư mục con", video
@@ -2741,6 +2765,11 @@ class App(tk.Tk):
         ttk.Checkbutton(tiktok, text="Tạo video TikTok (dùng lại Facebook khi bật 📁, "
                         "không thì ghép từ videodoc)",
                         variable=self.var_make_tiktok).pack(anchor="w")
+        # Short cắt TỪ video TikTok nên chỉ có tác dụng khi ô trên được bật.
+        self.var_make_short = tk.BooleanVar(value=self._opt_settings["make_short"])
+        ttk.Checkbutton(tiktok, text="📱  Tạo + đăng YouTube Short (cắt ≤2:50 từ video TikTok, "
+                        "hẹn sau bản chính 1 giờ)",
+                        variable=self.var_make_short).pack(anchor="w")
         # Lấy khoảng bao nhiêu % thời lượng (cắt ở cuối câu → độ dài chỉ xấp xỉ %).
         tiktok_opts0 = ttk.Frame(tiktok)
         tiktok_opts0.pack(anchor="w", fill="x", pady=(6, 0))
@@ -4762,6 +4791,7 @@ class App(tk.Tk):
                 doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(),
                 make_tiktok=self.var_make_tiktok.get(),
+                make_short=self.var_make_short.get(),
                 tiktok_speed=self.var_tiktok_speed.get(),
                 tiktok_percent=self._parse_percent(self.var_tiktok_percent),
                 tiktok_no_effect=self.var_tiktok_no_effect.get(),
@@ -5719,6 +5749,7 @@ class App(tk.Tk):
             doc_from_subfolder=self.var_doc_from_subfolder.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
             make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
+            make_short=self.var_make_short.get(),
             tiktok_percent=self._parse_percent(self.var_tiktok_percent),
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
             tiktok_caption_pos=tiktok_caption_pos,
@@ -5943,6 +5974,8 @@ class App(tk.Tk):
             doc_out=folder / "facebook.mp4",       # video DỌC  (đăng Facebook)
             make_tiktok=ts.get("make_tiktok", False),
             tiktok_out=folder / "tiktok.mp4",      # video TIKTOK (cắt theo %)
+            make_short=ts.get("make_short", False),
+            short_out=folder / "short.mp4",        # YOUTUBE SHORT (≤2:50, đăng tự động)
             tiktok_speed=ts.get("tiktok_speed", 1.0),
             tiktok_percent=ts.get("tiktok_percent", 50),
             tiktok_no_effect=ts.get("tiktok_no_effect", False),
@@ -7075,6 +7108,7 @@ class App(tk.Tk):
                   make_video_doc, doc_full_audio, doc_speed, doc_percent,
                   ngang_speed, cut_half, reuse, doc_from_ngang, doc_no_effect),
             kwargs={"make_tiktok": make_tiktok,   # video TikTok (cắt theo %)
+                    "make_short": self.var_make_short.get(),   # Short ≤2:50 cắt từ TikTok
                     "tiktok_speed": tiktok_speed,
                     "tiktok_percent": tiktok_percent,
                     "tiktok_no_effect": tiktok_no_effect,
@@ -7088,6 +7122,7 @@ class App(tk.Tk):
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,
                     "tiktok_out": tiktok_out,
+                    "short_out": Path(tiktok_out).with_name("short.mp4"),
                     # Phụ đề cho video ngang (YouTube)
                     "make_sub": self.var_make_sub.get(),
                     "sub_mode": self.var_sub_mode.get(),
@@ -7357,6 +7392,9 @@ class App(tk.Tk):
                 doc_from_subfolder=self.var_doc_from_subfolder.get(),
                 doc_no_effect=self.var_doc_no_effect.get(), doc_out=doc_out,
                 make_tiktok=(kind == "tiktok"), tiktok_out=tiktok_out,
+                # Dựng lại TikTok là short cũ hết hạn theo → cắt lại luôn cho khớp.
+                make_short=(kind == "tiktok" and self.var_make_short.get()),
+                short_out=_out_dir / "short.mp4",
                 tiktok_speed=self._parse_speed(self.var_tiktok_speed),
                 tiktok_percent=self._parse_percent(self.var_tiktok_percent),
                 tiktok_no_effect=self.var_tiktok_no_effect.get(),

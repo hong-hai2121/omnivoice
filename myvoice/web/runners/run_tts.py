@@ -90,6 +90,7 @@ def main(argv=None) -> int:
         doc_from_subfolder=ts.get("doc_from_subfolder", False),
         doc_no_effect=ts.get("doc_no_effect", False), doc_out=out_dir / "facebook.mp4",
         tiktok_out=out_dir / "tiktok.mp4",
+        short_out=out_dir / "short.mp4",
         tiktok_speed=ts.get("tiktok_speed", 1.0),
         tiktok_percent=ts.get("tiktok_percent", 50),
         tiktok_no_effect=ts.get("tiktok_no_effect", False),
@@ -114,6 +115,8 @@ def main(argv=None) -> int:
                 make_video=(kind == "ngang"),
                 make_video_doc=(kind == "doc"),
                 make_tiktok=(kind == "tiktok"),
+                # Dựng lại TikTok là short cũ lệch theo → cắt lại cho khớp.
+                make_short=(kind == "tiktok" and ts.get("make_short", False)),
                 # Mỗi nút "Dựng lại" chỉ làm phụ đề cho chính khung của nó, y như
                 # GUI: ngang → phụ đề ngang, dọc → phụ đề khung dọc. TikTok cố ý
                 # KHÔNG có (nó mượn hình của facebook.mp4 nhưng audio ngắn hơn).
@@ -140,6 +143,7 @@ def main(argv=None) -> int:
                 make_video=ts.get("make_video", False),
                 make_video_doc=ts.get("make_video_doc", False),
                 make_tiktok=ts.get("make_tiktok", False),
+                make_short=ts.get("make_short", False),
                 make_sub=ts.get("make_sub", False),
                 make_sub_doc=ts.get("make_sub_doc", False),
                 **common)

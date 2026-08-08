@@ -55,9 +55,9 @@ SPEED_MIN, SPEED_MAX, SPEED_STEP = 0.75, 1.60, 0.05
 
 # Kịch bản mẫu để thử giọng (sửa tay thoải mái) — có câu kể, câu hỏi để nghe ngữ điệu.
 DEFAULT_SCRIPT = (
-    "Xin chào, đây là giọng đọc thử nghiệm. "
-    "Hôm nay trời thật đẹp, rất thích hợp để nghe một câu chuyện hay. "
-    "Bạn thấy giọng này có tự nhiên, rõ ràng và dễ nghe không?"
+    "Chào bạn, hôm nay trời khá đẹp, nắng nhẹ và gió mát. "
+    "Tôi vừa đi dạo một vòng quanh hồ, ngắm mấy chú chim sẻ đậu trên cành, "
+    "cảm giác thật sự dễ chịu."
 )
 
 UI = dict(

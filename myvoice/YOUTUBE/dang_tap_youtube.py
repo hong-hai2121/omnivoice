@@ -6,7 +6,8 @@ Cầu nối giữa quy trình tổng (scripts/amain_taogiong_gui.py) và lớp g
 (dang_video_youtube.py):
   • tìm YOUTUBE.mp4 + thumbnail<NN>.png của tập,
   • xếp giờ đăng vào khung 08:00 / 18:00 còn trống kế tiếp,
-  • gọi upload_video rồi ghi kết quả ra youtube_upload.json trong thư mục tập.
+  • gọi upload_video rồi ghi kết quả ra youtube_upload.json trong thư mục tập,
+  • đăng kèm YouTube Short (short.mp4) hẹn sau bản chính 1 giờ — xem upload_short.
 
 youtube_upload.json vừa là BẰNG CHỨNG ĐÃ ĐĂNG (chạy lại quy trình sẽ bỏ qua tập
 đó, không đăng trùng lên kênh) vừa là chỗ tra lại link + giờ hẹn của từng tập.
@@ -18,7 +19,7 @@ chỉ có MỘT nơi quy định.
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 RECORD_NAME = "youtube_upload.json"   # bản ghi lần đăng, nằm trong thư mục tập
@@ -27,6 +28,13 @@ TIKTOK_NAME = "tiktok.mp4"            # bản dọc mồi, đăng TikTok bằng 
 FACEBOOK_NAME = "facebook.mp4"        # bản dọc mồi, đăng Facebook bằng tay
 # Hai bản DỌC đều đăng tay, đều được đổi tên sau khi đăng — xem rename_doc().
 DOC_LABELS = {TIKTOK_NAME: "TikTok", FACEBOOK_NAME: "Facebook"}
+
+# YouTube Short: bản dọc ≤ 2:50 cắt từ TikTok (xem scripts/video_short.py), đăng TỰ
+# ĐỘNG ngay sau video chính. Để short lên sau bản đầy đủ SHORT_DELAY_HOURS giờ thì
+# người xem short bấm vào link mô tả là bản full đã có sẵn trên kênh.
+SHORT_NAME = "short.mp4"
+SHORT_DELAY_HOURS = 1
+SHORT_HASHTAG = "#Shorts"
 
 BAD_CHARS = '<>:"/\\|?*'   # Windows cấm các ký tự này trong tên file
 MAX_STEM = 120            # cắt tên cho đường dẫn không chạm giới hạn 260 của Windows
@@ -152,6 +160,92 @@ def rename_doc(folder, name, stem, log):
         return None
 
 
+def short_title(blocks, max_title) -> str:
+    """Tiêu đề cho Short: kiểu TikTok ('Full ở Mimi audio Số 12 | …') + '#Shorts'.
+
+    Tiêu đề TikTok dài hơn bản YouTube đúng 'Full ở ' nên có tập vượt mốc 100 ký
+    tự dù bản YouTube vẫn lọt. Thử lần lượt từ bản đầy đủ nhất xuống, lấy cái đầu
+    tiên vừa — thà mất hashtag còn hơn mất tiêu đề (YouTube nhận Short theo khung
+    hình dọc + dưới 3 phút, hashtag chỉ là tín hiệu phụ).
+    """
+    tiktok = (blocks.get("title_tiktok") or "").strip()
+    chinh = (blocks.get("title") or "").strip()
+    for ung_vien in (f"{tiktok} {SHORT_HASHTAG}", tiktok,
+                     f"{chinh} {SHORT_HASHTAG}", chinh):
+        ung_vien = ung_vien.strip()
+        if ung_vien and len(ung_vien) <= max_title:
+            return ung_vien
+    return ""
+
+
+def short_description(main_url: str, episode: str) -> str:
+    """Mô tả Short: câu dẫn về bản full + hashtag. Ngắn gọn vì Shorts chỉ hiện vài dòng."""
+    dong = [f"▶ Nghe full tại: {main_url}", ""] if main_url else []
+    tags = [SHORT_HASHTAG]
+    try:
+        import thumbnail_gui as tg
+        ep_tag = tg.episode_hashtag(episode)
+        tags = ([ep_tag] if ep_tag else []) + [SHORT_HASHTAG] + list(tg.FULL_HASHTAGS)
+    except Exception:
+        # Thiếu thumbnail_gui thì vẫn đăng được, chỉ là mô tả trơ hashtag mặc định.
+        pass
+    dong.append(" ".join(tags))
+    return "\n".join(dong)
+
+
+def upload_short(folder, episode, blocks, main_url, publish_local, cfg, log,
+                 progress_cb=None):
+    """Đăng short.mp4 của tập, hẹn sau video chính SHORT_DELAY_HOURS giờ.
+
+    Trả về dict {'video_id','url','publish_at','publish_at_text'} hoặc None khi bỏ
+    qua (không có file / không dựng được tiêu đề). Lỗi API thì ném ra cho bên gọi —
+    upload_episode bắt lại để sự cố của Short không kéo đổ bản ghi video chính.
+
+    publish_local=None (đăng công khai ngay / unlisted) → Short cũng theo đúng chế
+    độ đó, không hẹn giờ; giữ cho hai video của cùng một tập luôn cùng trạng thái.
+    """
+    import dang_video_youtube as yt
+
+    video = Path(folder) / SHORT_NAME
+    if not video.is_file() or video.stat().st_size == 0:
+        return None
+
+    title = short_title(blocks, yt.MAX_TITLE)
+    if not title:
+        log(f"⚠️ Tập {episode}: không dựng được tiêu đề Short → bỏ qua Short.", "warn")
+        return None
+
+    short_at = publish_local + timedelta(hours=SHORT_DELAY_HOURS) if publish_local else None
+    privacy = "private" if publish_local else cfg.get("privacy", "schedule")
+    khi = (f"hẹn công khai {short_at:%d/%m/%Y %H:%M}" if short_at
+           else PRIVACY_LABELS.get(privacy, privacy))
+    log(f"⬆ Đăng Short tập {episode}: {video.name} → {khi}", "info")
+
+    video_id = yt.upload_video({
+        "video_path": str(video),
+        "title": title,
+        "description": short_description(main_url, episode),
+        "tags": [t.strip() for t in (blocks.get("tags") or "").split(",") if t.strip()],
+        "category_id": str(cfg.get("category_id") or DEFAULTS["category_id"]),
+        "privacy": privacy,
+        "publish_at": yt.to_rfc3339(short_at) if short_at else None,
+        "made_for_kids": bool(cfg.get("made_for_kids", False)),
+        "contains_ai": bool(cfg.get("contains_ai", True)),
+        # Shorts lấy frame đầu làm ảnh bìa mà frame đầu ĐÃ là thumbnail dọc (build_video_doc
+        # đè cover_png lên frame đầu của bản TikTok) → không cần đặt ảnh bìa riêng.
+        "thumbnail_path": None,
+    }, log, progress_cb or (lambda _p: None))
+
+    return {
+        "video_id": video_id,
+        "url": f"https://youtu.be/{video_id}",
+        "title": title,
+        "publish_at": short_at.isoformat(timespec="seconds") if short_at else "",
+        "publish_at_text": (short_at.strftime("%d/%m/%Y %H:%M") if short_at
+                            else PRIVACY_LABELS.get(privacy, privacy)),
+    }
+
+
 def _current_channel_id():
     """Id kênh đang đăng nhập (theo cache) — ghi vào bản ghi để biết video lên kênh nào.
 
@@ -248,6 +342,20 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
                         log)
     facebook = rename_doc(folder, FACEBOOK_NAME, time_stem(FACEBOOK_NAME, live_at), log)
 
+    # YouTube Short — video PHỤ. Bản chính đã lên kênh rồi, nên mọi sự cố ở đây chỉ
+    # được phép thành một dòng cảnh báo: nuốt lỗi để còn ghi bản ghi, không thì lần
+    # chạy sau tưởng chưa đăng và đăng TRÙNG bản chính.
+    main_url = f"https://youtu.be/{video_id}"
+    short = None
+    try:
+        short = upload_short(folder, ep, blocks, main_url, publish_local, cfg, log,
+                             progress_cb)
+    except Exception as e:
+        log(f"⚠️ Tập {ep}: đăng Short lỗi ({e}) — video chính KHÔNG ảnh hưởng. "
+            f"Đăng Short tay từ {SHORT_NAME} nếu cần.", "warn")
+    if short:
+        log(f"✅ Short tập {ep}: {short['url']} — {short['publish_at_text']}", "ok")
+
     rec = {
         "episode": ep,
         "video_id": video_id,
@@ -261,6 +369,12 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
         "video_file": video.name,
         "tiktok_file": tiktok.name if tiktok else "",
         "facebook_file": facebook.name if facebook else "",
+        # Short rỗng = chưa/không đăng được (thiếu short.mp4 hoặc lỗi API). Bản ghi
+        # tồn tại nên lần chạy sau bỏ qua CẢ TẬP — muốn có Short thì đăng tay.
+        "short_video_id": short["video_id"] if short else "",
+        "short_url": short["url"] if short else "",
+        "short_publish_at": short["publish_at"] if short else "",
+        "short_publish_at_text": short["publish_at_text"] if short else "",
         "thumbnail": thumb.name if thumb else "",
         "made_for_kids": bool(cfg.get("made_for_kids", False)),
         "contains_ai": bool(cfg.get("contains_ai", True)),

@@ -492,6 +492,9 @@ def tts_settings() -> tuple[dict | None, str]:
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),
         make_tiktok=bool(opts.get("make_tiktok")),
+        # YouTube Short ≤2:50 cắt từ chính video TikTok, đăng tự động sau bản chính
+        # 1 giờ (xem scripts/video_short.py + YOUTUBE/dang_tap_youtube.upload_short).
+        make_short=bool(opts.get("make_short")),
         tiktok_speed=_f(opts.get("tiktok_speed"), 1.0, 0.5, 2.0),
         tiktok_percent=_i(opts.get("tiktok_percent"), 50, 1, 100),
         tiktok_no_effect=bool(opts.get("tiktok_no_effect")),

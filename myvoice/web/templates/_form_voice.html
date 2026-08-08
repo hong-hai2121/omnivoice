@@ -206,6 +206,9 @@
     </div>
     <div class="chks">
       {{ chk('make_tiktok', 'Tạo video TikTok', opts) }}
+      {# Short cắt TỪ video TikTok nên chỉ có tác dụng khi ô trên bật. Đăng tự động
+         cùng lượt đăng YouTube, hẹn sau bản chính 1 giờ — xem upload_short. #}
+      {{ chk('make_short', '📱 Tạo + đăng YouTube Short (≤2:50, sau bản chính 1 giờ)', opts) }}
       {{ chk('tiktok_music', '🎼 Chèn nhạc nền (Music/)', opts) }}
       {{ chk('tiktok_no_effect', '🚫 Không áp hiệu ứng cho TikTok', opts) }}
     </div>

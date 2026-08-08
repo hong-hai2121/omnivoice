@@ -41,7 +41,7 @@ FILE_RAC = ("output_half.wav", "tiktok_bgm.wav")
 MAU_RAC = ("output_sped*.wav", "output_tiktok*.wav")
 
 # Video đầu ra — có ÍT NHẤT một cái mới coi là "đã làm xong video".
-VIDEO_RA = ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4")
+VIDEO_RA = ("YOUTUBE.mp4", "facebook.mp4", "tiktok.mp4", "short.mp4")
 MAU_VIDEO_CU = ("*_videodone.mp4", "*_doc.mp4")   # tên các tập làm trước đây
 
 
