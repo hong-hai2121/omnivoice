@@ -68,19 +68,30 @@ AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 # Tham số cố định cho faster-whisper khi nhận diện TIẾNG TRUNG.
 # - language="zh": ép model nhận diện tiếng Trung (phổ thông / Mandarin).
 # - initial_prompt: gợi ý bằng tiếng Trung giúp model thêm dấu câu chuẩn hơn.
-# - no_repeat_ngram_size + log_prob_threshold: chống Whisper lặp vô tận / "ảo giác".
 # - condition_on_previous_text=False: không để lỗi của câu trước lan sang câu sau.
 # - vad_filter: tự bỏ đoạn im lặng/nhạc nền nên không cần cắt file thủ công.
+#
+# Chống Whisper kẹt vòng lặp ("啊啊啊啊..." nuốt trọn cửa sổ 30s) — 3 lớp:
+#   1. temperature là DÃY, không phải số đơn. Whisper giải mã ở nhiệt độ 0, thấy
+#      compression_ratio/log_prob vượt ngưỡng thì giải mã LẠI ở nhiệt độ cao hơn.
+#      Đặt temperature=0 là tắt hẳn cơ chế này: ngưỡng vẫn tính nhưng không có gì
+#      để lùi về, nên đoạn lặp bị giữ nguyên.
+#   2. no_repeat_ngram_size=3: cấm lặp lại bất kỳ 3-gram nào NGAY LÚC giải mã.
+#   3. repetition_penalty=1.1: phạt token đã sinh, làm nguội vòng lặp từ sớm.
+# Lưu ý: chế độ batched (BatchedInferencePipeline) chỉ đọc temperatures[0] và
+# KHÔNG có vòng fallback — ở đó lớp 1 vô hiệu. Bù lại bằng _repair_looped_segments():
+# đoạn nào vẫn kẹt lặp thì giải mã lại bằng model thường (có đủ lớp 1).
 _TRANSCRIBE_OPTS = dict(
     language="zh",
     condition_on_previous_text=False,
-    temperature=0,
+    temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
     beam_size=5,
     initial_prompt="以下是普通话的句子，请用简体中文加上标点符号。",
     no_speech_threshold=0.6,
     compression_ratio_threshold=2.4,
     log_prob_threshold=-1.0,
     no_repeat_ngram_size=3,
+    repetition_penalty=1.1,
     vad_filter=True,
     vad_parameters=dict(min_silence_duration_ms=500),
 )
@@ -195,6 +206,104 @@ def get_model(model_name, use_batched=True):
     return model, batched, device
 
 
+def _max_repeat_run(text, max_unit=4):
+    """Số lần lặp liên tiếp NHIỀU NHẤT của một cụm ngắn (1-4 ký tự) trong text.
+
+    "啊啊啊啊啊啊" -> 6 (kẹt vòng lặp). "看看" -> 2, "高高兴兴" -> 2, "讨论讨论" -> 2:
+    điệp từ là ngữ pháp bình thường của tiếng Trung nên ngưỡng phải để cao, đừng cắt.
+    """
+    s = "".join(text.split())
+    best = 1
+    for n in range(1, max_unit + 1):
+        i = 0
+        while i + n <= len(s):
+            unit = s[i:i + n]
+            k = 1
+            while s[i + k * n:i + (k + 1) * n] == unit:
+                k += 1
+            if k > best:
+                best = k
+            i += k * n if k > 1 else 1
+    return best
+
+
+# Một câu bị nghi kẹt vòng lặp khi: gzip nén được quá tốt (= quá lặp), HOẶC có cụm
+# ngắn lặp liên tiếp >= 6 lần (điệp từ thật của tiếng Trung không bao giờ tới 6).
+_LOOP_CR_THRESHOLD = _TRANSCRIBE_OPTS["compression_ratio_threshold"]
+_LOOP_RUN_THRESHOLD = 6
+
+
+def _looks_looped(text, compression_ratio=None):
+    if compression_ratio and compression_ratio > _LOOP_CR_THRESHOLD:
+        return True
+    return _max_repeat_run(text) >= _LOOP_RUN_THRESHOLD
+
+
+def _repair_looped_segments(model, audio_path, records, suspects):
+    """Giải mã LẠI các đoạn kẹt lặp bằng model thường (sửa records tại chỗ).
+
+    Chế độ batched chạy nhanh nhưng chỉ dùng temperatures[0] nên không lùi nhiệt độ
+    được: đoạn nào kẹt lặp là kẹt luôn, nuốt trọn cửa sổ 30s tiếng nói thật. Ở đây gom
+    đúng những mốc giờ bị hỏng rồi chạy lại MỘT lượt bằng model thường — có đủ vòng
+    temperature fallback. Chỉ vài chục giây audio nên gần như không ảnh hưởng tốc độ.
+
+    Trả về số câu đã sửa được.
+    """
+    # Gộp các câu nghi ngờ nằm sát nhau thành từng cửa sổ liền mạch.
+    windows = []  # [start, end, [chỉ số record]]
+    for i in suspects:
+        start, end = records[i][0], records[i][1]
+        if end - start < 0.2:
+            continue
+        if windows and start - windows[-1][1] < 0.5:
+            windows[-1][1] = max(windows[-1][1], end)
+            windows[-1][2].append(i)
+        else:
+            windows.append([start, end, [i]])
+    if not windows:
+        return 0
+
+    tong = sum(w[1] - w[0] for w in windows)
+    print(f"🔁 Nghi {len(suspects)} câu kẹt lặp ({tong:.0f}s) → giải mã lại có fallback...")
+
+    opts = dict(_TRANSCRIBE_OPTS)
+    # clip_timestamps làm faster-whisper bỏ qua VAD; nói rõ ra cho khỏi hiểu nhầm.
+    opts.pop("vad_parameters", None)
+    opts["vad_filter"] = False
+    clip = ",".join(f"{w[0]:.3f},{w[1]:.3f}" for w in windows)
+    try:
+        segments, _ = model.transcribe(audio_path, clip_timestamps=clip, **opts)
+        fixed_text = [[] for _ in windows]
+        for seg in segments:
+            piece = seg.text.strip()
+            if not piece:
+                continue
+            # Xếp câu vừa nghe lại vào cửa sổ chứa nó (theo điểm giữa).
+            mid = (seg.start + seg.end) / 2
+            for wi, w in enumerate(windows):
+                if w[0] - 0.5 <= mid <= w[1] + 0.5:
+                    fixed_text[wi].append(piece)
+                    break
+    except Exception as e:
+        print(f"⚠️ Không giải mã lại được, giữ nguyên bản cũ: {e}")
+        return 0
+
+    n_fixed = 0
+    for w, texts in zip(windows, fixed_text):
+        new = "".join(texts).strip()
+        # Vẫn lặp sau khi chạy lại -> fallback bó tay, giữ nguyên còn hơn mất chữ.
+        if not new or _looks_looped(new):
+            continue
+        idxs = w[2]
+        records[idxs[0]][2] = new
+        for i in idxs[1:]:
+            records[i][2] = ""
+        n_fixed += len(idxs)
+    print(f"✅ Đã sửa {n_fixed}/{len(suspects)} câu kẹt lặp." if n_fixed
+          else "⚠️ Chạy lại vẫn lặp — giữ nguyên bản cũ.")
+    return n_fixed
+
+
 def transcribe_chinese(media_path, model_name="medium", batch_size=8,
                        use_batched=True, on_segment=None, on_progress=None,
                        partial_path=None, speed=0.7):
@@ -243,14 +352,17 @@ def transcribe_chinese(media_path, model_name="medium", batch_size=8,
         segments, info = model.transcribe(audio_path, **_TRANSCRIBE_OPTS)
 
     total = duration or float(getattr(info, "duration", 0) or 0)
-    parts = []
+    records = []   # [start, end, text] từng câu — giữ mốc giờ để còn chạy lại đoạn hỏng
+    suspects = []  # chỉ số các câu nghi kẹt vòng lặp
     pf = open(partial_path, "w", encoding="utf-8") if partial_path else None
     try:
         for seg in segments:
             piece = seg.text.strip()
             if not piece:
                 continue
-            parts.append(piece)
+            if _looks_looped(piece, getattr(seg, "compression_ratio", None)):
+                suspects.append(len(records))
+            records.append([seg.start, seg.end, piece])
             if pf:
                 pf.write(piece)
                 pf.flush()
@@ -259,6 +371,11 @@ def transcribe_chinese(media_path, model_name="medium", batch_size=8,
                 on_segment(piece, frac)
             if on_progress and frac is not None:
                 on_progress(frac)
+
+        # Batched không có temperature fallback -> vá lại ở đây (xem _TRANSCRIBE_OPTS).
+        # Bản thường đã tự lùi nhiệt độ rồi, chạy lại y hệt cũng vô ích nên bỏ qua.
+        if suspects and batched is not None:
+            _repair_looped_segments(model, audio_path, records, suspects)
     finally:
         if pf:
             pf.close()
@@ -277,7 +394,7 @@ def transcribe_chinese(media_path, model_name="medium", batch_size=8,
 
     if on_progress:
         on_progress(1.0)
-    transcript = "".join(parts).strip()
+    transcript = "".join(r[2] for r in records).strip()
     # Xong xuôi -> bỏ file tạm
     if partial_path and os.path.exists(partial_path):
         try:

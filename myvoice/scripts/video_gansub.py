@@ -148,12 +148,21 @@ def build_cues(text: str, max_chars: int):
 # ----------------------------------------------------------------------------- #
 # 2) Nghe audio → danh sách từ kèm mốc giờ
 # ----------------------------------------------------------------------------- #
+# Chống kẹt vòng lặp: temperature phải là DÃY thì Whisper mới giải mã lại được ở
+# nhiệt độ cao hơn khi thấy đoạn lặp (temperature=0 là tắt hẳn cơ chế đó).
+# no_repeat_ngram_size + repetition_penalty chặn ngay lúc giải mã. Ở script này
+# một đoạn kẹt lặp không làm sai CHỮ (chữ lấy từ text gốc) nhưng làm cả cửa sổ 30s
+# không khớp được -> mốc giờ phải nội suy -> sub lệch giờ.
 _TRANSCRIBE_OPTS = dict(
     language="vi",
     word_timestamps=True,        # cần mốc giờ TỪNG TỪ để căn sub
     condition_on_previous_text=False,
-    temperature=0,
+    temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
     beam_size=5,
+    compression_ratio_threshold=2.4,
+    log_prob_threshold=-1.0,
+    no_repeat_ngram_size=3,
+    repetition_penalty=1.1,
     vad_filter=True,
     vad_parameters=dict(min_silence_duration_ms=400),
 )
