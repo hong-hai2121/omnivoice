@@ -47,7 +47,16 @@
   <div class="actions">
     <button class="primary" formaction="/dangyoutube/luu">💾 Lưu cài đặt</button>
     <button formaction="/dangyoutube/chay">⬆ Đăng ngay các tập chưa đăng</button>
+    {# Nút này KHÔNG lưu cài đặt (handler bỏ qua form) — nó chỉ mở cửa sổ Google. #}
+    <button formaction="/dangyoutube/dangnhap" formnovalidate>🔑 Đăng nhập YouTube</button>
   </div>
+  <p class="hint">Gặp lỗi “Chưa đăng nhập YouTube” thì bấm 🔑: cửa sổ Google mở ra
+     ngay trên máy này, bấm Cho phép là xong — kết quả hiện ở nhật ký hàng đợi đăng
+     bên dưới. Token còn dùng được thì nút chỉ đọc lại kênh, không bắt đăng nhập lại.
+     Đổi hẳn sang kênh khác vẫn phải dùng nút “🔁 Đổi kênh…” bên app GUI.
+     Nếu cứ vài ngày lại phải bấm 🔑 một lần: app OAuth đang ở chế độ <em>Testing</em>,
+     Google thu hồi quyền sau 7 ngày — vào Google Cloud Console → OAuth consent
+     screen → <em>Publish app</em> là hết.</p>
 
   {% if pending %}
     <p class="hint">Đang chờ đăng ({{ pending|length }} tập): {{ pending|join(', ') }}.

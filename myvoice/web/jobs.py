@@ -13,6 +13,7 @@ bảng điều khiển.
 from __future__ import annotations
 
 import itertools
+import re
 import subprocess
 import sys
 import threading
@@ -25,8 +26,9 @@ from typing import Callable
 CREATE_NO_WINDOW = 0x08000000
 
 # ── Nhật ký: in thẳng ra cửa sổ console của server ──────────────────────────
-# Trang web không còn panel nhật ký; chỗ xem tiến trình chi tiết là cửa sổ
-# console đã mở sẵn khi bật server (chay_web.bat / nút 🌐 Bảng web của GUI).
+# Chỗ xem tiến trình ĐẦY ĐỦ là cửa sổ console đã mở sẵn khi bật server
+# (chay_web.bat / nút 🌐 Bảng web của GUI). Riêng hàng đợi ĐĂNG còn giữ thêm một
+# vòng đệm (LogTail bên dưới) để trang web và GUI cùng nhìn thấy — xem chú thích ở đó.
 _print_lock = threading.Lock()
 
 try:        # console Windows thường là cp1252 → emoji/tiếng Việt sẽ nổ khi in
@@ -42,6 +44,74 @@ def log(text: str) -> None:
                 print(line, flush=True)
             except Exception:               # không có console (pythonw) → bỏ qua
                 return
+
+
+class LogTail:
+    """Vòng đệm các dòng nhật ký gần đây của MỘT hàng đợi.
+
+    Vì sao cần: console của server nằm ở cửa sổ khác, mà GUI lại là TIẾN TRÌNH
+    KHÁC HẲN — bấm “⬆ Đăng ngay” trên web thì hai chỗ đó không hay biết gì, nhìn
+    vào chỉ thấy im lìm không rõ có chạy hay không. Vòng đệm này là nguồn chung để
+    trang web hiện vài dòng cuối và GUI hỏi xin dòng mới qua /api/nhatky-dang.
+
+    Mỗi dòng mang một SỐ THỨ TỰ tăng dần: bên đọc chỉ cần nhớ số cuối đã lấy rồi
+    hỏi “có gì mới hơn số này không”, nên không đọc trùng, cũng không sót khi
+    chậm nhịp (miễn chưa trôi khỏi vòng đệm).
+    """
+
+    _PCT = re.compile(r"Tải lên (\d{1,3})%")
+    # Dòng mở/kết một việc → tiến độ % của việc trước không còn nghĩa gì nữa.
+    _RESET = ("▶", "➕", "✅", "❌", "⛔", "⏹", "♻", "⏭")
+
+    def __init__(self, maxlen: int = 200):
+        self._lines: deque[tuple[int, str, str]] = deque(maxlen=maxlen)   # (số, giờ, nội dung)
+        self._lock = threading.Lock()
+        self._seq = 0
+        self._percent: int | None = None
+        self._pct_step = -1
+
+    def add(self, text: str) -> None:
+        text = str(text).rstrip()
+        if not text:
+            return
+        pct = self._PCT.search(text)
+        with self._lock:
+            if pct:
+                # Tiến độ tải lên nhảy từng % → hàng trăm dòng mỗi video. Giữ số %
+                # mới nhất cho thanh tiến trình, còn vào nhật ký thì mỗi mốc 10%
+                # một dòng: đủ biết là còn sống mà không ngập ô nhật ký của GUI.
+                self._percent = min(100, int(pct.group(1)))
+                step = self._percent // 10
+                if step == self._pct_step:
+                    return
+                self._pct_step = step
+                text = f"⬆ Tải lên {self._percent}%"
+            elif text.startswith(self._RESET):
+                self._percent, self._pct_step = None, -1
+            self._seq += 1
+            self._lines.append((self._seq, datetime.now().strftime("%H:%M:%S"), text))
+
+    def since(self, seq: int) -> tuple[int, list[str]]:
+        """Các dòng mới hơn `seq` → (số thứ tự cuối, nội dung KHÔNG kèm giờ).
+
+        Không kèm giờ vì bên đọc (GUI) tự đóng dấu thời gian của nó.
+        """
+        with self._lock:
+            return self._seq, [t for n, _, t in self._lines if n > seq]
+
+    def tail(self, n: int = 8) -> list[str]:
+        """n dòng cuối, có kèm giờ — dùng để hiện trên trang web."""
+        with self._lock:
+            return [f"{when}  {t}" for _, when, t in list(self._lines)[-n:]]
+
+    @property
+    def seq(self) -> int:
+        with self._lock:
+            return self._seq
+
+    @property
+    def percent(self) -> int | None:
+        return self._percent
 
 
 # ── Mô tả công việc ─────────────────────────────────────────────────────────
@@ -88,7 +158,7 @@ class JobRunner:
     """Hàng đợi + worker. Bốn nút điều khiển: chạy, tạm dừng, bỏ việc đang chạy,
     dừng hẳn (xoá cả hàng đợi)."""
 
-    def __init__(self):
+    def __init__(self, tail: "LogTail | None" = None):
         self._pending: deque[Job] = deque()
         self._history: deque[Job] = deque(maxlen=40)
         self._current: Job | None = None
@@ -98,25 +168,37 @@ class JobRunner:
         self._paused = False
         self._skip_current = False
         self._ids = itertools.count(1)
+        # Vòng đệm nhật ký RIÊNG của hàng đợi này (có thể không có). Mọi dòng của
+        # hàng đợi phải đi qua self.note() thì vòng đệm mới đủ, đừng gọi log() thẳng.
+        self._tail = tail
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     # ── API cho tầng web ────────────────────────────────────────────────────
+    def note(self, text: str) -> None:
+        """Ghi một dòng nhật ký MANG DANH hàng đợi này: console + vòng đệm riêng."""
+        log(text)
+        if self._tail is not None:
+            try:
+                self._tail.add(text)
+            except Exception:       # nhật ký hỏng không được làm hỏng việc đang chạy
+                pass
+
     def enqueue(self, title: str, steps: list[Step]) -> Job:
         job = Job(id=next(self._ids), title=title, steps=steps)
         with self._lock:
             self._pending.append(job)
-        log(f"➕ Xếp hàng: {title} ({len(steps)} bước)")
+        self.note(f"➕ Xếp hàng: {title} ({len(steps)} bước)")
         self._wake.set()
         return job
 
     def pause(self) -> None:
         self._paused = True
-        log("⏸ Tạm dừng — việc đang chạy vẫn chạy nốt, chưa lấy việc mới.")
+        self.note("⏸ Tạm dừng — việc đang chạy vẫn chạy nốt, chưa lấy việc mới.")
 
     def resume(self) -> None:
         self._paused = False
-        log("▶ Chạy tiếp hàng đợi.")
+        self.note("▶ Chạy tiếp hàng đợi.")
         self._wake.set()
 
     def skip_current(self) -> None:
@@ -126,7 +208,7 @@ class JobRunner:
         if cur is None:
             return
         self._skip_current = True
-        log(f"⏭ Bỏ việc đang chạy: {cur.title}")
+        self.note(f"⏭ Bỏ việc đang chạy: {cur.title}")
         _terminate(proc)
 
     def stop_all(self) -> None:
@@ -142,7 +224,7 @@ class JobRunner:
         self._paused = False
         if cur is not None:
             self._skip_current = True
-        log(f"⏹ Dừng hàng đợi (huỷ {dropped} việc chờ)." )
+        self.note(f"⏹ Dừng hàng đợi (huỷ {dropped} việc chờ)." )
         _terminate(proc)
 
     def remove(self, job_id: int) -> bool:
@@ -188,7 +270,7 @@ class JobRunner:
             except Exception as e:                      # worker không được chết
                 job.status = "failed"
                 job.message = str(e)
-                log(f"❌ Lỗi hàng đợi: {e}")
+                self.note(f"❌ Lỗi hàng đợi: {e}")
             finally:
                 job.finished = datetime.now().strftime("%H:%M:%S")
                 with self._lock:
@@ -200,15 +282,15 @@ class JobRunner:
     def _run_job(self, job: Job) -> None:
         job.status = "running"
         job.started = datetime.now().strftime("%H:%M:%S")
-        log(f"▶ {job.title}")
+        self.note(f"▶ {job.title}")
         for i, step in enumerate(job.steps):
             job.step_index = i
             if self._skip_current:
                 job.status = "stopped"
                 job.message = "Đã bỏ giữa chừng."
-                log(f"⏹ {job.title}: dừng ở bước “{step.label}”.")
+                self.note(f"⏹ {job.title}: dừng ở bước “{step.label}”.")
                 return
-            log(f"── [{i + 1}/{len(job.steps)}] {step.label}")
+            self.note(f"── [{i + 1}/{len(job.steps)}] {step.label}")
             code = self._run_step(step)
             if self._skip_current:
                 job.status = "stopped"
@@ -217,22 +299,22 @@ class JobRunner:
             if code in step.soft_fail_codes:
                 job.status = "stopped"
                 job.message = f"Dừng ở bước “{step.label}” (mã {code}) — xem nhật ký."
-                log(f"⛔ {job.title}: dừng ở “{step.label}” (mã {code}).")
+                self.note(f"⛔ {job.title}: dừng ở “{step.label}” (mã {code}).")
                 return
             if code != 0:
                 job.status = "failed"
                 job.message = f"Bước “{step.label}” lỗi (mã {code})."
-                log(f"❌ {job.title}: bước “{step.label}” lỗi (mã {code}).")
+                self.note(f"❌ {job.title}: bước “{step.label}” lỗi (mã {code}).")
                 return
             if step.on_success is not None:
                 try:
                     step.on_success()
                 except Exception as e:      # nối việc hỏng ≠ bước vừa chạy hỏng
-                    log(f"⚠️ Không nối được việc sau bước “{step.label}”: {e}")
+                    self.note(f"⚠️ Không nối được việc sau bước “{step.label}”: {e}")
         job.step_index = len(job.steps)
         job.status = "done"
         job.message = "Hoàn tất."
-        log(f"✅ {job.title} — xong.")
+        self.note(f"✅ {job.title} — xong.")
 
     def _run_step(self, step: Step) -> int:
         try:
@@ -244,7 +326,7 @@ class JobRunner:
                 creationflags=CREATE_NO_WINDOW,
             )
         except Exception as e:
-            log(f"❌ Không chạy được: {e}")
+            self.note(f"❌ Không chạy được: {e}")
             return 1
 
         with self._lock:
@@ -253,7 +335,7 @@ class JobRunner:
             for line in proc.stdout:                     # type: ignore[union-attr]
                 line = line.rstrip("\r\n")
                 if line.strip():
-                    log(line)
+                    self.note(line)
             return proc.wait()
         finally:
             with self._lock:
@@ -287,6 +369,11 @@ def _terminate(proc: subprocess.Popen | None) -> None:
 
 runner = JobRunner()
 
+# Nhật ký RIÊNG của hàng đợi đăng — trang web hiện vài dòng cuối, GUI hỏi xin dòng
+# mới qua /api/nhatky-dang. Chỉ hàng đợi đăng mới cần: hàng đợi chính in ra hàng
+# nghìn dòng ffmpeg/Whisper, chiếu hết sang GUI thì ô nhật ký thành bãi rác.
+upload_log = LogTail()
+
 # Hàng đợi RIÊNG cho việc đăng YouTube, chạy SONG SONG với hàng đợi trên.
 #
 # Vì sao được phép song song trong khi cả file này chủ trương một worker: lý do có
@@ -296,4 +383,4 @@ runner = JobRunner()
 #
 # Vẫn chỉ MỘT worker cho riêng hàng này: tải hai video cùng lúc chỉ chia nhỏ băng
 # thông chứ không nhanh hơn.
-upload_runner = JobRunner()
+upload_runner = JobRunner(tail=upload_log)

@@ -26,6 +26,16 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+# Bộ cấp phát VRAM của PyTorch giữ lại khối đã cắt để tái dùng; mỗi đoạn TTS lại
+# có độ dài chuỗi khác nhau nên qua vài trăm đoạn là phần GIỮ LẠI phình to hơn
+# hẳn phần thực dùng (đo được: thực dùng đỉnh 2.1 GB mà tiến trình chiếm 6.5 GB).
+# Trên Windows driver KHÔNG báo hết VRAM mà lặng lẽ đẩy tensor sang RAM chạy qua
+# PCIe, chậm 20-50× — đúng cái làm tập 08 trôi từ 50s/đoạn xuống 285s/đoạn.
+# Ngưỡng này bảo allocator tự nhả bớt khối rảnh khi đã giữ tới 80% card.
+# (expandable_segments hợp lý hơn nhưng torch 2.8 KHÔNG hỗ trợ trên Windows — đã
+# thử, nó chỉ cảnh báo rồi bỏ qua.) PHẢI đặt TRƯỚC lần import torch đầu tiên.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
+
 import re
 import hashlib
 import threading
@@ -861,29 +871,115 @@ def vn_duration(text: str):
             + len(_VN_END_RE.findall(text)) * VN_PAUSE_END)
 
 
+# ── SỐ BƯỚC GIẢI MÃ MỖI ĐOẠN ─────────────────────────────────────────────────
+# OmniVoice là masked-diffusion, KHÔNG có KV cache: mỗi bước chạy lại TOÀN BỘ
+# chuỗi (prompt giọng mẫu + văn bản + khung audio), nên thời gian sinh một đoạn
+# tỉ lệ THẲNG với số này. Đo trên RTX 4060: 32 bước 4.1s/đoạn (~12 phút cả bài
+# 191 đoạn), 16 bước 2.0s/đoạn (~6 phút).
+#
+# GIỮ 32 — là mặc định tác giả model đã kiểm. Có thử 16: tai nghe không phân
+# biệt được, detect_spike chấm 0/60 đoạn lỗi ở CẢ HAI mức. Nhưng detect_spike
+# chỉ bắt lỗi thô (nổ, rít, câm), không thấy sai thanh điệu hay lệch nhịp — nên
+# đó là "chưa thấy lỗi", không phải "tương đương". Ít bước thì mỗi bước chốt
+# nhiều token hơn mà chúng không nhìn thấy nhau, rủi ro nằm ở đuôi phân phối,
+# 60 đoạn chưa đủ để loại. Đổi lấy 6 phút trên một việc chạy tự động thì không
+# đáng — nút thắt thật là VRAM, đã xử lý rồi.
+#
+# Số này nằm trong chữ ký cấu hình: đổi là các đoạn cũ tự sinh lại, không bao
+# giờ trộn hai mức chất lượng vào cùng một bài.
+NUM_STEP = 32
+
+# KHÔNG gom nhiều đoạn vào một lượt generate. Nghe thì hợp lý, nhưng đo trên
+# RTX 4060 (4 đoạn 142-268 ký tự) thì gom lô 4 CHẬM HƠN: 1.9s/đoạn so với 1.5s.
+# Lý do: card đã chạy hết công suất ngay từ 1 đoạn, mà gom lô thì mọi đoạn phải
+# đệm cho bằng đoạn dài nhất — ở đây thừa 26% phép tính. Card mạnh hơn (chưa bão
+# hoà ở lô 1) thì gom lô mới có lãi.
+
+# Cứ ngần này đoạn thì trả các khối VRAM đã giữ mà không dùng lại về cho driver.
+VRAM_CLEAN_EVERY = 20
+
+
+def _free_asr(model):
+    """Xả model Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu.
+
+    create_voice_clone_prompt() không kèm ref_text thì OmniVoice nạp
+    whisper-large-v3-turbo (~1.6 GB fp16) để nghe file giọng mẫu — dùng ĐÚNG MỘT
+    LẦN rồi nằm lì trong VRAM tới hết bài. Trên card 8GB chính nó là phần đẩy
+    tiến trình sang vùng tràn ra RAM.
+
+    Đây là Whisper của RIÊNG OmniVoice (transformers pipeline). Whisper của bước
+    nhận diện tiếng Trung và bước gắn phụ đề là faster-whisper, đã có
+    nhandien_giongnoi.free_model() lo — không đụng gì tới nhau.
+    """
+    if getattr(model, "_asr_pipe", None) is None:
+        return
+    import gc
+    import torch
+    model._asr_pipe = None
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    logging.info("🧹 Đã xả Whisper (phiên âm giọng mẫu) khỏi VRAM — trả lại ~1.6 GB.")
+
+
 def _voice_prompt(model, ref_audio):
-    """VoiceClonePrompt dựng 1 lần rồi dùng lại cho mọi đoạn.
+    """VoiceClonePrompt dựng 1 lần rồi dùng lại cho mọi đoạn — và mọi lần chạy sau.
 
     Gọi model.generate(ref_audio=...) sẽ dựng LẠI prompt cho TỪNG đoạn: đọc
     mp3, cắt lặng, chạy Whisper large-v3-turbo phiên âm, mã hoá token. Bài 159
     đoạn tức là chạy Whisper 159 lần cho đúng một file — đo được ~7s thừa mỗi
     đoạn.
+
+    Prompt còn được LƯU RA ĐĨA cạnh file giọng mẫu, nên từ lần chạy sau nạp
+    thẳng file .pt và Whisper không phải vào VRAM lần nào nữa. Sửa file giọng
+    mẫu (mtime mới hơn) thì prompt tự dựng lại.
     """
     cache = getattr(model, "_vn_prompt_cache", None)
     if cache is None:
         cache = model._vn_prompt_cache = {}
-    if ref_audio not in cache:
-        cache[ref_audio] = model.create_voice_clone_prompt(ref_audio=ref_audio)
+    if ref_audio in cache:
+        return cache[ref_audio]
+
+    from omnivoice.models.omnivoice import VoiceClonePrompt
+
+    ref_path = Path(str(ref_audio))
+    # Đuôi .pt nên file này KHÔNG lọt vào danh sách giọng của GUI (lọc AUDIO_EXTS).
+    pt_path = ref_path.with_name(ref_path.name + ".prompt.pt")
+    prompt = None
+
+    try:
+        if pt_path.exists() and pt_path.stat().st_mtime >= ref_path.stat().st_mtime:
+            prompt = VoiceClonePrompt.load(str(pt_path))
+            logging.info(f"🎙️  Nạp prompt giọng mẫu đã lưu: {pt_path.name} "
+                         "— khỏi phải chạy Whisper.")
+    except Exception as e:
+        logging.warning(f"Prompt giọng mẫu đã lưu không đọc được ({e}) → dựng lại.")
+        prompt = None
+
+    if prompt is None:
+        prompt = model.create_voice_clone_prompt(ref_audio=ref_audio)
         logging.info(f"🎙️  Đã dựng prompt giọng mẫu (dùng lại cho mọi đoạn): "
-                     f"{Path(str(ref_audio)).name}")
-    return cache[ref_audio]
+                     f"{ref_path.name}")
+        try:
+            prompt.save(str(pt_path))
+            logging.info(f"💾 Đã lưu prompt giọng mẫu → {pt_path.name}")
+        except Exception as e:
+            logging.warning(f"Không lưu được prompt giọng mẫu: {e}")
+
+    # Nạp từ đĩa hay vừa dựng thì tới đây Whisper cũng hết việc cho cả bài.
+    _free_asr(model)
+
+    cache[ref_audio] = prompt
+    return prompt
 
 
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
 def _generate_chunk(model, mode, voice_param, chunk):
     # language="vi": cả pipeline này chỉ sinh tiếng Việt, khai báo rõ giúp model
     # phát âm chuẩn hơn là để chế độ đoán ngôn ngữ.
-    kw = {"language": "vi", "duration": vn_duration(chunk)}
+    kw = {"language": "vi", "duration": vn_duration(chunk), "num_step": NUM_STEP}
     if mode == "clone":
         return model.generate(text=chunk,
                               voice_clone_prompt=_voice_prompt(model, voice_param), **kw)
@@ -1622,7 +1718,10 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         else:
             # Chữ ký cấu hình (giọng/chế độ/văn bản) — quyết định có thể DÙNG LẠI
             # audio cũ hay phải tạo lại (text/giọng đổi → chữ ký khác → tạo lại).
-            sig = hashlib.sha1("|".join([mode, str(voice_param), *chunks])
+            # NUM_STEP nằm trong chữ ký: đổi số bước là đổi chất lượng giọng, mà
+            # ghép đoạn 32 bước với đoạn 16 bước trong cùng một bài thì nghe cứ
+            # lệch lệch mà chẳng biết tại đâu. Cho vào đây là đổi số → sinh lại hết.
+            sig = hashlib.sha1("|".join([mode, str(voice_param), f"step{NUM_STEP}", *chunks])
                                .encode("utf-8")).hexdigest()
             sig_file = tmp_dir / "_signature.txt"
             old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
@@ -1702,6 +1801,18 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 result = _generate_chunk(model, mode, voice_param, chunk)
                 sf.write(str(tmp_file), result[0], sr)
 
+                # Mỗi đoạn một độ dài chuỗi khác nhau → allocator giữ lại đủ kiểu
+                # khối rời. Dọn định kỳ để phần GIỮ LẠI không phình dần tới mức
+                # tràn sang RAM (xem chú thích PYTORCH_CUDA_ALLOC_CONF đầu file).
+                if (i + 1) % VRAM_CLEAN_EVERY == 0:
+                    torch.cuda.empty_cache()
+                    try:
+                        free_b, total_b = torch.cuda.mem_get_info()
+                        logging.info(f"🧹 Dọn VRAM sau {i+1}/{total} đoạn — còn trống "
+                                     f"{free_b/2**30:.1f}/{total_b/2**30:.1f} GB.")
+                    except Exception:
+                        pass
+
             # ── KIỂM TRA SPIKE SAU KHI GENERATE XONG ────────────────────────
             status_var.set("Kiểm tra chất lượng audio...")
             logging.info("Kiểm tra spike toàn bộ chunks...")
@@ -1776,6 +1887,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # thiếu VRAM khiến dựng video rớt về CPU (libx264) chậm.
             try:
                 import gc
+                _free_asr(model)      # phòng khi giọng mẫu dựng prompt mà chưa xả
                 del model
                 gc.collect()
                 torch.cuda.empty_cache()
@@ -2126,9 +2238,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         pass
 
             # ── (TÙY CHỌN) YOUTUBE SHORT — cắt ≤2:50 từ CHÍNH video TikTok ────
-            # Cắt `-c copy` nên gần như tức thì và giữ nguyên chất lượng; short thừa
-            # hưởng luôn khung dọc, chữ 'Mimi audio Số N', ảnh bìa frame đầu, nhạc
-            # nền. Bước ⑥ đăng YouTube sẽ tự đăng file này sau bản chính 1 giờ.
+            # Hình `-c:v copy` nên gần như tức thì và giữ nguyên chất lượng; short
+            # thừa hưởng luôn khung dọc, khung tiêu đề, chữ 'Mimi audio Số N', ảnh
+            # bìa frame đầu. Riêng TIẾNG thay bằng tk_voice (giọng trần) để không
+            # đẩy nhạc nền TikTok lên YouTube — xem video_short.
+            # Bước ⑥ đăng YouTube sẽ tự đăng file này sau bản chính 1 giờ.
             if make_short and tk_video_out.exists():
                 from video_short import build_short, SHORT_NAME
                 sh_out = Path(short_out) if short_out else tk_video_out.with_name(SHORT_NAME)
@@ -2217,6 +2331,7 @@ class App(tk.Tk):
         self._setup_logging()
         self._build_ui()
         self._poll_log()
+        self._start_web_log_mirror()   # nhật ký đăng bên bảng web → ô Nhật ký ở đây
         self.update_idletasks()
         self.minsize(1280, 680)
         self._center(1560, 720)   # đủ rộng/cao cho Home + tab Thumbnail (các nút không bị che)
@@ -4987,6 +5102,49 @@ class App(tk.Tk):
             messagebox.showerror("Lỗi mở bảng web", str(e))
         finally:
             self.btn_web.config(state="normal")
+
+    def _start_web_log_mirror(self):
+        """Chiếu nhật ký hàng đợi ĐĂNG của bảng web sang ô Nhật ký của GUI.
+
+        Bảng web là TIẾN TRÌNH RIÊNG (cửa sổ console riêng), nên bấm “⬆ Đăng ngay”
+        bên đó thì cửa sổ này không hay biết gì — nhìn vào chỉ thấy im lìm, không rõ
+        có chạy hay không. Luồng nền dưới đây hỏi server 2 giây/lần “có dòng nào mới
+        hơn số này chưa”; server chưa bật thì chỉ tốn một lần thử kết nối tới
+        127.0.0.1 rồi ngủ tiếp, không kêu ca gì.
+
+        Chỉ chiếu hàng đợi ĐĂNG, không chiếu hàng đợi chính: bên đó là hàng nghìn
+        dòng ffmpeg/Whisper, đổ hết sang đây thì ô nhật ký thành bãi rác.
+        """
+        def loop():
+            import json
+            import time
+            import urllib.request
+
+            since = -1          # -1 = chỉ lấy từ giờ trở đi, bỏ qua mẻ đăng cũ
+            port = self._web_port()
+            token_file = BASE_DIR / "web" / "token.txt"
+            while True:
+                if not self._web_alive(port, timeout=0.2):
+                    since = -1          # server tắt rồi bật lại → xin lại từ đầu
+                    time.sleep(5)
+                    continue
+                try:
+                    token = token_file.read_text(encoding="utf-8").strip()
+                    with urllib.request.urlopen(
+                            f"http://127.0.0.1:{port}/api/nhatky-dang"
+                            f"?since={since}&token={token}", timeout=5) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                except Exception:
+                    time.sleep(5)       # server đang bận/khởi động lại → thử lại sau
+                    continue
+                since = int(data.get("next", since))
+                for line in data.get("lines") or []:
+                    level = (logging.ERROR if line.startswith(("❌", "⛔"))
+                             else logging.WARNING if line.startswith("⚠") else logging.INFO)
+                    logging.log(level, f"🌐 {line}")    # 🌐 = việc do bảng web chạy
+                time.sleep(2)
+
+        threading.Thread(target=loop, daemon=True).start()
 
     def _prepare_input_from_gemini(self) -> bool:
         """Quy trình trước khi tạo audio: lấy nội dung từ gemini_result.docx.

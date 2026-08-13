@@ -3,12 +3,32 @@
 {# Một form chạy chung: bấm nút của bước nào thì chạy từ bước đó trở đi. #}
 <form class="form-grid" method="post" action="/kichban/chay">
 
-  <div class="panel">
-    <div class="phead"><h2>Nguồn</h2></div>
+  {# span-all: khối này rộng hết bề ngang kể cả ở Home (nơi form xếp 2–3 cột) —
+     ô nguồn là chỗ gõ nhiều nhất, để hẹp thì link dài bị xuống dòng lung tung. #}
+  <div class="panel span-all srcbox">
+    <div class="phead">
+      <h2>Nguồn</h2>
+      <span class="phead-gap"></span>
+      <button type="button" class="small" id="srcAdd">📂 Thêm từ máy</button>
+      <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
+    </div>
     <label class="field">
       <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
-      <textarea name="sources" rows="4" placeholder="https://www.bilibili.com/video/…&#10;D:\video\tap-moi.mp4"></textarea>
+      <textarea id="srcBox" name="sources" rows="6" placeholder="https://www.bilibili.com/video/…&#10;C:\Users\PC\Downloads\93.mp3"></textarea>
     </label>
+    {% if src_history %}
+      <div class="chiprow">
+        <span class="chiplabel">Gần đây</span>
+        {% for h in src_history %}
+          <button type="button" class="chip" data-src="{{ h.full }}" title="{{ h.full }}">{{ h.label }}</button>
+        {% endfor %}
+        {# type=button + gọi ngầm bằng JS, KHÔNG phải submit: khối Nguồn là panel
+           đầu form, nút submit đặt ở đây sẽ thành nút mặc định — bấm Enter ở ô
+           "Số tập" hoá ra xoá lịch sử thay vì chạy nhận diện. #}
+        <button type="button" id="srcForget" class="chip chip-x"
+                title="Quên danh sách gần đây (không đụng ô nhập)">🗑</button>
+      </div>
+    {% endif %}
     <div class="grid">
       <label class="field">
         <span>Model nhận diện</span>

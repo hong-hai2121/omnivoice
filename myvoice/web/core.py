@@ -55,7 +55,23 @@ WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
                     # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
                     # ảnh nền mặc định, và có làm thêm bản dọc không.
-                    epsrc="manual", thumb_photo="", thumb_doc=True)
+                    epsrc="manual", thumb_photo="", thumb_doc=True,
+                    # Link/đường dẫn đã chạy, mới nhất đứng đầu — ô Nguồn hiện
+                    # thành nút bấm lại, khỏi phải đi tìm hay gõ lại.
+                    src_history=[])
+
+# ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
+SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
+SRC_PICK_MAX = 60           # liệt kê tối đa bấy nhiêu file mỗi thư mục
+
+# Hai chỗ file nguồn hay nằm: Downloads của Windows (tải tay về) và downloads_zh
+# (mp3 do chính script tải từ link). Nút "Thêm từ máy" bên web đọc đúng hai chỗ này.
+DOWNLOAD_DIRS = [
+    (Path.home() / "Downloads", "Tải về"),
+    (gui.DOWNLOAD_DIR, "mp3 tải từ link"),
+]
+MEDIA_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma",
+              ".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".ts", ".m4v"}
 
 STEP_LABELS = [
     ("recognize",   "Nhận diện"),
@@ -105,6 +121,88 @@ def save_web_settings(data: dict) -> None:
     merged = {**load_web_settings(), **data}
     WEB_SETTINGS_FILE.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
+
+
+# ── Nguồn đã dùng ───────────────────────────────────────────────────────────
+def _src_label(src: str) -> str:
+    """Nhãn ngắn cho nút bấm lại: link thì lấy tên miền + đuôi, file thì lấy tên."""
+    s = src.strip()
+    if s.lower().startswith(("http://", "https://")):
+        rest = s.split("://", 1)[1]
+        # Bỏ ?query và #fragment TRƯỚC khi tách: không thì "?spm=..." thành đoạn
+        # cuối và nhãn hoá ra vô nghĩa.
+        rest = rest.split("?", 1)[0].split("#", 1)[0]
+        host, _, path = rest.partition("/")
+        if host.startswith("www."):
+            host = host[4:]
+        tail = [p for p in path.split("/") if p]
+        return f"{host}/{tail[-1]}" if tail else host
+    return Path(s).name or s
+
+
+def source_history() -> list[dict]:
+    """Nguồn đã chạy, mới nhất trước — mỗi mục có `full` (điền vào ô) và `label`."""
+    raw = load_web_settings().get("src_history") or []
+    return [{"full": s, "label": _src_label(s)} for s in raw if isinstance(s, str) and s.strip()]
+
+
+def remember_sources(lines: list[str]) -> None:
+    """Đẩy các nguồn vừa chạy lên đầu lịch sử (bỏ trùng, cắt bớt phần cũ)."""
+    old = [s for s in (load_web_settings().get("src_history") or []) if isinstance(s, str)]
+    merged: list[str] = []
+    for s in [*reversed([l.strip() for l in lines if l.strip()]), *old]:
+        if s not in merged:
+            merged.append(s)
+    save_web_settings({"src_history": merged[:SRC_HISTORY_MAX]})
+
+
+def clear_source_history() -> None:
+    save_web_settings({"src_history": []})
+
+
+def list_download_files() -> list[dict]:
+    """File audio/video trong các thư mục tải về — mới nhất trước, theo từng nhóm.
+
+    Chỉ đọc tên + cỡ + ngày sửa; server chạy ở 127.0.0.1 nên đọc thẳng đĩa máy
+    này là đúng chỗ người dùng vừa tải file về.
+    """
+    groups = []
+    for folder, label in DOWNLOAD_DIRS:
+        try:
+            items = [p for p in folder.iterdir()
+                     if p.is_file() and p.suffix.lower() in MEDIA_EXTS]
+        except Exception:
+            continue                      # thư mục không có/không đọc được → bỏ qua
+        items.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        files = []
+        for p in items[:SRC_PICK_MAX]:
+            st = p.stat()
+            files.append({"name": p.name, "path": str(p),
+                          "size": _human_size(st.st_size),
+                          "when": _human_when(st.st_mtime)})
+        groups.append({"label": label, "folder": str(folder),
+                       "files": files, "more": max(0, len(items) - SRC_PICK_MAX)})
+    return groups
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} GB"
+
+
+def _human_when(ts: float) -> str:
+    import time
+    d = time.time() - ts
+    if d < 3600:
+        return f"{d / 60:.0f} phút trước"
+    if d < 86400:
+        return f"{d / 3600:.0f} giờ trước"
+    if d < 86400 * 7:
+        return f"{d / 86400:.0f} ngày trước"
+    return time.strftime("%d/%m/%Y", time.localtime(ts))
 
 
 # ── Danh sách lựa chọn cho các form ─────────────────────────────────────────
@@ -521,34 +619,91 @@ def upload_slots_text(default: str = "08:00 & 18:00") -> str:
         return default
 
 
-def upload_check() -> tuple[bool, str]:
-    """Đủ điều kiện đăng YouTube chưa? → (ok, thông báo lỗi).
-
-    KHÔNG BAO GIỜ mở trình duyệt đăng nhập: việc đó sẽ chặn cứng server web (và
-    hộp thoại Google hiện ra sau lưng thì không ai bấm). Chưa có token dùng được
-    thì báo để đăng nhập một lần bên app 'Đăng video YouTube' của GUI.
-    """
+def _yt_module() -> tuple[object | None, str]:
+    """Nạp phần đăng YouTube + kiểm hai thứ ngoài tầm token: thư viện Google API và
+    client_secret.json. → (module, lỗi). Chung cho upload_check và youtube_login."""
     try:
         import dang_video_youtube as yt
     except Exception as e:
-        return False, f"Không nạp được phần đăng YouTube: {e}"
+        return None, f"Không nạp được phần đăng YouTube: {e}"
 
     missing = yt._check_deps()
     if missing:
-        return False, ("Thiếu thư viện Google API (" + missing + "). Cài bằng: pip "
-                       "install google-api-python-client google-auth-oauthlib "
-                       "google-auth-httplib2")
+        return None, ("Thiếu thư viện Google API (" + missing + "). Cài bằng: pip "
+                      "install google-api-python-client google-auth-oauthlib "
+                      "google-auth-httplib2")
     if not yt.CLIENT_SECRET_FILE.exists():
-        return False, f"Chưa có {yt.CLIENT_SECRET_FILE.name} trong myvoice/YOUTUBE/."
+        return None, f"Chưa có {yt.CLIENT_SECRET_FILE.name} trong myvoice/YOUTUBE/."
+    return yt, ""
+
+
+def upload_check() -> tuple[bool, str]:
+    """Đủ điều kiện đăng YouTube chưa? → (ok, thông báo lỗi).
+
+    KHÔNG BAO GIỜ mở trình duyệt đăng nhập: hàm này chạy trong luồng phục vụ trang
+    web, chờ ở đây là treo cứng cả bảng điều khiển. Chưa có token dùng được thì báo
+    để bấm nút "🔑 Đăng nhập YouTube" (youtube_login) — nút đó mới được mở trình
+    duyệt, vì nó chạy ở luồng nền riêng.
+    """
+    yt, err = _yt_module()
+    if err:
+        return False, err
+    # Giữ lại lời của get_credentials (token hết hạn / làm mới thất bại / thiếu
+    # quyền) thay vì ném đi: nuốt mất thì mọi kiểu hỏng đều ra đúng một câu "chưa
+    # đăng nhập", không biết là chưa đăng nhập bao giờ hay token vừa bị thu hồi.
+    notes: list[str] = []
     try:
-        creds = yt.get_credentials(lambda *a, **k: None, interactive=False)
+        creds = yt.get_credentials(lambda m, *a, **k: notes.append(str(m)),
+                                   interactive=False)
     except Exception as e:
         return False, f"Không đọc được token YouTube: {e}"
     if creds is None:
-        return False, ("Chưa đăng nhập YouTube. Mở app 'Đăng video YouTube' "
-                       "(myvoice/YOUTUBE/dang_video_youtube.py) đăng nhập một lần "
-                       "rồi chạy lại — web không tự mở cửa sổ đăng nhập được.")
+        why = f" ({notes[-1]})" if notes else ""
+        return False, (f"Chưa đăng nhập YouTube{why}. Bấm nút “🔑 Đăng nhập "
+                       "YouTube” ở khối Đăng YouTube (hoặc mở app 'Đăng video "
+                       "YouTube' bên GUI) để đăng nhập lại một lần.")
     return True, ""
+
+
+def youtube_login(note, timeout: int = 300) -> tuple[dict | None, str]:
+    """Đăng nhập YouTube: MỞ TRÌNH DUYỆT trên chính máy đang chạy server. → (kênh, lỗi).
+
+    Gọi hàm này trong LUỒNG NỀN, đừng gọi thẳng từ handler: nó đứng chờ tới lúc
+    người dùng bấm "Cho phép" xong (tối đa `timeout` giây).
+
+    Mở trình duyệt được là vì server chỉ nghe 127.0.0.1 — người ngồi trước trang web
+    cũng chính là người ngồi trước cái máy này, nên cửa sổ Google hiện ra đúng trước
+    mặt họ. Còn token đã hết hạn/bị thu hồi thì không có cách nào lấy lại mà không
+    qua trình duyệt.
+
+    `note` nhận từng dòng tiến trình (truyền upload_runner.note để nó lên nhật ký
+    hàng đợi đăng). Xong thì đọc luôn kênh: vừa có tên kênh để báo lại, vừa nạp
+    kenh_video_cache.json cho việc xếp khung giờ đăng.
+    """
+    yt, err = _yt_module()
+    if err:
+        return None, err
+
+    def _log(msg, *a, **k):         # chữ ký log của dang_video_youtube: log(text, level)
+        note(str(msg))
+
+    try:
+        creds = yt.get_credentials(_log, login_timeout=timeout)
+    except Exception as e:
+        # So theo TÊN lớp thay vì isinstance: WSGITimeoutError kế thừa AttributeError
+        # nên bắt bằng lớp cha sẽ nuốt nhầm lỗi lập trình thật, mà import lớp con vào
+        # đây chỉ để so sánh thì lại kéo google_auth_oauthlib lên tận đầu module.
+        if type(e).__name__ == "WSGITimeoutError":
+            return None, (f"Chờ quá {timeout // 60} phút không thấy bấm Cho phép nên "
+                          "đã đóng cửa sổ chờ. Bấm lại nút 🔑 khi sẵn sàng.")
+        return None, f"{type(e).__name__}: {e}"
+    if creds is None:               # interactive=True nên chỉ xảy ra nếu code đổi
+        return None, "Không lấy được token đăng nhập."
+    try:
+        chan, _videos = yt.fetch_channel_videos(_log)
+    except Exception as e:
+        return None, f"Đã đăng nhập nhưng chưa đọc được kênh: {e}"
+    return chan, ""
 
 
 def refresh_channel() -> tuple[dict | None, str]:

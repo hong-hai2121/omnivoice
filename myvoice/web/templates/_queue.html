@@ -46,7 +46,10 @@
 {% endfor %}
 
 {# Hàng đợi ĐĂNG chạy song song — chỉ hiện khi có việc, để lúc không đăng thì
-   khối hàng đợi vẫn gọn như cũ. #}
+   khối hàng đợi vẫn gọn như cũ. Nhật ký đăng thì giữ lại cả lúc rảnh (gấp trong
+   <details>): bấm nút xong mà không tập nào đủ điều kiện thì LÝ DO nằm ở đó. #}
+{% set pct = upct if upct is defined and upct is not none else 0 %}
+{% set ulines = ulog if ulog is defined and ulog else [] %}
 {% if qu and (qu.current or qu.pending) %}
   <div class="uploadq">
     <p class="colhead">⬆ Đăng YouTube (chạy song song)</p>
@@ -59,7 +62,8 @@
           <span class="spacer"></span>
           <form method="post" action="/hangdoidang/skip"><button class="ghost small">⏭ Bỏ</button></form>
         </div>
-        <p class="hint">bắt đầu {{ qu.current.started }}</p>
+        <p class="hint">bắt đầu {{ qu.current.started }}{% if pct %} · đã tải {{ pct }}%{% endif %}</p>
+        {% if pct %}<div class="bar"><i style="width: {{ pct }}%"></i></div>{% endif %}
       </div>
     {% endif %}
     {% for j in qu.pending %}
@@ -72,6 +76,14 @@
         </div>
       </div>
     {% endfor %}
+    {% if ulines %}<pre class="loglines">{{ ulines|join('\n') }}</pre>{% endif %}
+  </div>
+{% elif ulines %}
+  <div class="uploadq">
+    <details class="history">
+      <summary>⬆ Nhật ký đăng YouTube gần đây</summary>
+      <pre class="loglines">{{ ulines|join('\n') }}</pre>
+    </details>
   </div>
 {% endif %}
 

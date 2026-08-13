@@ -30,6 +30,11 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# Chống phình VRAM (giải thích đầy đủ ở đầu scripts/amain_taogiong_gui.py). Đặt
+# lại ngay tại cửa vào tiến trình chứ không phó mặc thứ tự import: biến này chỉ ăn
+# khi được đặt TRƯỚC lần import torch đầu tiên.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
+
 import amain_taogiong_gui as gui                # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào

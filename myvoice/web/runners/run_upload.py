@@ -63,10 +63,15 @@ def main(argv=None) -> int:
         logging.error(f"❌ Không thấy thư mục tập {episode} trong kịch_bản/.")
         return ERROR
 
-    ok, msg = core.upload_check()
-    if not ok:
+    # Đọc lại kênh NGAY TRƯỚC KHI ĐĂNG, không tin ảnh chụp lúc bấm nút: mẻ chạy đêm
+    # cách lúc bấm hàng giờ — token có thể vừa hết hạn, mà khung giờ 08:00/18:00 cũng
+    # phải tính trên danh sách video mới nhất (kể cả video hẹn từ máy khác), không
+    # thì hai tập đè nhau một khung.
+    chan, msg = core.refresh_channel()
+    if chan is None:
         logging.error(f"⛔ {msg}")
         return ERROR
+    logging.info(f"📺 Kênh: {chan['title']} — {chan['video_count']} video.")
 
     import dang_tap_youtube as up
 

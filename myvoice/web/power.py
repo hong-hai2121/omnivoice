@@ -37,6 +37,7 @@ class SleepWhenDone:
         self._armed = False
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
+        self._warn_due = False     # vừa bắt đầu đếm → soát tập chưa đăng (ngoài lock)
         self._lock = threading.Lock()
         threading.Thread(target=self._watch, daemon=True).start()
 
@@ -48,6 +49,7 @@ class SleepWhenDone:
             self._armed = on
             self._saw_busy = False     # bật lại = đếm lại từ đầu, phải thấy bận đã
             counting, self._due = bool(self._due), 0.0
+            self._warn_due = False
         if on:
             log(f"🌙 Bật chế độ ngủ: hàng đợi xong hết + rảnh {SLEEP_DELAY_MIN} "
                 "phút thì máy ngủ. Huỷ: bỏ tick trên trang web.")
@@ -72,10 +74,37 @@ class SleepWhenDone:
         while True:
             time.sleep(POLL_SEC)
             try:
-                if self._tick():
+                due = self._tick()
+                self._warn_pending_upload()   # ngoài _lock: hàm này quét thư mục
+                if due:
                     self._sleep_now()
             except Exception as e:          # luồng canh không được chết
                 log(f"⚠️ Lỗi khi canh chế độ ngủ: {e}")
+
+    def _warn_pending_upload(self) -> None:
+        """Bắt đầu đếm ngược mà còn tập dựng xong CHƯA đăng → nói ra.
+
+        Hàng đợi rỗng KHÔNG đồng nghĩa “đã đăng hết”: việc đăng chỉ được nối khi ô
+        “⬆ tự động đăng” bật lúc bấm chạy. Im lặng úp máy xuống rồi sáng ra mới biết
+        cả mẻ chưa lên kênh là kiểu hỏng khó chịu nhất — nên đây là chỗ hỏi lại lần
+        cuối, ngay trước khi ngủ.
+
+        Chỉ CẢNH BÁO, không tự đăng: đăng là việc hướng ra ngoài, không được tự ý
+        làm thay chỉ vì máy sắp ngủ.
+        """
+        with self._lock:
+            if not self._warn_due:
+                return
+            self._warn_due = False
+        try:
+            pending = core.episodes_pending_upload()
+        except Exception:
+            return
+        if pending:
+            upload_runner.note(
+                f"⚠️ Sắp ngủ mà còn {len(pending)} tập dựng xong CHƯA đăng: "
+                f"{', '.join(pending)}. Muốn đăng thì bỏ tick 🌙 rồi bấm "
+                "“⬆ Đăng ngay các tập chưa đăng” — máy vẫn ngủ đúng lịch nếu để yên.")
 
     def _tick(self) -> bool:
         """Một lượt kiểm tra → True nghĩa là ĐẾN GIỜ NGỦ."""
@@ -86,12 +115,14 @@ class SleepWhenDone:
                 self._saw_busy = True
                 if self._due:               # việc mới chen vào giữa lúc đếm ngược
                     self._due = 0.0
+                    self._warn_due = False
                     log("🌙 Có việc mới → huỷ đếm ngược, chờ xong hết đã.")
                 return False
             if not self._saw_busy:          # tick lúc đang rảnh: chờ mẻ tới
                 return False
             if not self._due:
                 self._due = time.monotonic() + SLEEP_DELAY_MIN * 60
+                self._warn_due = True       # _warn_pending_upload lo phần soát
                 log(f"🌙 Hàng đợi đã xong — máy sẽ NGỦ sau {SLEEP_DELAY_MIN} phút. "
                     "Huỷ: bỏ tick “Xong hết thì cho máy ngủ” trên trang web.")
                 return False

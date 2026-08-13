@@ -160,7 +160,7 @@ def install_deps(log):
     log("Đã cài xong thư viện Google API.", "ok")
 
 
-def get_credentials(log, force_new=False, interactive=True):
+def get_credentials(log, force_new=False, interactive=True, login_timeout=None):
     """Lấy credentials hợp lệ; tự refresh hoặc mở trình duyệt đăng nhập khi cần.
 
     force_new=True: bỏ qua token đã lưu, mở trình duyệt với màn hình CHỌN TÀI
@@ -171,6 +171,12 @@ def get_credentials(log, force_new=False, interactive=True):
     interactive=False: CHỈ dùng token sẵn có (kể cả làm mới), KHÔNG mở trình duyệt —
     trả về None nếu bắt buộc phải đăng nhập lại. Dùng để KIỂM TRA trước khi chạy mẻ
     dài: bật trình duyệt đòi đăng nhập giữa chừng là treo cả mẻ chạy qua đêm.
+
+    login_timeout=<giây>: chờ tối đa bấy nhiêu giây cho lần bấm "Cho phép" trong
+    trình duyệt rồi ném WSGITimeoutError. None (mặc định, bản GUI dùng) = chờ mãi:
+    ngồi ngay đó thì cứ để người dùng thong thả. Bản web đặt hạn giờ vì lần đăng
+    nhập chạy trong luồng nền — bỏ dở giữa chừng mà không có hạn thì luồng đó treo
+    luôn, giữ mãi cổng nghe callback và chặn lần bấm nút sau.
     """
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
@@ -217,7 +223,8 @@ def get_credentials(log, force_new=False, interactive=True):
     # "Đổi kênh": select_account bắt Google hiện lại màn hình chọn tài khoản,
     # nơi mỗi kênh của cùng một Gmail hiện thành một dòng riêng để chọn.
     prompt = "select_account consent" if force_new else "consent"
-    creds = flow.run_local_server(port=0, prompt=prompt)
+    creds = flow.run_local_server(port=0, prompt=prompt,
+                                  timeout_seconds=login_timeout)
     if force_new and TOKEN_FILE.exists():
         # Giữ lại token kênh cũ (không ghi đè mất) trước khi lưu token kênh mới.
         backup = TOKEN_FILE.with_name(f"token_old_{datetime.now():%Y%m%d_%H%M%S}.json")

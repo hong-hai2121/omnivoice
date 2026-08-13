@@ -4,7 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}myvoice{% endblock %}</title>
-  <link rel="stylesheet" href="/static/app.css">
+  {# ?v=… là mtime của file (xem _asset_v trong server.py): sửa css/js xong là URL
+     đổi theo, trình duyệt không thể lấy nhầm bản cũ trong cache. #}
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v() }}">
   <script src="/static/htmx.min.js" defer></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎧</text></svg>">
 </head>
@@ -32,6 +34,6 @@
   {% block content %}{% endblock %}
 </main>
 
-<script src="/static/app.js" defer></script>
+<script src="/static/app.js?v={{ asset_v() }}" defer></script>
 </body>
 </html>

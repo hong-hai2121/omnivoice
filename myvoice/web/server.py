@@ -7,7 +7,9 @@ Server này điều khiển máy thật (ffmpeg, GPU, Firefox, xoá file) nên C
 trên 127.0.0.1 — không có chế độ mở ra mạng LAN. Vẫn giữ một token trong cookie
 để trang web lạ đang mở trong cùng trình duyệt không gọi được vào đây.
 
-Nhật ký chạy in thẳng ra cửa sổ console của server (không còn panel nhật ký).
+Nhật ký chạy in thẳng ra cửa sổ console của server. Riêng hàng đợi ĐĂNG có thêm
+vài dòng cuối ngay trong khối hàng đợi trên trang, và /api/nhatky-dang để GUI
+(tiến trình khác) chiếu sang ô Nhật ký của nó.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import os
 import secrets
 import sys
+import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -28,8 +31,8 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     __package__ = "myvoice.web"
 
-from . import core, power, steps as steps_mod   # noqa: E402
-from .jobs import log, runner, upload_runner    # noqa: E402
+from . import core, power, steps as steps_mod              # noqa: E402
+from .jobs import log, runner, upload_log, upload_runner   # noqa: E402
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -56,6 +59,24 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
 
+def _asset_v() -> str:
+    """Dấu phiên bản gắn vào URL của app.css/app.js — xem base.html.
+
+    StaticFiles không gửi Cache-Control, nên trình duyệt tự đoán và có thể lấy
+    lại bản trong cache mà không thèm hỏi server: sửa app.js xong mở trang vẫn
+    chạy code cũ, nút bấm không ăn gì, mà nhìn HTML thì thấy đúng nút mới nên
+    rất khó đoán ra. Lấy mtime làm phiên bản: file đổi là URL đổi là tải lại.
+    """
+    try:
+        d = WEB_DIR / "static"
+        return str(int(max((d / n).stat().st_mtime for n in ("app.css", "app.js"))))
+    except Exception:
+        return "0"
+
+
+templates.env.globals["asset_v"] = _asset_v
+
+
 # ── Bảo vệ bằng token ───────────────────────────────────────────────────────
 @app.middleware("http")
 async def require_token(request: Request, call_next):
@@ -78,6 +99,8 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.setdefault("on_home", False)
     # Hàng đợi ĐĂNG chạy song song với hàng đợi chính nên trang nào cũng cần thấy.
     ctx.setdefault("qu", upload_runner.state())
+    ctx.setdefault("ulog", upload_log.tail(8))
+    ctx.setdefault("upct", upload_log.percent)
     ctx.setdefault("slots", core.upload_slots_text())
     # Ô "🌙 Xong hết thì cho máy ngủ" nằm trong khối hàng đợi → trang nào có khối
     # đó cũng cần trạng thái này.
@@ -94,6 +117,8 @@ def _script_ctx() -> dict:
             "next_episode": core.next_episode(), "prefix": core.load_prefix(),
             "skip_episodes": core.load_skip_episodes(),
             "shutdown_delay": core.gui.SHUTDOWN_DELAY_MIN,
+            # Link/file đã chạy lần trước — ô Nguồn hiện thành nút bấm lại.
+            "src_history": core.source_history(),
             # Chế độ đánh số đã lưu — trang Tạo kịch bản riêng không có khối
             # Thumbnail (nơi đặt radio) nên vẫn phải theo lựa chọn đã nhớ.
             "epsrc": core.load_web_settings().get("epsrc", "manual")}
@@ -221,17 +246,45 @@ def _save_model_speed(form) -> dict:
 def _upload_ready() -> bool:
     """Kiểm tra TRƯỚC khi xếp việc: đủ thư viện + đã đăng nhập YouTube.
 
-    Làm ngay lúc bấm nút thay vì để runner phát hiện lúc 2 giờ sáng. Đồng thời đọc
-    lại kênh: vừa báo rõ sẽ đăng lên kênh nào (một Gmail có thể nhiều kênh), vừa nạp
-    cache các giờ đã hẹn để xếp khung 08:00/18:00 không bị trùng.
+    Dùng cho các nút ĐĂNG NGAY (⑥ và “⬆ Đăng ngay các tập chưa đăng”): người dùng
+    đang ngồi đó bấm, hỏng thì báo liền. Đồng thời đọc lại kênh: vừa nói rõ sẽ đăng
+    lên kênh nào (một Gmail có thể nhiều kênh), vừa nạp cache các giờ đã hẹn để xếp
+    khung 08:00/18:00 không bị trùng.
+
+    KHÔNG dùng làm chốt cho chuỗi tự động — xem _auto_upload_wanted.
     """
     chan, err = core.refresh_channel()
     if err:
-        log(f"⛔ Chưa đăng YouTube được: {err}")
+        upload_runner.note(f"⛔ Chưa đăng YouTube được: {err}")
         return False
     slot = core.next_publish_slot_text()
-    log(f"⬆ Sẽ đăng lên kênh: {chan['title']} ({chan['id']}) — {chan['video_count']} video."
+    upload_runner.note(
+        f"⬆ Sẽ đăng lên kênh: {chan['title']} ({chan['id']}) — {chan['video_count']} video."
         + (f" Khung giờ trống kế tiếp: {slot}." if slot else ""))
+    return True
+
+
+def _auto_upload_wanted(chain: list[str]) -> bool:
+    """Dựng xong video thì có NỐI việc đăng vào hàng đợi đăng không?
+
+    Chỉ hỏi hai điều: ô “⬆ tự động đăng” có bật không, và chuỗi này có bước 'tts'
+    không (việc đăng móc vào bước dựng video).
+
+    KHÔNG chặn theo tình trạng đăng nhập như trước. Lý do: mẻ chạy đêm mất hàng
+    GIỜ, mà chốt đăng nhập lại kiểm ngay lúc bấm nút — chỉ cần một lần mạng chập
+    hay token vừa hết hạn là cả mẻ mất luôn phần đăng, hàng đợi rỗng, máy ngủ theo
+    lịch, sáng ra video nằm im trong thư mục mà nhật ký báo “xong” hết. Đăng nhập
+    hỏng thật thì run_upload.py phát hiện ĐÚNG LÚC đăng và việc đó báo lỗi đỏ ở
+    hàng đợi đăng — thấy được, chứ không âm thầm biến mất.
+    """
+    if not (bool(core.load_pipeline().get("upload")) and "tts" in chain):
+        return False
+    ok, err = core.upload_check()
+    if not ok:
+        upload_runner.note(
+            f"⚠️ Tự động đăng đang BẬT nhưng hiện chưa đăng nhập YouTube được: {err} "
+            "→ vẫn xếp việc đăng sau khi dựng xong; tới lúc đó còn hỏng thì việc "
+            "đăng sẽ báo lỗi ở đây (không bỏ qua im lặng).")
     return True
 
 
@@ -268,12 +321,11 @@ async def run_script(request: Request):
         log("⚠️ Chưa nhập link hoặc đường dẫn file nào.")
         return _back(request, "/kichban")
 
+    core.remember_sources(lines)      # để lần sau bấm lại, khỏi đi tìm/gõ lại
     pipe = _save_pipe_from_form(form)
     chain = _chain_from(start, pipe)
     force = bool(form.get("force"))
-    upload = bool(pipe.get("upload")) and "tts" in chain
-    if upload and not _upload_ready():
-        upload = False           # lý do đã ghi ra nhật ký; vẫn dựng video như thường
+    upload = _auto_upload_wanted(chain)
     # LÀM BÙ: bắt đầu từ số tập đã chọn rồi vét tiếp các số kênh còn thiếu; hết thì
     # cấp số mới. Tính TRƯỚC cho cả mẻ để ghi ra nhật ký, khỏi phải đoán.
     start_ep = str(form.get("episode", "")).strip()
@@ -307,6 +359,30 @@ async def save_pipe_only(request: Request):
     _save_pipe_from_form(await request.form())
     log("💾 Đã lưu cài đặt quy trình (model · tốc độ · các ô ⛓).")
     return _back(request, "/kichban")
+
+
+@app.get("/api/tep-nguon")
+def api_source_files():
+    """File audio/video đang nằm trong các thư mục tải về — cho nút 📂 Thêm từ máy.
+
+    Server chỉ chạy trên 127.0.0.1 (xem đầu file) nên đọc thẳng đĩa máy này là
+    đúng chỗ người dùng vừa tải file về; trình duyệt không tự đọc được đường dẫn
+    thật của file nên phải hỏi server.
+    """
+    return JSONResponse({"groups": core.list_download_files()})
+
+
+@app.post("/kichban/xoalichsu")
+def clear_source_history():
+    """Nút 🗑 ở hàng “Gần đây”: quên các nguồn đã chạy, KHÔNG đụng ô đang nhập.
+
+    Trả JSON chứ không redirect: khối Nguồn nằm trong form chạy chung nên nút này
+    là type=button gọi ngầm bằng fetch (nếu để submit thì nó thành nút mặc định
+    của form — bấm Enter ở ô “Số tập” hoá ra xoá lịch sử). Xem app.js.
+    """
+    core.clear_source_history()
+    log("🗑 Đã xoá danh sách nguồn gần đây.")
+    return JSONResponse({"ok": True})
 
 
 @app.post("/kichban/reset")
@@ -489,10 +565,9 @@ def _run_resume(request: Request, form) -> RedirectResponse:
         log(f"ℹ️ Không tick tập nào → chạy tiếp {len(targets)} tập còn việc.")
 
     # Tôn trọng ô '⬆ tự động đăng' của quy trình: bật thì dựng xong video là nối
-    # việc đăng, y như chuỗi ①→③. Chưa đăng nhập được thì vẫn dựng, chỉ báo lý do.
-    upload = bool(core.load_pipeline().get("upload"))
-    if upload and not _upload_ready():
-        upload = False
+    # việc đăng, y như chuỗi ①→③. (Mỗi tập thiếu một kiểu nên chốt 'tts' xét lại
+    # theo từng tập ở dưới; ở đây chỉ hỏi ô tick.)
+    upload_on = _auto_upload_wanted(["tts"])
 
     steps_mod.cleanup_tmp()
     queued = 0
@@ -505,7 +580,7 @@ def _run_resume(request: Request, form) -> RedirectResponse:
                 "→ dán lại link vào ô nhận diện để chạy tập này.")
             continue
         built, err = steps_mod.resume_steps(missing, r["source"], r["episode"],
-                                            upload=upload)
+                                            upload=upload_on)
         if err:
             log(f"⛔ {err}")
             continue
@@ -563,11 +638,17 @@ async def run_recog(request: Request):
         skipped = [r["episode"] for r in targets if int(r["episode"]) in on_channel]
         targets = [r for r in targets if int(r["episode"]) not in on_channel]
         if skipped:
-            log(f"♻ Bỏ qua {len(skipped)} tập kênh đã có: {', '.join(skipped)}.")
+            upload_runner.note(f"♻ Bỏ qua {len(skipped)} tập kênh đã có: "
+                               f"{', '.join(skipped)}.")
 
     if not targets:
         log(f"⚠️ Không có tập nào để chạy “{label}”.")
         return _back(request, "/nhandien")
+
+    # Nút ⑤ dựng video hàng loạt cũng phải TÔN TRỌNG ô '⬆ tự động đăng', y như chuỗi
+    # ①→③ và nút ⏩ chạy tiếp. Trước đây chỗ này quên truyền upload= nên bấm ⑤ là mẻ
+    # đó KHÔNG BAO GIỜ tự đăng dù ô tick đang bật — dựng xong, hàng đợi rỗng, máy ngủ.
+    upload = _auto_upload_wanted(chain)
 
     for r in sorted(targets, key=lambda r: int(r["episode"])):
         # Đăng đi hàng đợi RIÊNG (song song), các bước khác đi hàng đợi chính.
@@ -575,7 +656,8 @@ async def run_recog(request: Request):
             steps_mod.queue_upload(r["episode"])
             continue
         built, err = steps_mod.build_steps(chain, source=r["source"],
-                                           episode=r["episode"], force=force)
+                                           episode=r["episode"], force=force,
+                                           upload=upload)
         if err:
             log(f"⛔ {err}")
             break
@@ -617,12 +699,58 @@ async def run_upload_now(request: Request):
     if not _upload_ready():
         return _back(request, "/")
     pending = core.episodes_pending_upload()
+    # Hai dòng này đi qua upload_runner.note để LỌT vào nhật ký hàng đợi đăng: bấm
+    # nút mà không có tập nào đủ điều kiện thì phải thấy LÝ DO ngay trên trang/GUI,
+    # chứ không phải im lìm như hỏng.
     if not pending:
-        log("⚠️ Không có tập nào cần đăng (thiếu video/SEO, hoặc kênh đã có hết).")
+        upload_runner.note("⚠️ Không có tập nào cần đăng (thiếu video/SEO, "
+                           "hoặc kênh đã có hết).")
         return _back(request, "/")
-    log(f"⬆ Xếp {len(pending)} tập vào hàng đợi đăng: {', '.join(pending)}")
+    upload_runner.note(f"⬆ Xếp {len(pending)} tập vào hàng đợi đăng: {', '.join(pending)}")
     for ep in pending:
         steps_mod.queue_upload(ep)
+    return _back(request, "/")
+
+
+# Luồng đang chạy phiên đăng nhập Google (None = không có). Chỉ cho MỘT phiên: hai
+# lần bấm là hai cửa sổ Google, cái sau ghi đè token của cái trước.
+_login_thread: threading.Thread | None = None
+
+
+def _do_youtube_login() -> None:
+    """Thân của luồng đăng nhập. Mọi dòng đều qua upload_runner.note để hiện ngay
+    trong khối hàng đợi đăng (trang tự hỏi lại mỗi 2 giây) — người bấm nút thấy được
+    tiến trình, chứ luồng nền mà im lìm thì không biết còn sống hay đã chết."""
+    chan, err = core.youtube_login(upload_runner.note)
+    if err:
+        upload_runner.note(f"⛔ Đăng nhập YouTube thất bại: {err}")
+        return
+    slot = core.next_publish_slot_text()
+    upload_runner.note(
+        f"✅ Đã đăng nhập YouTube — kênh: {chan['title']} ({chan['id']}) — "
+        f"{chan['video_count']} video."
+        + (f" Khung giờ trống kế tiếp: {slot}." if slot else ""))
+
+
+@app.post("/dangyoutube/dangnhap")
+def youtube_login(request: Request):
+    """Nút '🔑 Đăng nhập YouTube': mở cửa sổ Google ngay trên máy này.
+
+    Chạy ở LUỒNG NỀN rồi trả trang về liền. Đăng nhập mất từ vài giây tới vài phút
+    (chọn tài khoản, cấp quyền) — chờ trong handler là uvicorn treo, trang đứng hình
+    và chính cái tab đang mở cũng không tải nổi.
+    """
+    global _login_thread
+    if _login_thread is not None and _login_thread.is_alive():
+        upload_runner.note("⏳ Cửa sổ đăng nhập Google đang mở sẵn — làm nốt ở cửa "
+                           "sổ đó (bấm hai lần là hai phiên, phiên sau đè token "
+                           "phiên trước).")
+        return _back(request, "/")
+    upload_runner.note("🔑 Đang mở trình duyệt để đăng nhập YouTube — chọn tài khoản "
+                       "và bấm Cho phép trong cửa sổ vừa hiện ra (chờ tối đa 5 phút).")
+    _login_thread = threading.Thread(target=_do_youtube_login, daemon=True,
+                                     name="youtube-login")
+    _login_thread.start()
     return _back(request, "/")
 
 
@@ -726,7 +854,22 @@ def partial_queue(request: Request):
     return templates.TemplateResponse(
         request, "_queue.html",
         {"q": runner.state(), "qu": upload_runner.state(),
+         "ulog": upload_log.tail(8), "upct": upload_log.percent,
          "sleepq": power.watcher.state()})
+
+
+@app.get("/api/nhatky-dang")
+def api_upload_log(since: int = -1):
+    """Nhật ký hàng đợi ĐĂNG cho tiến trình khác (GUI) đọc.
+
+    since < 0 nghĩa là “chỉ lấy từ giờ trở đi”: trả về số thứ tự hiện tại kèm danh
+    sách rỗng, để GUI vừa mở không đổ ra cả mẻ đăng từ hôm trước.
+    """
+    if since < 0:
+        return JSONResponse({"next": upload_log.seq, "lines": [],
+                             "percent": upload_log.percent})
+    seq, lines = upload_log.since(since)
+    return JSONResponse({"next": seq, "lines": lines, "percent": upload_log.percent})
 
 
 @app.post("/hangdoi/ngu", response_class=HTMLResponse)
@@ -880,8 +1023,6 @@ def _should_open_browser() -> bool:
 
 
 def main() -> None:
-    import threading
-
     import uvicorn
 
     port = int(os.environ.get("MYVOICE_WEB_PORT", "8765"))

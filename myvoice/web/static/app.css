@@ -383,6 +383,15 @@ audio { max-width: 100%; height: 36px; }
 .history { margin-top: 6px; border-top: 1px solid var(--line); }
 .history summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 9px 0 4px; }
 
+/* Vài dòng nhật ký cuối của hàng đợi đăng — khối làm mới 2 giây/lần nên cao cố
+   định, không thì trang nhảy lên nhảy xuống mỗi lần có dòng mới. */
+.loglines {
+  margin: 9px 0 0; padding: 9px 11px; max-height: 190px; overflow: auto;
+  background: var(--sunken); border: 1px solid var(--line); border-radius: var(--r-sm);
+  color: var(--muted); font: 12px/1.55 ui-monospace, Consolas, "Courier New", monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+
 /* Gợi ý số tập còn thiếu trên kênh (làm bù) — khối riêng, trọn bề ngang panel */
 .epsuggest {
   margin: 4px 0 10px; padding: 10px 12px;
@@ -476,3 +485,72 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   .pagehead .ico { width: 36px; height: 36px; font-size: 17px; border-radius: 11px; }
   .panel { padding: 15px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KHỐI NGUỒN — ô nhập link/file + hàng "Gần đây" + bảng chọn file từ máy.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Đẩy cặp nút Thêm/Xoá về sát mép phải của đầu khối. */
+.phead-gap { flex: 1 1 auto; }
+
+.srcbox textarea { font-size: 13px; line-height: 1.65; min-height: 108px; }
+
+/* ── Hàng nguồn đã dùng lần trước ─────────────────────────────────────────── */
+.chiprow {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin: 2px 0 10px; padding-top: 10px; border-top: 1px dashed var(--line);
+}
+.chiplabel { font-size: 12px; color: var(--muted); margin-right: 2px; }
+
+/* display:block (không phải inline-flex như button gốc) để text-overflow:ellipsis
+   ăn — bù lại phải tự đặt line-height, min-height của button gốc sẽ đẩy chữ lệch
+   lên trên. */
+.chip {
+  display: block; max-width: 260px; min-height: 0; padding: 4px 11px;
+  border-radius: 999px; background: var(--sunken);
+  font-size: 12.5px; line-height: 18px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.chip-hit { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.chip-x { color: var(--muted); padding: 4px 10px; text-align: center; }
+.chip-x:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+
+/* ── Bảng chọn file (dựng bằng JS trong app.js) ───────────────────────────── */
+.modal {
+  position: fixed; inset: 0; z-index: 60; display: flex;
+  align-items: center; justify-content: center; padding: 20px;
+  background: rgba(24, 20, 50, .42); backdrop-filter: blur(2px);
+}
+.modal-card {
+  display: flex; flex-direction: column; width: min(680px, 100%); max-height: 82vh;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--r); box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.modal-head, .modal-foot {
+  display: flex; gap: 9px; align-items: center; flex: none;
+  padding: 12px 14px; background: var(--card);
+}
+.modal-head { border-bottom: 1px solid var(--line); }
+.modal-foot { border-top: 1px solid var(--line); justify-content: space-between; }
+.modal-foot .hint { margin: 0; }
+.modal-find { flex: 1 1 auto; min-width: 0; }
+.modal-body { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px; }
+
+.filegroup + .filegroup { margin-top: 16px; }
+.filegroup-head {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+  margin-bottom: 7px; font-size: 12.5px; font-weight: 650; color: var(--fg);
+}
+.filegroup-head .hint { margin: 0; font-size: 11.5px; }
+
+.filerow {
+  display: flex; gap: 10px; align-items: baseline; justify-content: space-between;
+  width: 100%; margin-bottom: 4px; padding: 7px 11px; text-align: left;
+  border-radius: var(--r-sm); background: var(--sunken); font-size: 13px;
+}
+.filerow:hover { background: var(--accent-soft); border-color: var(--accent); }
+.filerow-hit { background: var(--ok-bg); border-color: var(--ok); }
+.filerow-hit .filerow-meta { color: var(--ok); }
+.filerow-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filerow-meta { flex: none; font-size: 11.5px; color: var(--muted); }
