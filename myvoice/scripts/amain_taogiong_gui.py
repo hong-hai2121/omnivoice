@@ -853,6 +853,25 @@ _VN_END_RE   = re.compile(r'[.!?]')
 # "26" đọc là "hai mươi sáu" — 2 chữ số thành 3 âm tiết. Đếm mỗi chữ số 1.5 âm
 # tiết để đoạn có số không bị khung quá hẹp rồi đọc vội/nuốt chữ.
 _VN_SYL_PER_DIGIT = 1.5
+# Chữ Hán sót qua bước dịch: model vẫn đọc (~1 âm tiết/chữ) mà _VN_TOKEN không
+# bắt được → khung hụt giờ nặng. Đếm riêng từng chữ.
+_VN_CJK      = re.compile(r'[一-鿿㐀-䶿豈-﫿]')
+# Cụm nguyên âm liền nhau (kể cả có dấu). Mỗi TIẾNG Việt đúng 1 cụm ("nghiêng",
+# "khuya", "quyết" → 1); từ ngoại lai nhiều cụm ("piano" 2, "camera" 3,
+# "audio" 2, "elise" 3) — trước đây đều bị đếm 1 âm tiết nên đoạn có nhạc cụ /
+# đồ tây / tên riêng tây bị hụt giờ, đọc gấp. Đếm mỗi cụm 1 âm tiết.
+_VN_VOWELS   = re.compile(r'[aeiouyàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩị'
+                          r'òóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]+')
+
+
+def _vn_syl_token(tok: str) -> float:
+    """Số âm tiết đọc ra của MỘT token (chunk đã .lower() trước khi vào đây)."""
+    if tok.isdigit():
+        return len(tok) * _VN_SYL_PER_DIGIT
+    if any(c.isdigit() for c in tok):
+        # Chữ–số dính nhau ("12a8" đọc "mười hai a tám"): đếm rời từng ký tự.
+        return sum(_VN_SYL_PER_DIGIT if c.isdigit() else 1 for c in tok)
+    return max(1, len(_VN_VOWELS.findall(tok)))
 
 
 def vn_duration(text: str):
@@ -861,9 +880,8 @@ def vn_duration(text: str):
     Trả None khi đoạn không có âm tiết nào (chỉ dấu câu) — lúc đó để model tự
     đoán như cũ, vì ép duration=0 sẽ lỗi.
     """
-    syllables = 0.0
-    for tok in _VN_TOKEN.findall(text):
-        syllables += len(tok) * _VN_SYL_PER_DIGIT if tok.isdigit() else 1
+    syllables = sum(_vn_syl_token(tok) for tok in _VN_TOKEN.findall(text))
+    syllables += len(_VN_CJK.findall(text))
     if not syllables:
         return None
     return (syllables / VN_RATE
@@ -976,10 +994,15 @@ def _voice_prompt(model, ref_audio):
 
 
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
-def _generate_chunk(model, mode, voice_param, chunk):
+def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0):
     # language="vi": cả pipeline này chỉ sinh tiếng Việt, khai báo rõ giúp model
     # phát âm chuẩn hơn là để chế độ đoán ngôn ngữ.
-    kw = {"language": "vi", "duration": vn_duration(chunk), "num_step": NUM_STEP}
+    # dur_scale: nới khung thời lượng (render lại đoạn bị nuốt chữ lần 2 dùng
+    # 1.06 — thêm ~6% chỗ để model nhét lại câu đã nuốt; lần đầu chỉ re-roll).
+    dur = vn_duration(chunk)
+    if dur is not None:
+        dur *= dur_scale
+    kw = {"language": "vi", "duration": dur, "num_step": NUM_STEP}
     if mode == "clone":
         return model.generate(text=chunk,
                               voice_clone_prompt=_voice_prompt(model, voice_param), **kw)
@@ -1835,6 +1858,57 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.info(f"  [{i:04d}] render lại xong")
             else:
                 logging.info("Không phát hiện spike — tất cả chunk OK.")
+
+            # ── KIỂM TRA MẤT CHỮ (ASR đối chiếu văn bản từng đoạn) ──────────
+            # OmniVoice thi thoảng NUỐT nguyên câu ngắn (đo tập 49/53: 7–12% số
+            # đoạn — hay dính nhất là câu thuật thoại "tôi hỏi"/"tôi gật đầu"
+            # và cụm lặp "không chia. không chia."). detect_spike không thấy
+            # được vì audio vẫn sạch, chỉ thiếu lời. Đối chiếu ASR ↔ văn bản
+            # (CPU, không đụng VRAM) để bắt rồi render lại; lượt 2 nới khung
+            # thời lượng +6% cho model đủ chỗ nhét lại câu đã nuốt.
+            try:
+                import taogiong_kiemtra_matchu as _mc
+            except Exception as e:
+                _mc = None
+                logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ (thiếu module: {e})")
+            if _mc is not None:
+                status_var.set("Kiểm tra mất chữ (ASR đối chiếu)...")
+                logging.info("Kiểm tra mất chữ toàn bộ chunks (ASR đối chiếu văn bản)...")
+                miss = _mc.quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info,
+                                            status=status_var.set)
+                for attempt in (1, 2):
+                    if not miss:
+                        break
+                    logging.warning(
+                        f"📢 {len(miss)} đoạn bị nuốt chữ → render lại "
+                        f"(lượt {attempt}): {sorted(miss)}")
+                    for i in sorted(miss):
+                        logging.info(f"  [{i:04d}] mất: {' | '.join(miss[i])}")
+                        status_var.set(f"Render lại đoạn nuốt chữ {i+1}/{total} "
+                                       f"(lượt {attempt})...")
+                        tmp_file = tmp_dir / f"{i:04d}.wav"
+                        tmp_file.unlink(missing_ok=True)
+                        result = _generate_chunk(
+                            model, mode, voice_param, chunks[i],
+                            dur_scale=1.0 if attempt == 1 else 1.06)
+                        sf.write(str(tmp_file), result[0], sr)
+                        spikes = detect_spike(tmp_file, sr)
+                        if spikes:
+                            logging.warning(f"  [{i:04d}] bản render lại có spike "
+                                            f"tại {spikes[:3]}s — nghe kiểm tra tay.")
+                    miss = _mc.quet_va_xac_minh(chunks, tmp_dir,
+                                                on_log=logging.info,
+                                                chi_cac_doan=set(miss),
+                                                status=status_var.set)
+                if miss:
+                    for i in sorted(miss):
+                        logging.error(
+                            f"⛔ Đoạn {i:04d} VẪN thiếu chữ sau 2 lần render lại "
+                            f"({' | '.join(miss[i])}) — nghe kiểm tra tay: "
+                            f"{chunks[i][:60]!r}")
+                else:
+                    logging.info("✅ Kiểm tra mất chữ: tất cả đoạn đủ lời.")
+                _mc.giai_phong()
 
             status_var.set("Đang ghép file...")
             logging.info("Ghép tất cả đoạn...")
