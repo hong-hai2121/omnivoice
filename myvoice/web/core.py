@@ -791,8 +791,10 @@ def missing_episodes() -> dict:
       built — ĐÃ có thư mục (dựng xong rồi, chỉ chưa đăng) → không cấp cho link mới
               vì sẽ đụng thư mục đã có; việc cần làm với chúng là bấm ⑥ Đăng YouTube.
 
-    Số tập lấy bằng cách đọc 'Số N' trong tiêu đề video trên kênh, nên chỉ đúng
-    trong phạm vi cache (~50 video gần nhất) và chỉ mới tới lần đọc kênh gần nhất.
+    Số tập lấy bằng cách đọc 'Số N' trong tiêu đề video trên kênh, nên chỉ mới tới
+    lần đọc kênh gần nhất. Đọc kênh mặc định chỉ lấy 50 video mới nhất → chỉ dò
+    thiếu từ Số của video CŨ NHẤT đọc được trở lên (lo), số nhỏ hơn nằm ngoài tầm
+    nhìn nên không bị coi là thiếu — xem yt.find_missing_episodes.
     """
     try:
         import dang_video_youtube as yt

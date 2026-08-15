@@ -4072,16 +4072,36 @@ class App(tk.Tk):
                             logging.info("🌐 Mở Firefox cho SEO...")
                             driver = g.init_firefox()
                         logging.info(f"🔎 Tập {episode}: tạo SEO YouTube...")
-                        # seo.run tự mở đúng cuộc trò chuyện SEO nên tập sau dùng lại
-                        # được driver này; keep_open=True → worker đóng ở cuối.
+                        # seo.run mở cuộc trò chuyện MỚI cho mỗi tập nhưng vẫn dùng lại
+                        # đúng Firefox này; keep_open=True → worker đóng ở cuối.
                         seo.run(str(gemini_docx), str(seo_docx),
                                 keep_open=True, log=logging.info, driver=driver)
+                        if not self._seo_docx_valid(seo_docx):
+                            logging.error(f"⛔ Tập {episode}: không lấy được SEO hợp lệ "
+                                          "— bỏ qua, chạy lại để làm SEO mới.")
+                            continue
                         logging.info(f"💾 Đã tạo: {seo_docx}")
 
                     # ── Nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt — LUÔN
                     # tạo lại (nhẹ) để áp dụng logic mới nhất, như tab Home. ──
                     self._save_youtube_seo_copy(
                         seo_docx, folder / "youtube_seo.txt", episode)
+
+                    # Tiêu đề trùng tập khác = SEO lấy nhầm kết quả cũ → cất bản đó đi
+                    # để lần chạy sau làm lại, không để tập này đi tiếp với tiêu đề sai.
+                    blocks_seo = self._seo_copy_blocks(seo_docx, episode) or {}
+                    trung = self._seo_title_duplicate(
+                        folder, episode, blocks_seo.get("title") or "")
+                    if trung:
+                        logging.error(f"⛔ Tập {episode}: tiêu đề SEO trùng — {trung}. "
+                                      "Bỏ qua tập này (chạy lại để làm SEO mới).")
+                        try:
+                            parked = seo.park_docx(seo_docx)
+                            if parked:
+                                logging.info(f"📦 Đã cất bản SEO nghi sai → {parked.name}")
+                        except Exception as e:
+                            logging.warning(f"⚠️ Không cất được {seo_docx.name}: {e}")
+                        continue
                     self._manifest_update_if_known(folder, episode)
                     ok_count += 1
                 except Exception as e:
@@ -6547,6 +6567,53 @@ class App(tk.Tk):
         except Exception:
             return False
 
+    def _seo_title_duplicate(self, folder, episode, title) -> str:
+        """Tập KHÁC đang mang đúng TÊN TRUYỆN này → mô tả chỗ trùng; '' nếu sạch.
+
+        Mỗi tập là một truyện khác nhau, nên trùng tên truyện = bước SEO lấy nhầm
+        kết quả của tập khác (đã dính: tập 55–58 / 49 / 08 cùng một tiêu đề vì đọc
+        trúng câu trả lời cũ trong chat Gemini). Dò cả hai nơi:
+          • kênh YouTube (theo cache đọc gần nhất) — bắt tập ĐÃ ĐĂNG,
+          • các thư mục tập khác trong kịch_bản/ — bắt tập dựng rồi mà chưa đăng.
+        So bằng dang_video_youtube.title_key nên 'Số N', 'Full ở', 'Mimi audio',
+        '#Shorts' không ảnh hưởng.
+        """
+        try:
+            youtube_dir = str(YOUTUBE_DIR)
+            if youtube_dir not in sys.path:
+                sys.path.insert(0, youtube_dir)
+            import dang_video_youtube as yt
+            from seo_docx_parser import parse_seo_docx
+        except Exception as e:
+            logging.warning(f"⚠️ Không dò được tiêu đề trùng: {e}")
+            return ""
+
+        key = yt.title_key(title)
+        if not key:
+            return ""
+        try:
+            dup = yt.duplicate_title_on_channel(title, episode)
+            if dup:
+                return f"kênh đã có “{dup.get('title')}”"
+        except Exception as e:
+            logging.warning(f"⚠️ Không dò được tiêu đề trùng trên kênh: {e}")
+
+        ep = str(episode).strip().zfill(2)
+        for p in episode_dirs():
+            ep_khac = episode_of(p.name)
+            if Path(p) == Path(folder) or ep_khac == ep:
+                continue
+            docx = p / "seoYoutube.docx"
+            if not docx.exists():
+                continue
+            try:
+                khac = parse_seo_docx(str(docx)).get("title") or ""
+            except Exception:
+                continue
+            if khac and yt.title_key(khac) == key:
+                return f"tập {ep_khac} ({p.name}) cũng mang tên truyện này"
+        return ""
+
     def _dich_gemini_cho_tap(self, gemini_docx, chunks, prefix, episode,
                              driver=None, on_status=None):
         """Dịch 1 tập sang Gemini: bỏ qua đoạn đã dịch, gửi phần thiếu, rồi KIỂM ĐỦ ĐOẠN.
@@ -6867,6 +6934,11 @@ class App(tk.Tk):
                         logging.info("🔎 Tạo SEO YouTube...")
                         seo.run(str(gemini_docx), str(seo_docx),
                                 keep_open=True, log=logging.info, driver=driver)
+                        if not self._seo_docx_valid(seo_docx):
+                            logging.error(f"⛔ Tập {episode}: không có SEO hợp lệ → BỎ QUA "
+                                          "tập này (thumbnail/tên video đều lấy tiêu đề "
+                                          "từ SEO). Chạy lại để làm SEO mới.")
+                            continue
                         logging.info(f"💾 Đã tạo: {seo_docx}")
 
                     # 5b) Nội dung 3 nút Copy (tiêu đề/mô tả/thẻ tag) ra .txt — LUÔN
@@ -6874,6 +6946,22 @@ class App(tk.Tk):
                     # (vd cắt thẻ tag ≤500 ký tự) kể cả khi các bước khác đã bỏ qua.
                     self._save_youtube_seo_copy(
                         seo_docx, folder / "youtube_seo.txt", episode)
+
+                    # 5c) Chốt sớm: tiêu đề trùng tập khác = SEO lấy nhầm kết quả cũ.
+                    # Bắt TRƯỚC khi dựng thumbnail/video cho khỏi hỏng cả mẻ.
+                    blocks_seo = self._seo_copy_blocks(seo_docx, episode) or {}
+                    trung = self._seo_title_duplicate(
+                        folder, episode, blocks_seo.get("title") or "")
+                    if trung:
+                        logging.error(f"⛔ Tập {episode}: tiêu đề SEO trùng — {trung}. "
+                                      "BỎ QUA tập này (chạy lại để làm SEO mới).")
+                        try:
+                            parked = seo.park_docx(seo_docx)
+                            if parked:
+                                logging.info(f"📦 Đã cất bản SEO nghi sai → {parked.name}")
+                        except Exception as e:
+                            logging.warning(f"⚠️ Không cất được {seo_docx.name}: {e}")
+                        continue
 
                     # ── 6) Thumbnail (ngang + dọc) — bỏ qua nếu đã có CẢ 2 bản ──
                     if (folder / f"thumbnail{episode}.png").exists() \

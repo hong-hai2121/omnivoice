@@ -215,10 +215,32 @@ def step_seo(app, folder: Path, episode: str, state: dict) -> int:
         logging.info("🔎 Tạo SEO YouTube...")
         seo.run(str(gemini_docx), str(seo_docx), keep_open=True,
                 log=logging.info, driver=driver)
+        if not app._seo_docx_valid(seo_docx):
+            logging.error("⛔ Không có SEO hợp lệ cho tập này → DỪNG, không tạo "
+                          "thumbnail/audio/video (tiêu đề thumbnail lấy từ SEO).")
+            return STOP
         logging.info(f"💾 Đã tạo: {seo_docx}")
 
     # Nội dung 3 nút Copy — luôn dựng lại (nhẹ) để áp logic cắt thẻ tag mới nhất.
     app._save_youtube_seo_copy(seo_docx, folder / "youtube_seo.txt", episode)
+
+    # Chốt sớm chống SEO lấy nhầm kết quả của tập khác. Bắt ở ĐÂY chứ không đợi tới
+    # lúc đăng: thumbnail và tên file video dọc đều lấy tiêu đề từ SEO, sai từ đây
+    # là hỏng cả mẻ dựng. Bản SEO nghi sai được CẤT sang tên khác (không xoá) để lần
+    # chạy sau tự làm SEO mới.
+    blocks = app._seo_copy_blocks(seo_docx, episode) or {}
+    trung = app._seo_title_duplicate(folder, episode, blocks.get("title") or "")
+    if trung:
+        logging.error(f"⛔ Tập {episode}: tiêu đề SEO trùng — {trung}. Gần như chắc "
+                      "chắn Gemini trả về kết quả của tập khác → DỪNG tập này "
+                      "(chạy lại để làm SEO mới).")
+        try:
+            parked = seo.park_docx(seo_docx)
+            if parked:
+                logging.info(f"📦 Đã cất bản SEO nghi sai → {parked.name}")
+        except Exception as e:
+            logging.warning(f"⚠️ Không cất được {seo_docx.name}: {e}")
+        return STOP
     return 0
 
 

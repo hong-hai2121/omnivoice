@@ -11,8 +11,8 @@
      tiêu đề và mô tả của từng tập đều mang đúng số cần bù. #}
   <div class="epsuggest">
     {% if missing.todo %}
-      <p class="hint">Kênh còn thiếu — bấm để làm bù (bắt đầu từ số này, các link
-         sau lấy tiếp):</p>
+      <p class="hint">Kênh còn thiếu trong dải Số {{ missing.lo }}–{{ missing.hi }}
+         — bấm để làm bù (bắt đầu từ số này, các link sau lấy tiếp):</p>
       <div class="chips">
         {% for ep in missing.todo %}
           <button type="button" class="chip" onclick="pickEpisode('{{ ep }}')">{{ ep }}</button>
@@ -29,8 +29,9 @@
       </div>
     {% endif %}
     {% if not missing.todo and not missing.built %}
-      <p class="hint">Kênh không thiếu tập nào trong dải {{ missing.lo }}–{{ missing.hi }}
-         (theo lần đọc kênh gần nhất).</p>
+      <p class="hint">Kênh không thiếu tập nào trong dải Số {{ missing.lo }}–{{ missing.hi }}
+         (theo lần đọc kênh gần nhất). Số nhỏ hơn {{ missing.lo }} nằm ngoài danh sách
+         video đọc được nên không dò — sẽ không bị cấp lại.</p>
     {% endif %}
     <p class="hint" id="epnote"></p>
   </div>

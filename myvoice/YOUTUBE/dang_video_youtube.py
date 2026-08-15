@@ -253,9 +253,13 @@ def fetch_channel_videos(log, max_videos=50, force_new_login=False):
     """Đọc kênh đang đăng nhập + danh sách video (kể cả video đã hẹn giờ).
 
     Trả về (chan, videos):
-      chan   = {"title", "id", "custom_url", "video_count"}
+      chan   = {"title", "id", "custom_url", "video_count", "videos_complete"}
       videos = [{"id", "title", "privacy", "publish_at", "published_at"}, ...]
                mới nhất trước; publish_at là giờ HẸN ĐĂNG (giờ máy) nếu có.
+
+    videos_complete = đã đọc HẾT kênh (False = dừng vì chạm max_videos, còn video cũ
+    hơn chưa đọc). Cờ này đi theo cache để find_missing_episodes biết dải nào đáng
+    tin — xem chú thích ở hàm đó.
     """
     from googleapiclient.discovery import build
 
@@ -288,6 +292,9 @@ def fetch_channel_videos(log, max_videos=50, force_new_login=False):
         page_token = pl.get("nextPageToken")
         if not page_token:
             break
+    # Hết trang (page_token rỗng) = đã vét sạch kênh; còn token = dừng vì chạm
+    # max_videos, phía sau vẫn còn video cũ hơn chưa đọc.
+    chan["videos_complete"] = not page_token
 
     videos = []
     for i in range(0, len(video_ids), 50):   # videos.list nhận tối đa 50 id/lần
@@ -454,25 +461,104 @@ def episode_numbers(videos):
     return nums
 
 
-def find_missing_episodes(videos):
+def oldest_episode_number(videos):
+    """Số tập của video CŨ NHẤT đọc được số (danh sách xếp mới → cũ). Không có → None."""
+    for v in reversed(videos):
+        nums = [int(m.group(1)) for m in _EP_RE.finditer(v.get("title") or "")]
+        if nums:
+            return min(nums)
+    return None
+
+
+def find_missing_episodes(videos, complete=False):
     """Các SỐ TẬP CÒN SÓT trong dải tập của danh sách video (tính cả video hẹn giờ).
 
-    Trả về (missing, lo, hi): số thiếu trong khoảng [lo..hi] (lo/hi = tập nhỏ
-    nhất/lớn nhất đã có); ([], None, None) nếu không tách được số tập nào."""
+    Trả về (missing, lo, hi): số thiếu trong khoảng [lo..hi]; ([], None, None) nếu
+    không tách được số tập nào.
+
+    complete=True  — `videos` là TOÀN BỘ kênh → dò từ tập nhỏ nhất (lo = min).
+    complete=False — `videos` chỉ là CỬA SỔ N video mới nhất (đọc bị cắt vì chạm
+                     max_videos) → chỉ dò từ số của video CŨ NHẤT trong cửa sổ trở
+                     lên. Số nhỏ hơn nằm ngoài cửa sổ: KHÔNG BIẾT có hay không, nên
+                     không được coi là thiếu.
+
+    Vì sao phải chặn dưới: lấy lo = min(nums) là sai khi danh sách bị cắt. Một tập
+    LÀM BÙ vừa đăng (số nhỏ, ngày đăng mới) luôn nằm ở đầu cửa sổ và kéo lo tụt
+    xuống tận số của nó — thế là mọi số ở giữa nó và phần thân cửa sổ bị báo thiếu
+    oan. Thực tế đã dính: kênh 62 video, đọc 50 video mới nhất được Số 10→58, vừa
+    đăng bù Số 08 → lo tụt về 8 → Số 09 (đang có trên kênh nhưng nằm ngoài cửa sổ)
+    bị báo thiếu và bị cấp lại cho video mới.
+    """
     nums = episode_numbers(videos)
     if not nums:
         return [], None, None
     lo, hi = min(nums), max(nums)
+    if not complete:
+        floor = oldest_episode_number(videos)
+        if floor is not None:
+            lo = max(lo, floor)
     return sorted(set(range(lo, hi + 1)) - nums), lo, hi
 
 
+_SHORTS_RE = re.compile(r"#shorts\b", re.IGNORECASE)
+
+
+def title_key(title):
+    """Khoá so trùng tiêu đề = TÊN TRUYỆN, bỏ mọi phần trang trí.
+
+    Bỏ '#Shorts', 'Full ở', 'Mimi audio', 'Số <n>', dấu '|' → hai video của cùng
+    một truyện (bản chính, bản Short, tập khác nhau) cho ra CÙNG một khoá. Dùng
+    thumbnail_gui.strip_title_decorations để quy tắc bóc trang trí chỉ có một nơi
+    quy định; thiếu module đó thì lùi về bản rút gọn tại chỗ.
+    """
+    t = _SHORTS_RE.sub(" ", title or "")
+    try:
+        import thumbnail_gui as tg
+        t = tg.strip_title_decorations(t)
+    except Exception:
+        t = re.sub(r"^\s*(\[full\]|full\s+ở)\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*\|?\s*mimi\s*audio(\s*số\s*\d+)?\s*", " ", t, flags=re.IGNORECASE)
+        t = t.strip().strip("|")
+    return " ".join(t.lower().split())
+
+
+def duplicate_title_on_channel(title, episode=None, videos=None):
+    """Video ĐANG CÓ trên kênh trùng TÊN TRUYỆN với `title` — None nếu không có.
+
+    Mỗi tập là một truyện khác nhau nên trùng tên truyện = SEO lấy nhầm kết quả
+    của tập khác (xem seo_youtube_gemini). Bỏ qua video của CHÍNH tập `episode`
+    (đăng lại/bản Short của nó) để không tự báo trùng với mình.
+
+    videos=None → đọc cache kênh hiện tại (nhớ refresh cache trước khi gọi).
+    """
+    key = title_key(title)
+    if not key:
+        return None
+    if videos is None:
+        data = load_video_cache()
+        entry = data["channels"].get(data.get("current")) or {}
+        videos = entry.get("videos") or []
+    ep = int(episode) if str(episode or "").strip().isdecimal() else None
+    for v in videos:
+        t = v.get("title") or ""
+        if ep is not None and ep in {int(m.group(1)) for m in _EP_RE.finditer(t)}:
+            continue
+        if title_key(t) == key:
+            return v
+    return None
+
+
 def cached_missing_episodes():
-    """find_missing_episodes trên cache của kênh hiện tại — nguồn cho việc LÀM BÙ tập."""
+    """find_missing_episodes trên cache của kênh hiện tại — nguồn cho việc LÀM BÙ tập.
+
+    Cache cũ (lưu trước khi có cờ videos_complete) coi như đọc thiếu — thà bỏ sót
+    vài tập cần bù còn hơn cấp lại số đã có trên kênh."""
     data = load_video_cache()
     entry = data["channels"].get(data.get("current"))
     if not entry:
         return [], None, None
-    return find_missing_episodes(entry["videos"])
+    return find_missing_episodes(
+        entry["videos"], complete=bool(entry.get("channel", {}).get("videos_complete")))
 
 
 def _http_reason(err):
@@ -1542,8 +1628,10 @@ class App:
             self.tv_chan.insert("", "end", iid=v["id"],
                                 values=(v["title"], status, ts),
                                 tags=(tag,) if tag else ())
-        # Dò các số tập còn sót để làm bù (tính cả video đang hẹn giờ).
-        missing, lo, hi = find_missing_episodes(videos)
+        # Dò các số tập còn sót để làm bù (tính cả video đang hẹn giờ). Đọc chưa
+        # hết kênh thì chỉ dò trong dải cửa sổ đọc được — xem find_missing_episodes.
+        missing, lo, hi = find_missing_episodes(
+            videos, complete=bool(chan.get("videos_complete")))
         if lo is None:
             self.lbl_missing.config(text="Không tách được 'Số ...' từ tiêu đề video "
                                          "nên chưa dò được tập thiếu.",

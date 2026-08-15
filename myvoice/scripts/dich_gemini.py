@@ -391,16 +391,26 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     def _norm(s):
         return " ".join((s or "").split())
 
-    # Ghi nhớ các câu trả lời ĐÃ CÓ trước khi gửi. Dùng SỐ LƯỢNG phần tử trả lời
-    # làm dấu hiệu chính để nhận biết câu MỚI: <message-content> chỉ có ở câu trả
-    # lời của model, nên sau khi gửi, phần tử MỚI NHẤT chắc chắn là câu trả lời vừa
-    # nhận. So khớp theo TEXT (before_texts) không đáng tin khi TÁI DÙNG cuộc trò
-    # chuyện cũ (vd chat SEO): câu trả lời mới có thể TRÙNG y hệt câu cũ → bị bỏ
-    # nhầm thành "câu cũ" → tưởng Gemini không trả lời. Chỉ dùng before_texts làm
-    # dự phòng khi số lượng phần tử CHƯA tăng.
-    before = _get_responses(driver)
-    before_count = len(before)
-    before_texts = {_norm(e.text) for e in before}
+    # Ghi nhớ hiện trạng TRƯỚC khi gửi. Dấu hiệu nhận biết câu trả lời MỚI là phần
+    # tử CUỐI (bỏ tin nhắn của chính mình) có nội dung KHÁC trước khi gửi.
+    #
+    # KHÔNG dùng "số phần tử tăng" làm dấu hiệu nữa: trong cuộc trò chuyện CŨ và
+    # DÀI, số phần tử còn tăng vì tin nhắn vừa gửi được vẽ thêm hoặc vì Gemini nạp
+    # thêm lịch sử khi cuộn — trong khi câu trả lời mới CHƯA có. Lúc đó hàm trả về
+    # câu trả lời CŨ đang nằm cuối chat mà bên gọi không hề biết. Đó chính là lỗi
+    # làm các tập 55–58 / 49 / 08 dùng chung một bản SEO (cùng một tiêu đề).
+    #
+    # Đánh đổi: nếu câu trả lời mới TRÙNG y hệt câu cũ thì coi như chưa trả lời và
+    # chờ tới hết giờ → bên gọi báo lỗi. Chấp nhận được, vì thà dừng còn hơn lặng
+    # lẽ lưu kết quả của tập khác.
+    before_all = []
+    for e in _get_responses(driver):
+        try:
+            before_all.append(_norm(e.text))
+        except Exception:
+            continue
+    before_texts = set(before_all)
+    before_last = next((t for t in reversed(before_all) if t), "")
     sent_norm = _norm(prompt)
     sent_head = sent_norm[:60]   # phòng khi Gemini hiển thị tin người dùng hơi khác
 
@@ -410,22 +420,25 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     deadline = time.time() + timeout
 
     def _candidate():
-        """Câu trả lời MỚI của Gemini: phần tử mới nhất sau khi số lượng tăng."""
-        els = _get_responses(driver)
-        # Đã có THÊM phần tử trả lời → câu mới nhất chính là câu trả lời (kể cả khi
-        # nội dung trùng câu cũ). Bỏ qua phần tử rỗng (đang stream) và echo tin gửi.
-        grew = len(els) > before_count
-        for e in reversed(els):
-            t = (e.text or "").strip()
+        """Câu trả lời MỚI của Gemini, hoặc None nếu CHƯA có.
+
+        Chỉ xét phần tử CUỐI có chữ (bỏ phần tử rỗng đang stream và tin nhắn của
+        chính mình). Nội dung trùng cái đã thấy trước khi gửi → coi như chưa có
+        câu mới, chờ tiếp. TUYỆT ĐỐI không lần ngược lên lịch sử để lấy tạm một
+        câu cũ hơn — làm vậy là lấy nhầm SEO/bản dịch của tập khác.
+        """
+        for e in reversed(_get_responses(driver)):
+            try:
+                t = (e.text or "").strip()
+            except Exception:
+                continue   # phần tử vừa bị Angular vẽ lại
             if not t:
-                continue
+                continue   # phần tử rỗng: câu trả lời đang được vẽ dần
             nt = _norm(t)
-            if nt == sent_norm or nt.startswith(sent_head):
+            if nt == sent_norm or nt.startswith(sent_head) or sent_norm.startswith(nt[:60]):
                 continue   # đây là tin nhắn của chính mình (echo)
-            if grew:
-                return t   # số lượng đã tăng → đây là câu trả lời mới nhất
-            if nt in before_texts:
-                continue   # chưa có thêm phần tử → bỏ câu cũ từ lượt trước
+            if nt == before_last or nt in before_texts:
+                return None   # vẫn là câu CŨ → Gemini chưa trả lời xong
             return t
         return None
 
@@ -445,7 +458,9 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
         time.sleep(1.5)
 
     if not seen:
-        on_log("❌ Gemini không phản hồi (hết thời gian chờ).")
+        on_log("❌ Gemini không phản hồi (hết thời gian chờ) — hoặc câu trả lời mới "
+               "TRÙNG y hệt câu đã có sẵn trong cuộc trò chuyện. KHÔNG lấy câu cũ "
+               "làm kết quả.")
     return last_text or None
 
 

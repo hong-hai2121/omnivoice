@@ -18,6 +18,7 @@ chỉ có MỘT nơi quy định.
 """
 
 import json
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -38,6 +39,12 @@ SHORT_HASHTAG = "#Shorts"
 
 BAD_CHARS = '<>:"/\\|?*'   # Windows cấm các ký tự này trong tên file
 MAX_STEM = 120            # cắt tên cho đường dẫn không chạm giới hạn 260 của Windows
+
+# Chốt chống đăng trùng TÊN TRUYỆN (xem upload_episode). Chỉ tắt khi thật sự muốn
+# hai video cùng tên trên kênh — đặt biến môi trường này =1 trước khi chạy.
+ALLOW_DUP_TITLE_ENV = "OMNI_ALLOW_DUP_TITLE"
+ALLOW_DUP_TITLE = os.environ.get(ALLOW_DUP_TITLE_ENV, "").strip().lower() in (
+    "1", "true", "yes")
 
 # Cài đặt cho việc ĐĂNG TỰ ĐỘNG (quy trình tổng). Để file riêng, KHÔNG dùng chung
 # settings.json của app đăng tay — file đó nhớ cả tiêu đề/mô tả của lần đăng gần
@@ -300,6 +307,20 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
         log(f"⚠️ Tập {ep}: mô tả {len(desc)} ký tự > {yt.MAX_DESC} → cắt bớt phần cuối.",
             "warn")
         desc = desc[:yt.MAX_DESC]
+
+    # CHỐT CUỐI chống SEO lấy nhầm kết quả của tập khác: mỗi tập là một truyện khác
+    # nhau, nên tên truyện trùng video đã có trên kênh gần như chắc chắn là SEO hỏng.
+    # Đã dính thật: tập 55–58, 49, 08 cùng mang một tiêu đề vì bước SEO đọc trúng câu
+    # trả lời cũ trong chat Gemini. Thà bỏ qua để làm lại SEO còn hơn để kênh có 5
+    # video cùng tên.
+    if not ALLOW_DUP_TITLE:
+        dup = yt.duplicate_title_on_channel(title, ep)
+        if dup:
+            log(f"⛔ Tập {ep}: kênh ĐÃ CÓ video cùng tên truyện — “{dup.get('title')}”. "
+                f"Nhiều khả năng SEO của tập này lấy nhầm kết quả cũ → KHÔNG đăng. "
+                f"Xoá seoYoutube.docx của tập rồi chạy lại bước SEO. "
+                f"(Đặt {ALLOW_DUP_TITLE_ENV}=1 nếu thật sự muốn đăng trùng tên.)", "err")
+            return None
 
     cfg = load_settings()
     mode = cfg.get("privacy", "schedule")

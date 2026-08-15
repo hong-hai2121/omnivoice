@@ -9,8 +9,11 @@ Gemini, rồi lưu kết quả ra seoYoutube.docx.
   id rồi mở CHAT MỚI thì mất ngữ cảnh → SEO lỗi hoặc không gửi được. Nay TIN NHẮN
   TỰ CHỨA đầy đủ yêu cầu (SEO_PROMPT) nên gửi vào chat nào — kể cả chat mới trống —
   cũng ra đúng định dạng.
-• Vẫn cố mở đúng cuộc trò chuyện SEO cho tiện, nhưng KHÔNG bắt buộc: vào không được
-  thì vẫn gửi (kèm nguyên yêu cầu) thay vì dừng.
+• Vì thế mặc định MỖI TẬP gửi vào một cuộc trò chuyện MỚI (SEO_NEW_CHAT): chat cũ
+  chứa sẵn SEO của mọi tập trước, chỉ cần đọc nhầm một lần là cả loạt tập ra chung
+  một tiêu đề (đã dính: tập 55–58, 49, 08).
+• Kết quả phải ĐÚNG DẠNG SEO mới được lưu (_looks_like_seo); không đạt thì gửi lại,
+  hết lượt vẫn hỏng thì để file .docx RỖNG chứ không lưu bừa.
 
 Chạy:
     python seo_youtube_gemini.py                          # dùng gemini_result.docx mặc định
@@ -62,6 +65,18 @@ SEO_GEMINI_URL = os.environ.get(
     "OMNI_SEO_GEMINI_URL",
     "https://gemini.google.com/app/e1a7ace4a71c48b2",
 ).split("?", 1)[0].strip()
+
+# ── Mặc định: MỖI TẬP một cuộc trò chuyện MỚI ─────────────────────────────────
+# Chat SEO cố định ở trên chứa sẵn câu trả lời của mọi tập trước. Khi Gemini chậm
+# hoặc không trả lời, phần đọc kết quả từng lấy nhầm CÂU TRẢ LỜI CŨ đang nằm cuối
+# chat → nhiều tập ra CÙNG MỘT bản SEO (tập 55–58, 49, 08 cùng một tiêu đề). Chat
+# TRỐNG thì không có gì cũ để lấy nhầm, mà tin nhắn đã tự chứa trọn SEO_PROMPT nên
+# vẫn ra đúng định dạng. Đặt OMNI_SEO_NEW_CHAT=0 để quay lại dùng chat cố định.
+NEW_CHAT_URL = "https://gemini.google.com/app"
+SEO_NEW_CHAT = os.environ.get("OMNI_SEO_NEW_CHAT", "1").strip().lower() not in (
+    "0", "false", "no")
+# Số lần gửi lại khi Gemini không trả lời / trả lời sai định dạng (mỗi lần một chat mới).
+SEO_ATTEMPTS = max(1, int(os.environ.get("OMNI_SEO_ATTEMPTS", "2")))
 
 
 # ── Trọn bộ yêu cầu SEO chèn LÊN TRƯỚC đoạn truyện khi gửi Gemini ──────────────
@@ -136,6 +151,46 @@ def _open_seo_chat(driver, log, wait=8):
         "tạo SEO sai. Kiểm tra lại link OMNI_SEO_GEMINI_URL và đăng nhập Gemini.")
     return False
 
+
+def _open_new_chat(driver, log, wait=6):
+    """Mở một cuộc trò chuyện MỚI (trống) để gửi SEO — xem SEO_NEW_CHAT."""
+    driver.get(NEW_CHAT_URL)
+    time.sleep(wait)
+    try:
+        con = len(g._get_responses(driver))
+    except Exception:
+        con = 0
+    if con:
+        log(f"⚠️ Cuộc trò chuyện mới vẫn còn {con} khối nội dung cũ trên màn hình — "
+            "vẫn gửi (chốt chống lấy nhầm câu cũ nằm trong send_to_gemini).")
+    else:
+        log("🆕 Đã mở cuộc trò chuyện Gemini MỚI (trống) cho SEO.")
+    return True
+
+
+def _open_chat(driver, log):
+    """Đưa Firefox tới nơi sẽ gửi SEO: chat MỚI (mặc định) hoặc chat SEO cố định."""
+    if SEO_NEW_CHAT:
+        return _open_new_chat(driver, log)
+    if _open_seo_chat(driver, log):
+        log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
+    else:
+        log("↪️ Không vào được chat SEO — vẫn gửi KÈM TRỌN YÊU CẦU vào chat hiện tại.")
+    return True
+
+
+# Kết quả SEO thật luôn có phần TIÊU ĐỀ và phần MÔ TẢ (xem SEO_PROMPT). Câu trả lời
+# thiếu hai mốc này là câu vu vơ/báo lỗi của Gemini — KHÔNG lưu, gửi lại.
+_SEO_MARKS = ("TIÊU ĐỀ", "MÔ TẢ")
+_SEO_MIN_CHARS = 200
+
+
+def _looks_like_seo(ans: str) -> bool:
+    """True nếu câu trả lời đúng dạng kết quả SEO (đủ mốc TIÊU ĐỀ + MÔ TẢ)."""
+    text = " ".join((ans or "").split()).upper()
+    return len(text) >= _SEO_MIN_CHARS and all(m in text for m in _SEO_MARKS)
+
+
 # ── Đường dẫn mặc định ───────────────────────────────────────────────────────
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
 DEFAULT_INPUT = KICHBAN_DIR / "gemini_result.docx"
@@ -159,6 +214,26 @@ def save_seo_docx(content, out_path):
     return out_path
 
 
+PARKED_STEM = "seoYoutube_trung"    # nơi cất bản SEO nghi lấy nhầm của tập khác
+
+
+def park_docx(out_path):
+    """Cất file SEO nghi LẤY NHẦM của tập khác sang 'seoYoutube_trung*.docx'.
+
+    KHÔNG xoá gì: bản cũ vẫn còn đó để đối chiếu, mà thư mục tập không còn
+    seoYoutube.docx nên lần chạy sau tự làm SEO mới. Trả về đường dẫn mới / None.
+    """
+    src = Path(out_path)
+    if not src.is_file():
+        return None
+    dst, i = src.with_name(f"{PARKED_STEM}.docx"), 2
+    while dst.exists():
+        dst = src.with_name(f"{PARKED_STEM}_{i}.docx")
+        i += 1
+    src.rename(dst)
+    return dst
+
+
 def reset_docx(out_path):
     """Làm RỖNG file kết quả ngay đầu mỗi lần chạy: ghi đè bằng .docx hợp lệ nhưng
     chưa có nội dung (chỉ tiêu đề). Nhờ vậy nếu lần chạy này lỗi giữa chừng thì
@@ -170,10 +245,16 @@ def reset_docx(out_path):
     return out_path
 
 
-def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=None):
+def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=None,
+        attempts=SEO_ATTEMPTS):
     """driver: truyền 1 Firefox/driver đang mở để TÁI DÙNG (chỉ điều hướng sang cuộc
-    trò chuyện SEO). Nhờ vậy không phải đóng rồi mở lại Firefox — tránh kẹt khóa
-    profile khiến lần mở thứ hai thất bại. None thì tự mở Firefox mới."""
+    trò chuyện dùng cho SEO). Nhờ vậy không phải đóng rồi mở lại Firefox — tránh kẹt
+    khóa profile khiến lần mở thứ hai thất bại. None thì tự mở Firefox mới.
+
+    attempts: số lần gửi (mỗi lần một cuộc trò chuyện mới) khi Gemini không trả lời
+    hoặc trả lời sai định dạng. Hết lượt vẫn không có kết quả thì file .docx được
+    GIỮ RỖNG — bước sau (thumbnail/đăng) nhìn file rỗng là biết SEO chưa làm, thay
+    vì dùng nhầm nội dung của tập khác."""
     text = first_chunk(input_path)
     if not text:
         log(f"❌ Không đọc được đoạn đầu từ: {input_path}")
@@ -193,20 +274,34 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     own_driver = driver is None
     try:
         if driver is None:
-            driver = g.init_firefox(url=SEO_GEMINI_URL)
-        # Cố mở đúng cuộc trò chuyện SEO cho tiện, nhưng KHÔNG bắt buộc: tin nhắn đã
-        # tự chứa đủ yêu cầu (SEO_PROMPT) nên vào chat mới trống vẫn gửi được.
-        if _open_seo_chat(driver, log):
-            log("✅ Đã mở cuộc trò chuyện Gemini SEO. Đang gửi nội dung...")
-        else:
-            log("↪️ Không vào được chat SEO — vẫn gửi KÈM TRỌN YÊU CẦU vào chat hiện tại.")
-        # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
-        ans = g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log)
+            driver = g.init_firefox(url=NEW_CHAT_URL if SEO_NEW_CHAT else SEO_GEMINI_URL)
+
+        ans = ""
+        for lan in range(1, max(1, attempts) + 1):
+            if lan > 1:
+                log(f"🔁 Gửi lại SEO lần {lan}/{attempts} (cuộc trò chuyện khác)...")
+            _open_chat(driver, log)
+            # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
+            ans = (g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log) or "").strip()
+            if not ans:
+                log("⚠️ Gemini không trả về kết quả SEO.")
+                continue
+            if not _looks_like_seo(ans):
+                log("⚠️ Nội dung nhận được KHÔNG đúng dạng kết quả SEO (thiếu phần "
+                    "TIÊU ĐỀ/MÔ TẢ) → bỏ, không lưu.")
+                ans = ""
+                continue
+            break
+
         if not ans:
-            log("⚠️ Gemini không trả về kết quả SEO.")
-            ans = ""
+            # File đã được reset ở trên → GIỮ RỖNG. Đừng lưu chuỗi rỗng vào .docx
+            # kiểu "(trống)" nữa: bước sau chỉ coi là chưa làm SEO khi file rỗng.
+            log("❌ Không lấy được SEO cho tập này — giữ file kết quả RỖNG để bước "
+                "sau biết là CHƯA làm SEO (không dùng nhầm nội dung của tập khác).")
+            return ""
+
         save_seo_docx(ans, output_path)
-        log(f"\n========== KẾT QUẢ SEO YOUTUBE ==========\n{ans or '(trống)'}\n")
+        log(f"\n========== KẾT QUẢ SEO YOUTUBE ==========\n{ans}\n")
         log(f"✅ XONG: đã lưu SEO → {output_path}")
         return ans
     finally:
