@@ -1,0 +1,18 @@
+{
+  "thutu": 20,
+  "ten": "Tiêu đề phim",
+  "mota": "IN HOA vàng viền đỏ + viền đen ngoài, font tròn dày — kiểu tiêu đề phim recap",
+  "hieuung": "viendoi",
+  "font": "Baloo 2 ExtraBold",
+  "fontfile": "fonts/Baloo2-ExtraBold.ttf",
+  "size": 72,
+  "bold": false,
+  "hoa": true,
+  "mau_chu": "FFD21A",
+  "mau_vien": "E5202A",
+  "vien": 7,
+  "mau_vien2": "1A1A1A",
+  "vien2": 4,
+  "bong": 3,
+  "max_chars": 34
+}

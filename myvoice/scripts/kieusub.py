@@ -17,6 +17,7 @@ Các "hieuung" đang có (kiểu tĩnh ra ảnh PNG, kiểu động ra WEBP chuy
   tinh     chữ đứng yên — dáng vẻ do font/màu/viền/bóng/blur của JSON quyết định
   hopbo    chữ trên khung nền bo góc tự đo bề rộng (kiểu cổ điển của myvoice)
   glitch   chữ + 2 bản lệch màu đỏ/xanh hai phía (tách lớp kiểu CapCut/TikTok)
+  viendoi  viền KÉP: viền trong + viền ngoài khác màu (kiểu tiêu đề phim recap)
   karaoke  cả câu hiện sẵn, từ đang đọc NHUỘM MÀU dần theo giọng (thẻ \\k)
   hienlo   từ hiện DẦN và ở lại, từ đang đọc đổi màu + phóng nhẹ (kiểu Hormozi)
   tungtu   MỖI từ bật to đúng lúc đọc rồi nhường chỗ từ sau (word-pop TikTok)
@@ -67,6 +68,7 @@ GOC = dict(
     mau_noibat="FFD700",                  # màu từ đang đọc (karaoke/hienlo)
     nhieu_mau=[],                         # hienlo: xoay vòng màu nổi bật theo từ
     mau_vien="000000", vien=0,            # viền + độ dày
+    mau_vien2="000000", vien2=0,          # viendoi: viền NGOÀI thứ hai (dày thêm)
     mau_bong="000000", bong=0,            # bóng đổ + độ sâu
     blur=0,                               # nhoè mép → quầng sáng neon
     borderstyle=1,                        # 3 = khối nền đặc (màu = mau_nen)
@@ -372,6 +374,22 @@ def _ev_glitch(out, k, cue, st, en, extra, margin_v):
     out.append(f"Dialogue: 2,{a},{b},Sub,,0,0,0,,{extra}{body}\n")
 
 
+def _ev_viendoi(out, k, cue, st, en, extra):
+    """Viền KÉP kiểu tiêu đề phim (vd vàng + viền đỏ + viền đen ngoài cùng).
+
+    ASS chỉ cho MỘT viền mỗi style nên vẽ 3 lớp chồng đúng chỗ: dưới cùng viền
+    ngoài (dày = vien + vien2, mang luôn bóng đổ), giữa viền trong, trên cùng
+    thân chữ — mỗi lớp một layer để libass không collision-đẩy lệch nhau."""
+    body = cue.replace("\n", "\\N")
+    a, b = _ass_ts(st), _ass_ts(en)
+    out.append(f"Dialogue: 0,{a},{b},Sub,,0,0,0,,"
+               f"{{\\bord{int(k['vien']) + int(k['vien2'])}"
+               f"\\3c{_rgb_tag(k['mau_vien2'])}}}{body}\n")
+    out.append(f"Dialogue: 1,{a},{b},Sub,,0,0,0,,"
+               f"{{\\bord{k['vien']}\\3c{_rgb_tag(k['mau_vien'])}\\shad0}}{body}\n")
+    out.append(f"Dialogue: 2,{a},{b},Sub,,0,0,0,,{extra}{{\\bord0\\shad0}}{body}\n")
+
+
 def _ev_karaoke(out, k, cue, st, en, extra):
     words = _tach_tu(cue)
     if not words:
@@ -444,6 +462,8 @@ def write_ass_kieu(cues, cue_times, ass_path: Path, kieu=MACDINH,
             _ev_hopbo(out, k, cue, st, en, extra, play_w, play_h, margin_v)
         elif hu == "glitch":
             _ev_glitch(out, k, cue, st, en, extra, margin_v)
+        elif hu == "viendoi":
+            _ev_viendoi(out, k, cue, st, en, extra)
         elif hu == "karaoke":
             _ev_karaoke(out, k, cue, st, en, extra)
         elif hu == "hienlo":
