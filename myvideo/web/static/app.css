@@ -555,10 +555,46 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
 .filerow-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filerow-meta { flex: none; font-size: 11.5px; color: var(--muted); }
 
-/* ── Chọn KIỂU PHỤ ĐỀ — lưới thẻ radio có ảnh xem trước (khối Phụ đề) ─────────
-   Ảnh do scripts/kieusub.py vẽ bằng đúng libass sẽ burn (kiểu động là webp
-   chuyển động) nên nhìn thẻ nào là ra đúng kiểu đó. Radio giấu đi, viền tô
-   bằng :has(input:checked) — cùng mẹo với .mode. Dùng chung với myvideo. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHẦN RIÊNG CỦA MYVIDEO — file này là bản chép của myvoice/web/static/app.css
+   + khúc dưới đây. Cập nhật giao diện chung thì chép lại file bên myvoice rồi
+   giữ nguyên khúc này.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Tông màu của trang myvideo: XANH CHÀM trầm (indigo 800 → 600) — dịu mắt trên
+   nền trắng (hồng đậm thử trước bị chói), chữ trắng trên nút vẫn nổi rõ, và
+   cùng họ với thanh menu tím. Nền tối vẫn phải dùng cặp SÁNG (accent kiêm màu
+   chữ/link trên nền đen — xem quy ước ở đầu file). */
+body.p-video { --accent: #3730a3; --accent2: #4f46e5; --accent-soft: #eceafe; }
+@media (prefers-color-scheme: dark) {
+  body.p-video { --accent: #a5b4fc; --accent2: #c7d2fe; --accent-soft: #1c1e3d; }
+}
+
+/* Bảng trạng thái: dấu ✔ xanh, ô tên video cắt bớt khi quá dài. */
+table.grid td.okc { color: var(--ok); font-weight: 700; }
+table.grid td.left { text-align: left; }
+table.grid td.clip { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Mọi ô NHẬP/CHỌN được đều tô viền màu ngay từ đầu (bản gốc viền xám nhạt,
+   nhìn lướt khó biết chỗ nào gõ được) — hover đậm thêm, focus vẫn có quầng. */
+body.p-video input[type=text], body.p-video input[type=number],
+body.p-video input:not([type]), body.p-video select, body.p-video textarea {
+  border-color: var(--accent2);
+}
+body.p-video input[type=text]:hover, body.p-video input[type=number]:hover,
+body.p-video input:not([type]):hover, body.p-video select:hover,
+body.p-video textarea:hover {
+  border-color: var(--accent);
+}
+
+/* Nhãn tiêu đề nổi màu: nhãn trên từng ô nhập + tên khối bước. */
+body.p-video .field > span { color: var(--accent); font-weight: 600; }
+body.p-video .phead h2 { color: var(--accent); }
+
+/* ── Bước ④: chọn KIỂU PHỤ ĐỀ — lưới thẻ radio có ảnh xem trước ──────────────
+   Ảnh do kieusub.py vẽ bằng đúng libass sẽ burn (kiểu động là webp chuyển
+   động) nên nhìn thẻ nào là ra đúng kiểu đó. Radio giấu đi, viền tô bằng
+   :has(input:checked) — cùng mẹo với .mode của myvoice. */
 .ksubhead {
   display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
 }
@@ -601,3 +637,41 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4;
   color: var(--muted);
 }
+
+/* ── Trang 🎞 Timeline: xem xếp audio kiểu CapCut (trước/sau khi xếp) ────── */
+.tl-wrap {
+  overflow-x: auto; padding: 10px 8px 14px;
+  background: var(--sunken); border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.tl-inner { position: relative; --pps: 12px; min-width: 100%; }
+.tl-ruler {
+  position: relative; height: 20px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-tick {
+  position: absolute; top: 0; height: 100%;
+  border-left: 1px solid var(--border);
+  padding-left: 3px; color: var(--muted); font-size: 10.5px; white-space: nowrap;
+}
+.tl-label {
+  position: sticky; left: 4px; display: inline-block; z-index: 5;
+  margin-top: 8px; font-size: 12px; font-weight: 700; color: var(--accent);
+}
+.tl-lane { position: relative; height: 60px; }
+.tl-lane + .tl-label { border-top: 1px dashed var(--line); padding-top: 8px; width: 100%; }
+.tl-block {
+  position: absolute; top: 3px; height: 24px; padding: 0 5px;
+  border-radius: 6px; background: var(--accent-soft);
+  border: 1px solid var(--accent2); color: var(--fg);
+  font-size: 10.5px; line-height: 22px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default; box-sizing: border-box;
+}
+.tl-block.hang2 { top: 31px; }              /* so le 2 hàng con cho dễ thấy chỗ đè */
+.tl-block.de {
+  background: var(--danger-soft); border-color: var(--danger);
+  color: var(--danger); font-weight: 700; z-index: 2;
+}
+.tl-block:hover { z-index: 10; border-color: var(--accent); }
+.tl-end { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--warn); z-index: 1; }

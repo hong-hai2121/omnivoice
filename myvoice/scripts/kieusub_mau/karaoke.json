@@ -1,0 +1,15 @@
+{
+  "thutu": 6,
+  "ten": "Karaoke nhuộm vàng",
+  "mota": "Cả câu hiện sẵn, từ đang đọc nhuộm vàng dần theo giọng",
+  "hieuung": "karaoke",
+  "font": "Arial",
+  "size": 68,
+  "bold": true,
+  "mau_chu": "FFFFFF",
+  "mau_noibat": "FFC400",
+  "mau_vien": "000000",
+  "vien": 4,
+  "bong": 2,
+  "max_chars": 48
+}

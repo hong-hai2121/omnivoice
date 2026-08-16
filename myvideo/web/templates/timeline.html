@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Timeline — {{ base }}{% endblock %}
+
+{# Xem XẾP AUDIO kiểu CapCut: mỗi khối = một câu TTS trên trục thời gian.
+   Hai track: mốc SRT gốc (trước xếp) và mốc đã xếp chống đè (sau xếp).
+   Khối xếp SO LE hai hàng con chỉ để nhìn rõ chỗ đè — thực tế cùng MỘT track. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🎞</span> Timeline audio</h1>
+  <p class="muted"><code>{{ base }}</code> — khối <b style="color:var(--danger)">đỏ</b> =
+     câu đè lên câu kế (di chuột lên khối xem chi tiết); vạch cam = hết video.</p>
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <b>Trước xếp: {{ st_truoc.n }} cặp đè ({{ st_truoc.tong }}s)
+       → Sau xếp: {{ st_sau.n }} cặp ({{ st_sau.tong }}s)
+       · dời lớn nhất {{ lech_max }}s</b>
+    <span class="spacer"></span>
+    <button type="button" class="ghost" id="tlOut" title="Thu nhỏ">−</button>
+    <button type="button" class="ghost" id="tlIn" title="Phóng to">＋</button>
+    <a href="/">← Quay lại</a>
+  </div>
+
+  <div class="tl-wrap">
+    <div class="tl-inner" id="tlInner"
+         style="width: calc(var(--pps) * {{ '%.1f'|format(total_s + 6) }})">
+      <div class="tl-ruler">
+        {% for t in ticks %}
+          <span class="tl-tick" style="left: calc(var(--pps) * {{ t }})">{{ t // 60 }}:{{ '%02d'|format(t % 60) }}</span>
+        {% endfor %}
+      </div>
+      {% for ten, khoi in [('Trước khi xếp — mốc SRT', truoc), ('Sau khi xếp — chống đè', sau)] %}
+        <div class="tl-label">{{ ten }}</div>
+        <div class="tl-lane">
+          <span class="tl-end" style="left: calc(var(--pps) * {{ '%.2f'|format(end_s) }})"
+                title="Hết video: {{ '%.1f'|format(end_s) }}s"></span>
+          {% for c in khoi %}
+            <span class="tl-block {{ 'hang2' if loop.index0 % 2 }} {{ 'de' if c.ov }}"
+                  style="left: calc(var(--pps) * {{ '%.2f'|format(c.start / 1000) }}); width: calc(var(--pps) * {{ '%.2f'|format(c.duration_ms / 1000) }})"
+                  title="Câu {{ c.id }} · {{ '%.1f'|format(c.start / 1000) }}s → {{ '%.1f'|format(c.end / 1000) }}s (dài {{ '%.1f'|format(c.duration_ms / 1000) }}s){% if c.ov %} · ĐÈ câu sau {{ '%.2f'|format(c.ov / 1000) }}s{% endif %} · dời so với SRT {{ '%+.2f'|format(c.shift_ms / 1000) }}s
+{{ c.text }}">{{ c.id }}. {{ c.text }}</span>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+  <p class="hint">Cuộn ngang để đi dọc video; − / ＋ để thu phóng. Hai hàng con so le
+     chỉ để dễ nhìn — tất cả khối nằm trên cùng MỘT track audio.</p>
+</div>
+
+<script>
+  const inner = document.getElementById("tlInner");
+  let pps = 12;
+  const ap = () => inner.style.setProperty("--pps", pps + "px");
+  document.getElementById("tlIn").addEventListener("click", () => { pps = Math.min(60, pps * 1.5); ap(); });
+  document.getElementById("tlOut").addEventListener("click", () => { pps = Math.max(3, pps / 1.5); ap(); });
+  ap();
+</script>
+{% endblock %}

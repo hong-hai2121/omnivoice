@@ -1,0 +1,15 @@
+{
+  "thutu": 10,
+  "ten": "Be Việt Nam đậm",
+  "mota": "Font Be Vietnam Pro Black — thiết kế riêng cho tiếng Việt, hiện đại sạch sẽ",
+  "hieuung": "tinh",
+  "font": "Be Vietnam Pro Black",
+  "fontfile": "fonts/BeVietnamPro-Black.ttf",
+  "size": 64,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "000000",
+  "vien": 5,
+  "bong": 2,
+  "max_chars": 38
+}

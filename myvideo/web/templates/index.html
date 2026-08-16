@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{# Trang duy nhất của myvideo, bố cục theo THỨ TỰ LÀM VIỆC như Home của myvoice:
+   hàng đợi → nguồn (danh sách) → bốn khối bước ①②③④, MỖI KHỐI mang cài đặt
+   riêng của bước đó (bấm nút chạy là lưu lại cài đặt mới nhất). Bấm nút của
+   bước nào thì chạy từ bước đó; ô ⛓ quyết định có nối tiếp bước sau không. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🎬</span> myvideo — quy trình 4 bước</h1>
+  <p class="muted">Video tiếng Trung → <b>①</b> làm chậm + SRT Trung →
+     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice xếp timeline →
+     <b>④</b> video sub cứng + tiếng Việt.</p>
+</div>
+
+{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}
+
+<p class="colhead">⏱ Việc đang chạy</p>
+{% include "_queuepanel.html" %}
+
+<form method="post" action="/chay">
+  <p class="colhead later">🎞 Nguồn — danh sách, mỗi dòng một file</p>
+  <div class="panel srcbox">
+    <div class="phead">
+      <h2>Nguồn</h2>
+      <span class="phead-gap"></span>
+      <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
+    </div>
+    <label class="field">
+      <span>Mỗi dòng một file — mỗi dòng thành MỘT việc riêng trong hàng đợi.
+        Bước ① cần file video gốc; chạy lẻ bước ②③④ thì dán file/tên
+        <code>_x0.7</code> trong output (hoặc dùng nút ở bảng dưới).</span>
+      <textarea id="srcBox" name="sources" rows="4" spellcheck="false"
+                placeholder="C:\Users\PC\Downloads\video1.mp4&#10;C:\Users\PC\Downloads\video2.mp4"></textarea>
+    </label>
+    {% if downloads %}
+      <div class="chiprow">
+        <span class="chiplabel">Mới tải về — bấm để thêm/bỏ</span>
+        {% for f in downloads %}
+          <button type="button" class="chip" data-src="{{ f.path }}"
+                  title="{{ f.path }} · {{ f.size }}">{{ f.name }}</button>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <div class="actions">
+      <button name="start" value="thu60"
+              title="Cắt 60 giây đầu của mỗi file trong danh sách rồi chạy trọn 4 bước
+— duyệt giọng đọc, kiểu sub, vùng che trước khi chạy cả bài">🧪 Thử 60 giây đầu (bản nháp đủ 4 bước)</button>
+    </div>
+  </div>
+
+  <p class="colhead later">Các bước — bấm nút bước nào thì chạy từ bước đó</p>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">1</span><h2>Làm chậm video + SRT tiếng Trung</h2>
+      <p class="hint">Whisper mốc giờ từng chữ, ngắt theo dấu câu Trung →
+        <code>_x0.7.mp4</code> + <code>_x0.7.srt</code> trong output.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Tốc độ sau khi làm chậm</span>
+        <select name="speed">
+          {% for s in ["0.6", "0.7", "0.8", "0.9", "1.0"] %}
+            <option value="{{ s }}" {{ 'selected' if settings.speed|string == s }}>{{ s }}x</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Model nhận diện</span>
+        <select name="model">
+          {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+            <option value="{{ m }}" {{ 'selected' if settings.model == m }}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Số chữ tối đa/dòng SRT Trung</span>
+        <input name="maxchars" type="number" min="4" max="60" value="{{ settings.maxchars }}">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="cham">🐢 Chạy bước ①</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="redoasr">
+        Nhận diện lại từ đầu (bỏ mốc giờ đã lưu trong words.json — không lưu ô này)</label>
+      <label class="chk"><input type="checkbox" name="auto2" {{ 'checked' if settings.auto2 }}>
+        ⛓ Xong thì tự chạy bước ② dịch</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">2</span><h2>Dịch Gemini → SRT tiếng Việt</h2>
+      <p class="hint"><code>_x0.7.srt</code> → <code>_vi.srt</code> + <code>_zhvi.srt</code>
+        (song ngữ), giữ nguyên mốc giờ; lô nào xong lưu lô đó, lỗi chạy lại là dịch tiếp.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Cỡ mỗi lô gửi Gemini (ký tự)</span>
+        <input name="batchchars" type="number" min="200" max="5000" step="100"
+               value="{{ settings.batchchars }}">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="dich">🌐 Chạy bước ②</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="offline" {{ 'checked' if settings.offline }}>
+        📴 Dịch offline bằng opus-mt (nhanh, KHÔNG cần Firefox — chất lượng thô, chỉ nên làm nháp)</label>
+      <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if settings.auto3 }}>
+        ⛓ Xong thì tự chạy bước ③ tạo giọng</label>
+    </div>
+    <p class="hint">⚠️ Gemini dùng Firefox với profile đã đăng nhập —
+      <b>đóng Firefox</b> trước khi chạy bước này.</p>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">3</span><h2>Giọng OmniVoice + xếp timeline</h2>
+      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav, xếp chống đè →
+        <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>. Chạy lại tự bỏ qua
+        câu đã có audio.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Giọng đọc — kho riêng <code>myvideo/voice</code>; bấm ⭐ để
+          ghim/bỏ ghim giọng đang chọn lên đầu danh sách</span>
+        <span style="display:flex; gap:6px; align-items:stretch">
+          <select name="voice" style="flex:1 1 auto; min-width:0">
+            <option value="">(tự lấy file đầu tiên trong myvideo/voice)</option>
+            {% for v in voices %}
+              <option value="{{ v }}" {{ 'selected' if settings.voice == v }}>{{ '★ ' if v in voice_stars }}{{ v }}</option>
+            {% endfor %}
+          </select>
+          <button formaction="/giong-sao" formnovalidate class="small"
+                  title="Ghim/bỏ ghim giọng đang chọn lên đầu danh sách">⭐</button>
+        </span>
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="giong">🔊 Chạy bước ③</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="redotts">
+        Đọc lại TOÀN BỘ câu (bỏ wav đã có — dùng khi đổi giọng; không lưu ô này)</label>
+      <label class="chk"><input type="checkbox" name="auto4" {{ 'checked' if settings.auto4 }}>
+        ⛓ Xong thì tự chạy bước ④ gắn vào video</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">4</span><h2>Vẽ sub cứng + thay tiếng</h2>
+      <p class="hint">Burn phụ đề theo KIỂU chọn bên dưới vào
+        <code>_x0.7.mp4</code> → <code>_sub.mp4</code>; NVENC trước, lỗi tự lùi CPU.</p>
+    </div>
+    {# Kho kiểu: myvideo/kieusub_mau/*.json — thêm file JSON là có thẻ mới,
+       ảnh xem trước tự vẽ khi khởi động lại (vẽ bằng đúng libass sẽ burn).
+       Mặc định THU GỌN chỉ hiện kiểu đang chọn; nút 🎨 mở cả kho ra. #}
+    <div class="ksubhead">
+      <span class="hint">🎨 Kiểu phụ đề — ảnh là xem trước thật, kiểu động có chuyển động</span>
+      <button type="button" class="small" id="ksubToggle"
+              data-mo="▲ Thu gọn" data-dong="▼ Hiện cả {{ kieusubs|length }} kiểu"></button>
+    </div>
+    <div class="ksubs thu" id="ksubs">
+      {% for k in kieusubs %}
+        <label class="ksub" title="{{ k.mota }}">
+          <input type="radio" name="kieusub" value="{{ k.id }}"
+                 {{ 'checked' if settings.kieusub == k.id }}>
+          {% if k.anh %}
+            <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
+          {% else %}
+            <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
+          {% endif %}
+          <b>{{ k.ten }}</b>
+          <span>{{ k.mota }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Font chữ — đè font của kiểu đang chọn (font rời <code>myvoice/fonts</code>
+          không cần cài; ảnh xem trước ở trên vẫn vẽ bằng font gốc của kiểu)</span>
+        <select name="subfont">
+          <option value="">(theo kiểu đã chọn)</option>
+          {% for f in fonts %}
+            <option value="{{ f.ten }}" {{ 'selected' if settings.subfont == f.ten }}>{{ f.ten }}{{ ' (font Windows)' if f.he_thong }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>Số ký tự tối đa mỗi dòng hiển thị</span>
+        <input name="subchars" type="number" min="10" max="120" value="{{ settings.subchars }}">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="gan">🎬 Chạy bước ④</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="chesub" {{ 'checked' if settings.chesub }}>
+        🫥 Che sub Trung gốc: tự dò dải chữ đốt sẵn (10 khung hình) rồi LÀM MỜ dải đó
+        suốt video, sub Việt đè lên trên dải mờ (dò lệch: sửa file <code>_vungsub.json</code>)</label>
+      <label class="chk"><input type="checkbox" name="thaytieng" {{ 'checked' if settings.thaytieng }}>
+        🔊 Thay tiếng bằng giọng Việt đã xếp (dùng <code>_vi_sapxep.srt</code> +
+        <code>_vi_audio.wav</code>; bỏ tick = giữ tiếng Trung gốc, sub <code>_vi.srt</code>)</label>
+      <label class="chk"><input type="checkbox" name="cpu" {{ 'checked' if settings.cpu }}>
+        🖥 Ép encode CPU (khi GPU đang bận nhận diện/TTS)</label>
+    </div>
+  </div>
+
+  <div class="savebar">
+    <button formaction="/luu">💾 Lưu cài đặt</button>
+    <span class="hint">Nhớ toàn bộ cài đặt của cả 4 bước.
+      Bấm nút chạy bước nào cũng tự lưu cài đặt mới nhất trước khi chạy.</span>
+  </div>
+</form>
+
+<p class="colhead later">📼 Kết quả</p>
+<div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
+  {% include "_bang.html" %}
+</div>
+
+<script>
+  // Chip "Mới tải về": bấm thêm dòng vào ô Nguồn, bấm lại thì bỏ ra (chip xanh
+  // = đang có trong danh sách). type=button nên không submit form.
+  const srcBox = document.getElementById("srcBox");
+  const layDs = () => srcBox.value.split("\n").map(l => l.trim()).filter(Boolean);
+  const chips = [...document.querySelectorAll(".chip[data-src]")];
+  const toChip = () => {
+    const ds = layDs();
+    chips.forEach(c => c.classList.toggle("chip-hit", ds.includes(c.dataset.src)));
+  };
+  chips.forEach(b => b.addEventListener("click", () => {
+    const ds = layDs();
+    const i = ds.indexOf(b.dataset.src);
+    if (i >= 0) ds.splice(i, 1); else ds.push(b.dataset.src);
+    srcBox.value = ds.join("\n") + (ds.length ? "\n" : "");
+    toChip();
+  }));
+  srcBox.addEventListener("input", toChip);
+  document.getElementById("srcClear").addEventListener("click", () => {
+    srcBox.value = "";
+    toChip();
+  });
+  toChip();
+
+  // Ô chọn kiểu phụ đề: mặc định THU GỌN (chỉ hiện kiểu đang chọn) cho đỡ tốn
+  // chỗ; bấm nút là mở cả kho, trạng thái nhớ trong localStorage.
+  const ksubs = document.getElementById("ksubs");
+  const ksubBtn = document.getElementById("ksubToggle");
+  const ksubVe = () => {
+    const thu = ksubs.classList.contains("thu");
+    ksubBtn.textContent = thu ? ksubBtn.dataset.dong : ksubBtn.dataset.mo;
+  };
+  ksubs.classList.toggle("thu", localStorage.getItem("ksub_mo") !== "1");
+  if (!ksubs.querySelector("input:checked")) ksubs.classList.remove("thu");
+  ksubVe();
+  ksubBtn.addEventListener("click", () => {
+    ksubs.classList.toggle("thu");
+    localStorage.setItem("ksub_mo", ksubs.classList.contains("thu") ? "0" : "1");
+    ksubVe();
+  });
+
+  // Nhật ký trong khối hàng đợi: luôn cuộn xuống dòng mới nhất, kể cả sau khi
+  // htmx thay nội dung.
+  const cuonNhatKy = (root) =>
+    (root.querySelectorAll ? root : document)
+      .querySelectorAll(".loglines").forEach(p => { p.scrollTop = p.scrollHeight; });
+  cuonNhatKy(document);
+  document.body.addEventListener("htmx:afterSwap", e => cuonNhatKy(e.target));
+</script>
+{% endblock %}

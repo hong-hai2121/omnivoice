@@ -1,0 +1,15 @@
+{
+  "thutu": 15,
+  "ten": "Paytone tròn đầy",
+  "mota": "Font Paytone One tròn trịa dễ thương — trắng viền hồng, hợp clip nhẹ nhàng",
+  "hieuung": "tinh",
+  "font": "Paytone One",
+  "fontfile": "fonts/PaytoneOne-Regular.ttf",
+  "size": 66,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "FF6FA5",
+  "vien": 5,
+  "bong": 2,
+  "max_chars": 34
+}

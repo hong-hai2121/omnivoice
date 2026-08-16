@@ -82,3 +82,17 @@ mt_cache/
 /myvoice/web/token.txt
 /myvoice/web/web_settings.json
 /myvoice/web/.tmp/
+
+# Ảnh xem trước kiểu phụ đề (kho DÙNG CHUNG myvoice+myvideo, nằm bên myvoice) —
+# scripts/kieusub.py tự vẽ lại khi web khởi động nên không cần đưa lên git.
+# (Font trong myvoice/fonts và mẫu JSON trong scripts/kieusub_mau thì ĐƯA lên.)
+/myvoice/web/static/kieusub/
+
+# myvideo — file sinh tự động, KHÔNG đưa lên git:
+#   output/         kết quả pipeline từng video (mp4/srt/ass/wav/json trung gian)
+#   voice/          kho giọng mẫu cá nhân (audio nặng)
+#   token.txt / web_settings.json  đăng nhập + cài đặt riêng của máy
+/myvideo/output/
+/myvideo/voice/
+/myvideo/web/token.txt
+/myvideo/web/web_settings.json

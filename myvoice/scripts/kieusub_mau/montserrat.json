@@ -1,0 +1,16 @@
+{
+  "thutu": 11,
+  "ten": "Montserrat karaoke xanh",
+  "mota": "Font Montserrat — chuẩn caption Reels/TikTok, từ đang đọc nhuộm xanh lá",
+  "hieuung": "karaoke",
+  "font": "Montserrat ExtraBold",
+  "fontfile": "fonts/Montserrat-ExtraBold.ttf",
+  "size": 64,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_noibat": "00E97F",
+  "mau_vien": "000000",
+  "vien": 4,
+  "bong": 2,
+  "max_chars": 38
+}

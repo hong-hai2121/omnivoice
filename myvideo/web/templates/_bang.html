@@ -1,0 +1,105 @@
+{# Bảng trạng thái từng video trong output + danh sách file mới — cần rows,
+   files, output_dir. Khối này được htmx làm mới 5 giây/lần. #}
+<div class="panel">
+  <div class="phead">
+    <b>📼 Video trong output — bước nào xong, bước nào thiếu</b>
+    <span class="spacer"></span>
+    <form method="post" action="/mo-thumuc"><button class="ghost">📂 Mở thư mục</button></form>
+  </div>
+  {% if rows %}
+  <div class="tablewrap">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th style="text-align:left">Video</th>
+          <th>① Chậm + SRT</th>
+          <th>② SRT Việt</th>
+          <th>③ Giọng + xếp</th>
+          <th>④ Video sub</th>
+          <th>Làm tiếp</th>
+          <th>Chạy lại</th>
+          <th>Xoá</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr class="{{ 'done' if r.sub }}">
+          <td class="left clip" title="{{ r.base }}">{{ r.base }}</td>
+          <td class="{{ 'okc' if r.video and r.srt else 'no' }}">{{
+            '✔' if r.video and r.srt else ('chỉ SRT' if r.srt else ('chỉ video' if r.video else '—')) }}</td>
+          <td class="{{ 'okc' if r.vi else 'no' }}">{{ '✔' if r.vi else '—' }}</td>
+          <td class="{{ 'okc' if r.audio else 'no' }}">{{ '✔' if r.audio else '—' }}</td>
+          <td class="{{ 'okc' if r.sub else 'no' }}">{{ '✔' if r.sub else '—' }}</td>
+          <td>
+            {% if r.missing %}
+              <form method="post" action="/tiep">
+                <input type="hidden" name="base" value="{{ r.base }}">
+                <button class="small">⏩ {{ r.missing_label }}</button>
+              </form>
+            {% elif r.resume_err %}
+              <span title="{{ r.resume_err }}">⚠️</span>
+            {% else %}✅{% endif %}
+          </td>
+          <td>
+            {% for k in ['dich', 'giong', 'gan'] %}
+              <form method="post" action="/buoc" style="display:inline">
+                <input type="hidden" name="base" value="{{ r.base }}">
+                <input type="hidden" name="key" value="{{ k }}">
+                <button class="ghost small" title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
+                  {'dich':'②','giong':'③','gan':'④'}[k] }}</button>
+              </form>
+            {% endfor %}
+            {% if r.tl %}
+              <form method="get" action="/timeline" style="display:inline">
+                <input type="hidden" name="base" value="{{ r.base }}">
+                <button class="ghost small"
+                        title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</button>
+              </form>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/xoa"
+                  onsubmit="return confirm('Đưa TOÀN BỘ file của video này vào Thùng rác?\n\n{{ r.base }}\n\n(Khôi phục được từ Thùng rác Windows)')">
+              <input type="hidden" name="base" value="{{ r.base }}">
+              <button class="ghost small danger"
+                      title="Đưa mọi file của gốc này vào Thùng rác (khôi phục được)">🗑</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">⚠️ = thiếu file mà không tự chạy tiếp được (di chuột lên xem lý do).
+     Nút ⏩ xếp các bước còn thiếu vào hàng đợi, chạy liền một mạch.</p>
+  {% else %}
+  <p class="empty">Chưa có video nào trong output — chạy bước ① với một video mới.</p>
+  {% endif %}
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <b>📁 File mới trong output</b>
+    <span class="spacer"></span>
+    <form method="post" action="/xoa-het"
+          onsubmit="return confirm('Đưa TẤT CẢ file trong thư mục output vào Thùng rác?\n\n(Khôi phục được từ Thùng rác Windows)')">
+      <button class="ghost danger">🗑 Xoá cả output</button>
+    </form>
+  </div>
+  <p class="hint">{{ output_dir }} — xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
+  {% if files %}
+  <div class="tablewrap">
+    <table class="grid">
+      <tbody>
+        {% for f in files %}
+        <tr>
+          <td class="left clip" title="{{ f.name }}">{{ f.name }}</td>
+          <td>{{ f.size }}</td>
+          <td class="no">{{ f.when }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>

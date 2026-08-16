@@ -522,7 +522,10 @@ def burn_subs(video_path: Path, sub_path: Path, out_path: Path, style=BURN_STYLE
     Để né rắc rối escape đường dẫn Windows (dấu ':' của ổ đĩa) trong bộ lọc
     subtitles, ta chạy ffmpeg với cwd = thư mục chứa file phụ đề và chỉ truyền TÊN file.
     """
-    vf = f"subtitles={sub_path.name}"
+    # fontsdir: kho font rời myvoice/fonts (Anton, Bangers… của bộ kiểu phụ đề
+    # kieusub) — libass tự thấy, không cần cài font vào Windows.
+    import kieusub
+    vf = f"subtitles={sub_path.name}{kieusub.fontsdir_arg(sub_path.parent)}"
     if sub_path.suffix.lower() != ".ass":
         vf += f":force_style='{style}'"
 
@@ -595,6 +598,9 @@ def main():
                         help="Độ dài tối đa mỗi dòng phụ đề (mặc định: 50).")
     parser.add_argument("--burn", action="store_true",
                         help="Vẽ cứng phụ đề vào hình (hardsub, re-encode) thay vì nhúng mềm.")
+    parser.add_argument("--kieu", default="hopbo",
+                        help="Kiểu phụ đề khi --burn — tên file JSON trong "
+                             "scripts/kieusub_mau (mặc định hopbo: hộp bo góc cũ).")
     parser.add_argument("--srt-only", action="store_true",
                         help="CHỈ xuất file .srt (vd để tải lên YouTube Studio), không đụng video.")
     args = parser.parse_args()
@@ -614,9 +620,14 @@ def main():
     out_path = Path(args.out) if args.out else video_path.with_name(video_path.stem + "_sub.mp4")
     srt_path = out_path.with_suffix(".srt")
 
-    # 1) Cue từ kịch bản gốc
+    # 1) Cue từ kịch bản gốc. Burn theo kiểu font to (Anton, Bangers…) thì kiểu
+    # mang trần ký tự/dòng riêng nhỏ hơn — lấy trần chặt hơn giữa kiểu và --max-chars.
+    max_chars = args.max_chars
+    if args.burn:
+        import kieusub
+        max_chars = kieusub.chon_max_chars(kieusub.lay(args.kieu), max_chars)
     text = script_path.read_text(encoding="utf-8")
-    cues = build_cues(text, args.max_chars)
+    cues = build_cues(text, max_chars)
     if not cues:
         print("❌ Kịch bản rỗng, không có gì để làm phụ đề.")
         sys.exit(1)
@@ -672,10 +683,13 @@ def main():
         return
 
     if args.burn:
-        # Burn thì dùng .ass (khung nền bo góc) chứ không phải .srt: .srt không mang
-        # được kiểu riêng, ép bằng force_style chỉ ra khung nền VUÔNG.
-        ass_path = write_ass(cues, cue_times, srt_path.with_suffix(".ass"))
-        print(f"💾 Đã ghi kiểu phụ đề: {ass_path.name}")
+        # Burn thì dùng .ass (mang được kiểu riêng) chứ không phải .srt: ép .srt
+        # bằng force_style chỉ ra khung nền VUÔNG. Kiểu lấy từ kho kieusub_mau.
+        import kieusub
+        kieu = kieusub.lay(args.kieu)
+        ass_path = kieusub.write_ass_kieu(cues, cue_times,
+                                          srt_path.with_suffix(".ass"), kieu)
+        print(f"💾 Đã ghi kiểu phụ đề: {kieu['ten']} ({kieu['id']}) → {ass_path.name}")
         print("🎬 Đang VẼ CỨNG phụ đề vào hình (re-encode, hơi lâu)...")
         ok = burn_subs(video_path, ass_path, out_path)
     else:

@@ -124,6 +124,15 @@ def _script_ctx() -> dict:
             "epsrc": core.load_web_settings().get("epsrc", "manual")}
 
 
+def _kieusubs() -> list[dict]:
+    """Kho kiểu phụ đề (scripts/kieusub.py) — lỗi cũng không được sập trang."""
+    try:
+        import kieusub
+        return kieusub.danh_sach_web()
+    except Exception:
+        return []
+
+
 def _voice_ctx() -> dict:
     web = core.load_web_settings()
     out_wav = web.get("output") or str(core.OUTPUT_DIR / "output.wav")
@@ -141,6 +150,9 @@ def _voice_ctx() -> dict:
         "ngang_sources": [core.NGANG_SOURCE_ALL] + core.list_ngang_sources(),
         "effect_none": core.EFFECT_NONE,
         "sub_modes": [core.SUB_MODE_SRT, core.SUB_MODE_BURN],
+        # Kho kiểu phụ đề (scripts/kieusub_mau, dùng chung myvideo) — thẻ ảnh
+        # chọn kiểu khi "vẽ cứng vào hình"; ảnh nằm ở static/kieusub.
+        "kieusubs": _kieusubs(),
         "input_txt": web.get("input") or str(core.SCRIPT_DIR / "input.txt"),
         "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
         "voice_dir": str(core.VOICE_DIR),
@@ -930,7 +942,7 @@ _NUM_KEYS = {"chunk": int, "cut_target": float, "cut_min": float, "cut_max": flo
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
              "tiktok_music_db": int, "sub_max_chars": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
-              "sub_mode", "sub_model"]
+              "sub_mode", "sub_model", "sub_kieu"]
 
 
 def _save_opts_from_form(form) -> dict:
@@ -1047,6 +1059,14 @@ def main() -> None:
     if _should_open_browser():
         threading.Thread(target=_open_browser_when_ready, args=(port,),
                          daemon=True).start()
+
+    # Ảnh xem trước kiểu phụ đề còn thiếu (kiểu mới thêm) → tự vẽ nền sau,
+    # không chặn khởi động; vẽ xong tải lại trang là thấy.
+    try:
+        import kieusub
+        threading.Thread(target=kieusub.taomau_thieu, daemon=True).start()
+    except Exception:
+        pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.

@@ -100,6 +100,7 @@ def main(argv=None) -> int:
         sub_mode=ts.get("sub_mode", gui.SUB_MODE_SRT),
         sub_model=ts.get("sub_model", "medium"),
         sub_max_chars=ts.get("sub_max_chars", 50),
+        sub_kieu=ts.get("sub_kieu", "hopbo"),
     )
 
     try:

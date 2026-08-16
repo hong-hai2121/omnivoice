@@ -1,0 +1,15 @@
+{
+  "thutu": 13,
+  "ten": "Bungee retro",
+  "mota": "Font Bungee kiểu biển hiệu retro — trắng viền hồng, nổi bần bật",
+  "hieuung": "tinh",
+  "font": "Bungee",
+  "fontfile": "fonts/Bungee-Regular.ttf",
+  "size": 66,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "E91E63",
+  "vien": 4,
+  "bong": 2,
+  "max_chars": 28
+}

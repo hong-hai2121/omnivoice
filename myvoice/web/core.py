@@ -606,6 +606,8 @@ def tts_settings() -> tuple[dict | None, str]:
         sub_mode=opts.get("sub_mode") or SUB_MODE_SRT,
         sub_model=opts.get("sub_model") or "medium",
         sub_max_chars=_i(opts.get("sub_max_chars"), 50, 10, 200),
+        # Kiểu TRÌNH BÀY khi vẽ cứng (kho scripts/kieusub_mau, dùng chung myvideo).
+        sub_kieu=opts.get("sub_kieu") or "hopbo",
     ), ""
 
 

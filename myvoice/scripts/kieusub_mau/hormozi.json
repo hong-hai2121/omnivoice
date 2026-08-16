@@ -1,0 +1,17 @@
+{
+  "thutu": 7,
+  "ten": "Hormozi từng chữ",
+  "mota": "IN HOA hiện dần từng từ, từ đang đọc đổi màu + nảy nhẹ — kiểu clip triệu view",
+  "hieuung": "hienlo",
+  "font": "Arial Black",
+  "size": 72,
+  "bold": false,
+  "hoa": true,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "000000",
+  "vien": 6,
+  "bong": 3,
+  "nhieu_mau": ["FFD700", "3DFF73", "FF4D4D"],
+  "pop": true,
+  "max_chars": 26
+}

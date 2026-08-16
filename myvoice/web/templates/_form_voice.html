@@ -154,6 +154,52 @@
         <input name="sub_max_chars" value="{{ opts.sub_max_chars }}" inputmode="numeric">
       </label>
     </div>
+    {# Kiểu TRÌNH BÀY khi "vẽ cứng vào hình" — kho scripts/kieusub_mau dùng chung
+       với myvideo, ảnh xem trước vẽ bằng đúng libass sẽ burn. Mặc định THU GỌN
+       chỉ hiện kiểu đang chọn; nút ▼ mở cả kho (nhớ trạng thái localStorage). #}
+    {% if kieusubs %}
+      <div class="ksubhead">
+        <span class="hint">🎨 Kiểu chữ khi vẽ cứng — ảnh là xem trước thật</span>
+        <button type="button" class="small" id="ksubToggle"
+                data-mo="▲ Thu gọn" data-dong="▼ Hiện cả {{ kieusubs|length }} kiểu"></button>
+      </div>
+      <div class="ksubs thu" id="ksubs">
+        {% for k in kieusubs %}
+          <label class="ksub" title="{{ k.mota }}">
+            <input type="radio" name="sub_kieu" value="{{ k.id }}"
+                   {{ 'checked' if (opts.sub_kieu or 'hopbo') == k.id }}>
+            {% if k.anh %}
+              <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
+            {% else %}
+              <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
+            {% endif %}
+            <b>{{ k.ten }}</b>
+            <span>{{ k.mota }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <script>
+        (() => {   // bọc IIFE: form này nhúng ở cả Home lẫn trang Giọng nói
+          const ksubs = document.getElementById("ksubs");
+          const btn = document.getElementById("ksubToggle");
+          if (!ksubs || !btn || btn.dataset.gan) return;
+          btn.dataset.gan = "1";
+          const ve = () => {
+            btn.textContent = ksubs.classList.contains("thu")
+              ? btn.dataset.dong : btn.dataset.mo;
+          };
+          ksubs.classList.toggle("thu", localStorage.getItem("ksub_mo") !== "1");
+          if (!ksubs.querySelector("input:checked")) ksubs.classList.remove("thu");
+          ve();
+          btn.addEventListener("click", () => {
+            ksubs.classList.toggle("thu");
+            localStorage.setItem("ksub_mo",
+                                 ksubs.classList.contains("thu") ? "0" : "1");
+            ve();
+          });
+        })();
+      </script>
+    {% endif %}
     <p class="hint">.srt rời = tải lên YouTube Studio (nhanh) · vẽ cứng = mã hoá lại cả video (lâu).</p>
   </div>
 

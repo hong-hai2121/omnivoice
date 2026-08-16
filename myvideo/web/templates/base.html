@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}myvideo — bảng điều khiển{% endblock %}</title>
+  {# ?v=… là mtime của app.css: sửa css xong là URL đổi, cache không dính bản cũ. #}
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v() }}">
+  <script src="/static/htmx.min.js" defer></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎬</text></svg>">
+</head>
+<body class="p-video">
+<aside class="side">
+  <div class="brand">
+    <span class="logo">🎬</span>
+    <span><b>myvideo</b><span>bảng điều khiển</span></span>
+  </div>
+  <nav>
+    <a href="/" class="on"><span>🎬</span> Quy trình 4 bước</a>
+  </nav>
+  <p class="sidefoot">① chậm + SRT Trung → ② dịch Gemini → ③ giọng OmniVoice
+  → ④ sub cứng + thay tiếng.<br><br>
+  ⚠️ Bước ② điều khiển Firefox — nhớ <b>đóng Firefox</b> trước khi chạy.</p>
+</aside>
+
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

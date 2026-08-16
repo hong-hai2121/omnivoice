@@ -178,8 +178,11 @@ OPTS_DEFAULTS = dict(
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
     make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50,
+    # Kiểu phụ đề khi vẽ cứng — kho scripts/kieusub_mau/*.json (dùng chung với
+    # myvideo): hopbo = hộp bo góc cũ, ngoài ra karaoke/hormozi/anton/neon…
+    sub_kieu="hopbo",
     # Phụ đề cho VIDEO DỌC (facebook.mp4) — dùng chung kiểu/model/chế độ với video
-    # ngang, chỉ khác khung hình (1080x1920) và số ký tự/dòng (tự rút xuống 27).
+    # ngang, chỉ khác khung hình (1080x1920) và số ký tự/dòng (tự rút xuống 23).
     make_sub_doc=False,
 )
 
@@ -1439,7 +1442,8 @@ def _probe_duration(path: Path) -> float | None:
 
 def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                      model: str = "medium", max_chars: int = 50,
-                     progress=None, doc: bool = False) -> Path | None:
+                     progress=None, doc: bool = False,
+                     kieu: str = "hopbo") -> Path | None:
     """Tạo phụ đề cho 1 video. Trả về file .srt, None nếu lỗi.
 
     doc=False (mặc định): khung NGANG 1920x1080 — YOUTUBE.mp4.
@@ -1468,14 +1472,22 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
 
     tmp_wav = None
     try:
+        import kieusub
         import video_gansub as gs
         from nhandien_giongnoi import extract_audio, get_audio_duration
 
-        # Khung DỌC hẹp hơn → phải ngắt dòng ngắn lại, không thì khung nền tràn ra
-        # ngoài mép video. Chỉ ép khi bên gọi để nguyên số của khung ngang.
-        if doc and max_chars > gs.SUB_MAX_CHARS_DOC:
-            logging.info(f"📝 Video dọc: rút {max_chars} → {gs.SUB_MAX_CHARS_DOC} ký tự/dòng "
-                         "cho vừa khung 1080.")
+        # Trần ký tự/dòng theo KIỂU phụ đề (font to → trần nhỏ) + khung hình:
+        # khung DỌC hẹp hơn phải ngắt dòng ngắn lại, không thì chữ tràn ra mép
+        # (kiểu mặc định hopbo ra đúng 23 như SUB_MAX_CHARS_DOC cũ).
+        kieu_dict = kieusub.lay(kieu)
+        mc = kieusub.chon_max_chars(kieu_dict, max_chars, doc=doc)
+        if mode == SUB_MODE_BURN and mc != max_chars:
+            logging.info(f"📝 Kiểu '{kieu_dict['ten']}'"
+                         + (" + khung dọc" if doc else "")
+                         + f": rút {max_chars} → {mc} ký tự/dòng cho vừa khung.")
+            max_chars = mc
+        elif doc and max_chars > gs.SUB_MAX_CHARS_DOC:
+            # Chế độ .srt rời không có kiểu — giữ phép rút cũ của khung dọc.
             max_chars = gs.SUB_MAX_CHARS_DOC
 
         cues = gs.build_cues(script_path.read_text(encoding="utf-8"), max_chars)
@@ -1504,7 +1516,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         if mode == SUB_MODE_BURN:
             geo = ((gs.ASS_PLAY_W_DOC, gs.ASS_PLAY_H_DOC, gs.SUB_MARGIN_V_DOC) if doc
                    else (gs.ASS_PLAY_W, gs.ASS_PLAY_H, gs.SUB_MARGIN_V))
-            ass_path = gs.write_ass(cues, cue_times, srt_path.with_suffix(".ass"), *geo)
+            ass_path = kieusub.write_ass_kieu(cues, cue_times,
+                                              srt_path.with_suffix(".ass"),
+                                              kieu_dict, *geo)
             tmp_mp4 = video_path.with_name(video_path.stem + "_subtmp.mp4")
             logging.info("📝 Đang vẽ CỨNG phụ đề vào hình (mã hoá lại, hơi lâu)...")
             if gs.burn_subs(video_path, ass_path, tmp_mp4):
@@ -1706,7 +1720,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2064,7 +2078,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             make_youtube_sub(Path(ngang_video_path),
                              Path(ngang_video_path).parent / "input.txt",
                              sub_mode, sub_model, sub_max_chars,
-                             progress=_sub_progress)
+                             progress=_sub_progress, kieu=sub_kieu)
             progress_var.set(100)
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
@@ -2346,7 +2360,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(0)
                 make_youtube_sub(doc_video, output_path.parent / "input.txt",
                                  sub_mode, sub_model, sub_max_chars,
-                                 progress=_sub_doc_progress, doc=True)
+                                 progress=_sub_doc_progress, doc=True, kieu=sub_kieu)
                 progress_var.set(100)
             else:
                 logging.warning(f"📝 Chưa có video dọc ({doc_video.name}) → bỏ qua phụ đề dọc.")
@@ -2809,6 +2823,18 @@ class App(tk.Tk):
         self.var_sub_max_chars = tk.IntVar(value=self._opt_settings["sub_max_chars"])
         ttk.Spinbox(sub_row2, from_=20, to=90, increment=1, width=5,
                     textvariable=self.var_sub_max_chars).pack(side="left")
+        # Kiểu TRÌNH BÀY khi vẽ cứng — kho scripts/kieusub_mau (dùng chung myvideo);
+        # web có ảnh xem trước từng kiểu, GUI chỉ chọn theo tên.
+        ttk.Label(sub_row2, text="Kiểu chữ:").pack(side="left", padx=(10, 2))
+        self.var_sub_kieu = tk.StringVar(
+            value=self._opt_settings.get("sub_kieu", "hopbo"))
+        try:
+            import kieusub
+            _kieu_ids = [k["id"] for k in kieusub.danh_sach()] or ["hopbo"]
+        except Exception:
+            _kieu_ids = ["hopbo"]
+        ttk.Combobox(sub_row2, textvariable=self.var_sub_kieu, width=12,
+                     state="readonly", values=_kieu_ids).pack(side="left")
 
         # Phụ đề cho VIDEO DỌC (facebook.mp4) — tick riêng, dùng chung Kiểu/Model ở trên.
         # Khung 1080x1920 nên tự rút số ký tự/dòng xuống 27 cho khỏi tràn mép.
@@ -5012,6 +5038,7 @@ class App(tk.Tk):
                 sub_mode=self.var_sub_mode.get(),
                 sub_model=self.var_sub_model.get(),
                 sub_max_chars=int(self.var_sub_max_chars.get()),
+                sub_kieu=self.var_sub_kieu.get(),
                 make_sub_doc=self.var_make_sub_doc.get(),
             ))
         except Exception as e:
@@ -6010,6 +6037,7 @@ class App(tk.Tk):
             make_sub=self.var_make_sub.get(), sub_mode=self.var_sub_mode.get(),
             sub_model=self.var_sub_model.get(),
             sub_max_chars=self._parse_sub_max_chars(),
+            sub_kieu=self.var_sub_kieu.get(),
             make_sub_doc=self.var_make_sub_doc.get(),
         )
 
@@ -6241,6 +6269,7 @@ class App(tk.Tk):
             sub_mode=ts.get("sub_mode", SUB_MODE_SRT),
             sub_model=ts.get("sub_model", "medium"),
             sub_max_chars=ts.get("sub_max_chars", 50),
+            sub_kieu=ts.get("sub_kieu", "hopbo"),
             # Phụ đề cho facebook.mp4 (khung dọc) — chạy SAU TikTok, xem run_tts.
             make_sub_doc=ts.get("make_sub_doc", False),
         )                                          # render phần còn thiếu (vd video dọc).
@@ -7448,6 +7477,7 @@ class App(tk.Tk):
                     "sub_mode": self.var_sub_mode.get(),
                     "sub_model": self.var_sub_model.get(),
                     "sub_max_chars": self._parse_sub_max_chars(),
+                    "sub_kieu": self.var_sub_kieu.get(),
                     "make_sub_doc": self.var_make_sub_doc.get()},
             daemon=True,
         ).start()
@@ -7726,6 +7756,7 @@ class App(tk.Tk):
                 make_sub_doc=(kind == "doc" and self.var_make_sub_doc.get()),
                 sub_mode=self.var_sub_mode.get(), sub_model=self.var_sub_model.get(),
                 sub_max_chars=self._parse_sub_max_chars(),
+                sub_kieu=self.var_sub_kieu.get(),
             ),
             daemon=True,
         ).start()

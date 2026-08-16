@@ -1,0 +1,18 @@
+{
+  "thutu": 9,
+  "ten": "Anton từng chữ",
+  "mota": "Font Anton — đúng chất Hormozi gốc: IN HOA nét dày, hiện dần từng từ đổi màu",
+  "hieuung": "hienlo",
+  "font": "Anton",
+  "fontfile": "fonts/Anton-Regular.ttf",
+  "size": 78,
+  "bold": false,
+  "hoa": true,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "000000",
+  "vien": 6,
+  "bong": 3,
+  "nhieu_mau": ["FFD700", "3DFF73", "FF4D4D"],
+  "pop": true,
+  "max_chars": 30
+}

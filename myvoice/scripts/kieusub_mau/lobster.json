@@ -1,0 +1,15 @@
+{
+  "thutu": 14,
+  "ten": "Lobster mềm mại",
+  "mota": "Font Lobster viết tay bay bổng — hợp phim tình cảm, vlog kể chuyện",
+  "hieuung": "tinh",
+  "font": "Lobster",
+  "fontfile": "fonts/Lobster-Regular.ttf",
+  "size": 76,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "000000",
+  "vien": 4,
+  "bong": 2,
+  "max_chars": 40
+}

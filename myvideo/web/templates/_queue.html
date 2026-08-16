@@ -1,0 +1,70 @@
+{# Xong hết thì ngủ / tắt máy — nằm TRONG khối tự làm mới 2 giây/lần để đếm
+   ngược hiện ngay tại đây. Bỏ tick là huỷ, kể cả lúc đang đếm. #}
+<form class="sleeprow" method="post" action="/hangdoi/power"
+      hx-post="/hangdoi/power" hx-target="#queue" hx-swap="innerHTML">
+  <label class="chk">
+    <input type="checkbox" name="on" value="1" {{ 'checked' if power and power.armed }}
+           onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+    Xong hết thì
+  </label>
+  <select name="mode" style="width:auto"
+          onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+    <option value="ngu" {{ 'selected' if power and power.mode == 'ngu' }}>🌙 cho máy ngủ</option>
+    <option value="tat" {{ 'selected' if power and power.mode == 'tat' }}>⏻ tắt máy</option>
+  </select>
+  <span class="spacer"></span>
+  <noscript><button class="ghost small">Lưu</button></noscript>
+  {% if power and power.counting %}
+    <span class="badge run">{{ '🌙 ngủ' if power.mode == 'ngu' else '⏻ tắt máy' }} sau {{ power.left }}</span>
+  {% elif power and power.armed %}
+    <span class="badge">chờ xong hết · rảnh {{ power.delay_min }} phút</span>
+  {% endif %}
+</form>
+
+{% if q.paused %}<p class="warn">⏸ Hàng đợi đang tạm dừng — bấm “▶ Tiếp” để chạy tiếp.</p>{% endif %}
+
+{% if q.current %}
+  <div class="job">
+    <div class="jobtop">
+      <span class="badge run">đang chạy</span>
+      <b>{{ q.current.title }}</b>
+    </div>
+    <p class="hint">
+      Bước {{ q.current.step_index + 1 }}/{{ q.current.step_total }}: {{ q.current.step_label }}
+      · bắt đầu {{ q.current.started }}
+    </p>
+    <div class="bar"><i style="width: {{ (100 * q.current.step_index / q.current.step_total) if q.current.step_total else 0 }}%"></i></div>
+  </div>
+{% else %}
+  <p class="empty">Không có việc nào đang chạy.</p>
+{% endif %}
+
+{% for j in q.pending %}
+  <div class="job">
+    <div class="jobtop">
+      <span class="badge">chờ</span>
+      <b>{{ j.title }}</b>
+      <span class="spacer"></span>
+      <form method="post" action="/hangdoi/bo/{{ j.id }}"><button class="ghost small">✕</button></form>
+    </div>
+  </div>
+{% endfor %}
+
+{# Server myvideo thường chạy ẩn (pythonw) nên nhật ký hiện luôn tại đây. #}
+{% if loglines %}<pre class="loglines">{{ loglines|join('\n') }}</pre>{% endif %}
+
+{% if q.history %}
+  <details class="history">
+    <summary>Việc đã xong gần đây ({{ q.history|length }})</summary>
+    {% for j in q.history %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge {{ j.status }}">{{
+            {'done': 'xong', 'failed': 'lỗi', 'stopped': 'đã dừng'}.get(j.status, j.status) }}</span>
+          <b>{{ j.title }}</b>
+        </div>
+        {% if j.message %}<p class="hint">{{ j.message }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  </details>
+{% endif %}

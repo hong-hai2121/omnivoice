@@ -121,9 +121,22 @@ def _web_url(port: int) -> str:
     return f"http://127.0.0.1:{port}/" + (f"?token={quote(token)}" if token else "")
 
 
+# Bảng màu launcher — tông TÍM thương hiệu myvoice, nền tối cho sang
+# (cùng kiểu với launcher myvideo, chỉ khác tông màu).
+MAU = dict(
+    bg="#161129", card="#221a40", vien="#332758",
+    fg="#f2eeff", mo="#a99cd0",
+    accent="#7c3aed", accent_h="#8b5cf6",
+    xam="#2b2150", xam_h="#382b68",
+    do="#3a1631", do_chu="#fb7185", do_h="#4d1c40",
+    log_bg="#100b20", log_fg="#9a8fc4",
+)
+
+
 # ── Cửa sổ nhỏ: bật server nền + nút mở link ────────────────────────────────
 def _run_launcher(port: int) -> int:
-    """Cửa sổ Tkinter tối giản: trạng thái · địa chỉ · nút mở link · nhật ký.
+    """Cửa sổ launcher: nền tối tím, header gradient, nút màu có hover, tự CĂN
+    GIỮA màn hình. Trạng thái · địa chỉ · mở link · xóa output · tắt máy/ngủ.
 
     Server chạy trong tiến trình con KHÔNG có console (CREATE_NO_WINDOW) nên mọi
     thông báo/lỗi của nó được bơm vào ô nhật ký dưới — bỏ console mà vẫn nhìn thấy
@@ -132,7 +145,7 @@ def _run_launcher(port: int) -> int:
     import queue
     import tkinter as tk
     import webbrowser
-    from tkinter import messagebox, ttk
+    from tkinter import messagebox
 
     proc: subprocess.Popen | None = None
     owner = False                      # server có phải do cửa sổ này bật không
@@ -145,65 +158,148 @@ def _run_launcher(port: int) -> int:
 
     root = tk.Tk()
     root.title("myvoice — bảng điều khiển web")
-    root.geometry("640x420")
-    root.minsize(520, 300)
+    root.configure(bg=MAU["bg"])
+    root.minsize(600, 420)
 
-    wrap = ttk.Frame(root, padding=12)
-    wrap.pack(fill="both", expand=True)
+    # ── Header: dải gradient tím + tên app (vẽ lại khi đổi cỡ) ───────────────
+    header = tk.Canvas(root, height=66, bd=0, highlightthickness=0, bg=MAU["bg"])
+    header.pack(fill="x")
+
+    def _ve_header(_e=None):
+        header.delete("all")
+        w = max(header.winfo_width(), 600)
+        c1, c2 = (0x3B, 0x1A, 0x78), (0x93, 0x33, 0xEA)
+        for i in range(0, w, 2):        # vẽ dải 2px cho nhẹ
+            t = i / max(1, w - 1)
+            header.create_rectangle(
+                i, 0, i + 2, 66, width=0,
+                fill="#%02x%02x%02x" % tuple(int(a + (b - a) * t)
+                                             for a, b in zip(c1, c2)))
+        header.create_text(22, 33, anchor="w", text="🎧",
+                           font=("Segoe UI Emoji", 20))
+        header.create_text(62, 24, anchor="w", text="myvoice", fill="white",
+                           font=("Segoe UI", 15, "bold"))
+        header.create_text(62, 46, anchor="w", fill="#ddd0ff",
+                           text="bảng điều khiển web — kịch bản → giọng đọc → video",
+                           font=("Segoe UI", 9))
+
+    header.bind("<Configure>", _ve_header)
+
+    wrap = tk.Frame(root, bg=MAU["bg"])
+    wrap.pack(fill="both", expand=True, padx=16, pady=(12, 14))
     wrap.columnconfigure(0, weight=1)
-    wrap.rowconfigure(5, weight=1)          # hàng nhật ký giãn
+    wrap.rowconfigure(6, weight=1)          # hàng nhật ký giãn
 
-    status = tk.StringVar(value="⏳ Đang bật server…")
-    ttk.Label(wrap, textvariable=status, font=("Segoe UI", 11, "bold")).grid(
-        row=0, column=0, sticky="w")
+    # ── Trạng thái: chấm màu + chữ ───────────────────────────────────────────
+    st_row = tk.Frame(wrap, bg=MAU["bg"])
+    st_row.grid(row=0, column=0, sticky="w")
+    dot = tk.Canvas(st_row, width=12, height=12, bd=0, highlightthickness=0,
+                    bg=MAU["bg"])
+    dot.pack(side="left", pady=1)
+    dot_id = dot.create_oval(2, 2, 11, 11, fill="#fbbf24", width=0)
+    status = tk.StringVar(value="Đang bật server…")
+    tk.Label(st_row, textvariable=status, bg=MAU["bg"], fg=MAU["fg"],
+             font=("Segoe UI", 11, "bold")).pack(side="left", padx=(8, 0))
 
+    def _dot(mau: str) -> None:
+        dot.itemconfig(dot_id, fill=mau)
+
+    # ── Ô địa chỉ (thẻ chìm, double-click là mở) ─────────────────────────────
     url_var = tk.StringVar(value="")
-    url_entry = ttk.Entry(wrap, textvariable=url_var, state="readonly")
-    url_entry.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    url_entry = tk.Entry(wrap, textvariable=url_var, state="readonly",
+                         readonlybackground=MAU["card"], fg="#c4b5fd",
+                         relief="flat", insertbackground=MAU["fg"],
+                         highlightthickness=1, font=("Consolas", 10),
+                         highlightbackground=MAU["vien"],
+                         highlightcolor=MAU["accent"])
+    url_entry.grid(row=1, column=0, sticky="ew", pady=(10, 0), ipady=8)
 
-    btns = ttk.Frame(wrap)
-    btns.grid(row=2, column=0, sticky="w", pady=(10, 8))
-    btn_open = ttk.Button(btns, text="🌐  Mở link web", state="disabled")
+    # ── Nút màu, hover đổi sắc ───────────────────────────────────────────────
+    def _nut(parent, text, bg, hbg, fg="white"):
+        b = tk.Button(parent, text=text, bg=bg, fg=fg, activebackground=hbg,
+                      activeforeground=fg, disabledforeground="#5c5486",
+                      bd=0, relief="flat", cursor="hand2",
+                      font=("Segoe UI", 10, "bold"), padx=16, pady=9)
+        b._bg, b._hbg = bg, hbg
+        b.bind("<Enter>", lambda _e: str(b["state"]) == "normal"
+               and b.config(bg=b._hbg))
+        b.bind("<Leave>", lambda _e: b.config(bg=b._bg))
+        return b
+
+    def _doi_mau(b, bg, hbg):
+        b._bg, b._hbg = bg, hbg
+        b.config(bg=bg, activebackground=hbg)
+
+    btns = tk.Frame(wrap, bg=MAU["bg"])
+    btns.grid(row=2, column=0, sticky="w", pady=(12, 10))
+    btn_open = _nut(btns, "🌐  Mở link web", MAU["xam"], MAU["xam_h"])
+    btn_open.config(state="disabled")
     btn_open.pack(side="left")
-    btn_copy = ttk.Button(btns, text="📋  Copy link", state="disabled")
-    btn_copy.pack(side="left", padx=(8, 0))
-    btn_clear = ttk.Button(btns, text="🗑  Xóa output", state="disabled")
-    btn_clear.pack(side="left", padx=(8, 0))
-    btn_quit = ttk.Button(btns, text="⏹  Tắt & thoát")
-    btn_quit.pack(side="left", padx=(8, 0))
+    btn_copy = _nut(btns, "📋  Copy link", MAU["xam"], MAU["xam_h"], fg=MAU["mo"])
+    btn_copy.config(state="disabled")
+    btn_copy.pack(side="left", padx=(10, 0))
+    btn_clear = _nut(btns, "🗑  Xóa output", MAU["xam"], MAU["xam_h"], fg=MAU["mo"])
+    btn_clear.config(state="disabled")
+    btn_clear.pack(side="left", padx=(10, 0))
+    btn_quit = _nut(btns, "⏻  Tắt & thoát", MAU["do"], MAU["do_h"], fg=MAU["do_chu"])
+    btn_quit.pack(side="left", padx=(10, 0))
 
     # Hai chế độ "xong hết thì…", CHỌN MỘT (tick cái này thì cái kia tự bỏ):
     #   ⏻ tắt máy  — cửa sổ này tự canh: hỏi server 15 giây/lần rồi hẹn `shutdown /s`.
     #   🌙 cho ngủ — GIAO CHO SERVER: bảng web đã có sẵn bộ đếm (web/power.py), ở đây
     #                chỉ bật/tắt hộ (POST /hangdoi/ngu) và soi lại trạng thái. Làm thêm
     #                một bộ đếm thứ hai ở đây thì hai bên đá nhau.
-    sd_row = ttk.Frame(wrap)
+    def _chk(parent, text, var):
+        return tk.Checkbutton(parent, text=text, variable=var, bg=MAU["bg"],
+                              fg=MAU["fg"], activebackground=MAU["bg"],
+                              activeforeground=MAU["fg"],
+                              selectcolor=MAU["card"],
+                              disabledforeground="#5c5486", bd=0,
+                              highlightthickness=0, cursor="hand2",
+                              font=("Segoe UI", 9))
+
+    sd_row = tk.Frame(wrap, bg=MAU["bg"])
     sd_row.grid(row=3, column=0, sticky="w", pady=(0, 2))
     var_shutdown = tk.BooleanVar(value=False)
-    chk_shutdown = ttk.Checkbutton(
-        sd_row, text=f"⏻  Tự động tắt máy khi chạy xong (sau {SHUTDOWN_DELAY_MIN} phút)",
-        variable=var_shutdown, state="disabled")
+    chk_shutdown = _chk(
+        sd_row, f"⏻  Tự động tắt máy khi chạy xong (sau {SHUTDOWN_DELAY_MIN} phút)",
+        var_shutdown)
+    chk_shutdown.config(state="disabled")
     chk_shutdown.pack(side="left")
-    ttk.Label(sd_row, text="huỷ: mở CMD gõ  shutdown /a",
-              foreground="#888").pack(side="left", padx=(10, 0))
+    tk.Label(sd_row, text="huỷ: mở CMD gõ  shutdown /a", bg=MAU["bg"],
+             fg=MAU["mo"], font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
 
-    sl_row = ttk.Frame(wrap)
+    sl_row = tk.Frame(wrap, bg=MAU["bg"])
     sl_row.grid(row=4, column=0, sticky="w", pady=(0, 8))
     var_sleep = tk.BooleanVar(value=False)
-    chk_sleep = ttk.Checkbutton(
-        sl_row, text="🌙  Tự động cho máy NGỦ khi chạy xong",
-        variable=var_sleep, state="disabled")
+    chk_sleep = _chk(sl_row, "🌙  Tự động cho máy NGỦ khi chạy xong", var_sleep)
+    chk_sleep.config(state="disabled")
     chk_sleep.pack(side="left")
     sleep_note = tk.StringVar(value="")
-    ttk.Label(sl_row, textvariable=sleep_note,
-              foreground="#888").pack(side="left", padx=(10, 0))
+    tk.Label(sl_row, textvariable=sleep_note, bg=MAU["bg"], fg=MAU["mo"],
+             font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+
+    tk.Label(wrap, text="NHẬT KÝ", bg=MAU["bg"], fg=MAU["mo"],
+             font=("Segoe UI", 8, "bold")).grid(row=5, column=0, sticky="w")
 
     log_box = tk.Text(wrap, height=10, wrap="word", state="disabled",
+                      bg=MAU["log_bg"], fg=MAU["log_fg"], bd=0,
+                      insertbackground=MAU["fg"], padx=10, pady=8,
+                      selectbackground=MAU["accent"],
+                      highlightthickness=1, highlightbackground=MAU["vien"],
                       font=("Consolas", 9))
-    log_box.grid(row=5, column=0, sticky="nsew")
-    scroll = ttk.Scrollbar(wrap, orient="vertical", command=log_box.yview)
-    scroll.grid(row=5, column=1, sticky="ns")
+    log_box.grid(row=6, column=0, sticky="nsew", pady=(4, 0))
+    scroll = tk.Scrollbar(wrap, orient="vertical", command=log_box.yview,
+                          troughcolor=MAU["bg"], bd=0, width=10)
+    scroll.grid(row=6, column=1, sticky="ns", pady=(4, 0))
     log_box.config(yscrollcommand=scroll.set)
+
+    # ── CĂN GIỮA màn hình ────────────────────────────────────────────────────
+    w, h = 720, 520
+    root.update_idletasks()
+    x = (root.winfo_screenwidth() - w) // 2
+    y = max(0, (root.winfo_screenheight() - h) // 2 - 24)
+    root.geometry(f"{w}x{h}+{x}+{y}")
 
     def log(msg: str) -> None:
         log_box.config(state="normal")
@@ -230,10 +326,14 @@ def _run_launcher(port: int) -> int:
     def _ready() -> None:
         nonlocal owner
         url_var.set(_web_url(port))
-        status.set(f"● Đang chạy — cổng {port}"
+        status.set(f"Đang chạy — cổng {port}"
                    + ("" if owner else "  (tiến trình khác bật sẵn)"))
-        for w in (btn_open, btn_copy, btn_clear, chk_shutdown, chk_sleep):
-            w.config(state="normal")
+        _dot("#4ade80")
+        for wg in (btn_open, btn_copy, btn_clear, chk_shutdown, chk_sleep):
+            wg.config(state="normal")
+        _doi_mau(btn_open, MAU["accent"], MAU["accent_h"])   # nút chính sáng lên
+        btn_copy.config(fg="white")
+        btn_clear.config(fg="white")
         if not owner:
             btn_quit.config(text="✖  Đóng cửa sổ")
         log(f"🌐 Sẵn sàng: {url_var.get()}")
@@ -244,10 +344,12 @@ def _run_launcher(port: int) -> int:
             _ready()
             return
         if proc is not None and proc.poll() is not None:
-            status.set(f"⛔ Server tắt ngay khi bật (mã {proc.returncode}) — xem nhật ký")
+            status.set(f"Server tắt ngay khi bật (mã {proc.returncode}) — xem nhật ký")
+            _dot("#fb7185")
             return
         if n >= 75:                       # ~30 giây
-            status.set("⚠️ Server chưa phản hồi sau 30 giây — xem nhật ký")
+            status.set("Server chưa phản hồi sau 30 giây — xem nhật ký")
+            _dot("#fb7185")
             return
         root.after(400, _poll, n + 1)
 
@@ -270,7 +372,8 @@ def _run_launcher(port: int) -> int:
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                 creationflags=CREATE_NO_WINDOW)
         except Exception as e:
-            status.set("⛔ Không bật được server")
+            status.set("Không bật được server")
+            _dot("#fb7185")
             log(f"❌ {e}")
             return
         owner = True

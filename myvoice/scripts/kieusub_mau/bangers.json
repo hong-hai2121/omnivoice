@@ -1,0 +1,15 @@
+{
+  "thutu": 12,
+  "ten": "Truyện tranh Bangers",
+  "mota": "Font Bangers kiểu truyện tranh — chữ vàng nghiêng vui nhộn, hợp clip hài",
+  "hieuung": "tinh",
+  "font": "Bangers",
+  "fontfile": "fonts/Bangers-Regular.ttf",
+  "size": 78,
+  "bold": false,
+  "mau_chu": "FFE84A",
+  "mau_vien": "000000",
+  "vien": 5,
+  "bong": 3,
+  "max_chars": 42
+}
