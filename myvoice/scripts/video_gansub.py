@@ -168,7 +168,7 @@ _TRANSCRIBE_OPTS = dict(
 )
 
 
-def transcribe_words(audio_path, model_name="medium", on_progress=None):
+def transcribe_words(audio_path, model_name="large-v3-turbo", on_progress=None):
     """Nghe audio, trả về (words, starts, ends): 3 list song song.
 
     words[i] là token thường-hoá của từ thứ i; starts/ends là mốc giờ (giây).
@@ -592,8 +592,9 @@ def main():
                              "không có thì lùi về ../kịch_bản/input.txt).")
     parser.add_argument("--out", default=None,
                         help="Video kết quả (mặc định: <tên video>_sub.mp4).")
-    parser.add_argument("--model", default="medium",
-                        help="Model whisper: tiny/base/small/medium/large-v3 (mặc định: medium).")
+    parser.add_argument("--model", default="large-v3-turbo",
+                        help="Model whisper: tiny/base/small/medium/large-v3-turbo/large-v3 "
+                             "(mặc định: large-v3-turbo).")
     parser.add_argument("--max-chars", type=int, default=50,
                         help="Độ dài tối đa mỗi dòng phụ đề (mặc định: 50).")
     parser.add_argument("--burn", action="store_true",
@@ -601,6 +602,12 @@ def main():
     parser.add_argument("--kieu", default="hopbo",
                         help="Kiểu phụ đề khi --burn — tên file JSON trong "
                              "scripts/kieusub_mau (mặc định hopbo: hộp bo góc cũ).")
+    parser.add_argument("--font", default="",
+                        help="Đè font của kiểu khi --burn (tên font trong "
+                             "myvoice/fonts hoặc font Windows; rỗng = theo kiểu).")
+    parser.add_argument("--mau", default="",
+                        help="Đè MÀU CHỮ của kiểu khi --burn (RGB hex, vd FFD700; "
+                             "rỗng = theo kiểu).")
     parser.add_argument("--srt-only", action="store_true",
                         help="CHỈ xuất file .srt (vd để tải lên YouTube Studio), không đụng video.")
     args = parser.parse_args()
@@ -625,7 +632,8 @@ def main():
     max_chars = args.max_chars
     if args.burn:
         import kieusub
-        max_chars = kieusub.chon_max_chars(kieusub.lay(args.kieu), max_chars)
+        max_chars = kieusub.chon_max_chars(
+            kieusub.ap_font(kieusub.lay(args.kieu), args.font), max_chars)
     text = script_path.read_text(encoding="utf-8")
     cues = build_cues(text, max_chars)
     if not cues:
@@ -686,7 +694,8 @@ def main():
         # Burn thì dùng .ass (mang được kiểu riêng) chứ không phải .srt: ép .srt
         # bằng force_style chỉ ra khung nền VUÔNG. Kiểu lấy từ kho kieusub_mau.
         import kieusub
-        kieu = kieusub.lay(args.kieu)
+        kieu = kieusub.ap_mau(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
+                              args.mau)
         ass_path = kieusub.write_ass_kieu(cues, cue_times,
                                           srt_path.with_suffix(".ass"), kieu)
         print(f"💾 Đã ghi kiểu phụ đề: {kieu['ten']} ({kieu['id']}) → {ass_path.name}")

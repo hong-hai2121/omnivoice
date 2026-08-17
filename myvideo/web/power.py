@@ -10,7 +10,9 @@ Ba chốt an toàn (học từ myvoice):
     không úp máy ngay;
   • rảnh rồi vẫn đếm ngược N phút, có việc mới chen vào là huỷ đếm
     (bước này xong nối bước sau, hàng đợi rảnh vài giây là chuyện thường);
-  • thực hiện xong TỰ BỎ TICK — một lần duy nhất, mẻ sau không bị bất ngờ.
+  • NGỦ là MẶC ĐỊNH: tick sẵn khi mở server, ngủ xong dậy vẫn giữ tick cho mẻ
+    sau (phải thấy BẬN lại mới đếm tiếp); TẮT MÁY vẫn tự bỏ tick một lần duy
+    nhất, mẻ sau không bị bất ngờ.
 
 Bỏ tick trên trang là huỷ, kể cả khi đang đếm ngược. NGỦ chờ 3 phút (lỡ ngủ thì
 chạm chuột là dậy, không mất gì); TẮT MÁY chờ 5 phút và còn hẹn thêm 60 giây
@@ -59,7 +61,9 @@ class PowerWhenDone:
     """Trạng thái ô tick + chế độ (ngủ/tắt) + luồng nền canh hàng đợi."""
 
     def __init__(self) -> None:
-        self._armed = False
+        # Mặc định tick sẵn "🌙 cho máy ngủ" — bỏ tick trên trang nếu không muốn.
+        # An toàn vì _tick đòi TỪNG THẤY hàng đợi bận mới bắt đầu đếm ngược.
+        self._armed = True
         self._mode = "ngu"
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
@@ -128,9 +132,11 @@ class PowerWhenDone:
                 return ""
             if time.monotonic() < self._due:
                 return ""
-            # Một lần duy nhất: hạ cờ TRƯỚC khi thực hiện.
+            # Hạ cờ TRƯỚC khi thực hiện. NGỦ là mặc định nên giữ tick cho mẻ
+            # sau (dậy rồi phải thấy BẬN lại mới đếm tiếp — không ngủ lặp);
+            # TẮT MÁY vẫn tự bỏ tick một lần duy nhất.
             mode = self._mode
-            self._armed = False
+            self._armed = mode == "ngu"
             self._saw_busy = False
             self._due = 0.0
             return mode

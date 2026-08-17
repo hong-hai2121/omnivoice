@@ -79,12 +79,8 @@ def main(argv=None) -> int:
     out_dir = output.parent
     common = dict(
         effect=effect,
-        cut_audio=ts.get("cut_audio", False), cut_target=ts.get("cut_target", 12.0),
-        cut_min=ts.get("cut_min", 10.0), cut_max=ts.get("cut_max", 15.0),
-        cut_half=ts.get("cut_half", False),
         ngang_speed=ts.get("ngang_speed", 1.0), ngang_source=ts.get("ngang_source"),
         ngang_out=out_dir / "YOUTUBE.mp4",
-        doc_full_audio=ts.get("doc_full_audio", False),
         doc_speed=ts.get("doc_speed", 1.0), doc_percent=ts.get("doc_percent", 100),
         doc_from_ngang=ts.get("doc_from_ngang", False),
         doc_from_subfolder=ts.get("doc_from_subfolder", False),
@@ -98,9 +94,12 @@ def main(argv=None) -> int:
         tiktok_music=ts.get("tiktok_music", False),
         tiktok_music_db=ts.get("tiktok_music_db", -12),
         sub_mode=ts.get("sub_mode", gui.SUB_MODE_SRT),
-        sub_model=ts.get("sub_model", "medium"),
+        sub_model=ts.get("sub_model", "large-v3-turbo"),
         sub_max_chars=ts.get("sub_max_chars", 50),
         sub_kieu=ts.get("sub_kieu", "hopbo"),
+        sub_font=ts.get("sub_font", ""),
+        sub_mau=ts.get("sub_mau", ""),
+        sub_vitri=ts.get("sub_vitri", ""),
     )
 
     try:

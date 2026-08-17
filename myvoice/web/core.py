@@ -493,6 +493,48 @@ def plan_episodes(sources: list[str], start_ep: str = "",
     return out
 
 
+# ── Đăng Facebook (Page MimiAudio) ──────────────────────────────────────────
+FACEBOOK_DIR = BASE_DIR / "FACEBOOK"
+
+
+def facebook_pending() -> dict:
+    """Danh sách tập CHƯA đăng Page cho khối “Đăng Facebook” trên trang.
+
+    KHÔNG gọi Graph API ở đây — mở trang mà đi gọi mạng thì trang chậm theo đường
+    truyền (cùng lý do với tên kênh YouTube ở _upload_ctx). Danh sách tập đã có
+    trên Page lấy từ page_cache.json do chính script ghi ra mỗi lần chạy; chưa
+    quét lần nào thì `scanned` = False và trang sẽ mời bấm nút 🔄.
+    """
+    try:
+        cache = json.loads((FACEBOOK_DIR / "page_cache.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    seen = {int(n) for n in cache.get("eps", [])}
+
+    rows, missing = [], []
+    for r in sorted(episode_rows(), key=lambda r: int(r["episode"])):
+        folder = episode_folder(r["episode"])
+        if folder is None:
+            continue
+        if int(r["episode"]) in seen or (folder / "facebook_upload.json").exists():
+            continue
+        video = None
+        for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
+            hits = sorted(folder.glob(pattern))
+            if hits:
+                video = hits[0]
+                break
+        if video is None:
+            missing.append(r["episode"])       # có tập nhưng chưa dựng video dọc
+            continue
+        seo = seo_blocks(folder, r["episode"])
+        rows.append({"episode": r["episode"], "video": video.name,
+                     "title": (seo or {}).get("title", ""),
+                     "size_mb": video.stat().st_size // 1_000_000})
+    return {"rows": rows, "missing": missing, "scanned": bool(cache),
+            "fetched": cache.get("fetched", ""), "on_page": len(seen)}
+
+
 # ── Nội dung SEO để copy khi đăng video ─────────────────────────────────────
 def seo_blocks(folder, episode: str) -> dict | None:
     """Tiêu đề / tiêu đề TikTok / mô tả / thẻ tag — dùng ĐÚNG các hàm compose của
@@ -561,13 +603,6 @@ def tts_settings() -> tuple[dict | None, str]:
     else:
         voice_param = None
 
-    cut_audio = bool(opts.get("cut_audio"))
-    cut_target = _f(opts.get("cut_target"), 12.0, 0.1, 600.0) if cut_audio else 0.0
-    cut_min = _f(opts.get("cut_min"), 10.0, 0.1, 600.0) if cut_audio else 0.0
-    cut_max = _f(opts.get("cut_max"), 15.0, 0.1, 600.0) if cut_audio else 0.0
-    if cut_audio and not (0 < cut_min <= cut_max):
-        return None, "Cấu hình cắt audio sai: cần 0 < phút 'Từ' ≤ phút 'Đến'."
-
     effect_name = (opts.get("effect") or "").strip()
     effect_path = None
     if effect_name and effect_name != EFFECT_NONE:
@@ -578,10 +613,7 @@ def tts_settings() -> tuple[dict | None, str]:
         mode=mode, voice_param=voice_param,
         chunk=_i(opts.get("chunk"), 300, 50, 2000),
         make_video=bool(opts.get("make_video")), effect=effect_path,
-        cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
-        cut_half=bool(opts.get("cut_half")),
         make_video_doc=bool(opts.get("make_video_doc")),
-        doc_full_audio=bool(opts.get("doc_full_audio")),
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),
         doc_percent=_i(opts.get("doc_percent"), 100, 1, 100),
         ngang_speed=_f(opts.get("ngang_speed"), 1.0, 0.5, 2.0),
@@ -604,10 +636,14 @@ def tts_settings() -> tuple[dict | None, str]:
         # ngang, khung 1080x1920 tự rút dòng ngắn lại (xem make_youtube_sub).
         make_sub_doc=bool(opts.get("make_sub_doc")),
         sub_mode=opts.get("sub_mode") or SUB_MODE_SRT,
-        sub_model=opts.get("sub_model") or "medium",
+        sub_model=opts.get("sub_model") or "large-v3-turbo",
         sub_max_chars=_i(opts.get("sub_max_chars"), 50, 10, 200),
-        # Kiểu TRÌNH BÀY khi vẽ cứng (kho scripts/kieusub_mau, dùng chung myvideo).
+        # Kiểu TRÌNH BÀY khi vẽ cứng (kho scripts/kieusub_mau, dùng chung myvideo)
+        # + font đè lên font của kiểu (rỗng = theo kiểu).
         sub_kieu=opts.get("sub_kieu") or "hopbo",
+        sub_font=opts.get("sub_font") or "",
+        sub_mau=opts.get("sub_mau") or "",
+        sub_vitri=str(opts.get("sub_vitri") or ""),
     ), ""
 
 

@@ -166,8 +166,7 @@ def video_gansub_max_chars_doc(default: int = 27) -> int:
 OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=300,
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
-    cut_audio=True, cut_target=12.0, cut_min=10.0, cut_max=15.0, cut_half=False,
-    make_video_doc=True, doc_full_audio=False, doc_speed="1.0", doc_percent=100,
+    make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
     doc_from_subfolder=False,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
@@ -177,10 +176,17 @@ OPTS_DEFAULTS = dict(
     make_short=True,
     tiktok_no_effect=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12, bring_front=True,
-    make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50,
+    make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="large-v3-turbo", sub_max_chars=50,
     # Kiểu phụ đề khi vẽ cứng — kho scripts/kieusub_mau/*.json (dùng chung với
     # myvideo): hopbo = hộp bo góc cũ, ngoài ra karaoke/hormozi/anton/neon…
     sub_kieu="hopbo",
+    # Font chữ đè lên font của kiểu (rỗng = theo kiểu; kho myvoice/fonts +
+    # vài font Windows — xem kieusub.danh_sach_font).
+    sub_font="",
+    # Màu chữ đè lên màu của kiểu (RGB hex vd "FFD700"; rỗng = theo kiểu).
+    sub_mau="",
+    # Vị trí chữ: % chiều cao tính từ đáy (rỗng = mặc định 173px ngang/380px dọc).
+    sub_vitri="",
     # Phụ đề cho VIDEO DỌC (facebook.mp4) — dùng chung kiểu/model/chế độ với video
     # ngang, chỉ khác khung hình (1080x1920) và số ký tự/dòng (tự rút xuống 23).
     make_sub_doc=False,
@@ -1443,7 +1449,8 @@ def _probe_duration(path: Path) -> float | None:
 def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                      model: str = "medium", max_chars: int = 50,
                      progress=None, doc: bool = False,
-                     kieu: str = "hopbo") -> Path | None:
+                     kieu: str = "hopbo", font: str = "",
+                     mau: str = "", vitri="") -> Path | None:
     """Tạo phụ đề cho 1 video. Trả về file .srt, None nếu lỗi.
 
     doc=False (mặc định): khung NGANG 1920x1080 — YOUTUBE.mp4.
@@ -1479,7 +1486,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         # Trần ký tự/dòng theo KIỂU phụ đề (font to → trần nhỏ) + khung hình:
         # khung DỌC hẹp hơn phải ngắt dòng ngắn lại, không thì chữ tràn ra mép
         # (kiểu mặc định hopbo ra đúng 23 như SUB_MAX_CHARS_DOC cũ).
-        kieu_dict = kieusub.lay(kieu)
+        # `font`/`mau` khác rỗng = đè font/màu chữ của kiểu (ap_font thay cả
+        # fontfile đo chữ; ap_mau chỉ đổi mau_chu, viền/nền giữ nguyên).
+        kieu_dict = kieusub.ap_mau(kieusub.ap_font(kieusub.lay(kieu), font), mau)
         mc = kieusub.chon_max_chars(kieu_dict, max_chars, doc=doc)
         if mode == SUB_MODE_BURN and mc != max_chars:
             logging.info(f"📝 Kiểu '{kieu_dict['ten']}'"
@@ -1516,6 +1525,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         if mode == SUB_MODE_BURN:
             geo = ((gs.ASS_PLAY_W_DOC, gs.ASS_PLAY_H_DOC, gs.SUB_MARGIN_V_DOC) if doc
                    else (gs.ASS_PLAY_W, gs.ASS_PLAY_H, gs.SUB_MARGIN_V))
+            # `vitri` (% chiều cao từ đáy) đè MarginV mặc định — áp cho cả hai
+            # khung theo cùng tỉ lệ %, rỗng thì giữ 173/380 như cũ.
+            geo = (geo[0], geo[1], kieusub.vitri_margin(vitri, geo[1], geo[2]))
             ass_path = kieusub.write_ass_kieu(cues, cue_times,
                                               srt_path.with_suffix(".ass"),
                                               kieu_dict, *geo)
@@ -1720,7 +1732,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, cut_audio=False, cut_target=12.0, cut_min=10.0, cut_max=15.0, make_video_doc=False, doc_full_audio=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, cut_half=False, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -1769,7 +1781,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # Dựng video: chế độ dùng-lại BỎ QUA video đã có (chỉ dựng phần thiếu). Nhưng
         # nút "Dựng lại" (video_only) thì LUÔN dựng lại video dù đã tồn tại.
         skip_video = reuse_audio and not video_only
-        # Audio DẪN XUẤT (bản cắt/½/tiktok/nhạc nền): luồng ♻ thường thì tái dùng cho
+        # Audio DẪN XUẤT (bản %/tiktok/nhạc nền): luồng ♻ thường thì tái dùng cho
         # nhanh; nhưng nút "Dựng lại" (video_only) TẠO LẠI để áp cài đặt GUI mới nhất
         # (tốc độ, dB nhạc…). Audio GỐC (output.wav) vẫn dùng lại (không chạy lại TTS).
         reuse_derived = reuse_audio and not video_only
@@ -1781,7 +1793,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # không thì tập cũ dựng lại vẫn to nhỏ thất thường. Chỉ đụng vào file
             # còn LỆCH mức đích: file đã chuẩn rồi mà nén thêm lần nữa là bẹt giọng.
             if _chuan_am_neu_can(output_path, status_var):
-                # Audio gốc vừa đổi mức → bản cắt/tăng tốc/trộn nhạc làm từ bản
+                # Audio gốc vừa đổi mức → bản %/tăng tốc/trộn nhạc làm từ bản
                 # CŨ không còn khớp nữa, phải dựng lại từ bản vừa chuẩn.
                 reuse_derived = False
             progress_var.set(100)
@@ -1957,9 +1969,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             sf.write(output, merged, sr)
 
             # San bằng mức GIỮA CÁC CÂU + chuẩn độ to cả bài về mức phát hành.
-            # Làm NGAY tại đây vì mọi bản dẫn xuất (cắt 1/2, cắt TikTok, tăng
-            # tốc, trộn nhạc) đều lấy từ output.wav — chuẩn một lần ở gốc là cả
-            # dây chuyền chuẩn theo.
+            # Làm NGAY tại đây vì mọi bản dẫn xuất (cắt TikTok, tăng tốc, trộn
+            # nhạc) đều lấy từ output.wav — chuẩn một lần ở gốc là cả dây
+            # chuyền chuẩn theo.
             status_var.set("Đang chuẩn hoá âm lượng...")
             _loudnorm_file(output_path, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
 
@@ -1982,56 +1994,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 logging.info("🧹 Đã giải phóng OmniVoice khỏi VRAM trước khi dựng video.")
             except Exception as e:
                 logging.warning(f"Không giải phóng được OmniVoice: {e}")
-
-        # ── (TÙY CHỌN) CẮT BẢN NGẮN TỪ AUDIO FULL — nguồn cho video dọc ────
-        # Audio full ở trên KHÔNG đổi; đây là file phụ. Hai kiểu LOẠI TRỪ nhau:
-        #   • "Cắt 1/2" được ƯU TIÊN: cắt ≈ nửa tổng thời lượng (output_half.wav)
-        #     và THAY luôn bản 10–15 phút.
-        #   • Nếu không bật 1/2 thì mới cắt bản 10–15 phút (output_cut.wav).
-        # Cả hai đều cắt tại khoảng lặng cuối câu gần mốc đích để không cụt giữa câu.
-        cut_path = None
-        if cut_half:
-            hp = output_path.with_name(output_path.stem + "_half" + output_path.suffix)
-            if reuse_derived and hp.exists() and hp.stat().st_size > 4096:
-                cut_path = hp
-                logging.info(f"♻ Dùng lại bản ~1/2 đã có: {hp.name}")
-            else:
-                status_var.set("Đang cắt bản ~1/2 audio gốc...")
-                try:
-                    from video_timclip import (cut_audio_at_sentence_end,
-                                               probe_audio_duration)
-                    total_sec = probe_audio_duration(output_path)
-                    half_min = (total_sec / 2.0) / 60.0
-                    tol = max(0.5, half_min * 0.2)              # dung sai ±20% (≥0.5 phút)
-                    half_seconds, _ = cut_audio_at_sentence_end(
-                        output_path, hp,
-                        target_minutes=half_min,
-                        min_minutes=max(0.1, half_min - tol),
-                        max_minutes=min(total_sec / 60.0, half_min + tol),
-                        silence_db=-35.0, min_silence=0.5)
-                    cut_path = hp                                # thay bản 10–15 phút làm nguồn video dọc
-                    m, s = divmod(half_seconds, 60)
-                    logging.info(f"✂ Đã cắt bản ~1/2 tại {int(m)}:{s:05.2f} → {hp.name}")
-                except Exception as e:
-                    logging.warning(f"Không cắt được bản 1/2: {e}")
-        elif cut_audio:
-            cp = output_path.with_name(output_path.stem + "_cut" + output_path.suffix)
-            if reuse_derived and cp.exists() and cp.stat().st_size > 4096:
-                cut_path = cp
-                logging.info(f"♻ Dùng lại bản 10–15 phút đã có: {cp.name}")
-            else:
-                status_var.set("Đang cắt bản 10–15 phút...")
-                try:
-                    from video_timclip import cut_audio_at_sentence_end
-                    cut_seconds, _ = cut_audio_at_sentence_end(
-                        output_path, cp,
-                        target_minutes=cut_target, min_minutes=cut_min,
-                        max_minutes=cut_max, silence_db=-35.0, min_silence=0.5)
-                    cut_path = cp
-                    m, s = divmod(cut_seconds, 60)
-                    logging.info(f"✂ Đã cắt bản ngắn tại {int(m)}:{s:05.2f} → {cut_path.name}")
-                except Exception as e:
-                    logging.warning(f"Không cắt được bản 10–15 phút: {e}")
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         ngang_video_path = None   # video ngang vừa dựng (để video dọc dùng lại nếu bật)
@@ -2078,25 +2040,17 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             make_youtube_sub(Path(ngang_video_path),
                              Path(ngang_video_path).parent / "input.txt",
                              sub_mode, sub_model, sub_max_chars,
-                             progress=_sub_progress, kieu=sub_kieu)
+                             progress=_sub_progress, kieu=sub_kieu,
+                             font=sub_font, mau=sub_mau, vitri=sub_vitri)
             progress_var.set(100)
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
-        # Mặc định lấy AUDIO BẢN CẮT (cut_path = bản 1/2 nếu bật, không thì bản
-        # 10–15 phút). Nếu chọn "dùng audio không cắt" thì lấy audio full →
-        # video dọc có tiếng giống video ngang.
+        # Lấy AUDIO FULL; muốn ngắn hơn thì đặt % bên dưới (doc_percent).
         if make_video_doc:
-            if doc_full_audio:
-                doc_audio = output_path
-            elif cut_path and cut_path.exists():
-                doc_audio = cut_path
-            else:
-                logging.warning("Chưa có bản cắt → video dọc dùng tạm audio full.")
-                doc_audio = output_path
+            doc_audio = output_path
             # (TÙY CHỌN) Cắt ~doc_percent% ĐẦU của audio video dọc (cắt ở CUỐI CÂU) —
             # dùng CHUNG cơ chế với TikTok. doc_percent ≥ 100 → giữ nguyên (không cắt),
-            # nên tương thích ngược. Cắt SAU khi đã chọn nguồn (full/bản cắt) và TRƯỚC
-            # bước tăng tốc → kết hợp được "dùng audio không cắt" + lấy 50%.
+            # nên tương thích ngược. Cắt TRƯỚC bước tăng tốc.
             dpct = max(10, min(int(doc_percent or 100), 100))
             if dpct < 99:
                 try:
@@ -2360,7 +2314,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(0)
                 make_youtube_sub(doc_video, output_path.parent / "input.txt",
                                  sub_mode, sub_model, sub_max_chars,
-                                 progress=_sub_doc_progress, doc=True, kieu=sub_kieu)
+                                 progress=_sub_doc_progress, doc=True,
+                                 kieu=sub_kieu, font=sub_font, mau=sub_mau,
+                                 vitri=sub_vitri)
                 progress_var.set(100)
             else:
                 logging.warning(f"📝 Chưa có video dọc ({doc_video.name}) → bỏ qua phụ đề dọc.")
@@ -2814,8 +2770,8 @@ class App(tk.Tk):
                      values=[SUB_MODE_SRT, SUB_MODE_BURN]).pack(side="left")
         ttk.Label(sub_row, text="Model:").pack(side="left", padx=(10, 2))
         self.var_sub_model = tk.StringVar(value=self._opt_settings["sub_model"])
-        ttk.Combobox(sub_row, textvariable=self.var_sub_model, width=9, state="readonly",
-                     values=["small", "medium", "large-v3"]).pack(side="left")
+        ttk.Combobox(sub_row, textvariable=self.var_sub_model, width=14, state="readonly",
+                     values=["small", "medium", "large-v3-turbo", "large-v3"]).pack(side="left")
 
         sub_row2 = ttk.Frame(sec_opt)
         sub_row2.pack(anchor="w", fill="x", pady=(4, 0))
@@ -2831,10 +2787,34 @@ class App(tk.Tk):
         try:
             import kieusub
             _kieu_ids = [k["id"] for k in kieusub.danh_sach()] or ["hopbo"]
+            _font_ten = [""] + [f["ten"] for f in kieusub.danh_sach_font()]
         except Exception:
-            _kieu_ids = ["hopbo"]
+            _kieu_ids, _font_ten = ["hopbo"], [""]
         ttk.Combobox(sub_row2, textvariable=self.var_sub_kieu, width=12,
                      state="readonly", values=_kieu_ids).pack(side="left")
+        # Font đè lên font của kiểu — rỗng = dùng font gốc của kiểu.
+        ttk.Label(sub_row2, text="Font:").pack(side="left", padx=(10, 2))
+        self.var_sub_font = tk.StringVar(
+            value=self._opt_settings.get("sub_font", ""))
+        ttk.Combobox(sub_row2, textvariable=self.var_sub_font, width=16,
+                     state="readonly", values=_font_ten).pack(side="left")
+        # Màu chữ đè lên màu của kiểu — nút mở bảng chọn màu, × = theo kiểu.
+        ttk.Label(sub_row2, text="Màu:").pack(side="left", padx=(10, 2))
+        self.var_sub_mau = tk.StringVar(
+            value=self._opt_settings.get("sub_mau", ""))
+        self.btn_sub_mau = ttk.Button(sub_row2, width=9,
+                                      command=self._chon_sub_mau)
+        self.btn_sub_mau.pack(side="left")
+        ttk.Button(sub_row2, text="×", width=2,
+                   command=lambda: (self.var_sub_mau.set(""),
+                                    self._ve_nut_sub_mau())).pack(side="left")
+        self._ve_nut_sub_mau()
+        # Vị trí chữ theo % chiều cao từ đáy — để TRỐNG là mặc định (173/380px).
+        ttk.Label(sub_row2, text="Vị trí % đáy:").pack(side="left", padx=(10, 2))
+        self.var_sub_vitri = tk.StringVar(
+            value=str(self._opt_settings.get("sub_vitri", "")))
+        ttk.Spinbox(sub_row2, from_=4, to=45, increment=1, width=4,
+                    textvariable=self.var_sub_vitri).pack(side="left")
 
         # Phụ đề cho VIDEO DỌC (facebook.mp4) — tick riêng, dùng chung Kiểu/Model ở trên.
         # Khung 1080x1920 nên tự rút số ký tự/dòng xuống 27 cho khỏi tràn mép.
@@ -2864,35 +2844,6 @@ class App(tk.Tk):
         # Nạp danh sách (yêu thích ★ lên đầu) + chọn lại hiệu ứng của lần chạy trước
         self._reload_effect_combo(keep=self._opt_settings.get("effect", EFFECT_NONE))
 
-        # Cắt bản 10–15 phút (file phụ output_cut.wav) — ẨN khỏi UI theo yêu cầu.
-        # Vẫn tạo widget + biến để logic cắt và lưu cài đặt chạy theo giá trị đã lưu;
-        # chỉ KHÔNG .pack() nên hàng này không hiển thị.
-        cut_row = ttk.Frame(sec_opt)
-        self.var_cut_audio = tk.BooleanVar(value=self._opt_settings["cut_audio"])
-        ttk.Checkbutton(cut_row, text="✂️  Cắt 10–15 phút",
-                        variable=self.var_cut_audio).pack(side="left")
-        ttk.Label(cut_row, text="Đích:").pack(side="left", padx=(10, 2))
-        self.var_cut_target = tk.DoubleVar(value=self._opt_settings["cut_target"])
-        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
-                    textvariable=self.var_cut_target, width=4).pack(side="left")
-        ttk.Label(cut_row, text="Từ:").pack(side="left", padx=(8, 2))
-        self.var_cut_min = tk.DoubleVar(value=self._opt_settings["cut_min"])
-        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
-                    textvariable=self.var_cut_min, width=4).pack(side="left")
-        ttk.Label(cut_row, text="Đến:").pack(side="left", padx=(8, 2))
-        self.var_cut_max = tk.DoubleVar(value=self._opt_settings["cut_max"])
-        ttk.Spinbox(cut_row, from_=1, to=60, increment=1,
-                    textvariable=self.var_cut_max, width=4).pack(side="left")
-
-        # Cắt ~1/2 audio gốc (file riêng output_half.wav) — ẨN khỏi UI theo yêu cầu
-        # (giữ widget + biến, chỉ không .pack() nên không hiển thị).
-        cuthalf_row = ttk.Frame(sec_opt)
-        self.var_cut_half = tk.BooleanVar(value=self._opt_settings["cut_half"])
-        ttk.Checkbutton(cuthalf_row, text="✂️  Cắt 1/2 (≈ nửa audio gốc)",
-                        variable=self.var_cut_half).pack(side="left")
-        ttk.Label(cuthalf_row, text="(thay bản 10–15 phút → output_half.wav)",
-                  style="Hint.TLabel").pack(side="left", padx=8)
-
         # (Khối "Video dọc" đã chuyển sang CỘT 3 bên phải cho đỡ chật.)
 
         # ════════════════════════════════════════════════
@@ -2907,14 +2858,11 @@ class App(tk.Tk):
         vdoc = ttk.LabelFrame(right, text="  📱  Video dọc (1080×1920)  ")
         vdoc.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         self.var_make_video_doc = tk.BooleanVar(value=self._opt_settings["make_video_doc"])
-        ttk.Checkbutton(vdoc, text="Dựng video dọc (từ bản cắt)",
+        ttk.Checkbutton(vdoc, text="Dựng video dọc",
                         variable=self.var_make_video_doc).pack(anchor="w")
         vdoc_opts = ttk.Frame(vdoc)
         vdoc_opts.pack(anchor="w", fill="x", pady=(6, 0))
-        self.var_doc_full_audio = tk.BooleanVar(value=self._opt_settings["doc_full_audio"])
-        ttk.Checkbutton(vdoc_opts, text="dùng audio không cắt",
-                        variable=self.var_doc_full_audio).pack(side="left")
-        ttk.Label(vdoc_opts, text="Tăng tốc:").pack(side="left", padx=(12, 2))
+        ttk.Label(vdoc_opts, text="Tăng tốc:").pack(side="left", padx=(0, 2))
         self.var_doc_speed = tk.StringVar(value=self._opt_settings["doc_speed"])
         # Combobox để sửa tay được (vd 1.07), kèm các mức gợi ý sẵn.
         ttk.Combobox(vdoc_opts, textvariable=self.var_doc_speed, width=6,
@@ -5003,6 +4951,21 @@ class App(tk.Tk):
         self._reload_effect_combo(keep=self._current_effect())
         logging.info(f"Tìm thấy {len(list_effect_files())} hiệu ứng trong {EFFECTS_DIR}")
 
+    def _chon_sub_mau(self):
+        """Mở bảng chọn màu Windows cho ô 'Màu:' của phụ đề."""
+        from tkinter import colorchooser
+        hien = self.var_sub_mau.get()
+        c = colorchooser.askcolor(color=("#" + hien) if hien else None,
+                                  title="Màu chữ phụ đề (đè màu của kiểu)")
+        if c and c[1]:
+            self.var_sub_mau.set(c[1].lstrip("#").upper())
+        self._ve_nut_sub_mau()
+
+    def _ve_nut_sub_mau(self):
+        self.btn_sub_mau.config(
+            text=("#" + self.var_sub_mau.get()) if self.var_sub_mau.get()
+            else "(kiểu)")
+
     def _save_opt_settings(self):
         """Lưu cài đặt mục 'Cài đặt' hiện tại để lần sau mở lại dùng làm mặc định."""
         try:
@@ -5013,13 +4976,7 @@ class App(tk.Tk):
                 ngang_speed=self.var_ngang_speed.get(),
                 ngang_source=self.var_ngang_source.get(),
                 effect=self._current_effect(),
-                cut_audio=self.var_cut_audio.get(),
-                cut_target=float(self.var_cut_target.get()),
-                cut_min=float(self.var_cut_min.get()),
-                cut_max=float(self.var_cut_max.get()),
-                cut_half=self.var_cut_half.get(),
                 make_video_doc=self.var_make_video_doc.get(),
-                doc_full_audio=self.var_doc_full_audio.get(),
                 doc_speed=self.var_doc_speed.get(),
                 doc_percent=self._parse_percent(self.var_doc_percent, 100),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
@@ -5039,6 +4996,9 @@ class App(tk.Tk):
                 sub_model=self.var_sub_model.get(),
                 sub_max_chars=int(self.var_sub_max_chars.get()),
                 sub_kieu=self.var_sub_kieu.get(),
+                sub_font=self.var_sub_font.get(),
+                sub_mau=self.var_sub_mau.get(),
+                sub_vitri=self.var_sub_vitri.get().strip(),
                 make_sub_doc=self.var_make_sub_doc.get(),
             ))
         except Exception as e:
@@ -5968,22 +5928,6 @@ class App(tk.Tk):
         else:
             voice_param = None
 
-        cut_half = self.var_cut_half.get()
-        cut_audio = self.var_cut_audio.get()
-        cut_target = cut_min = cut_max = 0.0
-        if cut_audio:
-            try:
-                cut_target = float(self.var_cut_target.get())
-                cut_min = float(self.var_cut_min.get())
-                cut_max = float(self.var_cut_max.get())
-            except Exception:
-                messagebox.showwarning("Cấu hình cắt sai", "Số phút không hợp lệ.")
-                return None
-            if not (0 < cut_min <= cut_max):
-                messagebox.showwarning("Cấu hình cắt sai",
-                                       "Cần thỏa: 0 < phút 'Từ' ≤ phút 'Đến'.")
-                return None
-
         try:
             doc_speed = float(str(self.var_doc_speed.get()).replace(",", ".").strip())
         except (TypeError, ValueError):
@@ -6019,11 +5963,10 @@ class App(tk.Tk):
         return dict(
             mode=mode, voice_param=voice_param, chunk=self.var_chunk.get(),
             make_video=self.var_make_video.get(), effect=effect_path,
-            cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
             make_video_doc=self.var_make_video_doc.get(),
-            doc_full_audio=self.var_doc_full_audio.get(), doc_speed=doc_speed,
+            doc_speed=doc_speed,
             doc_percent=self._parse_percent(self.var_doc_percent, 100),
-            ngang_speed=ngang_speed, ngang_source=self.var_ngang_source.get(), cut_half=cut_half,
+            ngang_speed=ngang_speed, ngang_source=self.var_ngang_source.get(),
             doc_from_ngang=self.var_doc_from_ngang.get(),
             doc_from_subfolder=self.var_doc_from_subfolder.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
@@ -6038,6 +5981,9 @@ class App(tk.Tk):
             sub_model=self.var_sub_model.get(),
             sub_max_chars=self._parse_sub_max_chars(),
             sub_kieu=self.var_sub_kieu.get(),
+            sub_font=self.var_sub_font.get(),
+            sub_mau=self.var_sub_mau.get(),
+            sub_vitri=self.var_sub_vitri.get().strip(),
             make_sub_doc=self.var_make_sub_doc.get(),
         )
 
@@ -6242,10 +6188,9 @@ class App(tk.Tk):
             self.progress, self.status,
             stub, stub, stub, pause_event,
             ts["make_video"], ts["effect"],
-            ts["cut_audio"], ts["cut_target"], ts["cut_min"], ts["cut_max"],
-            ts["make_video_doc"], ts["doc_full_audio"], ts["doc_speed"],
+            ts["make_video_doc"], ts["doc_speed"],
             ts.get("doc_percent", 100),                # % cắt audio video dọc (100 = cả bài)
-            ts["ngang_speed"], ts["cut_half"], True,   # reuse=True → TIẾP TỤC: dùng
+            ts["ngang_speed"], True,                   # reuse=True → TIẾP TỤC: dùng
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
             doc_from_subfolder=ts.get("doc_from_subfolder", False),
             ngang_source=ts.get("ngang_source"),   # nguồn clip video ngang theo chủ đề
@@ -6267,9 +6212,12 @@ class App(tk.Tk):
             # Phụ đề cho YOUTUBE.mp4 (tắt mặc định — xem hàng "📝 Phụ đề" ở Cài đặt).
             make_sub=ts.get("make_sub", False),
             sub_mode=ts.get("sub_mode", SUB_MODE_SRT),
-            sub_model=ts.get("sub_model", "medium"),
+            sub_model=ts.get("sub_model", "large-v3-turbo"),
             sub_max_chars=ts.get("sub_max_chars", 50),
             sub_kieu=ts.get("sub_kieu", "hopbo"),
+            sub_font=ts.get("sub_font", ""),
+            sub_mau=ts.get("sub_mau", ""),
+            sub_vitri=ts.get("sub_vitri", ""),
             # Phụ đề cho facebook.mp4 (khung dọc) — chạy SAU TikTok, xem run_tts.
             make_sub_doc=ts.get("make_sub_doc", False),
         )                                          # render phần còn thiếu (vd video dọc).
@@ -7329,28 +7277,8 @@ class App(tk.Tk):
             messagebox.showwarning("File trống", "File văn bản không có nội dung.")
             return
 
-        # Cắt ~1/2 audio gốc (file riêng) — độc lập bản 10–15 phút
-        cut_half = self.var_cut_half.get()
-
-        # Tham số cắt bản 10–15 phút (đọc + kiểm tra TRƯỚC khi khóa nút)
-        cut_audio = self.var_cut_audio.get()
-        cut_target = cut_min = cut_max = 0.0
-        if cut_audio:
-            try:
-                cut_target = float(self.var_cut_target.get())
-                cut_min = float(self.var_cut_min.get())
-                cut_max = float(self.var_cut_max.get())
-            except Exception:
-                messagebox.showwarning("Cấu hình cắt sai", "Số phút không hợp lệ.")
-                return
-            if not (0 < cut_min <= cut_max):
-                messagebox.showwarning("Cấu hình cắt sai",
-                                       "Cần thỏa: 0 < phút 'Từ' ≤ phút 'Đến'.")
-                return
-
-        # Video dọc: bật/tắt + dùng audio cắt (mặc định) hay audio full + tốc độ
+        # Video dọc: bật/tắt + tốc độ
         make_video_doc = self.var_make_video_doc.get()
-        doc_full_audio = self.var_doc_full_audio.get()
         doc_from_ngang = self.var_doc_from_ngang.get()   # dùng lại video ngang cho dọc
         doc_from_subfolder = self.var_doc_from_subfolder.get()  # ghép từ thư mục con videodoc
         doc_no_effect = self.var_doc_no_effect.get()     # không phủ hiệu ứng lên video dọc
@@ -7453,9 +7381,8 @@ class App(tk.Tk):
                   self.progress, self.status,
                   self.btn_run, self.btn_pause, self.btn_preview, self._pause_event,
                   self.var_make_video.get(), effect_path,
-                  cut_audio, cut_target, cut_min, cut_max,
-                  make_video_doc, doc_full_audio, doc_speed, doc_percent,
-                  ngang_speed, cut_half, reuse, doc_from_ngang, doc_no_effect),
+                  make_video_doc, doc_speed, doc_percent,
+                  ngang_speed, reuse, doc_from_ngang, doc_no_effect),
             kwargs={"make_tiktok": make_tiktok,   # video TikTok (cắt theo %)
                     "make_short": self.var_make_short.get(),   # Short ≤2:50 cắt từ TikTok
                     "tiktok_speed": tiktok_speed,
@@ -7478,6 +7405,9 @@ class App(tk.Tk):
                     "sub_model": self.var_sub_model.get(),
                     "sub_max_chars": self._parse_sub_max_chars(),
                     "sub_kieu": self.var_sub_kieu.get(),
+                    "sub_font": self.var_sub_font.get(),
+                    "sub_mau": self.var_sub_mau.get(),
+                    "sub_vitri": self.var_sub_vitri.get().strip(),
                     "make_sub_doc": self.var_make_sub_doc.get()},
             daemon=True,
         ).start()
@@ -7694,15 +7624,6 @@ class App(tk.Tk):
             p = EFFECTS_DIR / effect_name
             effect_path = str(p) if p.exists() else None
 
-        # Tham số cắt (cho video dọc lấy bản cắt) — đọc an toàn.
-        cut_audio = self.var_cut_audio.get()
-        try:
-            cut_target = float(self.var_cut_target.get())
-            cut_min = float(self.var_cut_min.get())
-            cut_max = float(self.var_cut_max.get())
-        except Exception:
-            cut_audio, cut_target, cut_min, cut_max = False, 12.0, 10.0, 15.0
-
         # Chữ TikTok = 'Mimi audio Số <số tập>' (ô 'Số tập' = thumbnail + 1); LUÔN ghi.
         _ep = self._tiktok_episode_number()
         tiktok_caption = f"Mimi audio Số {_ep:02d}"   # LUÔN ghi chữ (kể cả số 00)
@@ -7733,9 +7654,7 @@ class App(tk.Tk):
                 make_video=(kind == "ngang"), ngang_speed=self._parse_speed(self.var_ngang_speed),
                 ngang_source=self.var_ngang_source.get(),
                 ngang_out=ngang_out,
-                cut_audio=cut_audio, cut_target=cut_target, cut_min=cut_min, cut_max=cut_max,
-                cut_half=self.var_cut_half.get(),
-                make_video_doc=(kind == "doc"), doc_full_audio=self.var_doc_full_audio.get(),
+                make_video_doc=(kind == "doc"),
                 doc_speed=self._parse_speed(self.var_doc_speed),
                 doc_percent=self._parse_percent(self.var_doc_percent, 100),
                 doc_from_ngang=self.var_doc_from_ngang.get(),
@@ -7757,6 +7676,9 @@ class App(tk.Tk):
                 sub_mode=self.var_sub_mode.get(), sub_model=self.var_sub_model.get(),
                 sub_max_chars=self._parse_sub_max_chars(),
                 sub_kieu=self.var_sub_kieu.get(),
+                sub_font=self.var_sub_font.get(),
+                sub_mau=self.var_sub_mau.get(),
+                sub_vitri=self.var_sub_vitri.get().strip(),
             ),
             daemon=True,
         ).start()

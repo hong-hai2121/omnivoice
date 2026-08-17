@@ -52,8 +52,9 @@ KICHBAN_DIR = MYVOICE_DIR / "kịch_bản"
 VIDEO_EXTS = [("Video", "*.mp4 *.mkv *.mov *.avi *.webm"), ("Tất cả", "*.*")]
 TEXT_EXTS = [("Văn bản", "*.txt"), ("Tất cả", "*.*")]
 
-# Model nhỏ → nhanh nhưng mốc giờ thô hơn. medium là điểm cân bằng tốt cho tiếng Việt.
-MODELS = ["small", "medium", "large-v3"]
+# Model nhỏ → nhanh nhưng mốc giờ thô hơn. large-v3-turbo là điểm cân bằng tốt cho
+# tiếng Việt: nặng ngang medium (1.5GB) nhưng nghe chuẩn hơn và nhanh hơn.
+MODELS = ["small", "medium", "large-v3-turbo", "large-v3"]
 
 WINDOW_WIDTH = 1020
 WINDOW_HEIGHT = 760
@@ -68,9 +69,11 @@ def cached_models() -> set[str]:
     """Tên các model whisper đã nằm sẵn trên đĩa (chạy được offline)."""
     if not WHISPER_CACHE.is_dir():
         return set()
-    prefix = "models--Systran--faster-whisper-"
-    return {d.name[len(prefix):] for d in WHISPER_CACHE.iterdir()
-            if d.is_dir() and d.name.startswith(prefix)}
+    # Chủ repo khác nhau theo model (Systran, riêng turbo là mobiuslabsgmbh) → cắt theo
+    # phần sau "faster-whisper-" thay vì so cứng một prefix.
+    marker = "--faster-whisper-"
+    return {d.name.split(marker, 1)[1] for d in WHISPER_CACHE.iterdir()
+            if d.is_dir() and marker in d.name}
 
 
 def guess_script(video: Path) -> Path | None:
@@ -100,7 +103,7 @@ class GanSubGUI:
         self.script_var = tk.StringVar()
         self.script_hint_var = tk.StringVar(value="Chọn video trước — kịch bản sẽ tự tìm.")
         self.mode_var = tk.StringVar(value="srt")            # srt | soft | burn
-        self.model_var = tk.StringVar(value="medium")
+        self.model_var = tk.StringVar(value="large-v3-turbo")
         self.maxchars_var = tk.StringVar(value="50")
         self.status_var = tk.StringVar(value="Sẵn sàng")
         self.progress_var = tk.DoubleVar(value=0.0)
@@ -216,7 +219,7 @@ class GanSubGUI:
         opts.pack(fill="x", pady=(8, 0))
         tk.Label(opts, text="Model nghe", bg="white", fg="#3B4256", width=14, anchor="w",
                  font=("Segoe UI", 10)).pack(side="left")
-        self.cb_model = ttk.Combobox(opts, textvariable=self.model_var, width=12,
+        self.cb_model = ttk.Combobox(opts, textvariable=self.model_var, width=15,
                                      state="readonly", values=MODELS)
         self.cb_model.pack(side="left")
         self.cb_model.bind("<<ComboboxSelected>>", lambda _e: self._update_model_hint())

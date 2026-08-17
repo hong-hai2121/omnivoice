@@ -119,7 +119,13 @@
   </div>
 
   <div class="savebar span-all">
-    <button formaction="/kichban/luu">💾 Lưu cài đặt</button>
-    <span class="hint">Nhớ model · tốc độ · các ô ⛓. Bấm nút chạy ở trên cũng tự lưu trước khi chạy.</span>
+    {# hx-post: lưu tại chỗ, không tải lại trang — server trả mẩu "✓ đã lưu" vào
+       ô .luunote bên cạnh. formaction giữ làm đường lui khi không có JS. #}
+    <button formaction="/kichban/luu"
+            hx-post="/kichban/luu" hx-target="#luunote-kichban" hx-swap="innerHTML">💾 Lưu cài đặt</button>
+    <span id="luunote-kichban" class="luunote"></span>
+    <span class="hint">Nhớ model · tốc độ · các ô ⛓. Bấm nút chạy ở trên cũng tự lưu trước khi
+      chạy{% if on_home %} — trên Home, mọi nút chạy của khối nào cũng lưu luôn
+      cài đặt của TẤT CẢ các khối trên trang{% endif %}.</span>
   </div>
 </form>

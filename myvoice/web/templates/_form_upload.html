@@ -45,7 +45,10 @@
      và giảm đề xuất — chỉ bật khi video thật sự dành cho trẻ em.</p>
 
   <div class="actions">
-    <button class="primary" formaction="/dangyoutube/luu">💾 Lưu cài đặt</button>
+    {# hx-post: lưu tại chỗ, không tải lại trang (formaction là đường lui noscript). #}
+    <button class="primary" formaction="/dangyoutube/luu"
+            hx-post="/dangyoutube/luu" hx-target="#luunote-dang" hx-swap="innerHTML">💾 Lưu cài đặt</button>
+    <span id="luunote-dang" class="luunote"></span>
     <button formaction="/dangyoutube/chay">⬆ Đăng ngay các tập chưa đăng</button>
     {# Nút này KHÔNG lưu cài đặt (handler bỏ qua form) — nó chỉ mở cửa sổ Google. #}
     <button formaction="/dangyoutube/dangnhap" formnovalidate>🔑 Đăng nhập YouTube</button>

@@ -135,6 +135,10 @@ class Job:
     id: int
     title: str
     steps: list[Step]
+    # Việc NHẸ (xem trước, kiểm tra nhanh): vẫn xếp hàng chạy bình thường nhưng
+    # KHÔNG tính vào heavy_busy() — bấm một nút xem kế hoạch mà bị coi là "đã
+    # chạy xong mẻ" rồi 3 phút sau 🌙 úp máy thì vô lý.
+    light: bool = False
     status: str = "queued"        # queued | running | done | failed | stopped
     step_index: int = 0
     created: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
@@ -184,8 +188,8 @@ class JobRunner:
             except Exception:       # nhật ký hỏng không được làm hỏng việc đang chạy
                 pass
 
-    def enqueue(self, title: str, steps: list[Step]) -> Job:
-        job = Job(id=next(self._ids), title=title, steps=steps)
+    def enqueue(self, title: str, steps: list[Step], light: bool = False) -> Job:
+        job = Job(id=next(self._ids), title=title, steps=steps, light=light)
         with self._lock:
             self._pending.append(job)
         self.note(f"➕ Xếp hàng: {title} ({len(steps)} bước)")
@@ -251,6 +255,14 @@ class JobRunner:
     def busy(self) -> bool:
         with self._lock:
             return self._current is not None or bool(self._pending)
+
+    def heavy_busy(self) -> bool:
+        """busy() nhưng BỎ QUA các việc `light` — nguồn sự thật cho 🌙/⏻
+        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt ngủ/tắt máy."""
+        with self._lock:
+            if self._current is not None and not self._current.light:
+                return True
+            return any(not j.light for j in self._pending)
 
     # ── Worker ──────────────────────────────────────────────────────────────
     def _loop(self) -> None:

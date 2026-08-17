@@ -133,6 +133,15 @@ def _kieusubs() -> list[dict]:
         return []
 
 
+def _sub_fonts() -> list[dict]:
+    """Danh sách font chọn được (kèm ảnh xem trước) — lỗi thì trả rỗng."""
+    try:
+        import kieusub
+        return kieusub.danh_sach_font_web()
+    except Exception:
+        return []
+
+
 def _voice_ctx() -> dict:
     web = core.load_web_settings()
     out_wav = web.get("output") or str(core.OUTPUT_DIR / "output.wav")
@@ -153,6 +162,7 @@ def _voice_ctx() -> dict:
         # Kho kiểu phụ đề (scripts/kieusub_mau, dùng chung myvideo) — thẻ ảnh
         # chọn kiểu khi "vẽ cứng vào hình"; ảnh nằm ở static/kieusub.
         "kieusubs": _kieusubs(),
+        "sub_fonts": _sub_fonts(),
         "input_txt": web.get("input") or str(core.SCRIPT_DIR / "input.txt"),
         "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
         "voice_dir": str(core.VOICE_DIR),
@@ -213,6 +223,8 @@ def page_home(request: Request):
     # on_home=True: ô "Số tập (chữ trên video)" hiện ở khối Thumbnail thay vì trong
     # khối Giọng nói (xem _field_tiktok_episode.html).
     ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx(), **_upload_ctx()}
+    # Khối Đăng Facebook: danh sách tập chưa đăng Page (đọc đĩa + cache, không gọi mạng).
+    ctx["fb"] = core.facebook_pending()
     return _page(request, "home.html", active="home", q=runner.state(),
                  on_home=True, **ctx)
 
@@ -370,7 +382,7 @@ async def save_pipe_only(request: Request):
     """Nút 💾 của khối Tạo kịch bản: chỉ lưu, không xếp việc nào vào hàng đợi."""
     _save_pipe_from_form(await request.form())
     log("💾 Đã lưu cài đặt quy trình (model · tốc độ · các ô ⛓).")
-    return _back(request, "/kichban")
+    return _saved(request, "/kichban")
 
 
 @app.get("/api/tep-nguon")
@@ -405,17 +417,20 @@ def reset_pipeline():
 
 
 @app.post("/kichban/tapboqua")
-def save_skip(skip: str = Form("")):
+def save_skip(request: Request, skip: str = Form("")):
     nums = core.save_skip_episodes(skip)
-    log(f"⏭ Tập bỏ qua: {', '.join(map(str, nums)) or '(không có)'}")
-    return RedirectResponse("/kichban", status_code=303)
+    text = ", ".join(map(str, nums)) or "(không có)"
+    log(f"⏭ Tập bỏ qua: {text}")
+    # Mẩu trả về nhắc lại danh sách ĐÃ CHUẨN HOÁ — ô nhập vẫn giữ nguyên chữ vừa
+    # gõ (không tải lại trang) nên đây là chỗ cho thấy server hiểu thành gì.
+    return _saved(request, "/kichban", f"✓ Đã lưu: {text}")
 
 
 @app.post("/kichban/mocau")
-def save_prefix(prefix: str = Form("")):
+def save_prefix(request: Request, prefix: str = Form("")):
     core.save_prefix(prefix)
     log("💾 Đã lưu câu mở đầu gửi Gemini.")
-    return RedirectResponse("/kichban", status_code=303)
+    return _saved(request, "/kichban")
 
 
 # ── Trang Giọng nói (view "voice" bên GUI: TTS + video) ─────────────────────
@@ -453,7 +468,27 @@ async def save_voice_only(request: Request):
     """Nút 💾 của khối Giọng nói & video: chỉ lưu, không tạo giọng."""
     _save_voice_from_form(await request.form())
     log("💾 Đã lưu cài đặt giọng nói + video.")
-    return _back(request, "/giongnoi")
+    return _saved(request, "/giongnoi")
+
+
+@app.get("/giongnoi/kieusub-xemtruoc")
+def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
+                     vitri: str = "", khung: str = ""):
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu (+ vị trí) cho popup chọn kiểu.
+
+    khung=ngang → khung 16:9 nguyên vẹn để thấy VỊ TRÍ chữ trên màn hình
+    (vitri = % chiều cao từ đáy). Render bằng đúng libass sẽ burn; mỗi tổ hợp
+    chỉ render một lần (cache xt_* trong static/kieusub) nên lần đầu ~1-3
+    giây, các lần sau tức thì."""
+    try:
+        import kieusub
+        p = kieusub.ve_xemtruoc(kieu, font, mau, vitri,
+                                ca_khung=(khung == "ngang"))
+    except Exception:
+        p = None
+    if not p:
+        return JSONResponse({"error": "không vẽ được ảnh xem thử"}, status_code=404)
+    return FileResponse(str(p))
 
 
 @app.get("/giongnoi/nghe")
@@ -548,7 +583,7 @@ async def save_recog_only(request: Request):
     """Nút 💾 của khối chạy hàng loạt (chỉ có model + tốc độ để nhớ)."""
     _save_model_speed(await request.form())
     log("💾 Đã lưu model + tốc độ nhận diện.")
-    return _back(request, "/nhandien")
+    return _saved(request, "/nhandien")
 
 
 @app.get("/nhandien", response_class=HTMLResponse)
@@ -701,7 +736,7 @@ async def save_upload(request: Request):
     log(f"💾 Đã lưu cài đặt đăng YouTube (tự động đăng: {auto} · danh mục "
         f"{cfg.get('category_id')} · {cfg.get('privacy')} · trẻ em: "
         f"{cfg.get('made_for_kids')} · AI: {cfg.get('contains_ai')}).")
-    return _back(request, "/")
+    return _saved(request, "/", f"✓ Đã lưu — tự động đăng: {auto}")
 
 
 @app.post("/dangyoutube/chay")
@@ -766,6 +801,46 @@ def youtube_login(request: Request):
     return _back(request, "/")
 
 
+# ── Khối Đăng Facebook (Page MimiAudio) ─────────────────────────────────────
+def _fb_picked(form) -> list[str]:
+    """Các tập được tick trong bảng; không tick ô nào = tất cả tập chưa đăng."""
+    return [str(e) for e in form.getlist("fbtap")]
+
+
+@app.post("/dangfacebook/chay")
+async def run_facebook_schedule(request: Request):
+    """Nút '📘 Đăng các tập chưa đăng': chạy dang_video_facebook.py trong hàng đợi
+    ĐĂNG (kế hoạch + tiến trình hiện ở nhật ký hàng đợi đăng)."""
+    picked = _fb_picked(await request.form())
+    upload_runner.note("📘 Xếp việc lên lịch Facebook (9h/19h)"
+                       + (f" — các tập: {', '.join(picked)}." if picked
+                          else " — tất cả tập chưa đăng."))
+    upload_runner.enqueue("📘 Lên lịch Facebook (9h/19h)",
+                          steps_mod.facebook_steps(dry_run=False, episodes=picked))
+    return _saved(request, "/", "✓ Đã xếp việc — theo dõi ở nhật ký hàng đợi đăng")
+
+
+@app.post("/dangfacebook/xemtruoc")
+async def preview_facebook_schedule(request: Request):
+    """Nút '🔍 Xem kế hoạch': chạy bản --dry-run — chỉ in kế hoạch, không đăng."""
+    picked = _fb_picked(await request.form())
+    # light=True: việc xem trước không được tính vào heavy_busy — kẻo ô 🌙 (mặc
+    # định bật) thấy "bận rồi rảnh" mà đếm 3 phút cho máy ngủ chỉ vì một cú bấm.
+    upload_runner.enqueue("📘 Kế hoạch Facebook (xem trước, không đăng)",
+                          steps_mod.facebook_steps(dry_run=True, episodes=picked),
+                          light=True)
+    return _saved(request, "/", "🔍 Đang xem — kế hoạch hiện ở nhật ký hàng đợi đăng")
+
+
+@app.post("/dangfacebook/quet")
+def scan_facebook_page(request: Request):
+    """Nút '🔄 Đọc lại Page': cập nhật page_cache.json → danh sách tập chưa đăng
+    vẽ lại theo. Cũng là việc nhẹ (chỉ gọi vài request đọc)."""
+    upload_runner.enqueue("🔄 Đọc lại Page Facebook",
+                          steps_mod.facebook_steps(only_scan=True), light=True)
+    return _saved(request, "/", "🔄 Đang đọc Page — xong thì tải lại trang")
+
+
 # ── Trang Thumbnail ─────────────────────────────────────────────────────────
 @app.get("/thumbnail", response_class=HTMLResponse)
 def page_thumbnail(request: Request, tap: str = ""):
@@ -791,7 +866,7 @@ async def save_thumb_only(request: Request):
     log(f"💾 Đã lưu tuỳ chọn thumbnail (đánh số: {web['epsrc']} · ảnh nền: "
         f"{web['thumb_photo'] or 'ngẫu nhiên'} · bản dọc: "
         f"{'có' if web['thumb_doc'] else 'không'}).")
-    return _back(request, "/thumbnail")
+    return _saved(request, "/thumbnail")
 
 
 @app.post("/thumbnail")
@@ -852,8 +927,10 @@ def api_state():
     q = runner.state()
     sleep = power.watcher.state()
     return {
-        "busy": runner.busy(),
-        "upload_busy": upload_runner.busy(),
+        # heavy_busy: việc "light" (xem kế hoạch Facebook…) không tính — kẻo ô ⏻
+        # bên cửa sổ launcher coi đó là mẻ thật rồi hẹn tắt máy.
+        "busy": runner.heavy_busy(),
+        "upload_busy": upload_runner.heavy_busy(),
         "current": (q.get("current") or {}).get("title", ""),
         "pending": len(q.get("pending") or []),
         "sleep_armed": sleep["armed"],
@@ -908,6 +985,15 @@ def _back(request: Request, fallback: str = "/") -> RedirectResponse:
     return RedirectResponse(ref or fallback, status_code=303)
 
 
+def _saved(request: Request, fallback: str, note: str = "✓ Đã lưu"):
+    """Trả lời cho các nút 💾 CHỈ LƯU: bấm qua htmx thì trả mẩu "✓ đã lưu" đặt
+    vào ô .luunote cạnh nút — KHÔNG tải lại trang, khỏi mất chỗ đang cuộn và
+    các ô đang gõ dở. Không có JS thì rơi về chuyển hướng như cũ."""
+    if request.headers.get("hx-request"):
+        return HTMLResponse(f'<span class="savenote">{note}</span>')
+    return _back(request, fallback)
+
+
 @app.post("/hangdoi/{action}")
 def queue_action(action: str, request: Request):
     {"pause": runner.pause, "resume": runner.resume,
@@ -938,11 +1024,12 @@ def upload_queue_remove(job_id: int, request: Request):
 
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
-_NUM_KEYS = {"chunk": int, "cut_target": float, "cut_min": float, "cut_max": float,
+_NUM_KEYS = {"chunk": int,
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
              "tiktok_music_db": int, "sub_max_chars": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
-              "sub_mode", "sub_model", "sub_kieu"]
+              "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",
+              "sub_vitri"]
 
 
 def _save_opts_from_form(form) -> dict:
@@ -1069,6 +1156,8 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
+    log("🌙 Mặc định BẬT “xong hết thì cho máy ngủ” — không muốn thì bỏ tick "
+        "trên trang web.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

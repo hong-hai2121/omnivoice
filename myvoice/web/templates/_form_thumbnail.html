@@ -63,7 +63,10 @@
   </div>
   <div class="actions">
     <button class="primary">🖼 Tạo thumbnail</button>
-    <button formaction="/thumbnail/luu">💾 Lưu tuỳ chọn</button>
+    {# hx-post: lưu tại chỗ, không tải lại trang (formaction là đường lui noscript). #}
+    <button formaction="/thumbnail/luu"
+            hx-post="/thumbnail/luu" hx-target="#luunote-thumbnail" hx-swap="innerHTML">💾 Lưu tuỳ chọn</button>
+    <span id="luunote-thumbnail" class="luunote"></span>
   </div>
   <p class="hint">Ảnh lưu vào thư mục của tập: <code>thumbnail&lt;tập&gt;.png</code>
      và <code>thumbnail&lt;tập&gt;_dọc.png</code>. Nút 💾 nhớ chế độ đánh số · ảnh nền ·

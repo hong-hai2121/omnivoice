@@ -28,6 +28,50 @@
 })();
 
 
+// ── Home: bấm BẤT KỲ nút chạy nào là LƯU HẾT các khối cài đặt trên trang ─────
+// Home ghép 4 form riêng (quy trình · giọng nói & video · thumbnail · đăng), mà
+// trình duyệt chỉ gửi form chứa nút vừa bấm: sửa "Tăng tốc" bên khối Giọng nói
+// rồi bấm 🎙 Nhận diện là giá trị mới KHÔNG được ghi ra file — chuỗi tự chạy tới
+// bước dựng video vẫn dùng tốc độ cũ, tải lại trang thì ô quay về số cũ. Nên khi
+// MỘT form trong bốn form gửi đi, gom dữ liệu ba form còn lại gửi vào đúng đường
+// 💾 của từng khối (ngữ nghĩa y hệt tự tay bấm 💾), xong xuôi mới cho chạy thật.
+// Nút 💾 htmx không qua đây (htmx tự gửi, không có sự kiện submit) — mỗi nút 💾
+// vẫn chỉ lưu đúng khối của nó như nhãn ghi. Form hàng đợi/🌙 không nằm trong
+// danh sách nên không bị đụng.
+(function () {
+  // [selector của form, đường 💾 của CHÍNH khối đó]
+  const FORMS = [
+    ['form[action="/kichban/chay"]', '/kichban/luu'],
+    ['#voiceform', '/giongnoi/luu'],
+    ['form[action="/thumbnail"]', '/thumbnail/luu'],
+    ['form[action="/dangyoutube/luu"]', '/dangyoutube/luu'],
+  ];
+
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (form.dataset.daLuu) { delete form.dataset.daLuu; return; }   // lượt gửi thật
+    const me = FORMS.findIndex(([sel]) => form.matches(sel));
+    if (me < 0) return;                // form ngoài danh sách (hàng đợi…): kệ nó
+    const others = FORMS
+      .filter((_, i) => i !== me)      // khối đang gửi tự lưu trong handler của nó
+      .map(([sel, url]) => [document.querySelector(sel), url])
+      .filter(([f]) => f);
+    if (!others.length) return;        // trang riêng: chỉ có mỗi form này
+    e.preventDefault();
+    const submitter = e.submitter;     // giữ nút vừa bấm (start=… / formaction)
+    // Chờ lưu xong hết mới gửi thật — gửi ngay thì trang unload, fetch bị huỷ.
+    // Có khối lưu hỏng vẫn chạy tiếp: việc chạy quan trọng hơn việc nhớ cài đặt.
+    Promise.allSettled(others.map(([f, url]) =>
+      fetch(url, { method: 'POST', body: new FormData(f),
+                   credentials: 'same-origin', redirect: 'manual' })
+    )).then(() => {
+      form.dataset.daLuu = '1';
+      form.requestSubmit(submitter || undefined);
+    });
+  });
+})();
+
+
 // ── Khối Nguồn: ✕ xoá ô nhập · chip "Gần đây" · 📂 chọn file từ thư mục tải về ──
 // Trình duyệt KHÔNG cho biết đường dẫn thật của file khi dùng <input type=file>
 // (chỉ trả "C:\fakepath\..."), mà pipeline lại cần đường dẫn thật để chạy. Nên

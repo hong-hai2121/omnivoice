@@ -43,7 +43,7 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🏠 Home** (trang chủ `/`) | 🏠 Home (đầy đủ) | **Mọi nút chức năng**: hàng đợi · ① kịch bản ①②③ · ② hàng loạt theo tập (bảng tập + ②③④⑤) · ③ giọng nói & video · ④ thumbnail |
 | **🛠 Tạo kịch bản** (`/kichban`) | Tạo kịch bản | Ba bước ①②③ với các ô ⛓ nối bước, hàng đợi, tập bỏ qua, câu mở đầu Gemini, reset quy trình |
 | **🎙 Nhận diện** | Nhận diện | ① nhận diện link → bảng tập tick chọn → các nút hàng loạt ②③④⑤ |
-| **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · cắt audio · dọc · TikTok, ba nút “Dựng lại”, xoá output |
+| **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 | **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
 
@@ -66,7 +66,47 @@ hồng · thumbnail cam · SEO xanh ngọc. Tông màu khai báo ở đầu `sta
 **Nhật ký nằm ở cửa sổ console của server**, không còn panel dưới trang web:
 mọi dòng của tiến trình con in thẳng ra đó.
 
-**🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*. Chạy xong CẢ
+**Nút 💾 lưu tại chỗ, không tải lại trang** — mọi nút "💾 Lưu…" (và hai form
+Tập bỏ qua / Câu mở đầu) gửi qua htmx: lưu xong hiện mẩu "✓ đã lưu" cạnh nút
+rồi tự mờ đi, chỗ đang cuộn và các ô đang gõ dở giữ nguyên. Trình duyệt tắt JS
+thì rơi về kiểu chuyển hướng như cũ (route `/…/luu` trả redirect khi không có
+header `HX-Request`).
+
+**Trên Home, bấm BẤT KỲ nút chạy nào là lưu HẾT các khối cài đặt** — Home ghép
+4 form riêng mà trình duyệt chỉ gửi form chứa nút vừa bấm, nên sửa "Tăng tốc"
+bên khối Giọng nói rồi bấm 🎙 Nhận diện là giá trị mới không được ghi ra file
+(chuỗi tự chạy vẫn dựng video theo tốc độ cũ). Vì vậy app.js chặn submit của cả
+4 form (quy trình · giọng nói & video · thumbnail · đăng), gửi dữ liệu 3 form
+còn lại vào đúng route `/…/luu` của từng khối trước (khối đang gửi tự lưu trong
+handler của nó), xong mới submit thật (`requestSubmit` giữ nguyên nút vừa bấm).
+Nút 💾 htmx không qua đường này (htmx tự gửi, không có sự kiện submit) — mỗi nút
+💾 vẫn chỉ lưu đúng khối của nó như nhãn ghi. Trang riêng chỉ có một form nên
+không bị chặn gì. CỐ Ý không lưu (mỗi lần mở trang là trống/mặc định): ô Nguồn
+(chỉ giữ chip "Gần đây"), "Số tập bắt đầu", hai ô mỗi-lần-chạy "Làm lại cả bước
+đã có kết quả" và "♻ Dùng lại audio/video đã có", tiêu đề thumbnail (nội dung
+của từng tập), và "Số tập (chữ trên video)" (tự suy từ bộ đếm thumbnail + 1).
+
+**📘 Đăng Facebook** — khối cuối trang Home (dưới Đăng YouTube): **bảng các tập
+chưa đăng Page** (có video dọc trong thư mục tập, chưa thấy trên Page, chưa có
+dấu `facebook_upload.json`) + ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế
+hoạch (dry-run) · 🔄 đọc lại Page. Tick vài tập thì chỉ làm những tập đó, không
+tick ô nào = làm tất cả. Lịch xếp **9h/19h hằng ngày**, nối tiếp bài mới nhất
+trên Page.
+
+Cả ba nút chạy `myvoice/FACEBOOK/dang_video_facebook.py` trong **hàng đợi đăng**
+nên kế hoạch/tiến trình hiện ở nhật ký hàng đợi đăng, trang không tải lại. Hai
+việc 🔍/🔄 xếp hàng dạng **light** (xem `JobRunner.heavy_busy`) nên KHÔNG kích
+hoạt 🌙/⏻ — bấm xem kế hoạch xong máy không tự ngủ sau 3 phút.
+
+Trang không gọi Graph API lúc render (chậm theo đường truyền): danh sách tập đã
+có trên Page đọc từ `FACEBOOK/page_cache.json` mà script ghi ra mỗi lần chạy —
+bấm 🔄 để cập nhật. Cache giữ **tập hợp** số tập chứ không chỉ số lớn nhất, nên
+kênh có lỗ (52 đã lên mà 49 chưa) vẫn phát hiện được. Token Page nằm ở `.env`
+gốc repo (`FB_PAGE_ID_MIMIAUDIO` / `FB_PAGE_ACCESS_TOKEN_MIMIAUDIO`).
+
+**🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*, **mặc định
+BẬT sẵn mỗi lần mở server** (an toàn vì phải từng thấy hàng đợi bận rồi mới đếm
+ngủ — tick suông lúc chưa chạy gì thì không úp máy). Chạy xong CẢ
 hàng đợi chính lẫn hàng đợi đăng YouTube, rảnh thêm 3 phút thì máy ngủ; có việc
 mới chen vào là huỷ đếm; ngủ xong tự bỏ tick (một lần duy nhất). Bỏ tick là huỷ,
 kể cả lúc đang đếm ngược. Ngủ chứ không tắt máy: sáng chạm chuột là server, hàng

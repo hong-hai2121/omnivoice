@@ -11,11 +11,12 @@ thiếu fastapi/uvicorn/torch.
     python myvoice/chay.py --console  → chạy thẳng trong console như trước (không cửa sổ)
     python myvoice/chay.py --gui      → GUI Tkinter bản cũ (amain_taogiong_gui.py)
 
-Cửa sổ nhỏ (mặc định) tự bật server rồi ĐỢI bạn bấm nút mới mở trình duyệt — không
-tự mở như bản console. Đóng cửa sổ = tắt server (nếu server do cửa sổ này bật).
-Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào Thùng rác) ·
-và hai chế độ khi hàng đợi web chạy xong hết — ⏻ tắt máy hoặc 🌙 cho máy ngủ
-(chọn một, tick cái này thì cái kia tự bỏ).
+Cửa sổ nhỏ (mặc định) tự bật server rồi TỰ MỞ trình duyệt ngay khi server sẵn
+sàng — nút 🌐 vẫn còn để mở LẠI. Đóng cửa sổ = tắt server (nếu server do cửa sổ
+này bật). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
+Thùng rác) · và hai chế độ khi hàng đợi web chạy xong hết — ⏻ tắt máy hoặc
+🌙 cho máy ngủ (chọn một, tick cái này thì cái kia tự bỏ). 🌙 do server giữ và
+MẶC ĐỊNH BẬT sẵn (web/power.py) — ô ở đây chỉ hiện theo.
 """
 
 from __future__ import annotations
@@ -337,7 +338,8 @@ def _run_launcher(port: int) -> int:
         if not owner:
             btn_quit.config(text="✖  Đóng cửa sổ")
         log(f"🌐 Sẵn sàng: {url_var.get()}")
-        log("Bấm '🌐 Mở link web' để mở trong trình duyệt.")
+        _open()                 # tự mở luôn — nút 🌐 chỉ còn để mở LẠI khi lỡ đóng tab
+        _sync_sleep_now()       # server mặc định bật 🌙 → tick ô ngay cho khớp
 
     def _poll(n: int = 0) -> None:
         if _port_busy(port):
@@ -361,7 +363,8 @@ def _run_launcher(port: int) -> int:
             return
         log("🌐 Đang bật server…")
         env = {**os.environ,
-               "MYVOICE_WEB_NO_OPEN": "1",     # đợi bấm nút, không tự mở trình duyệt
+               "MYVOICE_WEB_NO_OPEN": "1",     # server đừng mở — _ready() bên này
+                                               # tự mở, kẻo bung ra hai tab
                "PYTHONIOENCODING": "utf-8",
                "PYTHONUNBUFFERED": "1"}
         try:
@@ -461,6 +464,26 @@ def _run_launcher(port: int) -> int:
                 _http("/hangdoi/ngu", {"on": "1"} if on else {})
             except Exception as e:
                 lines.put(f"❌ Không đặt được chế độ ngủ: {e}\n")
+            else:
+                # Ghi ngay vào flags — không đợi lượt poll 15 giây, kẻo _sleep_sync
+                # đọc trạng thái cũ rồi tick ngược lại ô vừa bỏ.
+                flags["sleep_armed"] = on
+                if not on:
+                    flags["sleep_left"] = ""
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sync_sleep_now() -> None:
+        """Hỏi NGAY trạng thái 🌙 của server, không đợi lượt 15 giây đầu của
+        _shutdown_watcher: server mặc định bật ngủ-khi-xong, ô tick ở đây phải
+        khớp từ lúc cửa sổ hiện chứ không phải 15 giây sau. Chạy luồng nền."""
+        def work() -> None:
+            try:
+                st = _http("/api/trangthai")
+            except Exception:
+                return
+            if isinstance(st, dict):
+                flags["sleep_armed"] = st.get("sleep_armed")
+                flags["sleep_left"] = st.get("sleep_left") or ""
         threading.Thread(target=work, daemon=True).start()
 
     def _toggle_sleep() -> None:

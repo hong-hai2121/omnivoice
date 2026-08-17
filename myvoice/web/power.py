@@ -13,6 +13,10 @@ lần. Ba chốt an toàn, học từ ô ⏻ bên GUI:
   • ngủ xong TỰ BỎ TICK — một lần duy nhất, mẻ sau không bị ngủ bất ngờ.
 
 Bỏ tick trên trang web là huỷ, kể cả khi đang đếm ngược.
+
+MẶC ĐỊNH BẬT SẴN mỗi lần mở server: cách dùng chính là "xếp mẻ → đi ngủ", nên
+khỏi phải nhớ tick mỗi tối. An toàn nhờ chốt "phải từng thấy bận": chưa chạy gì
+thì có bật cũng không bao giờ úp máy. Không muốn ngủ thì bỏ tick.
 """
 
 from __future__ import annotations
@@ -34,7 +38,8 @@ class SleepWhenDone:
     """Trạng thái của ô tick + luồng nền canh hàng đợi."""
 
     def __init__(self) -> None:
-        self._armed = False
+        # Mặc định BẬT (xem đầu file) — chốt _saw_busy giữ cho việc này an toàn.
+        self._armed = True
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
         self._warn_due = False     # vừa bắt đầu đếm → soát tập chưa đăng (ngoài lock)
@@ -111,7 +116,9 @@ class SleepWhenDone:
         with self._lock:
             if not self._armed:
                 return False
-            if runner.busy() or upload_runner.busy():
+            # heavy_busy: việc "light" (xem kế hoạch Facebook…) không được tính —
+            # bấm nút xem trước xong mà máy đếm ngược đi ngủ thì vô lý.
+            if runner.heavy_busy() or upload_runner.heavy_busy():
                 self._saw_busy = True
                 if self._due:               # việc mới chen vào giữa lúc đếm ngược
                     self._due = 0.0

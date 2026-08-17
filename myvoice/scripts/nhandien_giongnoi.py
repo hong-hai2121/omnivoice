@@ -51,8 +51,12 @@ def _find_local_model(model_name):
 
     Trả về đường dẫn thư mục snapshot (chứa model.bin) nếu có, ngược lại None.
     Quét cache của script trước, rồi tới EXTRA_CACHE_DIRS.
+
+    Chủ repo để "*": phần lớn model do Systran chuyển đổi, riêng large-v3-turbo là
+    mobiuslabsgmbh (faster-whisper tự trỏ tới đó) — dò cứng "Systran" sẽ không thấy
+    turbo trong cache và lại đi tải về qua mạng.
     """
-    repo = f"models--Systran--faster-whisper-{model_name}"
+    repo = f"models--*--faster-whisper-{model_name}"
     for root in [WHISPER_MODEL_PATH, *EXTRA_CACHE_DIRS]:
         # Bố cục HF: <cache>/<repo>/snapshots/<hash>/model.bin
         for model_bin in glob.glob(os.path.join(root, repo, "snapshots", "*", "model.bin")):

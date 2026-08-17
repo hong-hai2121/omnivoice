@@ -72,7 +72,10 @@
   </div>
 
   <div class="savebar span-all">
-    <button formaction="/nhandien/luu">💾 Lưu cài đặt</button>
+    {# hx-post: lưu tại chỗ, không tải lại trang (formaction là đường lui noscript). #}
+    <button formaction="/nhandien/luu"
+            hx-post="/nhandien/luu" hx-target="#luunote-nhandien" hx-swap="innerHTML">💾 Lưu cài đặt</button>
+    <span id="luunote-nhandien" class="luunote"></span>
     <span class="hint">Nhớ model + tốc độ nhận diện.</span>
   </div>
 </form>

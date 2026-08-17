@@ -12,22 +12,28 @@
 
 {% include "_queuepanel.html" %}
 
-<form class="panel" method="post" action="/kichban/tapboqua">
+{# hx-post trên FORM: cả nút 💾 lẫn phím Enter đều lưu tại chỗ, không tải lại
+   trang — server trả mẩu "✓ đã lưu" vào ô .luunote cạnh nút. #}
+<form class="panel" method="post" action="/kichban/tapboqua"
+      hx-post="/kichban/tapboqua" hx-target="#luunote-tapboqua" hx-swap="innerHTML">
   <div class="phead"><h2>Tập bỏ qua</h2></div>
   <label class="field">
     <span>Không cấp những số này cho tập mới</span>
     <input name="skip" value="{{ skip_episodes | join(', ') }}" placeholder="ví dụ: 7, 12, 15">
   </label>
-  <div class="actions"><button>💾 Lưu danh sách</button></div>
+  <div class="actions"><button>💾 Lưu danh sách</button>
+    <span id="luunote-tapboqua" class="luunote"></span></div>
 </form>
 
-<form class="panel" method="post" action="/kichban/mocau">
+<form class="panel" method="post" action="/kichban/mocau"
+      hx-post="/kichban/mocau" hx-target="#luunote-mocau" hx-swap="innerHTML">
   <div class="phead"><h2>Câu mở đầu gửi Gemini</h2></div>
   <label class="field">
     <span>Chèn vào đầu đoạn 1 của mỗi lần dịch</span>
     <textarea name="prefix" rows="3">{{ prefix }}</textarea>
   </label>
-  <div class="actions"><button>💾 Lưu câu mở đầu</button></div>
+  <div class="actions"><button>💾 Lưu câu mở đầu</button>
+    <span id="luunote-mocau" class="luunote"></span></div>
 </form>
 
 <form class="panel" method="post" action="/kichban/reset">

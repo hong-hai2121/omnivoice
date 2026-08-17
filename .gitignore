@@ -74,6 +74,9 @@ mt_cache/
 /myvoice/YOUTUBE/settings.json
 /myvoice/YOUTUBE/kenh_video_cache.json
 
+# Đăng Facebook: bản đọc Page gần nhất (tự sinh lại bằng nút 🔄 Đọc lại Page)
+/myvoice/FACEBOOK/page_cache.json
+
 # Log/stderr sinh ra khi chạy tay script (rỗng, không có giá trị lịch sử)
 *.log
 *.err

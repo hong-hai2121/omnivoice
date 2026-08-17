@@ -83,6 +83,37 @@ def queue_upload(episode: str) -> None:
     upload_runner.enqueue(f"⬆ Đăng YouTube tập {episode}", upload_steps(episode))
 
 
+# Kịch bản lên lịch Facebook — file độc lập, tự đọc token từ .env gốc repo.
+FB_SCRIPT = core.WEB_DIR.parent / "FACEBOOK" / "dang_video_facebook.py"
+
+
+def facebook_steps(dry_run: bool = False, limit: int = 0, only_scan: bool = False,
+                   episodes: list[str] | None = None) -> list[Step]:
+    """Bước LÊN LỊCH Facebook (Page MimiAudio) — chạy ở hàng đợi ĐĂNG, vì cũng
+    chỉ tốn băng thông như đăng YouTube.
+
+    only_scan: chỉ đọc Page rồi ghi page_cache.json (khối trên trang dựng danh
+    sách "tập chưa đăng" từ file đó, khỏi gọi mạng mỗi lần mở trang).
+    Không dry_run thì truyền --yes: tiến trình con không có bàn phím
+    (stdin=DEVNULL), mà người dùng bấm nút trên web là đã xác nhận rồi."""
+    argv = [core.python_exe(), "-u", str(FB_SCRIPT)]
+    if only_scan:
+        argv.append("--only-scan")
+        label = "🔄 Đọc lại Page Facebook"
+    elif dry_run:
+        argv.append("--dry-run")
+        label = "📘 Xem kế hoạch Facebook (không đăng)"
+    else:
+        argv.append("--yes")
+        label = "📘 Lên lịch Facebook 9h/19h"
+    if episodes:
+        argv += ["--tap", ",".join(episodes)]
+    if limit > 0 and not only_scan:
+        argv += ["--limit", str(limit)]
+    return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
+                 env=core.subprocess_env())]
+
+
 def _queue_upload_from_file(ep_file: Path) -> None:
     """Đọc số tập mà runner vừa ghi ra rồi xếp việc đăng.
 

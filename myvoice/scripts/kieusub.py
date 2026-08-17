@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -180,9 +181,10 @@ def _fontfile(k: dict) -> str:
 # ── Danh sách font chọn được (cho ô "Font chữ" trên web) ─────────────────────
 # Font RỜI trong myvoice/fonts (libass thấy qua fontsdir, khớp theo TÊN FAMILY
 # đọc từ file) + vài font Windows quen thuộc đủ glyph tiếng Việt.
+# KHÔNG đưa Impact vào đây: thiếu glyph tiếng Việt dấu chồng (ộ ữ ế…) → tofu.
 _FONT_HE_THONG = [("Arial", "arial.ttf"), ("Arial Black", "ariblk.ttf"),
                   ("Segoe UI", "segoeui.ttf"), ("Tahoma", "tahoma.ttf"),
-                  ("Verdana", "verdana.ttf"), ("Impact", "impact.ttf"),
+                  ("Verdana", "verdana.ttf"),
                   ("Times New Roman", "times.ttf"), ("Calibri", "calibri.ttf")]
 _FONT_CACHE: list[dict] | None = None
 
@@ -226,6 +228,15 @@ def ap_font(k: dict, font: str) -> dict:
             k["fontfile"] = f["file"]
             break
     return k
+
+
+def ap_mau(k: dict, mau: str) -> dict:
+    """Đè MÀU CHỮ của kiểu ('FFD700' hoặc '#FFD700'; rỗng/sai dạng = giữ màu
+    gốc). Chỉ đổi mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên."""
+    mau = (mau or "").strip().lstrip("#")
+    if len(mau) != 6:
+        return k
+    return {**k, "mau_chu": mau.upper()}
 
 
 # ── Đo chữ (chỉ kiểu hopbo cần, để tính bề rộng khung nền) ───────────────────
@@ -501,26 +512,51 @@ def _wrap_tho(text: str, n: int) -> str:
 
 
 def ve_mau(k: dict) -> Path | None:
-    """Vẽ ảnh xem trước MỘT kiểu: kiểu tĩnh → PNG một khung, kiểu động → WEBP.
+    """Vẽ ảnh xem trước MỘT kiểu (tên file = id của kiểu)."""
+    return _ve_anh_kieu(k, k["id"])
+
+
+def _ve_anh_kieu(k: dict, ten_goc: str, margin_v: int = SUB_MARGIN_V,
+                 ca_khung: bool = False) -> Path | None:
+    """Vẽ ảnh xem trước cho dict kiểu `k` ra ANH_DIR/<ten_goc>.png|webp.
 
     Vẽ bằng đúng đường burn thật (libass qua ffmpeg) nên ảnh là xem trước
-    TRUNG THỰC, không phải mô phỏng CSS. Cắt lấy dải dưới của khung hình —
-    chỗ phụ đề nằm — cho thẻ chọn gọn mà chữ vẫn to.
+    TRUNG THỰC, không phải mô phỏng CSS.
+    ca_khung=False: cắt lấy dải dưới — chỗ phụ đề nằm — cho thẻ chọn gọn mà
+    chữ vẫn to. ca_khung=True: giữ NGUYÊN khung 16:9 (xem VỊ TRÍ chữ trên
+    màn hình ngang; margin_v đổi được để thử vị trí khác).
     """
     ANH_DIR.mkdir(parents=True, exist_ok=True)
     ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
-    dest = ANH_DIR / (k["id"] + ext)
-    tmp = ANH_DIR / f"_mau_{k['id']}.ass"
-    write_ass_kieu([_wrap_tho(CAU_MAU, k["max_chars"])], [(0.25, 3.15)], tmp, k)
-    vf = f"subtitles={tmp.name}{fontsdir_arg(ANH_DIR)},crop=960:300:0:240"
+    dest = ANH_DIR / (ten_goc + ext)
+    tmp = ANH_DIR / f"_mau_{ten_goc}.ass"
+    write_ass_kieu([_wrap_tho(CAU_MAU, k["max_chars"])], [(0.25, 3.15)], tmp, k,
+                   margin_v=margin_v)
+    if ca_khung:
+        kich, vf_them = "768x432", ""
+    else:
+        kich, vf_them = "960x540", ",crop=960:300:0:240"
+    # Khung ngang: nền là khung hình THẬT của video ngang (có viền trang trí)
+    # để canh vị trí chuẩn; các trường hợp còn lại nền gradient trừu tượng.
+    nen_anh = _nen_ngang() if ca_khung else None
+    if nen_anh is not None:
+        # ảnh tĩnh lặp thành clip 3.4s cho khớp mốc giờ của câu mẫu
+        dau_vao = [["-loop", "1", "-framerate", "14", "-t", "3.4",
+                    "-i", nen_anh.name]]
+        vf_dau = "scale=768:432,"
+    else:
+        dau_vao = [["-f", "lavfi", "-i",
+                    f"gradients=s={kich}:c0=0x2b3a55:c1=0x10131c:d=3.4"],
+                   ["-f", "lavfi", "-i", f"color=c=0x1c2431:s={kich}:d=3.4"]]
+        vf_dau = ""                       # máy thiếu gradients thì rơi về nền trơn
+    vf = f"{vf_dau}subtitles={tmp.name}{fontsdir_arg(ANH_DIR)}{vf_them}"
     if ext == ".png":
         duoi = ["-ss", "1.7", "-frames:v", "1", "-vf", vf, dest.name]
     else:
         duoi = ["-vf", vf + ",fps=14", "-c:v", "libwebp", "-loop", "0", dest.name]
     ok = False
-    for nen in (_NEN, _NEN_DUPHONG):      # máy nào ffmpeg cũ thiếu gradients thì nền trơn
-        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
-                            "-f", "lavfi", "-i", nen, *duoi],
+    for dau in dau_vao:
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *dau, *duoi],
                            cwd=str(ANH_DIR))
         if r.returncode == 0:
             ok = True
@@ -531,13 +567,124 @@ def ve_mau(k: dict) -> Path | None:
         pass
     if ok:
         # kiểu vừa đổi tĩnh↔động thì dọn ảnh đuôi cũ kẻo web vớ nhầm bản cũ
-        cu = ANH_DIR / (k["id"] + (".png" if ext == ".webp" else ".webp"))
+        cu = ANH_DIR / (ten_goc + (".png" if ext == ".webp" else ".webp"))
         try:
             cu.unlink()
         except OSError:
             pass
         return dest
     return None
+
+
+def _nen_ngang() -> Path | None:
+    """Khung hình MẪU của video ngang làm nền cho ảnh xem vị trí (768x432).
+
+    Thứ tự nguồn:
+      1. nen_ngang.png đặt TAY trong static/kieusub (dùng nguyên trạng).
+      2. KHUNG TRANG TRÍ GỐC myvoice/Backbround/khung1.png — sạch, không dính
+         chữ nào; phần trong suốt lót nền phẳng tối cho chữ mẫu nổi rõ.
+         (nen_ngang.jpg là CACHE tự sinh — khung1.png mới hơn thì vẽ lại.)
+      3. Trích từ YOUTUBE.mp4 mới nhất (làm MỜ dải sub cũ — video sub kín
+         từ đầu tới cuối) / clip gốc videongang."""
+    dest = ANH_DIR / "nen_ngang.jpg"
+    khung = MYVOICE_DIR / "Backbround" / "khung1.png"
+    tay = ANH_DIR / "nen_ngang.png"
+    if tay.is_file():
+        return tay
+    if dest.is_file():
+        try:
+            if not khung.is_file() or dest.stat().st_mtime >= khung.stat().st_mtime:
+                return dest
+        except OSError:
+            return dest
+    ANH_DIR.mkdir(parents=True, exist_ok=True)
+    if khung.is_file():
+        try:
+            from PIL import Image
+            nen = Image.new("RGB", (1920, 1080), (30, 36, 52))
+            lop = Image.open(khung).convert("RGBA")
+            nen.paste(lop, (0, 0), lop)
+            nen.resize((768, 432), Image.LANCZOS).save(dest, quality=90)
+            return dest
+        except Exception:
+            pass
+    # Dải MỜ che sub cũ: vùng sub mặc định (MarginV 173, ~2 dòng) trên khung 432.
+    che = ("scale=768:432,split[a][b];"
+           "[b]crop=768:130:0:275,gblur=sigma=16[c];[a][c]overlay=0:275")
+    nguon: list[tuple[Path, str]] = []
+    try:
+        nguon += [(v, che) for v in
+                  sorted((MYVOICE_DIR / "kịch_bản").glob("*/YOUTUBE.mp4"),
+                         key=lambda p: p.stat().st_mtime, reverse=True)[:2]]
+    except OSError:
+        pass
+    try:
+        nguon += [(v, "scale=768:432") for v in
+                  sorted((MYVOICE_DIR / "videongang").rglob("*.mp4"))[:2]]
+    except OSError:
+        pass
+    ANH_DIR.mkdir(parents=True, exist_ok=True)
+    for v, vf in nguon:
+        for ss in ("90", "1"):            # video/clip quá ngắn thì lùi về giây 1
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-ss", ss,
+                 "-i", str(v.resolve()), "-frames:v", "1", "-vf", vf, dest.name],
+                cwd=str(ANH_DIR))
+            if r.returncode == 0 and dest.is_file():
+                return dest
+    return None
+
+
+def vitri_margin(vitri, play_h: int, macdinh: int) -> int:
+    """'% chiều cao tính từ đáy' → MarginV px; rỗng/sai → mặc định của khung."""
+    try:
+        pct = float(str(vitri).strip())
+    except (TypeError, ValueError):
+        return macdinh
+    if not 1 <= pct <= 60:
+        return macdinh
+    return round(play_h * pct / 100)
+
+
+def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
+                vitri="", ca_khung: bool = False) -> Path | None:
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu (+ vị trí) đang chọn cho popup web.
+
+    ca_khung=True → khung ngang 16:9 NGUYÊN VẸN để thấy chữ nằm đâu trên màn
+    hình (vitri = % chiều cao từ đáy, rỗng = mặc định 173px ≈ 16%).
+    Không đè gì → trả thẳng ảnh mẫu sẵn có của kiểu. Còn lại render bản riêng
+    vào cache xt_<hash> (mỗi tổ hợp chỉ render MỘT lần, lần sau trả ngay)."""
+    k = ap_mau(ap_font(lay(kieu_id), font), mau)
+    ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
+    if not font and not mau and not ca_khung:
+        p = ANH_DIR / (k["id"] + ext)
+        return p if p.is_file() else ve_mau(k)
+    margin = vitri_margin(vitri, ASS_PLAY_H, SUB_MARGIN_V)
+    # Nền thật đổi (tập mới / thay file nen_ngang) thì cache phải vẽ lại →
+    # trộn mtime của nền vào khoá cache.
+    nen_mt = 0
+    if ca_khung:
+        nf = _nen_ngang()
+        nen_mt = int(nf.stat().st_mtime) if nf else 0
+    import hashlib
+    key = hashlib.md5(f"{k['id']}|{font}|{mau}|{margin}|{ca_khung}|{nen_mt}"
+                      .encode("utf-8")).hexdigest()[:12]
+    dest = ANH_DIR / (f"xt_{key}" + ext)
+    if dest.is_file():
+        return dest
+    p = _ve_anh_kieu(k, f"xt_{key}", margin_v=margin, ca_khung=ca_khung)
+    _don_xemtruoc()
+    return p
+
+
+def _don_xemtruoc(giu: int = 80) -> None:
+    """Cache xem thử chỉ giữ `giu` file mới nhất — khỏi phình vô hạn."""
+    try:
+        xt = sorted(ANH_DIR.glob("xt_*.*"), key=lambda p: p.stat().st_mtime)
+        for p in xt[:-giu]:
+            p.unlink()
+    except OSError:
+        pass
 
 
 def taomau(ep: bool = False, ids: list[str] | None = None) -> int:
@@ -557,10 +704,75 @@ def taomau(ep: bool = False, ids: list[str] | None = None) -> int:
     return n
 
 
+# ── Ảnh xem trước FONT (cho khu "Font chữ" trong popup chọn kiểu) ─────────────
+def _slug_font(ten: str) -> str:
+    return "font_" + re.sub(r"[^a-z0-9]+", "-", ten.lower()).strip("-")
+
+
+def ve_mau_font(ep: bool = False) -> int:
+    """Vẽ ảnh xem trước cho từng font (chữ trắng nền tối, 640x200 — cùng tỉ lệ
+    16:5 với thẻ kiểu nên giao diện tái dùng nguyên bộ CSS).
+
+    Vẽ bằng ĐÚNG libass sẽ burn — vài font Windows (vd Arial Black) không có
+    glyph Việt DỰNG SẴN nhưng libass tự ghép dấu vẫn chuẩn, còn Pillow thì ra
+    ô vuông → Pillow chỉ được dùng để ĐO bề rộng chọn cỡ chữ cho vừa khung.
+    Rất nhẹ: mỗi font một PNG tĩnh, vẽ MỘT lần rồi thôi."""
+    ANH_DIR.mkdir(parents=True, exist_ok=True)
+    W, H = 640, 200
+    n = 0
+    for f in danh_sach_font():
+        if not f["file"]:
+            continue
+        dest = ANH_DIR / (_slug_font(f["ten"]) + ".png")
+        if dest.exists() and not ep:
+            continue
+        size = 44
+        try:
+            from PIL import ImageFont
+            w100 = ImageFont.truetype(f["file"], 100).getlength(CAU_MAU)
+            if w100:
+                size = max(22, min(58, int(100 * (W - 56) / w100)))
+        except Exception:
+            pass
+        k = {"hieuung": "tinh", "font": f["ten"], "fontfile": f["file"],
+             "size": size, "bold": False, "mau_chu": "FFFFFF",
+             "vien": 0, "bong": 0}
+        tmp = ANH_DIR / "_mau_font.ass"
+        write_ass_kieu([CAU_MAU], [(0.2, 3.0)], tmp, k, play_w=W, play_h=H,
+                       margin_v=max(10, (H - int(size * 1.3)) // 2))
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", f"color=c=0x181E2C:s={W}x{H}:d=3", "-ss", "1",
+             "-frames:v", "1",
+             "-vf", f"subtitles={tmp.name}{fontsdir_arg(ANH_DIR)}", dest.name],
+            cwd=str(ANH_DIR))
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        if r.returncode == 0:
+            n += 1
+    return n
+
+
+def danh_sach_font_web() -> list[dict]:
+    """danh_sach_font + tên file ảnh xem trước & mtime chống cache (cho web)."""
+    out = []
+    for f in danh_sach_font():
+        p = ANH_DIR / (_slug_font(f["ten"]) + ".png")
+        try:
+            anh, v = p.name, int(p.stat().st_mtime)
+        except OSError:
+            anh, v = "", 0
+        out.append({**f, "anh": anh, "v": v})
+    return out
+
+
 def taomau_thieu() -> None:
     """Cho server gọi lúc khởi động (trong thread nền) — không bao giờ ném lỗi."""
     try:
         taomau(ep=False)
+        ve_mau_font(ep=False)
     except Exception:
         pass
 
@@ -573,7 +785,8 @@ def main():
     args = ap.parse_args()
     if args.taomau:
         n = taomau(ep=args.ep, ids=args.kieu)
-        print(f"✅ Đã vẽ {n} ảnh vào {ANH_DIR}")
+        nf = ve_mau_font(ep=args.ep) if not args.kieu else 0
+        print(f"✅ Đã vẽ {n} ảnh kiểu + {nf} ảnh font vào {ANH_DIR}")
     else:
         for k in danh_sach():
             dong = "động" if k["hieuung"] in HIEUUNG_DONG else "tĩnh"

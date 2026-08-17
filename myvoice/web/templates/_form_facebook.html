@@ -1,0 +1,63 @@
+{# Khối Đăng Facebook — lên lịch video DỌC các tập lên Page MimiAudio.
+   Danh sách "chưa đăng" = tập trong kịch_bản/ có video dọc, CHƯA thấy trên Page
+   (theo page_cache.json) và chưa có dấu facebook_upload.json. Không tick ô nào
+   nghĩa là làm tất cả. Mọi nút chạy trong HÀNG ĐỢI ĐĂNG — kế hoạch và tiến trình
+   hiện ở nhật ký hàng đợi đăng, không tải lại trang. #}
+<form class="panel" method="post" action="/dangfacebook/chay">
+  <div class="phead"><h2>📘 Đăng Facebook — Page MimiAudio</h2></div>
+
+  <p class="hint">Xếp lịch <b>09:00 / 19:00 hằng ngày</b>, nối tiếp bài mới nhất
+     trên Page. Video lấy trong thư mục mỗi tập
+     (<code>facebook….mp4</code>), caption lấy từ SEO của tập.</p>
+
+  {% if not fb.scanned %}
+    <p class="warn">Chưa đọc Page lần nào — bấm <b>🔄 Đọc lại Page</b> để biết tập
+       nào đã lên rồi, xong tải lại trang.</p>
+  {% else %}
+    <p class="hint">Page đang có <b>{{ fb.on_page }}</b> tập · đọc lúc
+       {{ fb.fetched[11:16] }} ngày {{ fb.fetched[8:10] }}/{{ fb.fetched[5:7] }}.</p>
+  {% endif %}
+
+  {% if fb.rows %}
+    <div class="tablewrap">
+      <table class="grid">
+        <thead><tr><th></th><th>Tập</th><th>Tiêu đề</th><th>Video</th><th>Cỡ</th></tr></thead>
+        <tbody>
+          {% for r in fb.rows %}
+            <tr>
+              <td><input type="checkbox" name="fbtap" value="{{ r.episode }}"></td>
+              <td class="epcell">{{ r.episode }}</td>
+              <td style="text-align:left">{{ r.title or '—' }}</td>
+              <td style="text-align:left"><code>{{ r.video }}</code></td>
+              <td>{{ r.size_mb }} MB</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">{{ fb.rows|length }} tập chưa đăng. Không tick ô nào = làm tất cả.</p>
+  {% else %}
+    <p class="hint">Không có tập nào chờ đăng Page (đã lên hết, hoặc chưa dựng video dọc).</p>
+  {% endif %}
+
+  {% if fb.missing %}
+    <p class="hint">Chưa có video dọc nên bỏ qua: {{ fb.missing|join(', ') }}.</p>
+  {% endif %}
+
+  {# hx-post: xếp việc tại chỗ, KHÔNG tải lại trang — mẩu trả lời hiện cạnh nút,
+     tiến trình xem ở khối Hàng đợi (tự làm mới 2s). formaction là đường lui khi
+     trình duyệt tắt JS. #}
+  <div class="actions">
+    <button class="primary" formaction="/dangfacebook/chay"
+            hx-post="/dangfacebook/chay" hx-target="#luunote-facebook" hx-swap="innerHTML">📘 Đăng các tập chưa đăng</button>
+    <button formaction="/dangfacebook/xemtruoc"
+            hx-post="/dangfacebook/xemtruoc" hx-target="#luunote-facebook" hx-swap="innerHTML">🔍 Xem kế hoạch (không đăng)</button>
+    <button formaction="/dangfacebook/quet" formnovalidate
+            hx-post="/dangfacebook/quet" hx-target="#luunote-facebook" hx-swap="innerHTML">🔄 Đọc lại Page</button>
+    <span id="luunote-facebook" class="luunote"></span>
+  </div>
+  <p class="hint">Nên bấm 🔍 trước để soát kế hoạch ở nhật ký hàng đợi đăng.
+     Facebook chỉ nhận lịch trong ~75 ngày tới — tập vượt hạn tự để lại lần sau.
+     Tập đã xếp có dấu <code>facebook_upload.json</code> trong thư mục tập nên
+     không bao giờ xếp trùng.</p>
+</form>
