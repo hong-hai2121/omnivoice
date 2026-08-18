@@ -25,7 +25,7 @@ import threading
 import time
 
 from . import core
-from .jobs import log, runner, upload_runner
+from .jobs import fb_runner, log, runner, upload_runner
 
 # Lệnh ngủ + số phút chờ lấy CHUNG với GUI (amain_taogiong_gui) — ô 🌙 bên GUI và ô
 # 🌙 trên trang web phải cư xử y hệt nhau, sửa một chỗ là cả hai cùng đổi.
@@ -117,8 +117,10 @@ class SleepWhenDone:
             if not self._armed:
                 return False
             # heavy_busy: việc "light" (xem kế hoạch Facebook…) không được tính —
-            # bấm nút xem trước xong mà máy đếm ngược đi ngủ thì vô lý.
-            if runner.heavy_busy() or upload_runner.heavy_busy():
+            # bấm nút xem trước xong mà máy đếm ngược đi ngủ thì vô lý. Hàng đợi
+            # Facebook phải có mặt: đang tải video lên Page mà máy ngủ là hỏng.
+            if (runner.heavy_busy() or upload_runner.heavy_busy()
+                    or fb_runner.heavy_busy()):
                 self._saw_busy = True
                 if self._due:               # việc mới chen vào giữa lúc đếm ngược
                     self._due = 0.0

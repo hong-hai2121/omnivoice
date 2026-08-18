@@ -92,6 +92,19 @@ xem được TRƯỚC khi bấm chạy; ba nút — 📘 đăng các tập chưa
 (dry-run) · 🔄 đối chiếu Page. Tick vài tập thì chỉ làm những tập đó, không tick ô
 nào = làm tất cả. Lịch xếp **9h/19h hằng ngày**, nối tiếp bài mới nhất trên Page.
 
+**Nằm trong chuỗi tự động** — ô tick “📘 Dựng xong video thì TỰ lên lịch đăng
+Page” (mặc định BẬT, lưu ở `web_settings.json` khoá `fb_auto`). Dựng xong video
+một tập là `queue_after_build()` xếp **cả hai** việc đăng rồi đi tiếp tập sau
+ngay: YouTube vào `upload_runner`, Facebook vào **`fb_runner` — hàng đợi thứ ba,
+riêng biệt**. Riêng chứ không chung với hàng đăng YouTube để hai bên chạy song
+song (nếu chung thì Page phải đợi video YouTube tải xong mới tới lượt). Nhưng
+`fb_runner` vẫn **một worker duy nhất, đừng bỏ**: hai lần chạy script Facebook
+cùng lúc sẽ cùng đọc “giờ lên lịch xa nhất” rồi cùng xếp vào ĐÚNG MỘT khung giờ.
+
+Ô 📘 đọc lại mỗi lần dùng nên bật/tắt giữa mẻ đang chạy là tập kế tiếp theo ngay.
+`fb_runner` cũng được tính vào `heavy_busy` của 🌙/⏻ và vào `upload_busy` của
+`/api/trangthai` — đang tải video lên Page mà máy ngủ là hỏng.
+
 Giờ dự kiến tính bằng **đúng hàm** mà lúc chạy thật sẽ dùng (`plan_slots` của
 script, mốc suy từ sổ qua `known_anchor`) — bảng nói một đằng Facebook nhận một
 nẻo là kiểu sai khó chịu nhất, nên hai bên không được có hai phép tính. Lúc bấm

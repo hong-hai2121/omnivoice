@@ -922,6 +922,22 @@ NUM_STEP = 32
 # đệm cho bằng đoạn dài nhất — ở đây thừa 26% phép tính. Card mạnh hơn (chưa bão
 # hoà ở lô 1) thì gom lô mới có lãi.
 
+# ── VUỐT TẮT CUỐI MỖI ĐOẠN ───────────────────────────────────────────────────
+# Package OmniVoice mặc định fade_duration=0.1: vuốt 100ms CUỐI của đoạn về 0 để
+# chống tiếng "cạch" ở mối nối. Chỗ đó đáng lẽ là im lặng — nhưng model chốt trước
+# số frame rồi nhồi chữ vào cho vừa, nên đoạn nào cũng có xu hướng kết thúc SÁT MÉP,
+# không còn im lặng để fade nhai. Đo trên 12 đoạn của bài 59 (sinh với fade tắt rồi
+# tự áp fade lên CÙNG mảng audio, loại yếu tố may rủi của lần sinh):
+#   fade 100ms → mất trung bình 19% năng lượng ở 100ms cuối (nặng nhất 38%)
+#   fade  10ms → mất 0%
+# Đây chính là "đuôi từ cuối bị cắt mất một chút" nghe thấy. 10ms vẫn thừa sức
+# chống cạch (chỗ nối đã có pad_duration=0.1 im lặng hai đầu).
+#
+# ĐÃ THỬ VÀ LOẠI: nới khung thời lượng (hạ VN_RATE 4.65→4.4→4.2). Không ăn thua —
+# model không dùng chỗ dư để im lặng, nó tính ra tỉ lệ tốc độ rồi đọc CHẬM lại cho
+# vừa khung, vẫn kết thúc sát mép (xem chú thích ở vn_duration).
+FADE_OUT_SEC = 0.01
+
 # Cứ ngần này đoạn thì trả các khối VRAM đã giữ mà không dùng lại về cho driver.
 VRAM_CLEAN_EVERY = 20
 
@@ -1057,7 +1073,8 @@ def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0):
     dur = vn_duration(chunk)
     if dur is not None:
         dur *= dur_scale
-    kw = {"language": "vi", "duration": dur, "num_step": NUM_STEP}
+    kw = {"language": "vi", "duration": dur, "num_step": NUM_STEP,
+          "fade_duration": FADE_OUT_SEC}
     if mode == "clone":
         return model.generate(text=chunk,
                               voice_clone_prompt=_voice_prompt(model, voice_param), **kw)
@@ -1817,7 +1834,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # NUM_STEP nằm trong chữ ký: đổi số bước là đổi chất lượng giọng, mà
             # ghép đoạn 32 bước với đoạn 16 bước trong cùng một bài thì nghe cứ
             # lệch lệch mà chẳng biết tại đâu. Cho vào đây là đổi số → sinh lại hết.
-            sig = hashlib.sha1("|".join([mode, str(voice_param), f"step{NUM_STEP}", *chunks])
+            sig = hashlib.sha1("|".join([mode, str(voice_param), f"step{NUM_STEP}",
+                                         f"fade{FADE_OUT_SEC}", *chunks])
                                .encode("utf-8")).hexdigest()
             sig_file = tmp_dir / "_signature.txt"
             old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None

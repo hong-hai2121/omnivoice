@@ -87,6 +87,45 @@
   </div>
 {% endif %}
 
+{# Hàng đợi FACEBOOK — hàng thứ ba, chạy song song với cả hai hàng trên: dựng
+   xong một tập là vừa đẩy lên YouTube vừa xếp lịch Page, không ai đợi ai. #}
+{% set flines = flog if flog is defined and flog else [] %}
+{% if qf and (qf.current or qf.pending) %}
+  <div class="uploadq">
+    <p class="colhead">📘 Lên lịch Facebook (chạy song song)</p>
+    {% if qf.paused %}<p class="warn">⏸ Hàng đợi Facebook đang tạm dừng.</p>{% endif %}
+    {% if qf.current %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge run">đang tải lên</span>
+          <b>{{ qf.current.title }}</b>
+          <span class="spacer"></span>
+          <form method="post" action="/hangdoifb/skip"><button class="ghost small">⏭ Bỏ</button></form>
+        </div>
+        <p class="hint">bắt đầu {{ qf.current.started }}</p>
+      </div>
+    {% endif %}
+    {% for j in qf.pending %}
+      <div class="job">
+        <div class="jobtop">
+          <span class="badge wait">chờ xếp lịch</span>
+          <b>{{ j.title }}</b>
+          <span class="spacer"></span>
+          <form method="post" action="/hangdoifb/bo/{{ j.id }}"><button class="ghost small">✕</button></form>
+        </div>
+      </div>
+    {% endfor %}
+    {% if flines %}<pre class="loglines">{{ flines|join('\n') }}</pre>{% endif %}
+  </div>
+{% elif flines %}
+  <div class="uploadq">
+    <details class="history">
+      <summary>📘 Nhật ký Facebook gần đây</summary>
+      <pre class="loglines">{{ flines|join('\n') }}</pre>
+    </details>
+  </div>
+{% endif %}
+
 {% if qu and qu.history %}
   <details class="history">
     <summary>Đã đăng gần đây ({{ qu.history|length }})</summary>

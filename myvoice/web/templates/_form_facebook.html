@@ -1,14 +1,33 @@
 {# Khối Đăng Facebook — lên lịch video DỌC các tập lên Page MimiAudio.
-   Danh sách "chưa đăng" = tập trong kịch_bản/ có video dọc, CHƯA thấy trên Page
-   (theo page_cache.json) và chưa có dấu facebook_upload.json. Không tick ô nào
-   nghĩa là làm tất cả. Mọi nút chạy trong HÀNG ĐỢI ĐĂNG — kế hoạch và tiến trình
-   hiện ở nhật ký hàng đợi đăng, không tải lại trang. #}
-<form class="panel" method="post" action="/dangfacebook/chay">
-  <div class="phead"><h2>📘 Đăng Facebook — Page MimiAudio</h2></div>
+   Danh sách "chưa đăng" = tập trong kịch_bản/ có video dọc, chưa nằm trong SỔ
+   LOCAL (FACEBOOK/da_dang.json) và chưa có dấu facebook_upload.json. Không tick
+   ô nào nghĩa là làm tất cả. Mọi nút chạy trong HÀNG ĐỢI FACEBOOK riêng — song
+   song với hàng đợi chính lẫn hàng đợi đăng YouTube, không tải lại trang. #}
 
+{# Ô tự động: form RIÊNG chỉ chứa mỗi ô này, nên server suy được "vắng mặt = bỏ
+   tick" (giống ô 🌙 của hàng đợi). #}
+<form class="panel" method="post" action="/dangfacebook/tudong"
+      hx-post="/dangfacebook/tudong" hx-target="#luunote-fbauto" hx-swap="innerHTML">
+  <div class="phead"><h2>📘 Đăng Facebook — Page MimiAudio</h2></div>
+  <div class="chks">
+    <label class="chk">
+      <input type="checkbox" name="on" value="1" {{ 'checked' if fb.auto }}
+             onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+      📘 Dựng xong video thì TỰ lên lịch đăng Page
+    </label>
+    <span id="luunote-fbauto" class="luunote"></span>
+  </div>
+  <p class="hint">Chạy <b>song song</b> với đăng YouTube và không giữ hàng đợi
+     chính: dựng xong tập nào là xếp lịch Page tập đó rồi làm tiếp tập sau ngay,
+     y như đăng YouTube. Bật/tắt lúc nào cũng được, kể cả giữa mẻ đang chạy —
+     tập kế tiếp theo ngay.</p>
+  <noscript><button class="ghost small">Lưu</button></noscript>
+</form>
+
+<form class="panel" method="post" action="/dangfacebook/chay">
   <p class="hint">Xếp lịch <b>09:00 / 19:00 hằng ngày</b>, nối tiếp bài mới nhất
-     trên Page. Video lấy trong thư mục mỗi tập
-     (<code>facebook….mp4</code>), caption lấy từ SEO của tập.</p>
+     trên Page. Video lấy trong thư mục mỗi tập (<code>facebook….mp4</code>),
+     tiêu đề + mô tả lấy từ SEO của tập.</p>
 
   {% if fb.cooldown %}
     <p class="warn">⏸ Đang tạm ngưng gọi Facebook tới <b>{{ fb.cooldown }}</b> —
@@ -69,7 +88,7 @@
             hx-post="/dangfacebook/quet" hx-target="#luunote-facebook" hx-swap="innerHTML">🔄 Đối chiếu Page</button>
     <span id="luunote-facebook" class="luunote"></span>
   </div>
-  <p class="hint">Nên bấm 🔍 trước để soát kế hoạch ở nhật ký hàng đợi đăng.
+  <p class="hint">Nên bấm 🔍 trước để soát kế hoạch ở khối Hàng đợi.
      “Đã đăng hay chưa” ghi ở <b>sổ local</b> (<code>FACEBOOK/da_dang.json</code> +
      dấu <code>facebook_upload.json</code> trong thư mục tập) nên việc thường ngày
      chỉ hỏi Page đúng một việc: bài lên lịch/đăng mới nhất, để biết xếp tiếp từ

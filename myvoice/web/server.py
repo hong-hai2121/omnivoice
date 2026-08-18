@@ -32,7 +32,8 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, power, steps as steps_mod              # noqa: E402
-from .jobs import log, runner, upload_log, upload_runner   # noqa: E402
+from .jobs import (fb_log, fb_runner, log, runner,          # noqa: E402
+                   upload_log, upload_runner)
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -101,6 +102,9 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.setdefault("qu", upload_runner.state())
     ctx.setdefault("ulog", upload_log.tail(8))
     ctx.setdefault("upct", upload_log.percent)
+    # Hàng đợi Facebook chạy song song với hai hàng trên → trang nào cũng thấy.
+    ctx.setdefault("qf", fb_runner.state())
+    ctx.setdefault("flog", fb_log.tail(8))
     ctx.setdefault("slots", core.upload_slots_text())
     # Ô "🌙 Xong hết thì cho máy ngủ" nằm trong khối hàng đợi → trang nào có khối
     # đó cũng cần trạng thái này.
@@ -812,12 +816,12 @@ async def run_facebook_schedule(request: Request):
     """Nút '📘 Đăng các tập chưa đăng': chạy dang_video_facebook.py trong hàng đợi
     ĐĂNG (kế hoạch + tiến trình hiện ở nhật ký hàng đợi đăng)."""
     picked = _fb_picked(await request.form())
-    upload_runner.note("📘 Xếp việc lên lịch Facebook (9h/19h)"
-                       + (f" — các tập: {', '.join(picked)}." if picked
-                          else " — tất cả tập chưa đăng."))
-    upload_runner.enqueue("📘 Lên lịch Facebook (9h/19h)",
-                          steps_mod.facebook_steps(dry_run=False, episodes=picked))
-    return _saved(request, "/", "✓ Đã xếp việc — theo dõi ở nhật ký hàng đợi đăng")
+    fb_runner.note("📘 Xếp việc lên lịch Facebook (9h/19h)"
+                   + (f" — các tập: {', '.join(picked)}." if picked
+                      else " — tất cả tập chưa đăng."))
+    fb_runner.enqueue("📘 Lên lịch Facebook (9h/19h)",
+                      steps_mod.facebook_steps(dry_run=False, episodes=picked))
+    return _saved(request, "/", "✓ Đã xếp việc — theo dõi ở khối Hàng đợi")
 
 
 @app.post("/dangfacebook/xemtruoc")
@@ -826,19 +830,34 @@ async def preview_facebook_schedule(request: Request):
     picked = _fb_picked(await request.form())
     # light=True: việc xem trước không được tính vào heavy_busy — kẻo ô 🌙 (mặc
     # định bật) thấy "bận rồi rảnh" mà đếm 3 phút cho máy ngủ chỉ vì một cú bấm.
-    upload_runner.enqueue("📘 Kế hoạch Facebook (xem trước, không đăng)",
-                          steps_mod.facebook_steps(dry_run=True, episodes=picked),
-                          light=True)
-    return _saved(request, "/", "🔍 Đang xem — kế hoạch hiện ở nhật ký hàng đợi đăng")
+    fb_runner.enqueue("📘 Kế hoạch Facebook (xem trước, không đăng)",
+                      steps_mod.facebook_steps(dry_run=True, episodes=picked),
+                      light=True)
+    return _saved(request, "/", "🔍 Đang xem — kế hoạch hiện ở khối Hàng đợi")
 
 
 @app.post("/dangfacebook/quet")
 def scan_facebook_page(request: Request):
-    """Nút '🔄 Đọc lại Page': cập nhật page_cache.json → danh sách tập chưa đăng
-    vẽ lại theo. Cũng là việc nhẹ (chỉ gọi vài request đọc)."""
-    upload_runner.enqueue("🔄 Đọc lại Page Facebook",
-                          steps_mod.facebook_steps(only_scan=True), light=True)
-    return _saved(request, "/", "🔄 Đang đọc Page — xong thì tải lại trang")
+    """Nút '🔄 Đối chiếu Page': cập nhật sổ đã đăng → bảng tập chưa đăng vẽ lại
+    theo. Cũng là việc nhẹ (chỉ gọi vài request đọc)."""
+    fb_runner.enqueue("🔄 Đối chiếu Page Facebook",
+                      steps_mod.facebook_steps(only_scan=True), light=True)
+    return _saved(request, "/", "🔄 Đang đối chiếu — xong thì tải lại trang")
+
+
+@app.post("/dangfacebook/tudong")
+async def toggle_facebook_auto(request: Request):
+    """Ô "📘 Dựng xong thì tự lên lịch Facebook".
+
+    Form này CHỈ có mỗi ô đó nên suy được "vắng mặt = bỏ tick" (giống ô 🌙)."""
+    on = bool((await request.form()).get("on"))
+    core.save_web_settings({"fb_auto": on})
+    log("📘 Bật tự động lên lịch Facebook: dựng xong video tập nào là xếp lịch "
+        "Page tập đó, chạy song song với đăng YouTube." if on
+        else "📘 Đã tắt tự động lên lịch Facebook.")
+    return _saved(request, "/",
+                  "✓ Đã bật tự động lên lịch Facebook" if on
+                  else "✓ Đã tắt tự động lên lịch Facebook")
 
 
 # ── Trang Thumbnail ─────────────────────────────────────────────────────────
@@ -930,7 +949,9 @@ def api_state():
         # heavy_busy: việc "light" (xem kế hoạch Facebook…) không tính — kẻo ô ⏻
         # bên cửa sổ launcher coi đó là mẻ thật rồi hẹn tắt máy.
         "busy": runner.heavy_busy(),
-        "upload_busy": upload_runner.heavy_busy(),
+        # Gộp hàng đợi Facebook vào đây: cửa sổ launcher chỉ đọc hai khoá này, mà
+        # đang tải video lên Page thì TUYỆT ĐỐI không được tắt/ngủ máy.
+        "upload_busy": upload_runner.heavy_busy() or fb_runner.heavy_busy(),
         "current": (q.get("current") or {}).get("title", ""),
         "pending": len(q.get("pending") or []),
         "sleep_armed": sleep["armed"],
@@ -944,6 +965,7 @@ def partial_queue(request: Request):
         request, "_queue.html",
         {"q": runner.state(), "qu": upload_runner.state(),
          "ulog": upload_log.tail(8), "upct": upload_log.percent,
+         "qf": fb_runner.state(), "flog": fb_log.tail(8),
          "sleepq": power.watcher.state()})
 
 
@@ -1020,6 +1042,21 @@ def upload_queue_action(action: str, request: Request):
 @app.post("/hangdoidang/bo/{job_id}")
 def upload_queue_remove(job_id: int, request: Request):
     upload_runner.remove(job_id)
+    return _back(request)
+
+
+@app.post("/hangdoifb/{action}")
+def fb_queue_action(action: str, request: Request):
+    """Điều khiển RIÊNG hàng đợi Facebook — nó chạy song song với hai hàng kia."""
+    {"pause": fb_runner.pause, "resume": fb_runner.resume,
+     "skip": fb_runner.skip_current,
+     "stop": fb_runner.stop_all}.get(action, lambda: None)()
+    return _back(request)
+
+
+@app.post("/hangdoifb/bo/{job_id}")
+def fb_queue_remove(job_id: int, request: Request):
+    fb_runner.remove(job_id)
     return _back(request)
 
 

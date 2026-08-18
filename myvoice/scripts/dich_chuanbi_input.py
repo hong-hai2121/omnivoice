@@ -82,6 +82,9 @@ _WORD_FIXES = [
     ("ma túy", "mai thúy"),
     ("cưỡng hiếp", "cưỡng híp"),
     ("tỳ", "tì"),
+    # Chỉ chữ "ĩ" ĐỨNG MỘT MÌNH: khớp nguyên tiếng nên "kĩ", "sĩ", "nghĩ",
+    # "đĩa" không bị đụng — chỉ cái "ĩ" trơ trọi mới thành "ỹ".
+    ("ĩ", "ỹ"),
 ]
 
 

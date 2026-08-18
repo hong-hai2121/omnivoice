@@ -396,3 +396,13 @@ upload_log = LogTail()
 # Vẫn chỉ MỘT worker cho riêng hàng này: tải hai video cùng lúc chỉ chia nhỏ băng
 # thông chứ không nhanh hơn.
 upload_runner = JobRunner(tail=upload_log)
+
+# Hàng đợi thứ BA: lên lịch đăng Facebook. Tách khỏi hàng đợi đăng YouTube để hai
+# nơi chạy SONG SONG — dựng xong một tập là vừa đẩy lên YouTube vừa xếp lịch Page,
+# không ai đợi ai, và hàng đợi chính đi tiếp tập sau ngay.
+#
+# Nhưng vẫn chỉ MỘT worker cho riêng hàng này, không được bỏ: hai lần chạy script
+# Facebook cùng lúc sẽ cùng đọc "giờ lên lịch xa nhất" rồi cùng xếp vào ĐÚNG MỘT
+# khung giờ — hai tập chồng lên nhau trên Page.
+fb_log = LogTail()
+fb_runner = JobRunner(tail=fb_log)

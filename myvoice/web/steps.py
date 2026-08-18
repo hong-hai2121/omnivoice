@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from . import core
-from .jobs import Step, log, upload_runner
+from .jobs import Step, fb_runner, log, upload_runner
 
 RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
@@ -114,20 +114,47 @@ def facebook_steps(dry_run: bool = False, limit: int = 0, only_scan: bool = Fals
                  env=core.subprocess_env())]
 
 
-def _queue_upload_from_file(ep_file: Path) -> None:
-    """Đọc số tập mà runner vừa ghi ra rồi xếp việc đăng.
+def queue_facebook(episode: str) -> None:
+    """Xếp việc lên lịch Facebook cho 1 tập vào hàng đợi RIÊNG của Facebook.
+
+    Hàng riêng (fb_runner) chứ không dùng chung với hàng đợi đăng YouTube: hai
+    việc này chạy SONG SONG, tập vừa dựng xong thì vừa đẩy lên YouTube vừa xếp
+    lịch Page, không ai đợi ai — mà hàng đợi chính cũng đi tiếp tập sau ngay.
+    """
+    episode = str(episode).strip().zfill(2)
+    fb_runner.enqueue(f"📘 Lên lịch Facebook tập {episode}",
+                      facebook_steps(episodes=[episode]))
+
+
+def queue_after_build(episode: str, upload: bool) -> None:
+    """Dựng xong video một tập → xếp các việc ĐĂNG chạy song song.
+
+    `upload` là ô "⬆ tự động đăng" của khối YouTube (chốt lúc bấm chạy), còn
+    Facebook đọc cài đặt NGAY LÚC NÀY: mẻ chạy hàng giờ, đổi ý giữa chừng thì lần
+    tới có hiệu lực luôn, khỏi phải dừng cả mẻ.
+    """
+    if upload:
+        queue_upload(episode)
+    if core.facebook_auto():
+        queue_facebook(episode)
+
+
+def _queue_after_build_from_file(ep_file: Path, upload: bool) -> None:
+    """Đọc số tập mà runner vừa ghi ra rồi xếp các việc đăng.
 
     Phải đi qua file vì với nguồn là link/file, SỐ TẬP do chính runner cấp lúc chạy
     (theo manifest) — lúc dựng danh sách bước ở đây thì chưa ai biết là tập mấy.
     """
+    if not upload and not core.facebook_auto():
+        return                      # không bật tự đăng ở đâu cả → khỏi đọc file
     try:
         episode = ep_file.read_text(encoding="utf-8").strip()
     except OSError:
         episode = ""
     if not episode:
-        log("⚠️ Không rõ vừa dựng xong tập nào → chưa xếp được việc đăng YouTube.")
+        log("⚠️ Không rõ vừa dựng xong tập nào → chưa xếp được việc đăng.")
         return
-    queue_upload(episode)
+    queue_after_build(episode, upload)
 
 
 def build_steps(step_keys: list[str], source: str = "", episode: str = "",
@@ -158,11 +185,13 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
             if err:
                 return [], err
             argv += ["--tts-json", tts_json]
-            if upload:
-                TMP_DIR.mkdir(parents=True, exist_ok=True)
-                ep_file = TMP_DIR / f"ep_{int(time.time() * 1000)}.txt"
-                argv += ["--episode-out", str(ep_file)]
-                on_success = lambda f=ep_file: _queue_upload_from_file(f)   # noqa: E731
+            # Luôn xin runner ghi ra SỐ TẬP và luôn gắn callback, kể cả khi ô
+            # "⬆ tự động đăng" đang tắt: ô 📘 Facebook có thể đang bật (hai chế độ
+            # độc lập), mà callback mới là chỗ đọc lại cài đặt lúc chạy.
+            TMP_DIR.mkdir(parents=True, exist_ok=True)
+            ep_file = TMP_DIR / f"ep_{int(time.time() * 1000)}.txt"
+            argv += ["--episode-out", str(ep_file)]
+            on_success = lambda f=ep_file, u=upload: _queue_after_build_from_file(f, u)   # noqa: E731
         steps.append(Step(label=label, argv=argv, cwd=cwd, env=env,
                           # runner trả STOP_CODE khi CHỦ ĐỘNG dừng (vd dịch còn thiếu
                           # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
@@ -187,10 +216,9 @@ def resume_steps(missing: list[str], source: str, episode: str,
         if err:
             return [], err
         argv += ["--tts-json", tts_json]
-        if upload:
-            # Số tập đã biết sẵn (chạy tiếp thư mục có rồi) → nối thẳng việc đăng,
-            # không cần đi vòng qua file --episode-out như lúc nguồn là link mới.
-            on_success = lambda ep=episode: queue_upload(ep)    # noqa: E731
+        # Số tập đã biết sẵn (chạy tiếp thư mục có rồi) → nối thẳng việc đăng,
+        # không cần đi vòng qua file --episode-out như lúc nguồn là link mới.
+        on_success = lambda ep=episode, u=upload: queue_after_build(ep, u)   # noqa: E731
     label = "⏩ " + " → ".join(SINGLE_STEPS.get(k, k) for k in missing)
     return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
                  env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,),

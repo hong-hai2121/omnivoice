@@ -24,8 +24,17 @@ if __name__ == "__main__" and os.path.exists(_VENV_PYTHON) and \
     sys.exit()
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)   # để import được package omnivoice
+_SCRIPTS_DIR = os.path.join(_REPO_ROOT, "myvoice", "scripts")
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+# Đường sinh audio dùng CHUNG với bản tạo giọng thật — xem _synthesize.
+# Import module này KHÔNG mở cửa sổ nào (mainloop nằm trong __main__), và nó
+# đặt sẵn PYTORCH_CUDA_ALLOC_CONF trước lần import torch đầu tiên.
+import amain_taogiong_gui as tts   # noqa: E402  (phải sau khi vá sys.path)
 
 import re
+import json
 import queue
 import shutil
 import subprocess
@@ -44,6 +53,32 @@ OUT_DIR = VOICE_DIR / "_thu_giong"            # nơi lưu audio nghe thử
 OUT_DIR.mkdir(exist_ok=True)
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
 CHUNK_SIZE = 300                              # ký tự tối đa mỗi đoạn khi tách
+
+# ── NHỚ LỰA CHỌN GIỮA CÁC LẦN CHẠY ──────────────────────────────────────────────
+# Chỉ để nhớ giọng đang chọn, nên để riêng một file nhỏ trong _thu_giong/ thay vì
+# đụng vào taogiong_options.json của bản tạo giọng thật (GUI bên đó ghi đè cả dict,
+# khoá lạ thêm vào sẽ bị xoá ở lần lưu kế tiếp).
+SETTINGS_FILE = OUT_DIR / "thu_giong_settings.json"
+
+
+def load_settings() -> dict:
+    """Cài đặt đã nhớ; chưa có file hoặc file hỏng thì coi như rỗng."""
+    try:
+        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_settings(**kv) -> None:
+    """Ghi đè các khoá trong kv, giữ nguyên khoá khác. Lỗi ghi thì bỏ qua —
+    không nhớ được lựa chọn không đáng để chặn việc đang làm."""
+    try:
+        SETTINGS_FILE.write_text(
+            json.dumps({**load_settings(), **kv}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+    except Exception:
+        pass
 
 # ── NGHE THỬ THEO TỐC ĐỘ ────────────────────────────────────────────────────────
 # Đổi tốc độ bằng ffmpeg atempo (GIỮ NGUYÊN cao độ, không bị "chipmunk" như cách
@@ -67,7 +102,6 @@ UI = dict(
     log_bg="#fbfbfc", log_info="#475063", log_warn="#b07400", log_err="#d62828", ok="#1f9d55",
 )
 
-SPLIT_CHARS = re.compile(r"(?<=[.!?。！？\n])\s*")
 
 
 def list_voices():
@@ -79,22 +113,10 @@ def list_voices():
 
 
 def split_chunks(text, max_len=CHUNK_SIZE):
-    """Tách text thành các đoạn <= max_len ký tự, ưu tiên cắt ở cuối câu."""
-    parts = SPLIT_CHARS.split(text)
-    chunks, cur = [], ""
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        if len(cur) + len(part) + 1 <= max_len:
-            cur = (cur + " " + part).strip()
-        else:
-            if cur:
-                chunks.append(cur)
-            cur = part
-    if cur:
-        chunks.append(cur)
-    return chunks or [text.strip()]
+    """Tách đoạn y hệt bản tạo giọng thật (tts.split_chunks) — nghe thử mà chia
+    đoạn khác thì chỗ ngắt và nhịp đọc đã khác, so sánh giọng thành vô nghĩa.
+    Thêm lưới: văn bản không có dấu câu nào thì lấy nguyên cả bài làm 1 đoạn."""
+    return tts.split_chunks(text, max_len) or [text.strip()]
 
 
 def safe_stem(name: str) -> str:
@@ -173,6 +195,7 @@ class App:
         sb.grid(row=0, column=1, sticky="ns")
         self.listbox.configure(yscrollcommand=sb.set)
         self.listbox.bind("<Double-Button-1>", lambda _e: self._on_make_one())
+        self.listbox.bind("<<ListboxSelect>>", self._on_pick_voice)
         ttk.Button(left, text="↻ Tải lại danh sách",
                    command=self._reload_voices).grid(row=1, column=0, columnspan=2,
                                                      sticky="ew", pady=(8, 0))
@@ -254,12 +277,24 @@ class App:
         for v in voices:
             self.listbox.insert("end", v)
         if voices:
-            self.listbox.selection_set(0)
+            # Chọn lại giọng của lần trước; giọng đó bị xoá/đổi tên thì lùi về đầu.
+            nho = load_settings().get("voice")
+            i = voices.index(nho) if nho in voices else 0
+            self.listbox.selection_set(i)
+            self.listbox.activate(i)
+            self.listbox.see(i)
         self.status.set(f"Có {len(voices)} giọng trong {VOICE_DIR.name}/.")
 
     def _selected_voice(self):
         sel = self.listbox.curselection()
         return self.listbox.get(sel[0]) if sel else None
+
+    def _on_pick_voice(self, _e=None):
+        """Nhớ giọng NGAY lúc bấm, không đợi lúc thoát — app có bị tắt ngang
+        (hoặc đóng bằng nút X lúc đang tạo) thì lần sau vẫn mở đúng giọng đó."""
+        v = self._selected_voice()
+        if v and v != load_settings().get("voice"):
+            save_settings(voice=v)
 
     # ── log / queue ──
     def _log(self, msg, level="info"):
@@ -331,11 +366,11 @@ class App:
     def _xa_whisper_con(self):
         """Xả Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu (~1.6 GB fp16).
 
-        generate(ref_audio=...) không kèm ref_text nên OmniVoice nạp
-        whisper-large-v3-turbo để nghe file giọng mẫu, xong rồi nằm lì trong VRAM
-        tới khi tắt app. Gọi sau khi tạo xong CẢ LƯỢT (không gọi giữa các đoạn —
-        đoạn kế lại phải nạp lại). Tham chiếu duy nhất nằm ở thuộc tính này nên
-        gán None là chết hẳn, dọn ngay sau đó trả được thật.
+        Từ khi dùng chung _generate_chunk, Whisper chỉ vào VRAM ở LẦN ĐẦU gặp
+        một giọng mẫu (lúc dựng .prompt.pt); các lần sau nạp thẳng file .pt nên
+        không đụng tới nó. _voice_prompt cũng tự xả ngay sau khi dựng — hàm này
+        giữ lại làm lưới, phòng lần đầu đó và các bản prompt hỏng phải dựng lại.
+        Tham chiếu duy nhất nằm ở thuộc tính này nên gán None là chết hẳn.
         """
         if getattr(self._model, "_asr_pipe", None) is None:
             return
@@ -356,12 +391,23 @@ class App:
         self._don_vram()
 
     def _synthesize(self, text, voice_path):
-        """Sinh audio clone cho 1 giọng; ghép các đoạn nếu kịch bản dài."""
+        """Sinh audio clone cho 1 giọng; ghép các đoạn nếu kịch bản dài.
+
+        Gọi THẲNG _generate_chunk của bản tạo giọng thật, không tự gọi
+        model.generate nữa: nghe thử phải đi đúng đường mà bài thật sẽ đi, không
+        thì nghe xong chẳng suy ra được gì. Ba thứ khác nhau trước đây:
+          • khung thời lượng: giờ là vn_duration() đếm ÂM TIẾT, trước để model tự
+            đoán theo KÝ TỰ — đo được lệch nhịp đọc 17% so với 6%;
+          • language="vi" + num_step=NUM_STEP giống hệt bài thật;
+          • voice_clone_prompt dựng 1 lần rồi lưu .prompt.pt cạnh file giọng mẫu,
+            thay vì ref_audio= khiến mỗi đoạn phải chạy lại Whisper phiên âm.
+            Prompt này bài thật dùng lại được luôn.
+        """
         chunks = split_chunks(text.strip().lower())
         parts = []
         for j, c in enumerate(chunks):
             self._set_status(f"Đang tạo đoạn {j + 1}/{len(chunks)}...")
-            parts.append(self._model.generate(text=c, ref_audio=str(voice_path))[0])
+            parts.append(tts._generate_chunk(self._model, "clone", str(voice_path), c)[0])
         return np.concatenate(parts) if len(parts) > 1 else parts[0]
 
     # ── tạo cho 1 giọng ──

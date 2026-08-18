@@ -58,7 +58,11 @@ WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     epsrc="manual", thumb_photo="", thumb_doc=True,
                     # Link/đường dẫn đã chạy, mới nhất đứng đầu — ô Nguồn hiện
                     # thành nút bấm lại, khỏi phải đi tìm hay gõ lại.
-                    src_history=[])
+                    src_history=[],
+                    # 📘 Dựng xong video thì tự xếp lịch đăng Page Facebook. Để ở
+                    # đây (không phải taogiong_pipeline.json) vì đăng Facebook là
+                    # chức năng CHỈ bản web có, GUI không biết tới.
+                    fb_auto=True)
 
 # ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
 SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
@@ -497,6 +501,14 @@ def plan_episodes(sources: list[str], start_ep: str = "",
 FACEBOOK_DIR = BASE_DIR / "FACEBOOK"
 
 
+def facebook_auto() -> bool:
+    """Ô "📘 Dựng xong thì tự lên lịch Facebook" có đang bật không.
+
+    Đọc lại mỗi lần hỏi (không nhớ vào biến) để đổi ô giữa mẻ đang chạy là tập
+    kế tiếp theo ngay, khỏi phải dừng cả mẻ."""
+    return bool(load_web_settings().get("fb_auto", True))
+
+
 def facebook_pending() -> dict:
     """Danh sách tập CHƯA đăng Page cho khối “Đăng Facebook” trên trang.
 
@@ -566,7 +578,7 @@ def facebook_pending() -> dict:
 
     return {"rows": rows, "missing": missing, "scanned": bool(eps),
             "fetched": str(led.get("synced", "")), "on_page": len(seen),
-            "cooldown": cooldown}
+            "cooldown": cooldown, "auto": facebook_auto()}
 
 
 # ── Nội dung SEO để copy khi đăng video ─────────────────────────────────────
