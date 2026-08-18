@@ -87,11 +87,22 @@ không bị chặn gì. CỐ Ý không lưu (mỗi lần mở trang là trống/
 của từng tập), và "Số tập (chữ trên video)" (tự suy từ bộ đếm thumbnail + 1).
 
 **📘 Đăng Facebook** — khối cuối trang Home (dưới Đăng YouTube): **bảng các tập
-chưa đăng Page** (có video dọc trong thư mục tập, chưa thấy trên Page, chưa có
-dấu `facebook_upload.json`) + ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế
-hoạch (dry-run) · 🔄 đọc lại Page. Tick vài tập thì chỉ làm những tập đó, không
-tick ô nào = làm tất cả. Lịch xếp **9h/19h hằng ngày**, nối tiếp bài mới nhất
-trên Page.
+chưa đăng Page** kèm **giờ lên lịch dự kiến** và **tiêu đề đúng như bài sẽ đăng**,
+xem được TRƯỚC khi bấm chạy; ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế hoạch
+(dry-run) · 🔄 đối chiếu Page. Tick vài tập thì chỉ làm những tập đó, không tick ô
+nào = làm tất cả. Lịch xếp **9h/19h hằng ngày**, nối tiếp bài mới nhất trên Page.
+
+Giờ dự kiến tính bằng **đúng hàm** mà lúc chạy thật sẽ dùng (`plan_slots` của
+script, mốc suy từ sổ qua `known_anchor`) — bảng nói một đằng Facebook nhận một
+nẻo là kiểu sai khó chịu nhất, nên hai bên không được có hai phép tính. Lúc bấm
+chạy script vẫn hỏi Page một lần rồi chốt theo mốc muộn hơn.
+
+Tiêu đề bài đăng do **`compose_facebook_title`** (trong `YOUTUBE/thumbnail_gui.py`,
+cạnh `compose_youtube_title` / `compose_tiktok_title`) dựng: lấy **tiêu đề
+YouTube** rồi ghép **bộ hashtag của mô tả** vào cùng MỘT DÒNG. Lý do gộp: bảng tin
+Facebook cắt bớt bằng “Xem thêm”, hashtag nằm dưới mô tả dài coi như không ai
+thấy. Hashtag lấy từ mô tả SEO chứ không bịa thêm (`hashtags_in` bỏ trùng, bỏ dấu
+câu dính đuôi), nên muốn đổi bộ hashtag thì sửa ở SEO như mọi kênh khác.
 
 Cả ba nút chạy `myvoice/FACEBOOK/dang_video_facebook.py` trong **hàng đợi đăng**
 nên kế hoạch/tiến trình hiện ở nhật ký hàng đợi đăng, trang không tải lại. Hai
@@ -103,6 +114,53 @@ có trên Page đọc từ `FACEBOOK/page_cache.json` mà script ghi ra mỗi l�
 bấm 🔄 để cập nhật. Cache giữ **tập hợp** số tập chứ không chỉ số lớn nhất, nên
 kênh có lỗ (52 đã lên mà 49 chưa) vẫn phát hiện được. Token Page nằm ở `.env`
 gốc repo (`FB_PAGE_ID_MIMIAUDIO` / `FB_PAGE_ACCESS_TOKEN_MIMIAUDIO`).
+
+**Hai chốt an toàn của script, đừng gỡ khi sửa sau này:**
+
+*Mã lỗi phải NGƯNG HẲN, tuyệt đối không thử lại* — `4` (hạn mức app), `17` (hạn
+mức người dùng), `32` (hạn mức Page), `613` (gọi quá dày), `190` (token hỏng).
+Xem `FATAL_CODES` trong `dang_video_facebook.py`: gặp mã này thì bỏ luôn vòng
+thử lại 3 lần của bước tải khúc video, ngưng cả lượt chạy và thoát mã **2**
+(khác mã 1 của lỗi thường) — thử lại chỉ kéo dài thời gian bị Facebook chặn,
+còn token hỏng thì lần nào cũng hỏng như nhau.
+
+*“Đã đăng chưa” tra SỔ LOCAL, Page chỉ hỏi mốc thời gian* — `FACEBOOK/da_dang.json`
+là nguồn sự thật cho câu hỏi tập nào đã lên Page: script ghi vào đó ngay khi
+Facebook nhận video (và ghi thêm biên nhận `facebook_upload.json` trong thư mục
+tập). Việc thường ngày vì thế chỉ hỏi Page **đúng một việc** — bài lên lịch/đăng
+mới nhất, để biết xếp tiếp từ đâu (`latest_time`). Số request đo thật:
+
+| Thao tác | Request |
+|---|---|
+| Trang web dựng bảng tập chưa đăng | **0** (đọc file) |
+| 🔍 xem kế hoạch · 📘 đăng (phần lên kế hoạch) | **1–2** |
+| 🔄 đối chiếu Page (chỉ khi cần) | ~3 |
+| mỗi tập đăng thật | 1 mở phiên + số khúc do FB chia + 1 kết thúc |
+
+Nút 🔄 (`--sync`) quét Page rồi cập nhật sổ — chỉ cần khi có bài đăng tay ngoài
+script hoặc mất sổ. Lần quét đó dùng **quét gia tăng**: `/posts` và `/videos` trả
+bài mới nhất trước nên chỉ đọc tới bài đã thấy lần trước (mốc `newest` trong
+`page_cache.json`) rồi dừng — đo thử Page 1200 bài: lần đầu 25 request, các lần
+sau 3. `/scheduled_posts` đọc hết vì nó chỉ chứa bài CHỜ lịch (ít, đăng rồi là
+rời danh sách).
+
+*Chạm 75% hạn mức là TỰ NGƯNG, không đợi Meta chặn* — mọi response của Graph API
+kèm header `X-App-Usage` / `X-Page-Usage` / `X-Business-Use-Case-Usage`, mỗi cái
+có `call_count` · `total_cputime` · `total_time` tính theo %. `_resp()` đọc header
+TRƯỚC khi xử lý thân response, lấy chỉ số cao nhất; chạm `USAGE_LIMIT_PCT` (75)
+thì ném `UsageStop` — lớp này kế thừa `FbError` với `fatal=True` nên đi chung mọi
+nhánh "không thử lại" đã có. Mốc được chạy lại ghi ra `FACEBOOK/cooldown.json`
+(theo `estimated_time_to_regain_access` nếu Meta nói rõ, không thì hết giờ hiện
+tại) vì **mỗi lần bấm nút trên web là một tiến trình mới** — không ghi ra đĩa thì
+bấm lại vài lần là vẫn nã đủ request cho tới lúc bị chặn thật. Khối trên trang
+hiện dòng "⏸ Đang tạm ngưng tới HH:MM" trong lúc đó. Gặp mã chặn thật
+(4/17/32/613) cũng ghi mốc y hệt.
+
+*Đọc Page thiếu thì KHÔNG xếp lịch* — `page_state` trả thêm cờ `complete`; nguồn
+nào lỗi (kể cả lỗi tạm thời) hoặc còn trang chưa đọc là hạ cờ, và khi cờ hạ thì
+script từ chối đăng đồng thời **không ghi đè** `page_cache.json`. Lý do: đọc
+thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiếp là đăng trùng lên
+Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
 **🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*, **mặc định
 BẬT sẵn mỗi lần mở server** (an toàn vì phải từng thấy hàng đợi bận rồi mới đếm

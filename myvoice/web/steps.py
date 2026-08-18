@@ -98,8 +98,8 @@ def facebook_steps(dry_run: bool = False, limit: int = 0, only_scan: bool = Fals
     (stdin=DEVNULL), mà người dùng bấm nút trên web là đã xác nhận rồi."""
     argv = [core.python_exe(), "-u", str(FB_SCRIPT)]
     if only_scan:
-        argv.append("--only-scan")
-        label = "🔄 Đọc lại Page Facebook"
+        argv.append("--sync")
+        label = "🔄 Đối chiếu Page Facebook"
     elif dry_run:
         argv.append("--dry-run")
         label = "📘 Xem kế hoạch Facebook (không đăng)"

@@ -505,11 +505,14 @@ def facebook_pending() -> dict:
     trên Page lấy từ page_cache.json do chính script ghi ra mỗi lần chạy; chưa
     quét lần nào thì `scanned` = False và trang sẽ mời bấm nút 🔄.
     """
+    # SỔ ĐÃ ĐĂNG ghi ở local (FACEBOOK/da_dang.json) — script cập nhật mỗi lần
+    # đăng xong; nút 🔄 chỉ dùng khi cần đối chiếu lại với Page.
     try:
-        cache = json.loads((FACEBOOK_DIR / "page_cache.json").read_text(encoding="utf-8"))
+        led = json.loads((FACEBOOK_DIR / "da_dang.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        cache = {}
-    seen = {int(n) for n in cache.get("eps", [])}
+        led = {}
+    eps = led.get("eps") if isinstance(led.get("eps"), dict) else {}
+    seen = {int(n) for n in eps}
 
     rows, missing = [], []
     for r in sorted(episode_rows(), key=lambda r: int(r["episode"])):
@@ -529,10 +532,41 @@ def facebook_pending() -> dict:
             continue
         seo = seo_blocks(folder, r["episode"])
         rows.append({"episode": r["episode"], "video": video.name,
-                     "title": (seo or {}).get("title", ""),
-                     "size_mb": video.stat().st_size // 1_000_000})
-    return {"rows": rows, "missing": missing, "scanned": bool(cache),
-            "fetched": cache.get("fetched", ""), "on_page": len(seen)}
+                     # Tiêu đề ĐÚNG như bài sẽ đăng: tiêu đề YouTube + hashtag
+                     # của mô tả, gộp một dòng (compose_facebook_title).
+                     "title": (seo or {}).get("title_facebook") or (seo or {}).get("title", ""),
+                     "size_mb": video.stat().st_size // 1_000_000,
+                     "when": ""})            # điền ngay bên dưới
+
+    # Giờ dự kiến của từng tập — tính bằng ĐÚNG hàm mà lúc chạy thật sẽ dùng
+    # (plan_slots của script), nối sau mốc suy từ sổ. Import muộn để tránh vòng
+    # lặp import: chính script đó lại import module này.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_fb_sched", FACEBOOK_DIR / "dang_video_facebook.py")
+        fb = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fb)                     # type: ignore[union-attr]
+        for row, when in zip(rows, fb.plan_slots(len(rows), fb.known_anchor(led))):
+            row["when"] = when.strftime("%d/%m %H:%M")
+    except Exception:
+        pass                                  # không xem trước được thì để trống
+
+    # Mốc TẠM NGƯNG khi script chạm 75% hạn mức Graph API — hiện lên khối để
+    # người bấm biết vì sao nút đang đứng yên (script tự từ chối chạy tới giờ đó).
+    cooldown = ""
+    try:
+        cd = json.loads((FACEBOOK_DIR / "cooldown.json").read_text(encoding="utf-8"))
+        from datetime import datetime
+        until = datetime.fromisoformat(cd["until"])
+        if until > datetime.now():
+            cooldown = until.strftime("%H:%M")
+    except (OSError, ValueError, KeyError):
+        pass
+
+    return {"rows": rows, "missing": missing, "scanned": bool(eps),
+            "fetched": str(led.get("synced", "")), "on_page": len(seen),
+            "cooldown": cooldown}
 
 
 # ── Nội dung SEO để copy khi đăng video ─────────────────────────────────────
@@ -555,7 +589,10 @@ def seo_blocks(folder, episode: str) -> dict | None:
         desc = tg.add_episode_hashtag_top(desc, ep)
         desc = tg.add_full_hashtags(desc)
         tags = tg.cap_tags(seo.get("tags", []), ep, seo.get("title", ""))
+        # Tiêu đề bài Facebook: tiêu đề YouTube + hashtag của mô tả, gộp một dòng.
+        title_fb = tg.compose_facebook_title(seo.get("title", ""), ep, desc)
         return {"title": title or "", "title_tiktok": title_tiktok or "",
+                "title_facebook": title_fb or "",
                 "desc": desc or "", "tags": tags or ""}
     except Exception:
         return None

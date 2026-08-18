@@ -10,23 +10,32 @@
      trên Page. Video lấy trong thư mục mỗi tập
      (<code>facebook….mp4</code>), caption lấy từ SEO của tập.</p>
 
+  {% if fb.cooldown %}
+    <p class="warn">⏸ Đang tạm ngưng gọi Facebook tới <b>{{ fb.cooldown }}</b> —
+       lượt chạy trước đã dùng tới 75% hạn mức Graph API nên script tự nghỉ cho
+       khỏi bị Meta chặn. Bấm nút lúc này chỉ nhận lại đúng dòng báo trên.</p>
+  {% endif %}
+
   {% if not fb.scanned %}
-    <p class="warn">Chưa đọc Page lần nào — bấm <b>🔄 Đọc lại Page</b> để biết tập
-       nào đã lên rồi, xong tải lại trang.</p>
+    <p class="warn">Sổ đã đăng đang trống — bấm <b>🔄 Đối chiếu Page</b> một lần để
+       ghi nhận các tập đã lên Page từ trước, xong tải lại trang.</p>
   {% else %}
-    <p class="hint">Page đang có <b>{{ fb.on_page }}</b> tập · đọc lúc
-       {{ fb.fetched[11:16] }} ngày {{ fb.fetched[8:10] }}/{{ fb.fetched[5:7] }}.</p>
+    <p class="hint">Sổ local ghi <b>{{ fb.on_page }}</b> tập đã đăng{% if fb.fetched %} ·
+       đối chiếu Page lần cuối {{ fb.fetched[11:16] }} ngày
+       {{ fb.fetched[8:10] }}/{{ fb.fetched[5:7] }}{% endif %}.</p>
   {% endif %}
 
   {% if fb.rows %}
     <div class="tablewrap">
       <table class="grid">
-        <thead><tr><th></th><th>Tập</th><th>Tiêu đề</th><th>Video</th><th>Cỡ</th></tr></thead>
+        <thead><tr><th></th><th>Tập</th><th>Giờ lên lịch</th><th>Tiêu đề bài đăng</th>
+          <th>Video</th><th>Cỡ</th></tr></thead>
         <tbody>
           {% for r in fb.rows %}
             <tr>
               <td><input type="checkbox" name="fbtap" value="{{ r.episode }}"></td>
               <td class="epcell">{{ r.episode }}</td>
+              <td><b>{{ r.when or '—' }}</b></td>
               <td style="text-align:left">{{ r.title or '—' }}</td>
               <td style="text-align:left"><code>{{ r.video }}</code></td>
               <td>{{ r.size_mb }} MB</td>
@@ -35,7 +44,11 @@
         </tbody>
       </table>
     </div>
-    <p class="hint">{{ fb.rows|length }} tập chưa đăng. Không tick ô nào = làm tất cả.</p>
+    <p class="hint">{{ fb.rows|length }} tập chưa đăng. Không tick ô nào = làm tất cả.
+       Giờ trên là <b>dự kiến</b> tính từ lịch đã biết; lúc bấm chạy script hỏi lại
+       Page một lần rồi chốt (tick bớt tập thì các tập sau dồn lên khung trống).
+       Tiêu đề hiện đúng như bài sẽ đăng — tiêu đề YouTube kèm hashtag của mô tả
+       trên cùng một dòng.</p>
   {% else %}
     <p class="hint">Không có tập nào chờ đăng Page (đã lên hết, hoặc chưa dựng video dọc).</p>
   {% endif %}
@@ -53,11 +66,13 @@
     <button formaction="/dangfacebook/xemtruoc"
             hx-post="/dangfacebook/xemtruoc" hx-target="#luunote-facebook" hx-swap="innerHTML">🔍 Xem kế hoạch (không đăng)</button>
     <button formaction="/dangfacebook/quet" formnovalidate
-            hx-post="/dangfacebook/quet" hx-target="#luunote-facebook" hx-swap="innerHTML">🔄 Đọc lại Page</button>
+            hx-post="/dangfacebook/quet" hx-target="#luunote-facebook" hx-swap="innerHTML">🔄 Đối chiếu Page</button>
     <span id="luunote-facebook" class="luunote"></span>
   </div>
   <p class="hint">Nên bấm 🔍 trước để soát kế hoạch ở nhật ký hàng đợi đăng.
-     Facebook chỉ nhận lịch trong ~75 ngày tới — tập vượt hạn tự để lại lần sau.
-     Tập đã xếp có dấu <code>facebook_upload.json</code> trong thư mục tập nên
-     không bao giờ xếp trùng.</p>
+     “Đã đăng hay chưa” ghi ở <b>sổ local</b> (<code>FACEBOOK/da_dang.json</code> +
+     dấu <code>facebook_upload.json</code> trong thư mục tập) nên việc thường ngày
+     chỉ hỏi Page đúng một việc: bài lên lịch/đăng mới nhất, để biết xếp tiếp từ
+     đâu. Chỉ bấm 🔄 khi có bài đăng tay ngoài script hoặc sổ bị mất.
+     Facebook chỉ nhận lịch trong ~75 ngày tới — tập vượt hạn tự để lại lần sau.</p>
 </form>

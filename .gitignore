@@ -74,8 +74,13 @@ mt_cache/
 /myvoice/YOUTUBE/settings.json
 /myvoice/YOUTUBE/kenh_video_cache.json
 
-# Đăng Facebook: bản đọc Page gần nhất (tự sinh lại bằng nút 🔄 Đọc lại Page)
+# Đăng Facebook — trạng thái riêng của máy này:
+#   da_dang.json    sổ tập đã lên Page (dựng lại được bằng nút 🔄 Đối chiếu Page)
+#   page_cache.json bản đọc Page gần nhất của lần đối chiếu
+#   cooldown.json   mốc tạm ngưng khi chạm 75% hạn mức (tự hết hạn rồi tự xoá)
+/myvoice/FACEBOOK/da_dang.json
 /myvoice/FACEBOOK/page_cache.json
+/myvoice/FACEBOOK/cooldown.json
 
 # Log/stderr sinh ra khi chạy tay script (rỗng, không có giá trị lịch sử)
 *.log

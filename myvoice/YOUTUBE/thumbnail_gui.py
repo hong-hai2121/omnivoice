@@ -196,6 +196,39 @@ def compose_tiktok_title(title: str, ep: str) -> str:
     return f"{TIKTOK_TITLE_HEAD} {yt}" if yt else ""
 
 
+def hashtags_in(text: str) -> list[str]:
+    """Mọi hashtag trong đoạn văn, giữ NGUYÊN THỨ TỰ và bỏ trùng (không phân biệt
+    hoa thường). Dùng để bê bộ hashtag của mô tả lên dòng tiêu đề Facebook."""
+    out, seen = [], set()
+    for tag in re.findall(r"#[^\s#]+", text or ""):
+        tag = tag.rstrip(".,;:!?)]}\"'")      # dấu câu dính đuôi khi hashtag cuối câu
+        low = tag.lower()
+        if len(tag) > 1 and low not in seen:
+            seen.add(low)
+            out.append(tag)
+    return out
+
+
+def compose_facebook_title(title: str, ep: str, description: str = "") -> str:
+    """Tiêu đề bài đăng Facebook = TIÊU ĐỀ YOUTUBE + bộ hashtag của mô tả, GỘP
+    THÀNH MỘT DÒNG:
+
+        'Mimi audio Số 12 | Mẹ Chồng Nàng Dâu #MimiAudioSo12 #TruyenAudio #Full'
+
+    Vì sao gộp một dòng: bảng tin Facebook chỉ hiện vài dòng đầu rồi cắt bằng
+    “Xem thêm”, nên hashtag nằm dưới mô tả dài coi như không ai thấy. Đưa lên
+    cùng dòng tiêu đề thì vừa hiện ngay, vừa giống các bài đã đăng tay trên Page.
+
+    Hashtag lấy từ `description` (mô tả SEO đã chèn '#MimiAudioSo<tập>' ở đầu),
+    không tự bịa thêm — muốn đổi bộ hashtag thì sửa ở SEO như mọi kênh khác.
+    """
+    head = compose_youtube_title(title, ep)
+    if not head:
+        return ""
+    tags = [t for t in hashtags_in(description) if t.lower() not in head.lower()]
+    return f"{head} {' '.join(tags)}".strip() if tags else head
+
+
 def add_full_hashtags(description: str) -> str:
     """Bổ sung hashtag '#truyenfull #full' vào CUỐI mô tả (bỏ cái đã có)."""
     description = description or ""

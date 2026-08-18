@@ -951,6 +951,31 @@ def _free_asr(model):
     logging.info("🧹 Đã xả Whisper (phiên âm giọng mẫu) khỏi VRAM — trả lại ~1.6 GB.")
 
 
+def _do_omnivoice(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ"):
+    """Dỡ OmniVoice khỏi VRAM. Trả None để bên gọi gán lại vào biến `model`.
+
+    Dùng khi cần mượn VRAM cho việc khác giữa chừng (bước nghe lại bằng
+    large-v3-turbo). Nạp lại sau đó chỉ tốn thời gian trọng số — prompt giọng mẫu
+    đã lưu ra .prompt.pt nên không phải chạy lại Whisper phiên âm (_voice_prompt).
+    """
+    if model is None:
+        return None
+    import gc
+    import torch      # nạp trong hàm như chỗ khác trong file — GUI mở cho nhẹ
+
+    _free_asr(model)  # xả Whisper con của OmniVoice trước, nếu còn
+    del model
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+        free_b, total_b = torch.cuda.mem_get_info()
+        logging.info(f"🧹 Đã dỡ OmniVoice khỏi VRAM ({ly_do}) — còn trống "
+                     f"{free_b/2**30:.1f}/{total_b/2**30:.1f} GB.")
+    except Exception as e:
+        logging.warning(f"Không dọn được VRAM sau khi dỡ OmniVoice: {e}")
+    return None
+
+
 def _voice_prompt(model, ref_audio):
     """VoiceClonePrompt dựng 1 lần rồi dùng lại cho mọi đoạn — và mọi lần chạy sau.
 
@@ -1889,15 +1914,24 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # OmniVoice thi thoảng NUỐT nguyên câu ngắn (đo tập 49/53: 7–12% số
             # đoạn — hay dính nhất là câu thuật thoại "tôi hỏi"/"tôi gật đầu"
             # và cụm lặp "không chia. không chia."). detect_spike không thấy
-            # được vì audio vẫn sạch, chỉ thiếu lời. Đối chiếu ASR ↔ văn bản
-            # (CPU, không đụng VRAM) để bắt rồi render lại; lượt 2 nới khung
-            # thời lượng +6% cho model đủ chỗ nhét lại câu đã nuốt.
+            # được vì audio vẫn sạch, chỉ thiếu lời. Đối chiếu ASR ↔ văn bản để
+            # bắt rồi render lại; lượt 2 nới khung thời lượng +6% cho model đủ
+            # chỗ nhét lại câu đã nuốt.
+            #
+            # VRAM: bước nghe lại chạy large-v3-turbo trên GPU (nhanh hơn hẳn
+            # small/medium trên CPU của bản cũ), mà card 8GB không chứa nổi cả
+            # nó lẫn OmniVoice → luân phiên nhau: dỡ OmniVoice → quét → có đoạn
+            # thiếu thì trả VRAM của turbo, nạp lại OmniVoice render lại, rồi dỡ
+            # ra quét tiếp. Nạp lại chỉ tốn thời gian trọng số: prompt giọng mẫu
+            # đã lưu sẵn ra .prompt.pt nên KHÔNG phải chạy lại Whisper phiên âm
+            # giọng mẫu (xem _voice_prompt).
             try:
                 import taogiong_kiemtra_matchu as _mc
             except Exception as e:
                 _mc = None
                 logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ (thiếu module: {e})")
             if _mc is not None:
+                model = _do_omnivoice(model)
                 status_var.set("Kiểm tra mất chữ (ASR đối chiếu)...")
                 logging.info("Kiểm tra mất chữ toàn bộ chunks (ASR đối chiếu văn bản)...")
                 miss = _mc.quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info,
@@ -1908,6 +1942,14 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     logging.warning(
                         f"📢 {len(miss)} đoạn bị nuốt chữ → render lại "
                         f"(lượt {attempt}): {sorted(miss)}")
+                    # Trả VRAM của ASR rồi mới nạp OmniVoice — hai model không
+                    # cùng lúc nằm trên card 8GB được.
+                    _mc.giai_phong()
+                    status_var.set("Nạp lại OmniVoice để render lại...")
+                    logging.info("↩ Nạp lại OmniVoice để render các đoạn thiếu chữ...")
+                    model = OmniVoice.from_pretrained(
+                        "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
+                    )
                     for i in sorted(miss):
                         logging.info(f"  [{i:04d}] mất: {' | '.join(miss[i])}")
                         status_var.set(f"Render lại đoạn nuốt chữ {i+1}/{total} "
@@ -1922,6 +1964,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         if spikes:
                             logging.warning(f"  [{i:04d}] bản render lại có spike "
                                             f"tại {spikes[:3]}s — nghe kiểm tra tay.")
+                    model = _do_omnivoice(model)   # trả VRAM lại cho lượt quét sau
                     miss = _mc.quet_va_xac_minh(chunks, tmp_dir,
                                                 on_log=logging.info,
                                                 chi_cac_doan=set(miss),
@@ -1985,15 +2028,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # h264_nvenc) KHÔNG dùng tới OmniVoice. Model nạp mới mỗi lần chạy
             # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC — tránh
             # thiếu VRAM khiến dựng video rớt về CPU (libx264) chậm.
-            try:
-                import gc
-                _free_asr(model)      # phòng khi giọng mẫu dựng prompt mà chưa xả
-                del model
-                gc.collect()
-                torch.cuda.empty_cache()
-                logging.info("🧹 Đã giải phóng OmniVoice khỏi VRAM trước khi dựng video.")
-            except Exception as e:
-                logging.warning(f"Không giải phóng được OmniVoice: {e}")
+            # Bước kiểm tra mất chữ ở trên thường đã dỡ sẵn rồi (model = None) →
+            # lúc đó hàm này không làm gì.
+            model = _do_omnivoice(model, "trước khi dựng video")
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         ngang_video_path = None   # video ngang vừa dựng (để video dọc dùng lại nếu bật)

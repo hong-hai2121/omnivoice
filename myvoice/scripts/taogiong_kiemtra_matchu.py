@@ -10,18 +10,29 @@ không chia."). detect_spike KHÔNG thấy được lỗi này: audio vẫn sạ
 thiếu lời. Lỗi cũng không nằm ở duration — các đoạn bị ép khung ngắn nhất
 lại không mất chữ (đã kiểm chứng bằng ASR).
 
-CÁCH HOẠT ĐỘNG (2 tầng để vừa nhanh vừa ít báo oan):
-  1. Quét TẤT CẢ đoạn bằng model `small` (CPU int8, beam 1) — nhanh.
-  2. Đoạn bị nghi → xác minh lại bằng `medium` (beam 5) — chỉ vài đoạn nên
-     không tốn bao nhiêu. small nghe sót câu ngắn khá thường; medium chốt
-     thì mới tin (đo thực tế: small gắn cờ 25, medium xác nhận 24).
-Chạy hoàn toàn trên CPU — KHÔNG đụng vào VRAM đang chứa OmniVoice.
+CÁCH HOẠT ĐỘNG: một tầng duy nhất — quét TẤT CẢ đoạn bằng large-v3-turbo
+(GPU float16, beam 5).
+
+  Bản cũ là 2 tầng `small` → `medium` chạy CPU: small nghe sót câu ngắn nên hay
+  báo oan, phải medium chốt lại mới tin (đo thực tế: small gắn cờ 25, medium xác
+  nhận 24). turbo nghe đủ chuẩn để bỏ hẳn tầng lọc đó, và chạy trên GPU thì
+  nhanh hơn cả hai tầng CPU cộng lại.
+
+  Đánh đổi: không còn tầng xác minh nên đoạn báo oan sẽ bị render lại thừa. Mất
+  thêm ~thời gian sinh 1 đoạn chứ không hỏng gì — lượt kiểm kế tiếp vẫn soi lại
+  bản mới, và bản render lại của một đoạn vốn đã đủ chữ thì cũng đủ chữ.
+
+VRAM: bên gọi phải DỠ OmniVoice khỏi VRAM TRƯỚC khi gọi, và gọi giai_phong()
+để trả VRAM lại TRƯỚC khi nạp OmniVoice render lại — card 8GB không chứa nổi
+cả hai. Còn dưới VRAM_TOI_THIEU_GB trống thì tự lùi về CPU int8: chậm hơn
+nhiều nhưng vẫn ra kết quả, không chặn pipeline.
 
 DÙNG TRONG run_tts (amain_taogiong_gui.py):
     bad = quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info)
-    # bad = {idx: ["cụm chữ bị mất", ...]} → render lại các idx đó rồi gọi
-    # lại quet_va_xac_minh(..., chi_cac_doan=set(bad)) để kiểm lần nữa.
-    giai_phong()   # xong cả bài thì trả RAM (~2 GB cho small+medium)
+    # bad = {idx: ["cụm chữ bị mất", ...]} → giai_phong(), nạp lại OmniVoice,
+    # render lại các idx đó, dỡ OmniVoice, rồi gọi lại quet_va_xac_minh(...,
+    # chi_cac_doan=set(bad)) để kiểm lần nữa.
+    giai_phong()   # xong thì trả VRAM/RAM (~1.6 GB)
 """
 
 import re
@@ -29,14 +40,34 @@ import unicodedata
 import difflib
 from pathlib import Path
 
-# Cùng cache offline với nhandien_giongnoi (models--Systran--faster-whisper-*).
+# Cùng cache offline với nhandien_giongnoi (models--<chủ repo>--faster-whisper-*).
 WHISPER_CACHE = Path(__file__).resolve().parent / "whisper_cache"
 
-# Ngưỡng coi là MẤT CHỮ THẬT: mất >= 2 từ liền nhau. 1 từ lẻ thì ASR nghe
-# nhầm nhiều hơn là model nuốt (và mất 1 từ cũng khó nhận ra khi nghe).
-MAT_TOI_THIEU = 2
+# Ngưỡng coi là MẤT CHỮ THẬT: mất >= ngần này từ liền nhau.
+# Bản cũ để 2 vì tai `small` nghe sót từ lẻ quá thường, 1 từ là báo oan liên tục.
+# large-v3-turbo nghe chắc hơn nên hạ xuống 1 — bắt được cả trường hợp nuốt đúng
+# một từ. Đo trên bài 59 (161 đoạn): ngưỡng 2 gắn cờ 3 đoạn, ngưỡng 1 gắn 9 đoạn,
+# trong đó 2 đoạn là rác do cách viết (đã chặn bằng _khac_cach_viet bên dưới).
+MAT_TOI_THIEU = 1
 
-_MODELS = {}          # "small"/"medium" → WhisperModel (nạp 1 lần, dùng cả bài)
+# Từ chỉ số bằng chữ — để nhận ra "sáu mươi" và "60" là một, không phải mất chữ.
+_SO_BANG_CHU = {
+    "không", "một", "mốt", "hai", "ba", "bốn", "tư", "năm", "lăm", "sáu",
+    "bảy", "bẩy", "tám", "chín", "mười", "mươi", "trăm", "nghìn", "ngàn",
+    "triệu", "tỷ", "tỉ", "linh", "lẻ", "rưỡi",
+}
+
+# Model DUY NHẤT dùng để nghe lại. beam 5 vì không còn tầng xác minh phía sau
+# nữa — cờ gắn ở đây là quyết định render lại luôn.
+MODEL_NAME = "large-v3-turbo"
+BEAM_SIZE = 5
+
+# Còn ít hơn ngần này VRAM trống thì nạp lên GPU chỉ tổ tràn sang RAM (chậm hơn
+# cả CPU) — lùi về CPU cho chắc. turbo float16 chiếm ~1.6 GB, chừa dư một ít.
+VRAM_TOI_THIEU_GB = 2.5
+
+_MODELS = {}          # tên model → WhisperModel (nạp 1 lần cho mỗi lượt quét)
+_THIET_BI = ""        # "cuda/float16" | "cpu/int8" — chỉ để ghi log
 
 _W = re.compile(r"[0-9a-zà-ỹ]+")
 _DIGIT_CHU = re.compile(r"(?<=\d)(?=[a-zà-ỹ])|(?<=[a-zà-ỹ])(?=\d)")
@@ -50,28 +81,75 @@ def _norm_words(s):
     return _W.findall(s)
 
 
-def _get_model(name):
-    """Nạp faster-whisper `name` trên CPU int8 từ cache offline (nạp 1 lần).
-    Trả None nếu thiếu thư viện/model — bên gọi tự bỏ qua bước kiểm tra."""
+def _chon_thiet_bi():
+    """(device, compute_type): GPU nếu CÒN ĐỦ VRAM TRỐNG, không thì CPU.
+
+    Đo VRAM trống ngay lúc gọi chứ không chỉ hỏi cuda.is_available(): bên gọi đã
+    dỡ OmniVoice ra rồi thì trống thật, còn nếu quên dỡ (hoặc Chrome đang ăn hết)
+    thì lùi về CPU vẫn hơn là nạp lên rồi tràn sang RAM.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free_b, _ = torch.cuda.mem_get_info()
+            if free_b / 2**30 >= VRAM_TOI_THIEU_GB:
+                return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
+
+
+def _get_model(name=MODEL_NAME):
+    """Nạp faster-whisper `name` từ cache offline (nạp 1 lần cho mỗi lượt quét).
+    Ném RuntimeError nếu thiếu thư viện/model — bên gọi tự bỏ qua bước kiểm tra."""
+    global _THIET_BI
     if name in _MODELS:
         return _MODELS[name]
+    device, compute = _chon_thiet_bi()
     try:
         from faster_whisper import WhisperModel
-        model = WhisperModel(name, device="cpu", compute_type="int8",
+        model = WhisperModel(name, device=device, compute_type=compute,
                              download_root=str(WHISPER_CACHE),
                              local_files_only=True)
     except Exception as e:
         _MODELS[name] = None
         raise RuntimeError(f"không nạp được faster-whisper '{name}': {e}")
     _MODELS[name] = model
+    _THIET_BI = f"{device}/{compute}"
     return model
 
 
 def giai_phong():
-    """Trả RAM của các model đã nạp (gọi khi xong cả bài)."""
+    """Trả VRAM/RAM của model đã nạp.
+
+    PHẢI gọi trước khi nạp lại OmniVoice để render lại: card 8GB không đủ chỗ cho
+    cả OmniVoice lẫn turbo. empty_cache() mới thực sự trả VRAM về cho driver —
+    bỏ tham chiếu không thôi thì allocator của torch vẫn giữ khối đó.
+    """
     import gc
     _MODELS.clear()
     gc.collect()
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _khac_cach_viet(ref_span, hyp_span):
+    """True nếu hai bên chỉ khác CÁCH VIẾT chứ không thiếu lời.
+
+    Ở ngưỡng 1 từ, hai kiểu này chiếm phần lớn báo oan:
+      • ngắt từ khác nhau : "r d" ↔ "rd", "bâng khuâng" ↔ "bângkhuâng"
+        → nối liền hai bên mà bằng nhau thì audio vẫn đủ chữ.
+      • số viết chữ vs viết số : kịch bản "sáu mươi", whisper nghe ra "60".
+    """
+    if not hyp_span:
+        return False                      # không nghe được gì → mất thật
+    if "".join(ref_span) == "".join(hyp_span):
+        return True
+    return (all(t in _SO_BANG_CHU for t in ref_span)
+            and any(c.isdigit() for t in hyp_span for c in t))
 
 
 def _tim_cum_mat(ref_text, wav_path, model, beam_size):
@@ -94,6 +172,8 @@ def _tim_cum_mat(ref_text, wav_path, model, beam_size):
         if tag == "delete" and (i2 - i1) >= MAT_TOI_THIEU:
             cum_mat.append(" ".join(ref_w[i1:i2]))
         elif tag == "replace" and (i2 - i1) - (j2 - j1) >= MAT_TOI_THIEU:
+            if _khac_cach_viet(ref_w[i1:i2], hyp_w[j1:j2]):
+                continue
             cum_mat.append(" ".join(ref_w[i1:i2]) + " → " + " ".join(hyp_w[j1:j2]))
     return cum_mat
 
@@ -107,52 +187,33 @@ def quet_va_xac_minh(chunks, tmp_dir, on_log=None, chi_cac_doan=None,
                    render lại). None = kiểm tất cả.
     status       : callable(str) cập nhật dòng trạng thái GUI (tùy chọn).
 
-    Trả {idx: [cụm chữ bị mất]} — CHỈ gồm đoạn medium đã xác nhận.
+    Trả {idx: [cụm chữ bị mất]}.
     Thiếu thư viện/model thì cảnh báo rồi trả {} (không chặn pipeline).
     """
     log = on_log or (lambda *_: None)
     tmp_dir = Path(tmp_dir)
     try:
-        small = _get_model("small")
+        model = _get_model()
     except RuntimeError as e:
         log(f"⚠️ Bỏ qua kiểm tra mất chữ: {e}")
         return {}
 
     ds = sorted(chi_cac_doan) if chi_cac_doan else range(len(chunks))
     ds = [i for i in ds if (tmp_dir / f"{i:04d}.wav").exists()]
+    log(f"🎧 Nghe lại {len(ds)} đoạn bằng {MODEL_NAME} ({_THIET_BI}, beam {BEAM_SIZE})...")
 
-    # Tầng 1: quét nhanh bằng small. Lỗi lẻ ở 1 file (wav hỏng…) chỉ cảnh báo
-    # rồi bỏ qua đoạn đó — không được làm sập cả worker tạo giọng.
-    nghi = {}
+    # Lỗi lẻ ở 1 file (wav hỏng…) chỉ cảnh báo rồi bỏ qua đoạn đó — không được
+    # làm sập cả worker tạo giọng.
+    mat = {}
     for n, i in enumerate(ds):
         if status and (n % 10 == 0 or len(ds) < 20):
             status(f"Kiểm tra mất chữ {n + 1}/{len(ds)}...")
         try:
-            cum = _tim_cum_mat(chunks[i], tmp_dir / f"{i:04d}.wav", small, beam_size=1)
+            cum = _tim_cum_mat(chunks[i], tmp_dir / f"{i:04d}.wav", model,
+                               beam_size=BEAM_SIZE)
         except Exception as e:
             log(f"⚠️ Không kiểm được đoạn {i:04d}: {e}")
             continue
-        if cum:
-            nghi[i] = cum
-    if not nghi:
-        return {}
-
-    # Tầng 2: chốt lại bằng medium (chỉ các đoạn bị nghi)
-    try:
-        medium = _get_model("medium")
-    except RuntimeError as e:
-        log(f"⚠️ Không nạp được medium để xác minh ({e}) — dùng kết quả small.")
-        return nghi
-
-    mat = {}
-    for n, i in enumerate(sorted(nghi)):
-        if status:
-            status(f"Xác minh mất chữ {n + 1}/{len(nghi)}...")
-        try:
-            cum = _tim_cum_mat(chunks[i], tmp_dir / f"{i:04d}.wav", medium, beam_size=5)
-        except Exception as e:
-            log(f"⚠️ Không xác minh được đoạn {i:04d} ({e}) — giữ kết quả small.")
-            cum = nghi[i]
         if cum:
             mat[i] = cum
     return mat
