@@ -302,7 +302,7 @@ class App:
 
     # ── model ──
     def _ensure_model(self):
-        """Nạp model OmniVoice 1 lần (lần đầu sẽ chậm)."""
+        """Nạp model OmniVoice 1 lần (lần đầu sẽ chậm), giữ lại cho các lượt sau."""
         if self._model is not None:
             return
         import torch
@@ -315,6 +315,45 @@ class App:
             "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16)
         self._sr = self._model.sampling_rate
         self._log("✅ Đã tải model.", "ok")
+
+    @staticmethod
+    def _don_vram():
+        """gc + empty_cache. Chỉ gọi khi đã bỏ HẾT tham chiếu tới thứ cần xả —
+        dọn lúc model còn sống thì torch chẳng trả được khối nào cho driver."""
+        import gc
+        gc.collect()
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _xa_whisper_con(self):
+        """Xả Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu (~1.6 GB fp16).
+
+        generate(ref_audio=...) không kèm ref_text nên OmniVoice nạp
+        whisper-large-v3-turbo để nghe file giọng mẫu, xong rồi nằm lì trong VRAM
+        tới khi tắt app. Gọi sau khi tạo xong CẢ LƯỢT (không gọi giữa các đoạn —
+        đoạn kế lại phải nạp lại). Tham chiếu duy nhất nằm ở thuộc tính này nên
+        gán None là chết hẳn, dọn ngay sau đó trả được thật.
+        """
+        if getattr(self._model, "_asr_pipe", None) is None:
+            return
+        self._model._asr_pipe = None
+        self._don_vram()
+        self._log("🧹 Đã xả Whisper phiên âm giọng mẫu khỏi VRAM (~1.6 GB).")
+
+    def _nha_model(self):
+        """Nhả hẳn OmniVoice khỏi VRAM (đóng cửa sổ). Bấm tạo lại thì tự nạp lại.
+
+        Bỏ tham chiếu TRƯỚC (self._model = None) rồi mới dọn — làm ngược thứ tự
+        thì trọng số vẫn còn sống, dọn xong không trả được gì cho driver.
+        """
+        if self._model is None:
+            return
+        self._xa_whisper_con()
+        self._model = None
+        self._don_vram()
 
     def _synthesize(self, text, voice_path):
         """Sinh audio clone cho 1 giọng; ghép các đoạn nếu kịch bản dài."""
@@ -359,6 +398,7 @@ class App:
             self._set_status(f"Lỗi: {e}")
             out = None
         finally:
+            self._xa_whisper_con()   # xong lượt → Whisper hết việc, trả VRAM
             self.q.put(("done", str(out) if out else None))
 
     # ── tạo cho tất cả giọng ──
@@ -403,6 +443,7 @@ class App:
             self._log(f"❌ Lỗi: {e}", "err")
             self._set_status(f"Lỗi: {e}")
         finally:
+            self._xa_whisper_con()   # xong cả mẻ → Whisper hết việc, trả VRAM
             self.q.put(("done", None))
 
     # ── tốc độ nghe thử ──
@@ -508,7 +549,19 @@ class App:
 
 def main():
     root = tk.Tk()
-    App(root)
+    app = App(root)
+
+    # Nhả model TRƯỚC khi Tk đóng: để CUDA tự dọn lúc trình thông dịch thoát thì
+    # thi thoảng treo/nổ lỗi driver trên Windows, mà máy chấm dứt tiến trình chậm
+    # thì card vẫn kẹt vài GB trong lúc bên kia (tạo giọng, dựng video) đang chờ.
+    def _thoat():
+        try:
+            app._nha_model()
+        except Exception:
+            pass
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", _thoat)
     root.mainloop()
 
 

@@ -9,6 +9,10 @@ bịa với input ngắn). Xem logic ghép ở dich_hanviet.translate_han().
 - Model cache tại scripts/mt_cache → nạp OFFLINE (local_files_only); lần đầu chưa
   có cache thì tự tải (~300MB) rồi lưu lại.
 - Nạp LƯỜI: chỉ tải model khi thật sự có đoạn cần dịch.
+- Xả TAY: gọi giai_phong() khi dịch xong cả bài (dich_hanviet.translate_han tự
+  gọi). Module này bị import THẲNG vào tiến trình GUI, mà GUI thì sống suốt buổi
+  → không xả là ~0.4 GB VRAM nằm lì tới khi tắt app, đúng lúc bước sau cần chỗ
+  cho OmniVoice. Xả rồi vẫn dịch lại được: _ensure() tự nạp lần sau.
 - Mọi lỗi (thiếu model/thiếu mạng lần đầu…) → trả None để bên gọi tự fallback.
 """
 
@@ -53,6 +57,27 @@ def _ensure() -> bool:
 
 def available() -> bool:
     return _ensure()
+
+
+def giai_phong():
+    """Nhả model khỏi VRAM/RAM. Gọi lại nhiều lần vô hại; nạp lại được ngay sau đó.
+
+    Thứ tự bắt buộc: bỏ HẾT tham chiếu (_model/_tok) rồi mới gc.collect() +
+    empty_cache(), không thì allocator của torch vẫn giữ nguyên khối đó.
+    Đặt _state về "unknown" chứ không phải "failed" — lần sau còn nạp lại.
+    """
+    global _tok, _model, _dev, _state
+    if _model is None and _tok is None:
+        return
+    _tok = _model = _dev = None
+    _state = "unknown"
+    import gc
+    gc.collect()
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def translate(zh_list):

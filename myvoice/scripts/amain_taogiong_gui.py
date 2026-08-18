@@ -926,6 +926,30 @@ NUM_STEP = 32
 VRAM_CLEAN_EVERY = 20
 
 
+def _tra_vram(ly_do=""):
+    """Trả các khối VRAM mà torch đang GIỮ LẠI về cho driver, rồi ghi mức trống.
+
+    Bộ cấp phát của torch giữ lại khối đã cắt để tái dùng: bỏ tham chiếu tới
+    model thì tensor chỉ về tay allocator, còn driver (và mọi tiến trình khác:
+    NVENC, faster-whisper, Chrome) vẫn thấy card đầy. Chỉ empty_cache() mới trả
+    thật.
+
+    ĐIỀU KIỆN DÙNG: gọi khi đã KHÔNG CÒN tham chiếu nào tới model. Gọi lúc model
+    vẫn còn sống thì hàm này gần như không trả được gì — mà dòng log lại in ra
+    một con số đẹp, nên rất dễ tưởng đã dọn xong.
+    """
+    import gc
+    import torch      # nạp trong hàm như chỗ khác trong file — GUI mở cho nhẹ
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+        free_b, total_b = torch.cuda.mem_get_info()
+        logging.info(f"🧹 Đã trả VRAM{f' ({ly_do})' if ly_do else ''} — còn trống "
+                     f"{free_b/2**30:.1f}/{total_b/2**30:.1f} GB.")
+    except Exception as e:
+        logging.warning(f"Không dọn được VRAM ({ly_do or 'không rõ bước'}): {e}")
+
+
 def _free_asr(model):
     """Xả model Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu.
 
@@ -934,45 +958,42 @@ def _free_asr(model):
     LẦN rồi nằm lì trong VRAM tới hết bài. Trên card 8GB chính nó là phần đẩy
     tiến trình sang vùng tràn ra RAM.
 
+    Ở đây xả được TRIỆT ĐỂ vì tham chiếu DUY NHẤT tới pipeline nằm trong chính
+    thuộc tính này: gán None là refcount về 0 ngay, nên _tra_vram() gọi liền sau
+    đó trả được thật (khác hẳn trường hợp _do_omnivoice, xem chú thích ở đó).
+
     Đây là Whisper của RIÊNG OmniVoice (transformers pipeline). Whisper của bước
     nhận diện tiếng Trung và bước gắn phụ đề là faster-whisper, đã có
     nhandien_giongnoi.free_model() lo — không đụng gì tới nhau.
     """
     if getattr(model, "_asr_pipe", None) is None:
         return
-    import gc
-    import torch
     model._asr_pipe = None
-    gc.collect()
-    try:
-        torch.cuda.empty_cache()
-    except Exception:
-        pass
-    logging.info("🧹 Đã xả Whisper (phiên âm giọng mẫu) khỏi VRAM — trả lại ~1.6 GB.")
+    _tra_vram("xả Whisper phiên âm giọng mẫu, ~1.6 GB")
 
 
 def _do_omnivoice(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ"):
-    """Dỡ OmniVoice khỏi VRAM. Trả None để bên gọi gán lại vào biến `model`.
+    """Bỏ tham chiếu tới OmniVoice. Trả None để bên gọi gán lại vào biến `model`.
 
-    Dùng khi cần mượn VRAM cho việc khác giữa chừng (bước nghe lại bằng
-    large-v3-turbo). Nạp lại sau đó chỉ tốn thời gian trọng số — prompt giọng mẫu
-    đã lưu ra .prompt.pt nên không phải chạy lại Whisper phiên âm (_voice_prompt).
+    ⚠️ PHẢI viết ĐÚNG HAI DÒNG, ĐÚNG THỨ TỰ NÀY:
+
+        model = _do_omnivoice(model, "lý do")   # ① bên gọi bỏ tham chiếu của mình
+        _tra_vram()                             # ② giờ mới trả VRAM cho driver
+
+    Vì sao phải tách đôi: `del model` bên trong hàm chỉ bỏ tham chiếu CỦA HÀM,
+    biến `model` bên gọi vẫn trỏ vào đúng model đó nên trọng số chưa chết. Bản
+    cũ gộp cả empty_cache() vào trong hàm này → lúc dọn thì model VẪN CÒN SỐNG,
+    dọn xong chẳng trả được gì, mà dòng log lại in mức trống ĐO TRƯỚC KHI dỡ nên
+    nhìn cứ tưởng đã xong. Hậu quả thật trên card 8GB: taogiong_kiemtra_matchu
+    đo mem_get_info() thấy card còn đầy nên lùi ASR về CPU (chậm hơn nhiều lần),
+    và NVENC dựng video cũng thiếu chỗ nên rớt về libx264.
+
+    Nạp lại sau đó chỉ tốn thời gian đọc trọng số — prompt giọng mẫu đã lưu ra
+    .prompt.pt nên không phải chạy lại Whisper phiên âm (xem _voice_prompt).
     """
-    if model is None:
-        return None
-    import gc
-    import torch      # nạp trong hàm như chỗ khác trong file — GUI mở cho nhẹ
-
-    _free_asr(model)  # xả Whisper con của OmniVoice trước, nếu còn
-    del model
-    gc.collect()
-    try:
-        torch.cuda.empty_cache()
-        free_b, total_b = torch.cuda.mem_get_info()
-        logging.info(f"🧹 Đã dỡ OmniVoice khỏi VRAM ({ly_do}) — còn trống "
-                     f"{free_b/2**30:.1f}/{total_b/2**30:.1f} GB.")
-    except Exception as e:
-        logging.warning(f"Không dọn được VRAM sau khi dỡ OmniVoice: {e}")
+    if model is not None:
+        _free_asr(model)   # xả Whisper con của OmniVoice trước, nếu còn
+        logging.info(f"📤 Dỡ OmniVoice khỏi VRAM ({ly_do})...")
     return None
 
 
@@ -1763,6 +1784,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
     from omnivoice.utils.common import get_best_device
 
     failed = False
+    model = None        # khai báo sớm: khối finally dưới cùng luôn dọn được VRAM
 
     # Bước dựng video báo tiến trình qua THANH (progress_var) + dòng trạng thái,
     # KHÔNG spam % ra nhật ký. label đứng trước, % chạy trên thanh.
@@ -1932,6 +1954,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ (thiếu module: {e})")
             if _mc is not None:
                 model = _do_omnivoice(model)
+                _tra_vram()          # dỡ xong mới thật sự còn chỗ cho turbo
                 status_var.set("Kiểm tra mất chữ (ASR đối chiếu)...")
                 logging.info("Kiểm tra mất chữ toàn bộ chunks (ASR đối chiếu văn bản)...")
                 miss = _mc.quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info,
@@ -1965,6 +1988,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                             logging.warning(f"  [{i:04d}] bản render lại có spike "
                                             f"tại {spikes[:3]}s — nghe kiểm tra tay.")
                     model = _do_omnivoice(model)   # trả VRAM lại cho lượt quét sau
+                    _tra_vram()
                     miss = _mc.quet_va_xac_minh(chunks, tmp_dir,
                                                 on_log=logging.info,
                                                 chi_cac_doan=set(miss),
@@ -2031,6 +2055,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # Bước kiểm tra mất chữ ở trên thường đã dỡ sẵn rồi (model = None) →
             # lúc đó hàm này không làm gì.
             model = _do_omnivoice(model, "trước khi dựng video")
+            _tra_vram()
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
         ngang_video_path = None   # video ngang vừa dựng (để video dọc dùng lại nếu bật)
@@ -2363,6 +2388,19 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         logging.error(f"Lỗi: {e}")
         status_var.set(f"Lỗi: {e}")
     finally:
+        # Lỗi giữa chừng (hết VRAM, ffmpeg chết, người dùng đóng tab…) thì model
+        # vẫn nằm nguyên trong VRAM — mà GUI thì sống mãi, nên card kẹt tới lần
+        # chạy sau. Chạy trót lọt thì model đã là None, đoạn này không tốn gì.
+        if model is not None:
+            model = _do_omnivoice(model, "dọn sau khi lỗi")
+            _tra_vram()
+        # Lỗi ngay trong lượt quét mất chữ thì large-v3-turbo cũng còn nằm đó.
+        # giai_phong() gọi lại nhiều lần vô hại nên cứ gọi cho chắc.
+        try:
+            import taogiong_kiemtra_matchu as _mc_clean
+            _mc_clean.giai_phong()
+        except Exception:
+            pass
         pause_event.set()
         btn_run.config(state="normal")
         btn_pause.config(state="disabled", text="⏸  Tạm dừng")

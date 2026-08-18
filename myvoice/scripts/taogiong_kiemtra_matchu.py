@@ -101,9 +101,15 @@ def _chon_thiet_bi():
 
 def _get_model(name=MODEL_NAME):
     """Nạp faster-whisper `name` từ cache offline (nạp 1 lần cho mỗi lượt quét).
-    Ném RuntimeError nếu thiếu thư viện/model — bên gọi tự bỏ qua bước kiểm tra."""
+    Ném RuntimeError nếu thiếu thư viện/model — bên gọi tự bỏ qua bước kiểm tra.
+
+    KHÔNG nhớ lần hỏng vào _MODELS: bản cũ ghi `_MODELS[name] = None` rồi mới
+    raise, nên lần gọi sau rơi vào nhánh cache và trả về None thay vì ném lỗi —
+    bên gọi tưởng nạp được, tới `model.transcribe(...)` mới vỡ bằng AttributeError
+    khó lần. Hỏng thì cứ để trống, lượt sau thử lại (nạp hỏng gần như tức thì).
+    """
     global _THIET_BI
-    if name in _MODELS:
+    if _MODELS.get(name) is not None:
         return _MODELS[name]
     device, compute = _chon_thiet_bi()
     try:
@@ -112,7 +118,6 @@ def _get_model(name=MODEL_NAME):
                              download_root=str(WHISPER_CACHE),
                              local_files_only=True)
     except Exception as e:
-        _MODELS[name] = None
         raise RuntimeError(f"không nạp được faster-whisper '{name}': {e}")
     _MODELS[name] = model
     _THIET_BI = f"{device}/{compute}"
@@ -120,11 +125,18 @@ def _get_model(name=MODEL_NAME):
 
 
 def giai_phong():
-    """Trả VRAM/RAM của model đã nạp.
+    """Trả VRAM/RAM của model đã nạp. Gọi lại nhiều lần vô hại.
 
     PHẢI gọi trước khi nạp lại OmniVoice để render lại: card 8GB không đủ chỗ cho
-    cả OmniVoice lẫn turbo. empty_cache() mới thực sự trả VRAM về cho driver —
-    bỏ tham chiếu không thôi thì allocator của torch vẫn giữ khối đó.
+    cả OmniVoice lẫn turbo.
+
+    Thứ tự ở đây mới đúng: bỏ tham chiếu (_MODELS.clear()) TRƯỚC, gc.collect()
+    gọi hàm huỷ của model, rồi empty_cache() mới trả được khối về cho driver.
+    Bỏ tham chiếu không thôi thì allocator của torch vẫn giữ khối đó, còn dọn
+    trước khi bỏ tham chiếu thì chẳng trả được gì (xem _do_omnivoice bên
+    amain_taogiong_gui). Riêng faster-whisper chạy trên CTranslate2 — bộ nhớ của
+    nó nằm NGOÀI allocator của torch nên phần trả thật nằm ở gc.collect();
+    empty_cache() chỉ để dọn nốt phần của torch, giữ cho chắc.
     """
     import gc
     _MODELS.clear()

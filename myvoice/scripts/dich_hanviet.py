@@ -149,6 +149,19 @@ def translate_han(text: str, on_log=None) -> tuple[str, int, int]:
             n_am += sum(1 for c in hans if m.get(c))
         last = ce
     res.append(text[last:])
+
+    # Dịch xong cả bài thì MT hết việc → nhả VRAM ngay. Hàm này chạy TRONG tiến
+    # trình GUI ở bước ③ (chuẩn bị input.txt), mà ngay bước sau là nạp OmniVoice
+    # tạo giọng — để model MT nằm lại là ăn mất chỗ của nó trên card 8GB.
+    if n_mt:
+        try:
+            import dich_hanmt as mt
+            mt.giai_phong()
+            if on_log:
+                on_log("   • Đã nhả model dịch nghĩa (MT) khỏi VRAM.")
+        except Exception:
+            pass
+
     return _tidy(''.join(res)), n_mt, n_am
 
 
