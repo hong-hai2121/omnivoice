@@ -145,10 +145,49 @@ def _src_label(src: str) -> str:
     return Path(s).name or s
 
 
+def source_progress() -> dict[str, dict]:
+    """Khoá nguồn (đã chuẩn hoá) → tiến độ của tập làm từ nguồn đó.
+
+    Để đánh dấu link/file nào đã làm rồi ngay trên ô "Gần đây" và bảng chọn file.
+    Đọc MỘT file manifest chứ không dò lại từng thư mục tập như episode_rows():
+    hàm này chạy mỗi lần vẽ khối Nguồn, mà dò thư mục còn phải mở docx đếm đoạn —
+    quá nặng cho một cái nhãn. Runner ghi manifest sau MỖI bước (xem
+    run_episode.py) nên bản chụp này đủ tươi.
+    """
+    out: dict[str, dict] = {}
+    for key, entry in gui.load_manifest().items():
+        if not isinstance(entry, dict):
+            continue
+        steps = entry.get("steps")
+        # Bỏ bước "đăng" y như episode_rows: đăng YouTube là tuỳ chọn, tính vào
+        # thì tập nào dựng xong từ đời nào cũng hoá "còn việc".
+        core_steps = {k: bool(v) for k, v in steps.items()
+                      if k not in DONE_EXCLUDE} if isinstance(steps, dict) else {}
+        done = sum(1 for v in core_steps.values() if v)
+        out[gui.norm_source(str(entry.get("source") or key))] = {
+            "episode": str(entry.get("episode", "")).strip().zfill(2),
+            "done": done, "total": len(core_steps),
+            "xong": bool(entry.get("done")) or (bool(core_steps) and done == len(core_steps)),
+        }
+    return out
+
+
+def _danh_dau(key: str, prog: dict[str, dict]) -> dict:
+    """Nhãn "đã làm" cho một nguồn: tập mấy, xong chưa, được mấy bước."""
+    p = prog.get(gui.norm_source(key))
+    if not p:
+        return {"episode": "", "xong": False, "buoc": ""}
+    return {"episode": p["episode"], "xong": p["xong"],
+            "buoc": f"{p['done']}/{p['total']}" if p["total"] else ""}
+
+
 def source_history() -> list[dict]:
-    """Nguồn đã chạy, mới nhất trước — mỗi mục có `full` (điền vào ô) và `label`."""
+    """Nguồn đã chạy, mới nhất trước — mỗi mục có `full` (điền vào ô), `label`
+    và nhãn đã-làm (`episode`/`xong`/`buoc`) lấy từ manifest."""
     raw = load_web_settings().get("src_history") or []
-    return [{"full": s, "label": _src_label(s)} for s in raw if isinstance(s, str) and s.strip()]
+    prog = source_progress()
+    return [{"full": s, "label": _src_label(s), **_danh_dau(s, prog)}
+            for s in raw if isinstance(s, str) and s.strip()]
 
 
 def remember_sources(lines: list[str]) -> None:
@@ -169,8 +208,10 @@ def list_download_files() -> list[dict]:
     """File audio/video trong các thư mục tải về — mới nhất trước, theo từng nhóm.
 
     Chỉ đọc tên + cỡ + ngày sửa; server chạy ở 127.0.0.1 nên đọc thẳng đĩa máy
-    này là đúng chỗ người dùng vừa tải file về.
+    này là đúng chỗ người dùng vừa tải file về. Kèm nhãn đã-làm (xem
+    source_progress) để khỏi chọn nhầm file đã chạy rồi.
     """
+    prog = source_progress()          # để đánh dấu file nào đã làm rồi
     groups = []
     for folder, label in DOWNLOAD_DIRS:
         try:
@@ -184,7 +225,8 @@ def list_download_files() -> list[dict]:
             st = p.stat()
             files.append({"name": p.name, "path": str(p),
                           "size": _human_size(st.st_size),
-                          "when": _human_when(st.st_mtime)})
+                          "when": _human_when(st.st_mtime),
+                          **_danh_dau(str(p), prog)})
         groups.append({"label": label, "folder": str(folder),
                        "files": files, "more": max(0, len(items) - SRC_PICK_MAX)})
     return groups
@@ -749,6 +791,8 @@ def tts_settings() -> tuple[dict | None, str]:
         sub_kieu=opts.get("sub_kieu") or "hopbo",
         sub_font=opts.get("sub_font") or "",
         sub_mau=opts.get("sub_mau") or "",
+        # Màu VIỀN quanh chữ (rỗng = viền gốc của kiểu).
+        sub_mau_vien=opts.get("sub_mau_vien") or "",
         sub_vitri=str(opts.get("sub_vitri") or ""),
         # Cỡ chữ = % so với cỡ gốc của kiểu (rỗng/100 = giữ nguyên); số dòng mỗi
         # lần hiện chữ (2 = gom hai dòng như ảnh mẫu của kho kiểu).

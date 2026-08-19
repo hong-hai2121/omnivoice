@@ -479,8 +479,8 @@ async def save_voice_only(request: Request):
 @app.get("/giongnoi/kieusub-xemtruoc")
 def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
                      vitri: str = "", khung: str = "", cochu: str = "",
-                     dong: int = 2):
-    """Ảnh xem thử TỔ HỢP kiểu + font + màu + cỡ chữ + số dòng (+ vị trí).
+                     dong: int = 2, mauvien: str = ""):
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ + số dòng (+ vị trí).
 
     khung=ngang → khung 16:9 nguyên vẹn để thấy VỊ TRÍ chữ trên màn hình
     (vitri = % chiều cao từ đáy). cochu = % phóng to/thu nhỏ chữ, dong = số
@@ -491,7 +491,7 @@ def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
         import kieusub
         p = kieusub.ve_xemtruoc(kieu, font, mau, vitri,
                                 ca_khung=(khung == "ngang"),
-                                cochu=cochu, dong=dong)
+                                cochu=cochu, dong=dong, mau_vien=mauvien)
     except Exception:
         p = None
     if not p:
@@ -1102,7 +1102,7 @@ _NUM_KEYS = {"chunk": int,
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
               "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",
-              "sub_vitri", "sub_cochu"]
+              "sub_vitri", "sub_cochu", "sub_mau_vien"]
 
 
 def _save_opts_from_form(form) -> dict:

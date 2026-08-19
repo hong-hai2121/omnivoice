@@ -185,6 +185,9 @@ OPTS_DEFAULTS = dict(
     sub_font="",
     # Màu chữ đè lên màu của kiểu (RGB hex vd "FFD700"; rỗng = theo kiểu).
     sub_mau="",
+    # Màu VIỀN quanh chữ, đè viền của kiểu (rỗng = theo kiểu). Kiểu không có
+    # viền (hộp bo góc, CapCut) thì đổi màu này không thấy gì.
+    sub_mau_vien="",
     # Vị trí chữ: % chiều cao tính từ đáy (rỗng = mặc định 173px ngang/380px dọc).
     sub_vitri="",
     # Cỡ chữ: % phóng to/thu nhỏ so với cỡ gốc của kiểu (rỗng/100 = giữ nguyên).
@@ -1520,7 +1523,7 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                      progress=None, doc: bool = False,
                      kieu: str = "hopbo", font: str = "",
                      mau: str = "", vitri="", cochu="",
-                     dong: int = 1) -> Path | None:
+                     dong: int = 1, mau_vien: str = "") -> Path | None:
     """Tạo phụ đề cho 1 video. Trả về file .srt, None nếu lỗi.
 
     doc=False (mặc định): khung NGANG 1920x1080 — YOUTUBE.mp4.
@@ -1534,7 +1537,8 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
     này (không bung subprocess) để dùng chung log + thanh tiến độ.
 
     cochu = % phóng to/thu nhỏ chữ của kiểu (rỗng/100 = cỡ gốc), dong = số dòng
-    tối đa mỗi lần hiện chữ (1 như cũ, 2 = gom hai dòng giống ảnh mẫu kho kiểu).
+    tối đa mỗi lần hiện chữ (1 như cũ, 2 = gom hai dòng giống ảnh mẫu kho kiểu),
+    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu).
 
     mode SUB_MODE_BURN thì đốt chữ vào hình rồi GHI ĐÈ lên video gốc — burn ra file
     tạm trước, xong mới thay thế, để video cũ không mất nếu ffmpeg chết giữa chừng.
@@ -1564,7 +1568,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         # `cochu` (% cỡ chữ) phóng to/thu nhỏ chữ của kiểu và rút trần ký tự/dòng
         # theo tỉ lệ ngược — phải áp TRƯỚC chon_max_chars mới cắt dòng đúng.
         kieu_dict = kieusub.ap_cochu(
-            kieusub.ap_mau(kieusub.ap_font(kieusub.lay(kieu), font), mau), cochu)
+            kieusub.ap_mau_vien(
+                kieusub.ap_mau(kieusub.ap_font(kieusub.lay(kieu), font), mau),
+                mau_vien), cochu)
         mc = kieusub.chon_max_chars(kieu_dict, max_chars, doc=doc)
         if mode == SUB_MODE_BURN and mc != max_chars:
             logging.info(f"📝 Kiểu '{kieu_dict['ten']}'"
@@ -1811,7 +1817,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_dong=1, make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2138,7 +2144,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                              sub_mode, sub_model, sub_max_chars,
                              progress=_sub_progress, kieu=sub_kieu,
                              font=sub_font, mau=sub_mau, vitri=sub_vitri,
-                             cochu=sub_cochu, dong=sub_dong)
+                             cochu=sub_cochu, dong=sub_dong,
+                             mau_vien=sub_mau_vien)
             progress_var.set(100)
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
@@ -2414,7 +2421,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                                  progress=_sub_doc_progress, doc=True,
                                  kieu=sub_kieu, font=sub_font, mau=sub_mau,
                                  vitri=sub_vitri, cochu=sub_cochu,
-                                 dong=sub_dong)
+                                 dong=sub_dong, mau_vien=sub_mau_vien)
                 progress_var.set(100)
             else:
                 logging.warning(f"📝 Chưa có video dọc ({doc_video.name}) → bỏ qua phụ đề dọc.")
@@ -2909,34 +2916,39 @@ class App(tk.Tk):
             value=self._opt_settings.get("sub_font", ""))
         ttk.Combobox(sub_row2, textvariable=self.var_sub_font, width=16,
                      state="readonly", values=_font_ten).pack(side="left")
-        # Màu chữ đè lên màu của kiểu — nút mở bảng chọn màu, × = theo kiểu.
-        ttk.Label(sub_row2, text="Màu:").pack(side="left", padx=(10, 2))
+        # Màu CHỮ + màu VIỀN đè lên màu của kiểu — nút mở bảng chọn màu Windows,
+        # × = trả về màu gốc của kiểu.
         self.var_sub_mau = tk.StringVar(
             value=self._opt_settings.get("sub_mau", ""))
-        self.btn_sub_mau = ttk.Button(sub_row2, width=9,
-                                      command=self._chon_sub_mau)
-        self.btn_sub_mau.pack(side="left")
-        ttk.Button(sub_row2, text="×", width=2,
-                   command=lambda: (self.var_sub_mau.set(""),
-                                    self._ve_nut_sub_mau())).pack(side="left")
-        self._ve_nut_sub_mau()
+        self.btn_sub_mau = self._o_mau_sub(
+            sub_row2, "Màu:", self.var_sub_mau,
+            "Màu chữ phụ đề (đè màu của kiểu)")
+        self.var_sub_mau_vien = tk.StringVar(
+            value=self._opt_settings.get("sub_mau_vien", ""))
+        self.btn_sub_mau_vien = self._o_mau_sub(
+            sub_row2, "Viền:", self.var_sub_mau_vien,
+            "Màu viền quanh chữ phụ đề (đè viền của kiểu)")
+
+        # Hàng riêng cho vị trí / cỡ chữ / số dòng — hàng trên đã kín chỗ.
+        sub_row2b = ttk.Frame(sec_opt)
+        sub_row2b.pack(anchor="w", fill="x", pady=(4, 0))
         # Vị trí chữ theo % chiều cao từ đáy — để TRỐNG là mặc định (173/380px).
-        ttk.Label(sub_row2, text="Vị trí % đáy:").pack(side="left", padx=(10, 2))
+        ttk.Label(sub_row2b, text="Vị trí % đáy:").pack(side="left", padx=(26, 2))
         self.var_sub_vitri = tk.StringVar(
             value=str(self._opt_settings.get("sub_vitri", "")))
-        ttk.Spinbox(sub_row2, from_=4, to=45, increment=1, width=4,
+        ttk.Spinbox(sub_row2b, from_=4, to=45, increment=1, width=4,
                     textvariable=self.var_sub_vitri).pack(side="left")
         # Cỡ chữ theo % cỡ gốc của kiểu — để TRỐNG (hoặc 100) là giữ nguyên.
-        ttk.Label(sub_row2, text="Cỡ chữ %:").pack(side="left", padx=(10, 2))
+        ttk.Label(sub_row2b, text="Cỡ chữ %:").pack(side="left", padx=(10, 2))
         self.var_sub_cochu = tk.StringVar(
             value=str(self._opt_settings.get("sub_cochu", "")))
-        ttk.Spinbox(sub_row2, from_=50, to=200, increment=5, width=4,
+        ttk.Spinbox(sub_row2b, from_=50, to=200, increment=5, width=4,
                     textvariable=self.var_sub_cochu).pack(side="left")
         # Số dòng mỗi lần hiện chữ (2 = như ảnh mẫu của kho kiểu).
-        ttk.Label(sub_row2, text="Số dòng:").pack(side="left", padx=(10, 2))
+        ttk.Label(sub_row2b, text="Số dòng:").pack(side="left", padx=(10, 2))
         self.var_sub_dong = tk.IntVar(
             value=int(self._opt_settings.get("sub_dong", 2) or 2))
-        ttk.Combobox(sub_row2, textvariable=self.var_sub_dong, width=3,
+        ttk.Combobox(sub_row2b, textvariable=self.var_sub_dong, width=3,
                      state="readonly", values=[1, 2]).pack(side="left")
 
         # Phụ đề cho VIDEO DỌC (facebook.mp4) — tick riêng, dùng chung Kiểu/Model ở trên.
@@ -5074,20 +5086,37 @@ class App(tk.Tk):
         self._reload_effect_combo(keep=self._current_effect())
         logging.info(f"Tìm thấy {len(list_effect_files())} hiệu ứng trong {EFFECTS_DIR}")
 
-    def _chon_sub_mau(self):
-        """Mở bảng chọn màu Windows cho ô 'Màu:' của phụ đề."""
-        from tkinter import colorchooser
-        hien = self.var_sub_mau.get()
-        c = colorchooser.askcolor(color=("#" + hien) if hien else None,
-                                  title="Màu chữ phụ đề (đè màu của kiểu)")
-        if c and c[1]:
-            self.var_sub_mau.set(c[1].lstrip("#").upper())
-        self._ve_nut_sub_mau()
+    def _o_mau_sub(self, hang, nhan: str, var, tieude: str):
+        """Dựng một ô chọn màu phụ đề (nhãn + nút mã màu + nút × xoá) → nút màu.
 
-    def _ve_nut_sub_mau(self):
-        self.btn_sub_mau.config(
-            text=("#" + self.var_sub_mau.get()) if self.var_sub_mau.get()
-            else "(kiểu)")
+        Dùng chung cho màu CHỮ và màu VIỀN: cùng bảng chọn màu Windows, cùng
+        cách hiện '(kiểu)' khi để trống = giữ màu gốc của kiểu.
+        """
+        from tkinter import ttk as _ttk
+        _ttk.Label(hang, text=nhan).pack(side="left", padx=(10, 2))
+        btn = _ttk.Button(hang, width=9)
+        btn.config(command=lambda: self._chon_mau_sub(var, btn, tieude))
+        btn.pack(side="left")
+        _ttk.Button(hang, text="×", width=2,
+                    command=lambda: (var.set(""),
+                                     self._ve_nut_mau_sub(var, btn))).pack(side="left")
+        self._ve_nut_mau_sub(var, btn)
+        return btn
+
+    def _chon_mau_sub(self, var, btn, tieude: str):
+        """Mở bảng chọn màu Windows cho một ô màu của phụ đề (chữ / viền)."""
+        from tkinter import colorchooser
+        hien = var.get()
+        c = colorchooser.askcolor(color=("#" + hien) if hien else None,
+                                  title=tieude)
+        if c and c[1]:
+            var.set(c[1].lstrip("#").upper())
+        self._ve_nut_mau_sub(var, btn)
+
+    @staticmethod
+    def _ve_nut_mau_sub(var, btn):
+        """Nút hiện mã màu đang chọn; để trống thì ghi '(kiểu)'."""
+        btn.config(text=("#" + var.get()) if var.get() else "(kiểu)")
 
     def _save_opt_settings(self):
         """Lưu cài đặt mục 'Cài đặt' hiện tại để lần sau mở lại dùng làm mặc định."""
@@ -5121,6 +5150,7 @@ class App(tk.Tk):
                 sub_kieu=self.var_sub_kieu.get(),
                 sub_font=self.var_sub_font.get(),
                 sub_mau=self.var_sub_mau.get(),
+                sub_mau_vien=self.var_sub_mau_vien.get(),
                 sub_vitri=self.var_sub_vitri.get().strip(),
                 sub_cochu=self._parse_sub_cochu(),
                 sub_dong=self._parse_sub_dong(),
@@ -6108,6 +6138,7 @@ class App(tk.Tk):
             sub_kieu=self.var_sub_kieu.get(),
             sub_font=self.var_sub_font.get(),
             sub_mau=self.var_sub_mau.get(),
+            sub_mau_vien=self.var_sub_mau_vien.get(),
             sub_vitri=self.var_sub_vitri.get().strip(),
             sub_cochu=self._parse_sub_cochu(),
             sub_dong=self._parse_sub_dong(),
@@ -6344,6 +6375,7 @@ class App(tk.Tk):
             sub_kieu=ts.get("sub_kieu", "hopbo"),
             sub_font=ts.get("sub_font", ""),
             sub_mau=ts.get("sub_mau", ""),
+            sub_mau_vien=ts.get("sub_mau_vien", ""),
             sub_vitri=ts.get("sub_vitri", ""),
             sub_cochu=ts.get("sub_cochu", ""),
             sub_dong=ts.get("sub_dong", 2),
@@ -7536,6 +7568,7 @@ class App(tk.Tk):
                     "sub_kieu": self.var_sub_kieu.get(),
                     "sub_font": self.var_sub_font.get(),
                     "sub_mau": self.var_sub_mau.get(),
+                    "sub_mau_vien": self.var_sub_mau_vien.get(),
                     "sub_vitri": self.var_sub_vitri.get().strip(),
                     "sub_cochu": self._parse_sub_cochu(),
                     "sub_dong": self._parse_sub_dong(),
@@ -7828,6 +7861,7 @@ class App(tk.Tk):
                 sub_kieu=self.var_sub_kieu.get(),
                 sub_font=self.var_sub_font.get(),
                 sub_mau=self.var_sub_mau.get(),
+                sub_mau_vien=self.var_sub_mau_vien.get(),
                 sub_vitri=self.var_sub_vitri.get().strip(),
                 sub_cochu=self._parse_sub_cochu(),
                 sub_dong=self._parse_sub_dong(),

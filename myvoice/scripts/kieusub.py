@@ -240,6 +240,21 @@ def ap_mau(k: dict, mau: str) -> dict:
     return {**k, "mau_chu": mau.upper()}
 
 
+def ap_mau_vien(k: dict, mau: str) -> dict:
+    """Đè MÀU VIỀN quanh chữ ('FF6FA5' hoặc '#FF6FA5'; rỗng/sai dạng = giữ màu
+    gốc của kiểu). Chỉ đổi mau_vien — thân chữ, bóng, nền và viền NGOÀI thứ hai
+    của kiểu viền kép (mau_vien2) giữ nguyên.
+
+    Kiểu KHÔNG có viền (vien = 0: hộp bo góc, mấy kiểu CapCut) hoặc kiểu vẽ
+    khối nền đặc (borderstyle = 3, màu khối nằm ở mau_nen) thì đổi màu này
+    không thấy gì — cố ý, vì thêm viền vào là đổi hẳn dáng của kiểu đó.
+    """
+    mau = (mau or "").strip().lstrip("#")
+    if len(mau) != 6:
+        return k
+    return {**k, "mau_vien": mau.upper()}
+
+
 def ap_cochu(k: dict, cochu) -> dict:
     """PHÓNG TO / THU NHỎ chữ của kiểu theo % (100 hoặc rỗng = giữ nguyên).
 
@@ -690,20 +705,23 @@ def vitri_margin(vitri, play_h: int, macdinh: int) -> int:
 
 def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
                 vitri="", ca_khung: bool = False, cochu="",
-                dong: int = 2) -> Path | None:
-    """Ảnh xem thử TỔ HỢP kiểu + font + màu + cỡ chữ + số dòng (+ vị trí).
+                dong: int = 2, mau_vien: str = "") -> Path | None:
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ + số dòng (+ vị trí).
 
     ca_khung=True → khung ngang 16:9 NGUYÊN VẸN để thấy chữ nằm đâu trên màn
     hình (vitri = % chiều cao từ đáy, rỗng = mặc định 173px ≈ 16%).
-    cochu = % phóng to/thu nhỏ chữ, dong = số dòng mỗi lần hiện chữ (1 hoặc 2).
+    cochu = % phóng to/thu nhỏ chữ, dong = số dòng mỗi lần hiện chữ (1 hoặc 2),
+    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu).
     Không đè gì → trả thẳng ảnh mẫu sẵn có của kiểu. Còn lại render bản riêng
     vào cache xt_<hash> (mỗi tổ hợp chỉ render MỘT lần, lần sau trả ngay)."""
     co = str(cochu or "").strip()
     nguyen_co = (not co) or co in ("100", "100.0")
     dong = 1 if str(dong) in ("1", "1.0") else 2
-    k = ap_cochu(ap_mau(ap_font(lay(kieu_id), font), mau), co)
+    k = ap_cochu(ap_mau_vien(ap_mau(ap_font(lay(kieu_id), font), mau),
+                             mau_vien), co)
     ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
-    if not font and not mau and not ca_khung and nguyen_co and dong == 2:
+    if (not font and not mau and not mau_vien and not ca_khung
+            and nguyen_co and dong == 2):
         p = ANH_DIR / (k["id"] + ext)
         return p if p.is_file() else ve_mau(k)
     margin = vitri_margin(vitri, ASS_PLAY_H, SUB_MARGIN_V)
@@ -714,8 +732,8 @@ def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
         nf = _nen_ngang()
         nen_mt = int(nf.stat().st_mtime) if nf else 0
     import hashlib
-    key = hashlib.md5(f"{k['id']}|{font}|{mau}|{co}|{dong}|{margin}|{ca_khung}"
-                      f"|{nen_mt}".encode("utf-8")).hexdigest()[:12]
+    key = hashlib.md5(f"{k['id']}|{font}|{mau}|{mau_vien}|{co}|{dong}|{margin}"
+                      f"|{ca_khung}|{nen_mt}".encode("utf-8")).hexdigest()[:12]
     dest = ANH_DIR / (f"xt_{key}" + ext)
     if dest.is_file():
         return dest

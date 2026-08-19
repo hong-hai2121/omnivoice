@@ -19,8 +19,15 @@
     {% if src_history %}
       <div class="chiprow">
         <span class="chiplabel">Gần đây</span>
+        {# Nhãn đã-làm lấy từ manifest (core.source_progress): ✓ = tập đã dựng xong,
+           ◐ = mới được mấy bước; nguồn chưa chạy bao giờ thì không có dấu nào.
+           Dấu đặt TRƯỚC nhãn vì chip cắt đuôi bằng ellipsis — để sau thì link dài
+           che mất; số tập với số bước nằm ở tooltip. #}
         {% for h in src_history %}
-          <button type="button" class="chip" data-src="{{ h.full }}" title="{{ h.full }}">{{ h.label }}</button>
+          <button type="button" data-src="{{ h.full }}"
+                  class="chip {{ 'chip-xong' if h.xong else ('chip-dang' if h.episode) }}"
+                  title="{{ h.full }}{% if h.episode %} — tập {{ h.episode }}, {{ 'đã làm xong' if h.xong else 'đang dở ' ~ h.buoc ~ ' bước' }}{% endif %}">{%
+            if h.episode %}<i class="dalam">{{ '✓' if h.xong else '◐' }}</i>{% endif %}{{ h.label }}</button>
         {% endfor %}
         {# type=button + gọi ngầm bằng JS, KHÔNG phải submit: khối Nguồn là panel
            đầu form, nút submit đặt ở đây sẽ thành nút mặc định — bấm Enter ở ô

@@ -528,6 +528,16 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
 }
 .chip:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .chip-hit { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+/* Nguồn ĐÃ CHẠY rồi (có trong manifest): ✓ xanh = tập dựng xong, ◐ vàng = còn dở.
+   Bấm lại vẫn được — chạy tiếp đúng tập cũ chứ không cấp tập mới. */
+.chip-xong { background: var(--ok-bg); color: var(--ok); }
+.chip-dang { background: var(--warn-bg); color: var(--warn); }
+/* Trong chip chỉ có mỗi cái dấu ✓/◐ (màu đã do .chip-xong/.chip-dang lo) nên
+   bỏ hết viên thuốc của .dalam, kẻo chip phình ra. */
+.chip .dalam {
+  padding: 0; margin-right: 5px; font-style: normal;
+  font-size: inherit; line-height: inherit; background: none;
+}
 .chip-x { color: var(--muted); padding: 4px 10px; text-align: center; }
 .chip-x:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 
@@ -565,31 +575,88 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   border-radius: var(--r-sm); background: var(--sunken); font-size: 13px;
 }
 .filerow:hover { background: var(--accent-soft); border-color: var(--accent); }
-.filerow-hit { background: var(--ok-bg); border-color: var(--ok); }
+/* Đã bấm thêm vào ô Nguồn — dấu GIỮ NGUYÊN chứ không tự mất sau hơn giây, để
+   nhìn là biết đã lấy file nào. Nháy lúc vừa bấm dùng viền (outline) chứ không
+   dùng nền: nền đã là nền "đã thêm" rồi, tô nữa thì chẳng thấy gì nháy. */
+.filerow-them { background: var(--ok-bg); }
+.filerow-them .filerow-name { color: var(--ok); }
+.dalam.themroi { padding: 1px 0; background: none; color: var(--ok); }
+.filerow-hit {
+  background: var(--ok-bg); border-color: var(--ok);
+  outline: 2px solid var(--ok); outline-offset: -1px;
+}
 .filerow-hit .filerow-meta { color: var(--ok); }
-.filerow-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filerow-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filerow-meta { flex: none; font-size: 11.5px; color: var(--muted); }
+/* File ĐÃ CHẠY rồi (dò theo manifest): viền trái + nhãn tập, khỏi chọn nhầm.
+   Vẫn bấm được — chạy lại là chạy tiếp đúng tập cũ, không cấp tập mới. */
+.filerow-xong { box-shadow: inset 3px 0 0 var(--ok); }
+.filerow-dang { box-shadow: inset 3px 0 0 var(--warn); }
+.dalam {
+  flex: none; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 650; line-height: 17px; white-space: nowrap;
+}
+.dalam.xong { background: var(--ok-bg); color: var(--ok); }
+.dalam.dang { background: var(--warn-bg); color: var(--warn); }
 
 /* ── Chọn KIỂU PHỤ ĐỀ — lưới thẻ radio có ảnh xem trước (khối Phụ đề) ─────────
    Ảnh do scripts/kieusub.py vẽ bằng đúng libass sẽ burn (kiểu động là webp
    chuyển động) nên nhìn thẻ nào là ra đúng kiểu đó. Radio giấu đi, viền tô
    bằng :has(input:checked) — cùng mẹo với .mode. Dùng chung với myvideo. */
-/* Ô "kiểu đang chọn" trong khối Phụ đề: ảnh nhỏ + tên + nút mở popup.
-   Form giọng nằm cột hẹp (Home xếp cột 340px) nên KHÔNG bày lưới thẻ tại chỗ —
-   cả kho mở trong .modal (ksubmodal) rộng rãi. */
-.ksubpick {
-  display: flex; align-items: center; gap: 10px; margin: 4px 0 10px;
-  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+/* Kho kiểu có KHỐI RIÊNG (#ksubBox, span-all) chứ không nhét trong popup nữa:
+   cột trái là kho thẻ, cột phải là ảnh xem thử DÍNH theo màn hình nên kéo thanh
+   nào cũng thấy đổi ngay. Màn hẹp thì xếp dọc, ảnh xem thử lên trên. */
+.ksubbox {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 380px);
+  gap: 0 20px; align-items: start;
+}
+.ksubbox-chon { min-width: 0; }
+.ksubbox-xem {
+  position: sticky; top: 12px; min-width: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--sunken);
 }
-.ksubpick img {
-  flex: none; width: 108px; aspect-ratio: 16 / 5; object-fit: cover;
-  border-radius: 6px; background: #151a24;
+.ksubbox-xem img {
+  display: block; width: 100%; object-fit: cover; cursor: zoom-in;
+  border-radius: 8px; border: 1px solid var(--border); background: #151a24;
+  transition: opacity .15s;
 }
-.ksubpick-ten { flex: 1 1 auto; min-width: 0; }
-.ksubpick-ten b { display: block; font-size: 13px; line-height: 1.3; }
-.ksubpick-ten .hint { margin: 1px 0 0; font-size: 11px; }
-.ksubmodal { width: min(920px, 100%); }
+.ksubbox-xem #ksubXemThu { aspect-ratio: 16 / 5; }
+.ksubbox-xem #kvitriAnh { aspect-ratio: 16 / 9; }
+.ksubbox-xem .colhead { margin-bottom: 0; }
+.ksubbox-xem .hint { margin: 0; font-size: 11.5px; }
+.ksubbox-xem .kvitri-dk { flex: none; margin-top: 2px; }
+/* Nút 💾 ngay trong ô xem thử dính — chọn xong bấm luôn, khỏi cuộn xuống cuối. */
+.ksubbox-xem .savebar {
+  flex: none; margin: 2px 0 0; padding-top: 10px; border-top: 1px solid var(--line);
+}
+/* Dòng "Đang chọn …" ở đầu khối — tóm tắt kiểu + font + màu chữ + màu viền. */
+.ksub-dangchon { font-size: 12px; color: var(--muted); }
+.ksub-dangchon b { font-weight: 650; color: var(--fg); }
+@media (max-width: 1100px) {
+  .ksubbox { grid-template-columns: 1fr; gap: 14px 0; }
+  .ksubbox-xem { position: static; order: -1; }
+}
+/* Hai lưới dài nhất (kiểu · font) bọc trong <details> để THU LẠI cho gọn —
+   nhãn thành thanh bấm được, tên đang chọn nằm luôn trên đó, mũi tên quay khi mở. */
+.ksubthu { margin-bottom: 12px; }
+.ksubthu > summary {
+  cursor: pointer; user-select: none; list-style: none; margin-bottom: 0;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--sunken); transition: border-color .14s;
+}
+.ksubthu > summary::-webkit-details-marker { display: none; }
+.ksubthu > summary::after { content: "▾"; margin-left: auto; transition: transform .15s; }
+.ksubthu[open] > summary::after { transform: rotate(180deg); }
+.ksubthu > summary:hover { border-color: var(--accent2); }
+.ksubthu[open] > summary { margin-bottom: 10px; }
+.ksubthu > .ksubs { margin-bottom: 0; }
+/* Tên kiểu/font đang chọn trên nhãn — chữ thường, khỏi lẫn với nhãn viết hoa. */
+.ksub-nay {
+  font-weight: 650; color: var(--fg); text-transform: none; letter-spacing: 0;
+}
+
 .ksubs {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(195px, 1fr));
   gap: 10px; margin-bottom: 12px;
@@ -627,7 +694,7 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   color: var(--muted);
 }
 
-/* Khu MÀU CHỮ trong popup: dãy ô màu tròn + ô tự chọn (input color). */
+/* Bảng màu (chữ · viền): dãy ô màu tròn + ô "tự chọn" (input color). */
 .kmaus { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .kmau {
   position: relative; display: flex; flex-direction: column; align-items: center;
@@ -653,23 +720,8 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   border: 1px solid rgba(0, 0, 0, .3); vertical-align: baseline; margin-right: 2px;
 }
 
-/* Ảnh xem thử tổ hợp kiểu+font+màu ở chân popup. */
-.ksub-xemthu { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.ksub-xemthu img {
-  flex: none; height: 68px; aspect-ratio: 16 / 5; object-fit: cover;
-  border-radius: 8px; border: 1px solid var(--border); background: #151a24;
-  transition: opacity .15s;
-}
-.ksub-xemthu .hint { margin: 0; font-size: 11px; }
-
-/* Khu VỊ TRÍ trên khung ngang: ảnh 16:9 nguyên khung + thanh kéo % từ đáy. */
-.kvitri { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
-.kvitri img {
-  flex: 1 1 300px; max-width: 480px; aspect-ratio: 16 / 9; object-fit: cover;
-  border-radius: 8px; border: 1px solid var(--border); background: #151a24;
-  transition: opacity .15s; cursor: zoom-in;
-}
-.kvitri-dk { flex: 1 1 220px; display: flex; flex-direction: column; gap: 8px; }
+/* Thanh chỉnh VỊ TRÍ · cỡ chữ · số dòng, nằm dưới ảnh khung ngang 16:9. */
+.kvitri-dk { display: flex; flex-direction: column; gap: 8px; }
 .kvitri-dk input[type=range] { width: 100%; accent-color: var(--accent); }
 .kvitri-dk .hint { margin: 0; }
 .kvitri-dk button { align-self: flex-start; }
@@ -677,10 +729,8 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
 .kvitri-thanh { display: flex; flex-direction: column; gap: 3px; cursor: default; }
 .kvitri-thanh select { align-self: flex-start; min-width: 170px; }
 
-/* Lightbox phóng to ảnh xem thử — bấm ảnh nhỏ nào cũng mở, bấm đâu cũng đóng. */
-#ksubHienAnh, .ksub-xemthu img { cursor: zoom-in; }
-/* Lightbox nằm TRƯỚC popup chọn kiểu trong HTML nên cùng z-index là bị popup
-   đè lên — nâng hẳn một nấc, kèm nền tối hơn cho ảnh phóng to nổi rõ. */
+/* Lightbox phóng to ảnh xem thử — bấm ảnh nào cũng mở, bấm đâu cũng đóng.
+   Nâng hơn .modal một nấc (kẻo bảng chọn file đè lên), nền tối hơn cho ảnh nổi. */
 #ksubZoom { cursor: zoom-out; z-index: 70; background: rgba(10, 8, 22, .72); }
 .ksub-zoom {
   width: min(94vw, 1280px); max-height: 88vh; object-fit: contain;

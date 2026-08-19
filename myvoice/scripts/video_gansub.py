@@ -622,6 +622,9 @@ def main():
     parser.add_argument("--mau", default="",
                         help="Đè MÀU CHỮ của kiểu khi --burn (RGB hex, vd FFD700; "
                              "rỗng = theo kiểu).")
+    parser.add_argument("--mau-vien", default="",
+                        help="Đè MÀU VIỀN quanh chữ khi --burn (RGB hex, vd 00E5FF; "
+                             "rỗng = viền gốc của kiểu).")
     parser.add_argument("--cochu", default="",
                         help="Phóng to/thu nhỏ chữ của kiểu khi --burn, tính bằng %% "
                              "(50-200; rỗng hoặc 100 = giữ cỡ gốc của kiểu).")
@@ -716,8 +719,9 @@ def main():
         # bằng force_style chỉ ra khung nền VUÔNG. Kiểu lấy từ kho kieusub_mau.
         import kieusub
         kieu = kieusub.ap_cochu(
-            kieusub.ap_mau(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
-                           args.mau), args.cochu)
+            kieusub.ap_mau_vien(
+                kieusub.ap_mau(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
+                               args.mau), args.mau_vien), args.cochu)
         ass_path = kieusub.write_ass_kieu(cues, cue_times,
                                           srt_path.with_suffix(".ass"), kieu)
         print(f"💾 Đã ghi kiểu phụ đề: {kieu['ten']} ({kieu['id']}) → {ass_path.name}")

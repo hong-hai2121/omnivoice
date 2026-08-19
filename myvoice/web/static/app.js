@@ -162,7 +162,10 @@
     dlg.addEventListener('click', (e) => {
       if (e.target === dlg || e.target.closest('.modal-x')) closePicker();
       const row = e.target.closest('.filerow');
-      if (row) flashRow(row, addSource(row.dataset.path));
+      if (row) {
+        addSource(row.dataset.path);
+        danhDauThem(row, true);
+      }
     });
     dlg.querySelector('.modal-find').addEventListener('input', (e) => {
       const q = e.target.value.trim().toLowerCase();
@@ -190,22 +193,47 @@
         <div class="filegroup-head">${esc(g.label)}
           <span class="hint">${esc(g.folder)}</span></div>
         ${g.files.length ? g.files.map((f) => `
-          <button type="button" class="filerow" data-path="${esc(f.path)}" data-name="${esc(f.name)}">
+          <button type="button" class="filerow${f.episode ? (f.xong ? ' filerow-xong' : ' filerow-dang') : ''}"
+                  data-path="${esc(f.path)}" data-name="${esc(f.name)}">
             <span class="filerow-name">${esc(f.name)}</span>
+            ${dauDaLam(f)}
             <span class="filerow-meta">${esc(f.size)} · ${esc(f.when)}</span>
           </button>`).join('')
           : '<p class="empty">Thư mục trống.</p>'}
         ${g.more ? `<p class="hint">…và ${g.more} file cũ hơn không hiện ở đây.</p>` : ''}
       </div>`).join('');
+    // File đã nằm sẵn trong ô Nguồn (thêm ở lần mở trước, hoặc tự gõ vào) cũng
+    // mang dấu ngay từ đầu — đóng rồi mở lại bảng vẫn thấy đã thêm những file nào.
+    const daCo = new Set((box()?.value || '').split('\n').map((s) => s.trim()).filter(Boolean));
+    dlg.querySelectorAll('.filerow').forEach((r) => {
+      if (daCo.has(r.dataset.path)) danhDauThem(r);
+    });
     dlg.querySelector('.modal-find').focus();
   }
 
-  function flashRow(row, added) {
-    const meta = row.querySelector('.filerow-meta');
-    const old = meta.textContent;
-    meta.textContent = added ? '✓ đã thêm' : 'đã có trong ô Nguồn';
+  /** Nhãn "đã làm" của một file: tập mấy, xong hẳn hay còn dở mấy bước.
+      Nguồn chưa chạy bao giờ (không có trong manifest) thì không có nhãn nào. */
+  function dauDaLam(f) {
+    if (!f.episode) return '';
+    const tap = 'tập ' + esc(f.episode);
+    return f.xong
+      ? `<span class="dalam xong" title="Đã làm xong ${tap}">✓ ${tap}</span>`
+      : `<span class="dalam dang" title="Đang dở ${tap} — ${esc(f.buoc)} bước">◐ ${tap} · ${esc(f.buoc)}</span>`;
+  }
+
+  /** Dán dấu "✓ đã thêm" lên hàng và GIỮ NGUYÊN ở đó — trước đây dấu hiện 1,1s
+      rồi mất, danh sách dài là quên mất đã bấm file nào. Thuần hiệu ứng: việc
+      không thêm trùng vẫn do addSource lo, bấm lại mấy lần cũng vô hại.
+      nhay=true thì nháy thêm một cái cho biết vừa bấm trúng hàng nào. */
+  function danhDauThem(row, nhay) {
+    row.classList.add('filerow-them');
+    if (!row.querySelector('.themroi')) {
+      row.querySelector('.filerow-name')
+         .insertAdjacentHTML('afterend', '<span class="dalam themroi">✓ đã thêm</span>');
+    }
+    if (!nhay) return;
     row.classList.add('filerow-hit');
-    setTimeout(() => { meta.textContent = old; row.classList.remove('filerow-hit'); }, 1100);
+    setTimeout(() => row.classList.remove('filerow-hit'), 700);
   }
 
   function esc(s) {

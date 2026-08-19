@@ -10,6 +10,36 @@
   </label>
 {% endmacro %}
 
+{# MỘT bảng chọn màu: swatch dựng sẵn + ô "tự chọn" (input color gắn radio riêng),
+   để trống = giữ màu gốc của kiểu. Dùng chung cho MÀU CHỮ và MÀU VIỀN nên chỉ có
+   một chỗ phải sửa. data-truong = tên ô gửi lên server, data-tom = id của dòng
+   tóm tắt ngoài popup mà JS phải cập nhật theo (kèm <id>Dot là chấm màu). #}
+{% macro bang_mau(ten, hien_tai, pick_md, tom) %}
+  {% set mau_san = ['FFFFFF', 'FFD700', 'FF9800', 'FF4D4D', 'FF6FA5',
+                    '3DFF73', '00E5FF', '9C6BFF', '141414'] %}
+  {% set tuchon = hien_tai and hien_tai not in mau_san %}
+  <div class="kmaus" data-truong="{{ ten }}" data-tom="{{ tom }}">
+    <label class="kmau" title="Dùng màu gốc của từng kiểu">
+      <input type="radio" name="{{ ten }}" value="" {{ 'checked' if not hien_tai }}>
+      <i class="kmau-goc">×</i><span>(theo kiểu)</span>
+    </label>
+    {% for m in mau_san %}
+      <label class="kmau" title="#{{ m }}">
+        <input type="radio" name="{{ ten }}" value="{{ m }}"
+               {{ 'checked' if hien_tai == m }}>
+        <i style="background:#{{ m }}"></i><span>#{{ m }}</span>
+      </label>
+    {% endfor %}
+    <label class="kmau" title="Tự chọn màu bất kỳ">
+      <input type="radio" name="{{ ten }}" class="kmau-khac"
+             value="{{ hien_tai if tuchon else '' }}" {{ 'checked' if tuchon }}>
+      <input type="color" class="kmau-pick"
+             value="#{{ hien_tai if tuchon else pick_md }}">
+      <span>tự chọn</span>
+    </label>
+  </div>
+{% endmacro %}
+
 {% macro speed(name, value) %}
   <label class="field">
     <span>Tăng tốc</span>
@@ -156,40 +186,56 @@
         <input name="sub_max_chars" value="{{ opts.sub_max_chars }}" inputmode="numeric">
       </label>
     </div>
-    {# Kiểu TRÌNH BÀY khi "vẽ cứng vào hình" — kho scripts/kieusub_mau dùng chung
-       với myvideo, ảnh xem trước vẽ bằng đúng libass sẽ burn. Form này nằm cột
-       HẸP (Home xếp cột 340px) nên kho kiểu mở bằng POPUP (tái dùng .modal của
-       bảng chọn file), trong khối chỉ hiện đúng kiểu đang chọn. #}
-    {% if kieusubs %}
-      {% set sel = (kieusubs | selectattr('id', 'equalto', opts.sub_kieu or 'hopbo')
-                    | list | first) or kieusubs[0] %}
-      <div class="ksubpick">
-        {% if sel.anh %}
-          <img id="ksubHienAnh" src="/static/kieusub/{{ sel.anh }}?v={{ sel.v }}" alt="">
-        {% else %}
-          <img id="ksubHienAnh" src="" alt="" style="display:none">
-        {% endif %}
-        <div class="ksubpick-ten">
-          <b id="ksubHienTen">{{ sel.ten }}</b>
-          <span class="hint">Font: <span id="ksubHienFont">{{ opts.sub_font or '(theo kiểu)' }}</span>
-            · Màu: <i class="kmau-dot" id="ksubHienMauDot"
-                      style="background:#{{ opts.sub_mau or 'FFF' }};{{ 'display:none' if not opts.sub_mau }}"></i><span
-                  id="ksubHienMau">{{ ('#' ~ opts.sub_mau) if opts.sub_mau else '(theo kiểu)' }}</span></span>
-        </div>
-        <button type="button" class="small" id="ksubMo">🎨 Chọn kiểu + font + màu</button>
-      </div>
-      {# Lightbox: bấm ảnh nhỏ (ô ngoài / xem thử trong popup) → phóng to. #}
+    <p class="hint">.srt rời = tải lên YouTube Studio (nhanh) · vẽ cứng = mã hoá lại cả video (lâu).</p>
+  </div>
+
+  {# ── Kho KIỂU PHỤ ĐỀ (chỉ ăn thua khi "vẽ cứng vào hình") ──────────────────
+     Kho scripts/kieusub_mau dùng chung với myvideo; MỌI ảnh xem trước đều do
+     scripts/kieusub.py vẽ bằng đúng libass sẽ burn nên nhìn sao ra vậy.
+     Trước đây cả kho nhét trong POPUP vì form giọng xếp cột hẹp; nay tách hẳn
+     thành khối riêng span-all (rộng hết bề ngang kể cả ở Home): cột trái bày
+     thẳng kho thẻ, cột phải là ảnh xem thử DÍNH theo màn hình — chọn tới đâu
+     thấy tới đó, khỏi đóng/mở popup. #}
+  {# Kiểu đang chọn — dùng cả ở dòng tóm tắt đầu khối lẫn nhãn của lưới thu lại.
+     Kho rỗng thì kieusubs[0] ra Undefined chứ không nổ, mà nhánh dưới cũng
+     không đụng tới sel. #}
+  {% set sel = (kieusubs | selectattr('id', 'equalto', opts.sub_kieu or 'hopbo')
+                | list | first) or kieusubs[0] %}
+  <div class="panel span-all" id="ksubBox">
+    <div class="phead">
+      <span class="num">6</span><h2>Kiểu phụ đề vẽ cứng</h2>
+      {% if kieusubs %}
+        <span class="spacer"></span>
+        <span class="ksub-dangchon">Đang chọn
+          <b id="ksubHienTen">{{ sel.ten }}</b> · font
+          <b id="ksubHienFont">{{ opts.sub_font or '(theo kiểu)' }}</b> · chữ
+          <i class="kmau-dot" id="ksubHienMauDot"
+             style="background:#{{ opts.sub_mau or 'FFF' }};{{ 'display:none' if not opts.sub_mau }}"></i><b
+             id="ksubHienMau">{{ ('#' ~ opts.sub_mau) if opts.sub_mau else '(theo kiểu)' }}</b> · viền
+          <i class="kmau-dot" id="ksubHienVienDot"
+             style="background:#{{ opts.sub_mau_vien or 'FFF' }};{{ 'display:none' if not opts.sub_mau_vien }}"></i><b
+             id="ksubHienVien">{{ ('#' ~ opts.sub_mau_vien) if opts.sub_mau_vien else '(theo kiểu)' }}</b></span>
+      {% endif %}
+      <p class="hint">Chỉ ăn thua khi ô <b>Kiểu</b> ở khối 5 đặt “{{ sub_modes[1] }}” —
+         xuất “{{ sub_modes[0] }}” thì YouTube tự vẽ theo kiểu của nó.</p>
+    </div>
+    {% if not kieusubs %}
+      <p class="hint">Không đọc được kho kiểu (<code>scripts/kieusub.py</code>) —
+         phụ đề vẽ cứng sẽ dùng kiểu mặc định.</p>
+    {% else %}
+      {# Lightbox: bấm ảnh xem thử nào cũng phóng to được. #}
       <div class="modal" id="ksubZoom" style="display:none" title="Bấm để đóng">
         <img id="ksubZoomAnh" class="ksub-zoom" alt="">
       </div>
-      <div class="modal" id="ksubModal" style="display:none">
-        <div class="modal-card ksubmodal">
-          <div class="modal-head">
-            <b>🎨 Kiểu phụ đề — bấm một thẻ để chọn</b>
-            <span class="spacer"></span>
-            <button type="button" class="small" id="ksubDong">✕ Đóng</button>
-          </div>
-          <div class="modal-body">
+      <div class="ksubbox">
+        <div class="ksubbox-chon">
+          {# Hai lưới thẻ dài nhất (kiểu · font) nằm trong <details> THU LẠI được,
+             kẻo chúng chiếm cả màn hình phải cuộn mãi. Thu lại vẫn thấy tên đang
+             chọn ngay trên nhãn; mở/thu nhớ ở localStorage nên tải lại trang vẫn
+             y như lúc rời đi. Radio bị thu vẫn gửi lên server bình thường. #}
+          <details class="ksubthu" id="ksubThuKieu">
+            <summary class="colhead">🖼 Kiểu trình bày — bấm một thẻ để chọn
+              <span class="ksub-nay" id="ksubNayKieu">{{ sel.ten }}</span></summary>
             <div class="ksubs">
               {% for k in kieusubs %}
                 <label class="ksub" title="{{ k.mota }}">
@@ -205,7 +251,10 @@
                 </label>
               {% endfor %}
             </div>
-            <p class="colhead later">🔤 Font chữ — đè font của kiểu đã chọn ở trên</p>
+          </details>
+          <details class="ksubthu" id="ksubThuFont">
+            <summary class="colhead">🔤 Font chữ — đè font của kiểu đã chọn ở trên
+              <span class="ksub-nay" id="ksubNayFont">{{ opts.sub_font or '(theo kiểu)' }}</span></summary>
             <div class="ksubs">
               <label class="ksub" title="Dùng font gốc của từng kiểu">
                 <input type="radio" name="sub_font" value="" {{ 'checked' if not opts.sub_font }}>
@@ -227,92 +276,75 @@
                 </label>
               {% endfor %}
             </div>
-            {# Màu chữ: bảng màu sẵn + ô tự chọn. Chỉ đè MÀU CHỮ (mau_chu) —
-               viền/bóng/nền/màu nổi bật karaoke của kiểu giữ nguyên. #}
-            {% set bang_mau = ['FFFFFF', 'FFD700', 'FF9800', 'FF4D4D', 'FF6FA5',
-                               '3DFF73', '00E5FF', '9C6BFF', '141414'] %}
-            {% set mau_tuchon = opts.sub_mau and opts.sub_mau not in bang_mau %}
-            <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
-            <div class="kmaus">
-              <label class="kmau" title="Dùng màu gốc của từng kiểu">
-                <input type="radio" name="sub_mau" value="" {{ 'checked' if not opts.sub_mau }}>
-                <i class="kmau-goc">×</i><span>(theo kiểu)</span>
-              </label>
-              {% for m in bang_mau %}
-                <label class="kmau" title="#{{ m }}">
-                  <input type="radio" name="sub_mau" value="{{ m }}"
-                         {{ 'checked' if opts.sub_mau == m }}>
-                  <i style="background:#{{ m }}"></i><span>#{{ m }}</span>
-                </label>
-              {% endfor %}
-              <label class="kmau" title="Tự chọn màu bất kỳ">
-                <input type="radio" name="sub_mau" id="kmauKhac"
-                       value="{{ opts.sub_mau if mau_tuchon else '' }}"
-                       {{ 'checked' if mau_tuchon }}>
-                <input type="color" id="kmauPick"
-                       value="#{{ opts.sub_mau if mau_tuchon else 'FFD700' }}">
-                <span>tự chọn</span>
-              </label>
-            </div>
-            {# Vị trí + CỠ CHỮ + số dòng trên KHUNG NGANG 16:9 (YouTube) — ảnh cả
-               khung hình, kéo thanh là ảnh vẽ lại bằng đúng libass sẽ burn. Vị trí
-               tính theo % chiều cao từ đáy nên áp được cho cả khung dọc; cỡ chữ là
-               % so với cỡ gốc của kiểu (trần ký tự/dòng tự rút theo, khỏi tràn mép). #}
-            <p class="colhead later">📺 Vị trí · cỡ chữ · số dòng (màn hình ngang)</p>
-            <div class="kvitri">
-              <img id="kvitriAnh" alt="" title="Bấm để phóng to">
-              <div class="kvitri-dk">
-                <label class="kvitri-thanh">
-                  <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
-                  <input type="range" id="kvitriKeo" min="4" max="45" step="1">
-                </label>
-                <label class="kvitri-thanh">
-                  <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>
-                  <input type="range" name="sub_cochu" id="kcochuKeo"
-                         min="50" max="200" step="5"
-                         value="{{ opts.sub_cochu or 100 }}">
-                </label>
-                <label class="kvitri-thanh">
-                  <span class="hint">📏 Số dòng mỗi lần hiện chữ</span>
-                  <select name="sub_dong" id="kdongChon">
-                    <option value="2" {{ 'selected' if (opts.sub_dong or 2) != 1 }}>2 dòng (như ảnh mẫu)</option>
-                    <option value="1" {{ 'selected' if (opts.sub_dong or 2) == 1 }}>1 dòng</option>
-                  </select>
-                </label>
-                <button type="button" class="small" id="kvitriMacDinh">↺ Mặc định</button>
-                <input type="hidden" name="sub_vitri" id="kvitriGiaTri"
-                       value="{{ opts.sub_vitri }}">
-              </div>
-            </div>
+          </details>
+          {# Màu CHỮ: chỉ đè mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên. #}
+          <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
+          {{ bang_mau('sub_mau', opts.sub_mau, 'FFD700', 'ksubHienMau') }}
+          {# Màu VIỀN quanh chữ: chỉ đè mau_vien — thân chữ/bóng/nền giữ nguyên. #}
+          <p class="colhead later">🖍 Màu viền chữ — đè viền của kiểu (chữ/nền giữ nguyên)</p>
+          {{ bang_mau('sub_mau_vien', opts.sub_mau_vien, '000000', 'ksubHienVien') }}
+          <p class="hint">Kiểu KHÔNG có viền (hộp bo góc, mấy kiểu CapCut) hoặc kiểu
+             vẽ khối nền đặc thì đổi màu viền không thấy gì — nhìn ảnh xem thử là rõ.</p>
+        </div>
+        {# Cột xem thử DÍNH theo màn hình (sticky) nên kéo thanh nào cũng thấy ngay:
+           ảnh trên là tổ hợp kiểu+font+màu, ảnh dưới là CẢ khung ngang 16:9 để
+           ngắm vị trí chữ. Server render bằng đúng libass sẽ burn — lần đầu mỗi
+           tổ hợp ~1-3s, có cache nên lần sau hiện luôn. #}
+        <div class="ksubbox-xem">
+          <p class="colhead">👁 Xem thử — bấm ảnh để phóng to</p>
+          <img id="ksubXemThu" alt=""
+               title="Xem thử kiểu + font + màu + cỡ chữ + số dòng đang chọn">
+          <p class="hint">Tổ hợp đang chọn — kiểu động là ảnh chuyển động.</p>
+          {# Vị trí + CỠ CHỮ + số dòng trên KHUNG NGANG 16:9 (YouTube). Vị trí tính
+             theo % chiều cao từ đáy nên áp được cho cả khung dọc; cỡ chữ là % so
+             với cỡ gốc của kiểu (trần ký tự/dòng tự rút theo, khỏi tràn mép). #}
+          <img id="kvitriAnh" alt="" title="Vị trí chữ trên khung ngang — bấm để phóng to">
+          <div class="kvitri-dk">
+            <label class="kvitri-thanh">
+              <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
+              <input type="range" id="kvitriKeo" min="4" max="45" step="1">
+            </label>
+            <label class="kvitri-thanh">
+              <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>
+              <input type="range" name="sub_cochu" id="kcochuKeo"
+                     min="50" max="200" step="5"
+                     value="{{ opts.sub_cochu or 100 }}">
+            </label>
+            <label class="kvitri-thanh">
+              <span class="hint">📏 Số dòng mỗi lần hiện chữ</span>
+              <select name="sub_dong" id="kdongChon">
+                <option value="2" {{ 'selected' if (opts.sub_dong or 2) != 1 }}>2 dòng (như ảnh mẫu)</option>
+                <option value="1" {{ 'selected' if (opts.sub_dong or 2) == 1 }}>1 dòng</option>
+              </select>
+            </label>
+            <button type="button" class="small" id="kvitriMacDinh">↺ Mặc định</button>
+            <input type="hidden" name="sub_vitri" id="kvitriGiaTri"
+                   value="{{ opts.sub_vitri }}">
           </div>
-          <div class="modal-foot">
-            {# Xem thử TỔ HỢP đang chọn — server render đúng libass sẽ burn
-               (lần đầu mỗi tổ hợp ~1-3s, có cache nên lần sau hiện ngay). #}
-            <div class="ksub-xemthu">
-              <img id="ksubXemThu" alt=""
-                   title="Xem thử kiểu + font + màu + cỡ chữ + số dòng đang chọn">
-              <span class="hint">Xem thử tổ hợp đang chọn — kiểu động là ảnh chuyển động</span>
-            </div>
-            <button type="button" class="primary small" id="ksubXong">✔ Xong</button>
+          {# Lưu tại chỗ — chọn xong bấm luôn, khỏi cuộn xuống cuối form. Vẫn là
+             đường /giongnoi/luu của nút dưới cùng (lưu CẢ form), chỉ khác ô báo
+             "✓ đã lưu"; formaction là đường lui khi không có JS. #}
+          <div class="savebar">
+            <button class="small" formaction="/giongnoi/luu"
+                    hx-post="/giongnoi/luu" hx-target="#luunote-kieusub"
+                    hx-swap="innerHTML">💾 Lưu cài đặt</button>
+            <span id="luunote-kieusub" class="luunote"></span>
           </div>
         </div>
       </div>
       <script>
         (() => {   // bọc IIFE: form này nhúng ở cả Home lẫn trang Giọng nói
-          const modal = document.getElementById("ksubModal");
-          const moBtn = document.getElementById("ksubMo");
-          if (!modal || !moBtn || moBtn.dataset.gan) return;
-          moBtn.dataset.gan = "1";
-          const anh = document.getElementById("ksubHienAnh");
-          const ten = document.getElementById("ksubHienTen");
-          const fontHien = document.getElementById("ksubHienFont");
-          const dong = () => { modal.style.display = "none"; };
-          moBtn.addEventListener("click", () => { modal.style.display = "flex"; });
-          document.getElementById("ksubDong").addEventListener("click", dong);
-          document.getElementById("ksubXong").addEventListener("click", dong);
-          modal.addEventListener("click", e => { if (e.target === modal) dong(); });
-          // Lightbox phóng to ảnh — Esc/bấm bất kỳ để đóng; Esc ưu tiên đóng
-          // lightbox trước rồi mới tới popup chọn kiểu.
+          const box = document.getElementById("ksubBox");
+          if (!box || box.dataset.gan) return;
+          box.dataset.gan = "1";
+          // Tên kiểu/font đang chọn hiện ở HAI chỗ: dòng tóm tắt đầu khối và nhãn
+          // của lưới thu lại (thu rồi vẫn biết đang chọn gì) → ghi cả cặp một lượt.
+          const ten = [document.getElementById("ksubHienTen"),
+                       document.getElementById("ksubNayKieu")];
+          const fontHien = [document.getElementById("ksubHienFont"),
+                            document.getElementById("ksubNayFont")];
+          const ghi = (o, v) => o.forEach(e => { e.textContent = v; });
+          // Lightbox phóng to ảnh: bấm ảnh để mở, bấm nền hoặc Esc để đóng.
           const zoom = document.getElementById("ksubZoom");
           const zoomAnh = document.getElementById("ksubZoomAnh");
           const moZoom = src => {
@@ -322,24 +354,22 @@
           };
           zoom.addEventListener("click", () => { zoom.style.display = "none"; });
           document.addEventListener("keydown", e => {
-            if (e.key !== "Escape") return;
-            if (zoom.style.display !== "none") zoom.style.display = "none";
-            else if (modal.style.display !== "none") dong();
+            if (e.key === "Escape") zoom.style.display = "none";
           });
           // Xem thử TỔ HỢP đang chọn: server render đúng libass (có cache).
-          // Ảnh ở chân popup + ảnh ô ngoài cùng trỏ về một tổ hợp.
           const xemThu = document.getElementById("ksubXemThu");
           const chon = n => {
             const r = document.querySelector(`input[name=${n}]:checked`);
             return r ? r.value : "";
           };
-          // Cỡ chữ (% cỡ gốc của kiểu) + số dòng mỗi lần hiện chữ — cùng đi kèm
-          // MỌI ảnh xem trước, kẻo ảnh một đằng video một nẻo.
+          // Cỡ chữ (% cỡ gốc của kiểu) + số dòng mỗi lần hiện chữ + màu viền —
+          // cùng đi kèm MỌI ảnh xem trước, kẻo ảnh một đằng video một nẻo.
           const cochuKeo = document.getElementById("kcochuKeo");
           const cochuSo = document.getElementById("kcochuSo");
           const dongChon = document.getElementById("kdongChon");
           const themCo = () => "&cochu=" + encodeURIComponent(cochuKeo.value) +
-            "&dong=" + encodeURIComponent(dongChon.value);
+            "&dong=" + encodeURIComponent(dongChon.value) +
+            "&mauvien=" + encodeURIComponent(chon("sub_mau_vien"));
           const capNhatXemThu = () => {
             const url = "/giongnoi/kieusub-xemtruoc?kieu=" +
               encodeURIComponent(chon("sub_kieu") || "hopbo") +
@@ -348,8 +378,6 @@
             xemThu.style.opacity = ".35";
             xemThu.onload = () => { xemThu.style.opacity = "1"; };
             xemThu.src = url;
-            anh.src = url;
-            anh.style.display = "";
           };
           // Khung ngang 16:9 xem VỊ TRÍ chữ + thanh kéo chỉnh % từ đáy.
           // Kéo thanh → chờ 350ms mới render (mỗi giá trị cache riêng phía server).
@@ -377,8 +405,8 @@
             cochuSo.textContent = cochuKeo.value + "%" +
               (cochuKeo.value === "100" ? " (giữ nguyên)" : "");
           };
-          // Đổi cỡ chữ / số dòng làm đổi CẢ hai ảnh (ô nhỏ + khung ngang) vì
-          // chúng đổi cả dáng chữ lẫn cách ngắt dòng.
+          // Đổi cỡ chữ / số dòng làm đổi CẢ hai ảnh vì chúng đổi cả dáng chữ lẫn
+          // cách ngắt dòng.
           const capNhatCaHai = () => { capNhatXemThu(); capNhatViTri(); };
           vitriKeo.value = vitriGT.value || VITRI_MD;
           veVitriNhan();
@@ -405,59 +433,65 @@
             capNhatCaHai();
           });
           vitriAnh.addEventListener("click", () => moZoom(vitriAnh.src));
-
+          xemThu.addEventListener("click", () => moZoom(xemThu.src));
           capNhatXemThu();
           capNhatViTri();
-          anh.addEventListener("click", () => moZoom(anh.src));
-          xemThu.addEventListener("click", () => moZoom(xemThu.src));
-          // Bấm thẻ: cập nhật ô "đang chọn" — KHÔNG tự đóng, để chọn tiếp font
-          // (hoặc ngược lại); đóng bằng ✔ Xong / ✕ / Esc / bấm nền tối.
-          modal.querySelectorAll("input[name=sub_kieu]").forEach(r =>
-            r.addEventListener("change", () => {
-              ten.textContent = r.closest(".ksub").querySelector("b").textContent;
-              capNhatXemThu();
-              capNhatViTri();
-            }));
-          modal.querySelectorAll("input[name=sub_font]").forEach(r =>
-            r.addEventListener("change", () => {
-              fontHien.textContent = r.value || "(theo kiểu)";
-              capNhatXemThu();
-              capNhatViTri();
-            }));
-          // Màu chữ: swatch có sẵn + ô tự chọn (input color gắn với radio riêng).
-          const mauHien = document.getElementById("ksubHienMau");
-          const mauDot = document.getElementById("ksubHienMauDot");
-          const veMau = v => {
-            mauHien.textContent = v ? "#" + v : "(theo kiểu)";
-            mauDot.style.display = v ? "" : "none";
-            if (v) mauDot.style.background = "#" + v;
-          };
-          modal.querySelectorAll("input[name=sub_mau]").forEach(r =>
-            r.addEventListener("change",
-                               () => { veMau(r.value); capNhatXemThu(); capNhatViTri(); }));
-          const khac = document.getElementById("kmauKhac");
-          const pick = document.getElementById("kmauPick");
-          pick.addEventListener("input", () => {
-            khac.value = pick.value.slice(1).toUpperCase();
-            khac.checked = true;
-            veMau(khac.value);
-            capNhatXemThu();
-            capNhatViTri();
+          // Lưới kiểu/font thu lại được — nhớ mở/thu, tải lại trang vẫn y như cũ.
+          box.querySelectorAll("details.ksubthu").forEach(td => {
+            const khoa = "ksubthu:" + td.id;
+            if (localStorage.getItem(khoa) === "1") td.open = true;
+            td.addEventListener("toggle",
+                                () => localStorage.setItem(khoa, td.open ? "1" : "0"));
           });
-          khac.addEventListener("change", () => {
-            if (!khac.value) khac.value = pick.value.slice(1).toUpperCase();
-            veMau(khac.value);
-            capNhatXemThu();
-            capNhatViTri();
+          // Bấm thẻ: cập nhật tên đang chọn + vẽ lại hai ảnh xem thử.
+          box.querySelectorAll("input[name=sub_kieu]").forEach(r =>
+            r.addEventListener("change", () => {
+              ghi(ten, r.closest(".ksub").querySelector("b").textContent);
+              capNhatCaHai();
+            }));
+          box.querySelectorAll("input[name=sub_font]").forEach(r =>
+            r.addEventListener("change", () => {
+              ghi(fontHien, r.value || "(theo kiểu)");
+              capNhatCaHai();
+            }));
+          // Bảng màu: swatch có sẵn + ô tự chọn (input color gắn radio riêng).
+          // MÀU CHỮ và MÀU VIỀN là hai bảng cùng khuôn, nên chạy chung một đoạn —
+          // .kmaus tự khai qua data-truong/data-tom nó sửa ô nào, cập nhật chấm
+          // màu nào ở dòng "Đang chọn".
+          box.querySelectorAll(".kmaus").forEach(bang => {
+            const ten = bang.dataset.truong;
+            const chu = document.getElementById(bang.dataset.tom);
+            const dot = document.getElementById(bang.dataset.tom + "Dot");
+            const veTom = v => {
+              if (chu) chu.textContent = v ? "#" + v : "(theo kiểu)";
+              if (!dot) return;
+              dot.style.display = v ? "" : "none";
+              if (v) dot.style.background = "#" + v;
+            };
+            const khac = bang.querySelector(".kmau-khac");
+            const pick = bang.querySelector(".kmau-pick");
+            bang.querySelectorAll("input[name=" + ten + "]").forEach(r =>
+              r.addEventListener("change",
+                                 () => { veTom(r.value); capNhatCaHai(); }));
+            pick.addEventListener("input", () => {
+              khac.value = pick.value.slice(1).toUpperCase();
+              khac.checked = true;
+              veTom(khac.value);
+              capNhatCaHai();
+            });
+            khac.addEventListener("change", () => {
+              if (!khac.value) khac.value = pick.value.slice(1).toUpperCase();
+              veTom(khac.value);
+              capNhatCaHai();
+            });
           });
         })();
       </script>
     {% endif %}
-    <p class="hint">.srt rời = tải lên YouTube Studio (nhanh) · vẽ cứng = mã hoá lại cả video (lâu).</p>
   </div>
 
   <div class="panel">
-    <div class="phead"><span class="num">6</span><h2>Video dọc (1080×1920)</h2></div>
+    <div class="phead"><span class="num">7</span><h2>Video dọc (1080×1920)</h2></div>
     <div class="grid">
       {{ speed('doc_speed', opts.doc_speed) }}
       {{ percent('doc_percent', opts.doc_percent) }}
@@ -473,7 +507,7 @@
   </div>
 
   <div class="panel">
-    <div class="phead"><span class="num">7</span><h2>Video TikTok (cắt theo %)</h2></div>
+    <div class="phead"><span class="num">8</span><h2>Video TikTok (cắt theo %)</h2></div>
     <div class="grid">
       {{ percent('tiktok_percent', opts.tiktok_percent) }}
       {{ speed('tiktok_speed', opts.tiktok_speed) }}
