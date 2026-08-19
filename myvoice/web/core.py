@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # ── Đường dẫn + sys.path (giống cách các script trong scripts/ tự dựng) ──────
@@ -509,29 +510,68 @@ def facebook_auto() -> bool:
     return bool(load_web_settings().get("fb_auto", True))
 
 
+_FB_MOD = None
+
+
+def facebook_module():
+    """Module dang_video_facebook nạp một lần rồi giữ lại.
+
+    Trang web xem trước giờ đăng bằng CHÍNH các hàm của script (plan_slots /
+    known_busy) — hai bên tính khác nhau thì bảng trên màn hình nói một đằng,
+    Facebook nhận một nẻo. Nạp theo đường dẫn (không import gói) vì chính script
+    đó lại import module này; nạp lại mỗi lần gọi thì mỗi lần mở trang lại chạy
+    thân module một lượt nên nhớ luôn vào biến.
+    """
+    global _FB_MOD
+    if _FB_MOD is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_fb_sched", FACEBOOK_DIR / "dang_video_facebook.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)                    # type: ignore[union-attr]
+        _FB_MOD = mod
+    return _FB_MOD
+
+
 def facebook_pending() -> dict:
-    """Danh sách tập CHƯA đăng Page cho khối “Đăng Facebook” trên trang.
+    """Danh sách tập CHƯA đăng Page + lịch đang chờ, cho khối “Đăng Facebook”.
 
     KHÔNG gọi Graph API ở đây — mở trang mà đi gọi mạng thì trang chậm theo đường
-    truyền (cùng lý do với tên kênh YouTube ở _upload_ctx). Danh sách tập đã có
-    trên Page lấy từ page_cache.json do chính script ghi ra mỗi lần chạy; chưa
-    quét lần nào thì `scanned` = False và trang sẽ mời bấm nút 🔄.
+    truyền (cùng lý do với tên kênh YouTube ở _upload_ctx). Mọi thứ đọc từ hai
+    file do chính script ghi ra: sổ đã đăng (da_dang.json) và bản chụp Page gần
+    nhất (page_cache.json); chưa quét lần nào thì `scanned` = False và trang sẽ
+    mời bấm nút 🔄.
     """
     # SỔ ĐÃ ĐĂNG ghi ở local (FACEBOOK/da_dang.json) — script cập nhật mỗi lần
-    # đăng xong; nút 🔄 chỉ dùng khi cần đối chiếu lại với Page.
+    # đăng xong; nút 🔄 dùng khi cần đối chiếu lại với Page (có bài đăng tay,
+    # hoặc vừa xoá bớt bài đã lên lịch).
     try:
         led = json.loads((FACEBOOK_DIR / "da_dang.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         led = {}
     eps = led.get("eps") if isinstance(led.get("eps"), dict) else {}
     seen = {int(n) for n in eps}
+    try:
+        cache = json.loads((FACEBOOK_DIR / "page_cache.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    # Mọi luật về lịch (biên nhận còn hiệu lực không · khung nào bận · giờ dự
+    # kiến) đều gọi thẳng hàm của script, không chép lại — xem chú thích đầu file.
+    try:
+        fb = facebook_module()
+    except Exception:
+        fb = None
 
     rows, missing = [], []
     for r in sorted(episode_rows(), key=lambda r: int(r["episode"])):
         folder = episode_folder(r["episode"])
         if folder is None:
             continue
-        if int(r["episode"]) in seen or (folder / "facebook_upload.json").exists():
+        # Biên nhận facebook_upload.json bị đánh dấu removed_from_page (bài đã bị
+        # xoá khỏi Page, nút 🔄 phát hiện) thì tập đó lại là hàng chờ.
+        posted = (fb.marker_alive(folder) if fb
+                  else (folder / "facebook_upload.json").exists())
+        if int(r["episode"]) in seen or posted:
             continue
         video = None
         for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
@@ -551,16 +591,29 @@ def facebook_pending() -> dict:
                      "when": ""})            # điền ngay bên dưới
 
     # Giờ dự kiến của từng tập — tính bằng ĐÚNG hàm mà lúc chạy thật sẽ dùng
-    # (plan_slots của script), nối sau mốc suy từ sổ. Import muộn để tránh vòng
-    # lặp import: chính script đó lại import module này.
+    # (plan_slots của script): lấp vào các khung 9h/19h còn trống theo lịch đọc
+    # được lần bấm 🔄 gần nhất. Chưa đọc lịch lần nào thì known_busy trả None và
+    # plan_slots lùi về nếp cũ (nối sau mốc xa nhất).
+    sched, filled = [], False
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "_fb_sched", FACEBOOK_DIR / "dang_video_facebook.py")
-        fb = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(fb)                     # type: ignore[union-attr]
-        for row, when in zip(rows, fb.plan_slots(len(rows), fb.known_anchor(led))):
+        busy = fb.known_busy(led, cache)
+        for row, when in zip(rows, fb.plan_slots(len(rows), fb.known_anchor(led), busy)):
             row["when"] = when.strftime("%d/%m %H:%M")
+        filled = busy is not None
+        # Lịch ĐANG CHỜ trên Page để hiện ngay trong khối: người xem biết ngày nào
+        # đã có bài, ngày nào còn trống — chính là chỗ các tập trên sẽ được xếp vào.
+        now, rows_sched = datetime.now(), []
+        for s in (cache.get("slots") or []):
+            try:
+                t = datetime.fromisoformat(str(s.get("when")))
+            except (TypeError, ValueError):
+                continue
+            if t > now:
+                rows_sched.append((t, s.get("ep") or ""))
+        # Sắp theo MỐC THẬT rồi mới đổi ra chữ: sắp theo chuỗi "%d/%m" thì sang
+        # tháng mới là 01/09 đứng trước 30/08.
+        sched = [{"when": t.strftime("%d/%m %H:%M"), "ep": ep}
+                 for t, ep in sorted(rows_sched)]
     except Exception:
         pass                                  # không xem trước được thì để trống
 
@@ -569,7 +622,6 @@ def facebook_pending() -> dict:
     cooldown = ""
     try:
         cd = json.loads((FACEBOOK_DIR / "cooldown.json").read_text(encoding="utf-8"))
-        from datetime import datetime
         until = datetime.fromisoformat(cd["until"])
         if until > datetime.now():
             cooldown = until.strftime("%H:%M")
@@ -578,7 +630,12 @@ def facebook_pending() -> dict:
 
     return {"rows": rows, "missing": missing, "scanned": bool(eps),
             "fetched": str(led.get("synced", "")), "on_page": len(seen),
-            "cooldown": cooldown, "auto": facebook_auto()}
+            "cooldown": cooldown, "auto": facebook_auto(),
+            # Lịch đang chờ + lúc đọc được nó: khối trên trang hiện thành bảng
+            # riêng, và biết `filled` để nói giờ dự kiến là lấp chỗ trống hay chỉ
+            # nối đuôi (chưa bấm 🔄 lần nào).
+            "sched": sched, "filled": filled,
+            "slots_at": str(cache.get("slots_at", ""))}
 
 
 # ── Nội dung SEO để copy khi đăng video ─────────────────────────────────────
@@ -693,6 +750,10 @@ def tts_settings() -> tuple[dict | None, str]:
         sub_font=opts.get("sub_font") or "",
         sub_mau=opts.get("sub_mau") or "",
         sub_vitri=str(opts.get("sub_vitri") or ""),
+        # Cỡ chữ = % so với cỡ gốc của kiểu (rỗng/100 = giữ nguyên); số dòng mỗi
+        # lần hiện chữ (2 = gom hai dòng như ảnh mẫu của kho kiểu).
+        sub_cochu=str(opts.get("sub_cochu") or ""),
+        sub_dong=_i(opts.get("sub_dong"), 2, 1, 2),
     ), ""
 
 

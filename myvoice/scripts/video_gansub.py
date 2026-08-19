@@ -123,12 +123,22 @@ def wrap_sentence(sentence: str, max_chars: int):
     return pieces
 
 
-def build_cues(text: str, max_chars: int):
+def build_cues(text: str, max_chars: int, max_lines: int = 1):
     """Trả về danh sách cue (chuỗi hiển thị) từ văn bản gốc.
 
     Mỗi dòng không rỗng = 1 đoạn; tách đoạn thành câu; câu quá dài thì cắt theo từ.
     Giữ NGUYÊN chữ gốc (kể cả hoa/thường, dấu câu) để hiển thị.
+
+    max_lines = số DÒNG tối đa mỗi lần hiện chữ:
+      1 — mỗi cue một dòng ≤ max_chars (nếp cũ).
+      2 — mỗi cue gom tới 2 dòng, đúng như ảnh mẫu của kho kiểu: cắt câu thành
+          mẩu vừa MỘT lần hiện chữ (≤ max_chars × max_lines ký tự) rồi bẻ mẩu
+          đó thành các dòng dài xấp xỉ nhau. Chữ ở lại trên hình lâu gấp đôi
+          nên dễ đọc hơn, và không còn cảnh nửa câu trôi mất trước khi đọc kịp.
+    Các dòng trong một cue nối bằng ký tự xuống dòng — write_srt ghi thẳng (SRT
+    cho phép cue nhiều dòng), kieusub.write_ass_kieu tự đổi sang mã của ASS.
     """
+    max_lines = max(1, int(max_lines or 1))
     cues = []
     for line in text.splitlines():
         line = line.strip()
@@ -138,10 +148,14 @@ def build_cues(text: str, max_chars: int):
             sentence = sentence.strip()
             if not sentence:
                 continue
-            if len(sentence) <= max_chars:
-                cues.append(sentence)
-            else:
-                cues.extend(wrap_sentence(sentence, max_chars))
+            if max_lines == 1:
+                if len(sentence) <= max_chars:
+                    cues.append(sentence)
+                else:
+                    cues.extend(wrap_sentence(sentence, max_chars))
+                continue
+            for mau in wrap_sentence(sentence, max_chars * max_lines):
+                cues.append("\n".join(wrap_sentence(mau, max_chars)))
     return cues
 
 
@@ -608,6 +622,12 @@ def main():
     parser.add_argument("--mau", default="",
                         help="Đè MÀU CHỮ của kiểu khi --burn (RGB hex, vd FFD700; "
                              "rỗng = theo kiểu).")
+    parser.add_argument("--cochu", default="",
+                        help="Phóng to/thu nhỏ chữ của kiểu khi --burn, tính bằng %% "
+                             "(50-200; rỗng hoặc 100 = giữ cỡ gốc của kiểu).")
+    parser.add_argument("--dong", type=int, default=1, choices=[1, 2],
+                        help="Số DÒNG mỗi lần hiện chữ (1 = như cũ; 2 = gom hai "
+                             "dòng một lần, giống ảnh mẫu của kho kiểu).")
     parser.add_argument("--srt-only", action="store_true",
                         help="CHỈ xuất file .srt (vd để tải lên YouTube Studio), không đụng video.")
     args = parser.parse_args()
@@ -633,9 +653,10 @@ def main():
     if args.burn:
         import kieusub
         max_chars = kieusub.chon_max_chars(
-            kieusub.ap_font(kieusub.lay(args.kieu), args.font), max_chars)
+            kieusub.ap_cochu(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
+                             args.cochu), max_chars)
     text = script_path.read_text(encoding="utf-8")
-    cues = build_cues(text, max_chars)
+    cues = build_cues(text, max_chars, args.dong)
     if not cues:
         print("❌ Kịch bản rỗng, không có gì để làm phụ đề.")
         sys.exit(1)
@@ -694,8 +715,9 @@ def main():
         # Burn thì dùng .ass (mang được kiểu riêng) chứ không phải .srt: ép .srt
         # bằng force_style chỉ ra khung nền VUÔNG. Kiểu lấy từ kho kieusub_mau.
         import kieusub
-        kieu = kieusub.ap_mau(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
-                              args.mau)
+        kieu = kieusub.ap_cochu(
+            kieusub.ap_mau(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
+                           args.mau), args.cochu)
         ass_path = kieusub.write_ass_kieu(cues, cue_times,
                                           srt_path.with_suffix(".ass"), kieu)
         print(f"💾 Đã ghi kiểu phụ đề: {kieu['ten']} ({kieu['id']}) → {ass_path.name}")

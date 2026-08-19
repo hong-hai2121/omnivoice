@@ -13,7 +13,9 @@
 {# Lớp p-<trang> quyết định tông màu của cả trang (xem đầu app.css). #}
 <body class="p-{{ active or 'script' }}">
 {# Menu trái: Home (đầy đủ, như GUI) rồi tới từng phần theo thứ tự làm việc thật —
-   kịch bản → nhận diện hàng loạt → giọng/video → thumbnail → copy SEO khi đăng. #}
+   kịch bản → nhận diện hàng loạt → giọng/video → thumbnail → copy SEO → đăng bài.
+   Trang Đăng bài dùng CHÍNH hai khối đăng của Home (cùng nút, cùng hàng đợi), chỉ
+   là chỗ ngồi canh việc đăng cho gọn. #}
 <aside class="side">
   <div class="brand">
     <span class="logo">🎧</span>
@@ -26,6 +28,7 @@
     <a href="/giongnoi"  class="{{ 'on' if active == 'voice' }}"><span>🎧</span> Giọng nói</a>
     <a href="/thumbnail" class="{{ 'on' if active == 'thumbnail' }}"><span>🖼</span> Thumbnail</a>
     <a href="/seo"       class="{{ 'on' if active == 'seo' }}"><span>📑</span> Copy SEO</a>
+    <a href="/dangbai"   class="{{ 'on' if active == 'post' }}"><span>📤</span> Đăng bài <span class="tag">YT · FB</span></a>
   </nav>
   <p class="sidefoot">Nhật ký chạy nằm ở cửa sổ console của server.</p>
 </aside>

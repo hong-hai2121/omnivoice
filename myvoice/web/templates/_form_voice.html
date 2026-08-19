@@ -254,14 +254,31 @@
                 <span>tự chọn</span>
               </label>
             </div>
-            {# Vị trí chữ trên KHUNG NGANG 16:9 (YouTube) — ảnh cả khung hình
-               + thanh kéo % chiều cao từ đáy; áp cho cả khung dọc theo cùng %. #}
-            <p class="colhead later">📺 Vị trí trên màn hình ngang (YouTube)</p>
+            {# Vị trí + CỠ CHỮ + số dòng trên KHUNG NGANG 16:9 (YouTube) — ảnh cả
+               khung hình, kéo thanh là ảnh vẽ lại bằng đúng libass sẽ burn. Vị trí
+               tính theo % chiều cao từ đáy nên áp được cho cả khung dọc; cỡ chữ là
+               % so với cỡ gốc của kiểu (trần ký tự/dòng tự rút theo, khỏi tràn mép). #}
+            <p class="colhead later">📺 Vị trí · cỡ chữ · số dòng (màn hình ngang)</p>
             <div class="kvitri">
               <img id="kvitriAnh" alt="" title="Bấm để phóng to">
               <div class="kvitri-dk">
-                <input type="range" id="kvitriKeo" min="4" max="45" step="1">
-                <span class="hint">Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
+                <label class="kvitri-thanh">
+                  <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
+                  <input type="range" id="kvitriKeo" min="4" max="45" step="1">
+                </label>
+                <label class="kvitri-thanh">
+                  <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>
+                  <input type="range" name="sub_cochu" id="kcochuKeo"
+                         min="50" max="200" step="5"
+                         value="{{ opts.sub_cochu or 100 }}">
+                </label>
+                <label class="kvitri-thanh">
+                  <span class="hint">📏 Số dòng mỗi lần hiện chữ</span>
+                  <select name="sub_dong" id="kdongChon">
+                    <option value="2" {{ 'selected' if (opts.sub_dong or 2) != 1 }}>2 dòng (như ảnh mẫu)</option>
+                    <option value="1" {{ 'selected' if (opts.sub_dong or 2) == 1 }}>1 dòng</option>
+                  </select>
+                </label>
                 <button type="button" class="small" id="kvitriMacDinh">↺ Mặc định</button>
                 <input type="hidden" name="sub_vitri" id="kvitriGiaTri"
                        value="{{ opts.sub_vitri }}">
@@ -272,7 +289,8 @@
             {# Xem thử TỔ HỢP đang chọn — server render đúng libass sẽ burn
                (lần đầu mỗi tổ hợp ~1-3s, có cache nên lần sau hiện ngay). #}
             <div class="ksub-xemthu">
-              <img id="ksubXemThu" alt="" title="Xem thử kiểu + font + màu đang chọn">
+              <img id="ksubXemThu" alt=""
+                   title="Xem thử kiểu + font + màu + cỡ chữ + số dòng đang chọn">
               <span class="hint">Xem thử tổ hợp đang chọn — kiểu động là ảnh chuyển động</span>
             </div>
             <button type="button" class="primary small" id="ksubXong">✔ Xong</button>
@@ -315,11 +333,18 @@
             const r = document.querySelector(`input[name=${n}]:checked`);
             return r ? r.value : "";
           };
+          // Cỡ chữ (% cỡ gốc của kiểu) + số dòng mỗi lần hiện chữ — cùng đi kèm
+          // MỌI ảnh xem trước, kẻo ảnh một đằng video một nẻo.
+          const cochuKeo = document.getElementById("kcochuKeo");
+          const cochuSo = document.getElementById("kcochuSo");
+          const dongChon = document.getElementById("kdongChon");
+          const themCo = () => "&cochu=" + encodeURIComponent(cochuKeo.value) +
+            "&dong=" + encodeURIComponent(dongChon.value);
           const capNhatXemThu = () => {
             const url = "/giongnoi/kieusub-xemtruoc?kieu=" +
               encodeURIComponent(chon("sub_kieu") || "hopbo") +
               "&font=" + encodeURIComponent(chon("sub_font")) +
-              "&mau=" + encodeURIComponent(chon("sub_mau"));
+              "&mau=" + encodeURIComponent(chon("sub_mau")) + themCo();
             xemThu.style.opacity = ".35";
             xemThu.onload = () => { xemThu.style.opacity = "1"; };
             xemThu.src = url;
@@ -333,7 +358,7 @@
           const vitriSo = document.getElementById("kvitriSo");
           const vitriGT = document.getElementById("kvitriGiaTri");
           const VITRI_MD = 16;                 // ≈ 173px trên khung 1080 (mặc định)
-          let vitriHen = null;
+          let vitriHen = null, cochuHen = null;
           const veVitriNhan = () => {
             vitriSo.textContent = (vitriGT.value || VITRI_MD) + "%" +
               (vitriGT.value ? "" : " (mặc định)");
@@ -343,24 +368,41 @@
               encodeURIComponent(chon("sub_kieu") || "hopbo") +
               "&font=" + encodeURIComponent(chon("sub_font")) +
               "&mau=" + encodeURIComponent(chon("sub_mau")) +
-              "&vitri=" + encodeURIComponent(vitriGT.value);
+              "&vitri=" + encodeURIComponent(vitriGT.value) + themCo();
             vitriAnh.style.opacity = ".35";
             vitriAnh.onload = () => { vitriAnh.style.opacity = "1"; };
             vitriAnh.src = url;
           };
+          const veCochuNhan = () => {
+            cochuSo.textContent = cochuKeo.value + "%" +
+              (cochuKeo.value === "100" ? " (giữ nguyên)" : "");
+          };
+          // Đổi cỡ chữ / số dòng làm đổi CẢ hai ảnh (ô nhỏ + khung ngang) vì
+          // chúng đổi cả dáng chữ lẫn cách ngắt dòng.
+          const capNhatCaHai = () => { capNhatXemThu(); capNhatViTri(); };
           vitriKeo.value = vitriGT.value || VITRI_MD;
           veVitriNhan();
+          veCochuNhan();
           vitriKeo.addEventListener("input", () => {
             vitriGT.value = vitriKeo.value;
             veVitriNhan();
             clearTimeout(vitriHen);
             vitriHen = setTimeout(capNhatViTri, 350);
           });
+          cochuKeo.addEventListener("input", () => {
+            veCochuNhan();
+            clearTimeout(cochuHen);          // hẹn riêng, khỏi nuốt lượt vẽ của vị trí
+            cochuHen = setTimeout(capNhatCaHai, 350);
+          });
+          dongChon.addEventListener("change", capNhatCaHai);
           document.getElementById("kvitriMacDinh").addEventListener("click", () => {
             vitriGT.value = "";
             vitriKeo.value = VITRI_MD;
+            cochuKeo.value = 100;
+            dongChon.value = "2";
             veVitriNhan();
-            capNhatViTri();
+            veCochuNhan();
+            capNhatCaHai();
           });
           vitriAnh.addEventListener("click", () => moZoom(vitriAnh.src));
 

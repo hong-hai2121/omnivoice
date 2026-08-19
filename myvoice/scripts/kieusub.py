@@ -76,6 +76,7 @@ GOC = dict(
     mau_nen="000000", nen_alpha="60",     # hộp/khối nền + độ trong (00 đặc…FF trong)
     pop=True,                             # hienlo/tungtu: từ mới phóng nhẹ
     lech=6,                               # glitch: hai bản màu lệch đi bấy nhiêu px
+    ti_co=1.0,                            # tỉ lệ ap_cochu đã phóng (hộp bo góc dãn theo)
     max_chars=0,                          # >0: trần ký tự/dòng RIÊNG của kiểu (font to
 )                                         # phải xuống dòng sớm hơn kẻo tràn mép)
 
@@ -239,6 +240,32 @@ def ap_mau(k: dict, mau: str) -> dict:
     return {**k, "mau_chu": mau.upper()}
 
 
+def ap_cochu(k: dict, cochu) -> dict:
+    """PHÓNG TO / THU NHỎ chữ của kiểu theo % (100 hoặc rỗng = giữ nguyên).
+
+    Nhân cả viền/bóng/nhoè/độ lệch glitch theo cùng tỉ lệ nên dáng chữ không
+    đổi, chỉ to nhỏ đi; đồng thời RÚT trần ký tự/dòng theo tỉ lệ NGƯỢC — chữ to
+    hơn thì ít ký tự lọt một dòng hơn, không rút là chữ tràn ra mép khung.
+    Kiểu để max_chars = 0 (theo số người dùng đặt) lấy 50 làm bề rộng chuẩn,
+    nhưng chỉ khi thật sự đổi cỡ — để 100% giữ nguyên hành vi cũ.
+    """
+    try:
+        pct = float(str(cochu).strip())
+    except (TypeError, ValueError):
+        return k
+    if not 50 <= pct <= 200 or round(pct) == 100:
+        return k
+    ti = pct / 100
+    k = {**k, "size": max(8, round(k["size"] * ti)), "ti_co": ti}
+    for kh in ("vien", "vien2", "bong", "lech"):
+        if k.get(kh):
+            k[kh] = max(1, round(k[kh] * ti))
+    if k.get("blur"):
+        k["blur"] = round(k["blur"] * ti, 1)
+    k["max_chars"] = max(8, round((k["max_chars"] or 50) / ti))
+    return k
+
+
 # ── Đo chữ (chỉ kiểu hopbo cần, để tính bề rộng khung nền) ───────────────────
 def _text_width(text: str, k: dict) -> float:
     try:
@@ -351,10 +378,14 @@ def _ev_hopbo(out, k, cue, st, en, extra, play_w, play_h, margin_v):
     text_bottom = play_h - margin_v
     lines = cue.split("\n")
     w = max(_text_width(ln, k) for ln in lines)
-    x0, x1 = cx - w / 2 - BOX_PAD_X, cx + w / 2 + BOX_PAD_X
-    y1 = text_bottom + BOX_PAD_Y
-    y0 = text_bottom - line_h * len(lines) - BOX_PAD_Y
-    path = _rounded_rect_path(x0, y0, x1, y1, BOX_RADIUS)
+    # Chữ phóng to thì lề/bo góc của hộp phải dãn theo, không thì hộp bó sát
+    # chữ trông như thiếu chỗ thở.
+    ti = float(k.get("ti_co") or 1)
+    pad_x, pad_y = BOX_PAD_X * ti, BOX_PAD_Y * ti
+    x0, x1 = cx - w / 2 - pad_x, cx + w / 2 + pad_x
+    y1 = text_bottom + pad_y
+    y0 = text_bottom - line_h * len(lines) - pad_y
+    path = _rounded_rect_path(x0, y0, x1, y1, BOX_RADIUS * ti)
     a, b = _ass_ts(st), _ass_ts(en)
     out.append(
         f"Dialogue: 0,{a},{b},Box,,0,0,0,,"
@@ -511,13 +542,24 @@ def _wrap_tho(text: str, n: int) -> str:
     return best or text
 
 
+def _cau_mau_theo_dong(k: dict, dong: int) -> str:
+    """Câu mẫu bẻ dòng ĐÚNG như burn thật sẽ hiện.
+
+    dong>=2: hai dòng cân đối (như ảnh mẫu trong kho kiểu).
+    dong==1: chỉ mẩu ĐẦU — burn thật cắt câu dài thành nhiều lần hiện chữ, mỗi
+    lần một dòng, nên vẽ cả câu vào một dòng là ảnh xem trước nói dối.
+    """
+    cau = _wrap_tho(CAU_MAU, k["max_chars"])
+    return cau if dong >= 2 else cau.splitlines()[0]
+
+
 def ve_mau(k: dict) -> Path | None:
     """Vẽ ảnh xem trước MỘT kiểu (tên file = id của kiểu)."""
     return _ve_anh_kieu(k, k["id"])
 
 
 def _ve_anh_kieu(k: dict, ten_goc: str, margin_v: int = SUB_MARGIN_V,
-                 ca_khung: bool = False) -> Path | None:
+                 ca_khung: bool = False, dong: int = 2) -> Path | None:
     """Vẽ ảnh xem trước cho dict kiểu `k` ra ANH_DIR/<ten_goc>.png|webp.
 
     Vẽ bằng đúng đường burn thật (libass qua ffmpeg) nên ảnh là xem trước
@@ -530,7 +572,7 @@ def _ve_anh_kieu(k: dict, ten_goc: str, margin_v: int = SUB_MARGIN_V,
     ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
     dest = ANH_DIR / (ten_goc + ext)
     tmp = ANH_DIR / f"_mau_{ten_goc}.ass"
-    write_ass_kieu([_wrap_tho(CAU_MAU, k["max_chars"])], [(0.25, 3.15)], tmp, k,
+    write_ass_kieu([_cau_mau_theo_dong(k, dong)], [(0.25, 3.15)], tmp, k,
                    margin_v=margin_v)
     if ca_khung:
         kich, vf_them = "768x432", ""
@@ -647,16 +689,21 @@ def vitri_margin(vitri, play_h: int, macdinh: int) -> int:
 
 
 def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
-                vitri="", ca_khung: bool = False) -> Path | None:
-    """Ảnh xem thử TỔ HỢP kiểu + font + màu (+ vị trí) đang chọn cho popup web.
+                vitri="", ca_khung: bool = False, cochu="",
+                dong: int = 2) -> Path | None:
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu + cỡ chữ + số dòng (+ vị trí).
 
     ca_khung=True → khung ngang 16:9 NGUYÊN VẸN để thấy chữ nằm đâu trên màn
     hình (vitri = % chiều cao từ đáy, rỗng = mặc định 173px ≈ 16%).
+    cochu = % phóng to/thu nhỏ chữ, dong = số dòng mỗi lần hiện chữ (1 hoặc 2).
     Không đè gì → trả thẳng ảnh mẫu sẵn có của kiểu. Còn lại render bản riêng
     vào cache xt_<hash> (mỗi tổ hợp chỉ render MỘT lần, lần sau trả ngay)."""
-    k = ap_mau(ap_font(lay(kieu_id), font), mau)
+    co = str(cochu or "").strip()
+    nguyen_co = (not co) or co in ("100", "100.0")
+    dong = 1 if str(dong) in ("1", "1.0") else 2
+    k = ap_cochu(ap_mau(ap_font(lay(kieu_id), font), mau), co)
     ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
-    if not font and not mau and not ca_khung:
+    if not font and not mau and not ca_khung and nguyen_co and dong == 2:
         p = ANH_DIR / (k["id"] + ext)
         return p if p.is_file() else ve_mau(k)
     margin = vitri_margin(vitri, ASS_PLAY_H, SUB_MARGIN_V)
@@ -667,12 +714,13 @@ def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
         nf = _nen_ngang()
         nen_mt = int(nf.stat().st_mtime) if nf else 0
     import hashlib
-    key = hashlib.md5(f"{k['id']}|{font}|{mau}|{margin}|{ca_khung}|{nen_mt}"
-                      .encode("utf-8")).hexdigest()[:12]
+    key = hashlib.md5(f"{k['id']}|{font}|{mau}|{co}|{dong}|{margin}|{ca_khung}"
+                      f"|{nen_mt}".encode("utf-8")).hexdigest()[:12]
     dest = ANH_DIR / (f"xt_{key}" + ext)
     if dest.is_file():
         return dest
-    p = _ve_anh_kieu(k, f"xt_{key}", margin_v=margin, ca_khung=ca_khung)
+    p = _ve_anh_kieu(k, f"xt_{key}", margin_v=margin, ca_khung=ca_khung,
+                     dong=dong)
     _don_xemtruoc()
     return p
 

@@ -37,7 +37,11 @@
 }
 
 /* ── Tông màu riêng của từng trang ───────────────────────────────────────── */
-body.p-home      { --accent: #4f46e5; --accent2: #818cf8; --accent-soft: #eceafe; }
+/* Home dùng CHUNG tông ĐỎ với trang Đăng bài: Home là chỗ bấm mọi nút chạy
+   nặng, đỏ cho nổi hẳn — và hai khối 4-5 của Home chính là trang Đăng bài nên
+   cùng màu là đúng việc. Sửa một chỗ là đổi cả hai trang. */
+body.p-home,
+body.p-post      { --accent: #dc2626; --accent2: #fb7185; --accent-soft: #ffecec; }
 body.p-script    { --accent: #7c3aed; --accent2: #c084fc; --accent-soft: #f2ecff; }
 body.p-recog     { --accent: #2563eb; --accent2: #38bdf8; --accent-soft: #e8f1ff; }
 body.p-voice     { --accent: #db2777; --accent2: #fb7185; --accent-soft: #ffe9f2; }
@@ -63,8 +67,9 @@ body.p-seo       { --accent: #0d9488; --accent2: #34d399; --accent-soft: #e2f7f3
   body.p-recog     { --accent: #60a5fa; --accent2: #7dd3fc; --accent-soft: #16233b; }
   body.p-voice     { --accent: #f472b6; --accent2: #fda4af; --accent-soft: #35182a; }
   body.p-thumbnail { --accent: #fb923c; --accent2: #fcd34d; --accent-soft: #35210f; }
-  body.p-home      { --accent: #a5b4fc; --accent2: #c7d2fe; --accent-soft: #1c1e3d; }
   body.p-seo       { --accent: #2dd4bf; --accent2: #6ee7b7; --accent-soft: #102b2a; }
+  body.p-home,
+  body.p-post      { --accent: #f87171; --accent2: #fda4af; --accent-soft: #331819; }
 
   /* Trong tối, --accent là màu SÁNG nên mọi nền gradient phải đi với chữ sẫm. */
   button.primary, button.primary:hover, .num, .badge.run { color: #14161c; }
@@ -668,10 +673,15 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
 .kvitri-dk input[type=range] { width: 100%; accent-color: var(--accent); }
 .kvitri-dk .hint { margin: 0; }
 .kvitri-dk button { align-self: flex-start; }
+/* Mỗi thanh chỉnh (vị trí / cỡ chữ / số dòng): nhãn trên, ô điều khiển dưới. */
+.kvitri-thanh { display: flex; flex-direction: column; gap: 3px; cursor: default; }
+.kvitri-thanh select { align-self: flex-start; min-width: 170px; }
 
 /* Lightbox phóng to ảnh xem thử — bấm ảnh nhỏ nào cũng mở, bấm đâu cũng đóng. */
 #ksubHienAnh, .ksub-xemthu img { cursor: zoom-in; }
-#ksubZoom { cursor: zoom-out; }
+/* Lightbox nằm TRƯỚC popup chọn kiểu trong HTML nên cùng z-index là bị popup
+   đè lên — nâng hẳn một nấc, kèm nền tối hơn cho ảnh phóng to nổi rõ. */
+#ksubZoom { cursor: zoom-out; z-index: 70; background: rgba(10, 8, 22, .72); }
 .ksub-zoom {
   width: min(94vw, 1280px); max-height: 88vh; object-fit: contain;
   border-radius: 12px; box-shadow: var(--shadow-lg); background: #151a24;

@@ -227,8 +227,9 @@ def page_home(request: Request):
     # on_home=True: ô "Số tập (chữ trên video)" hiện ở khối Thumbnail thay vì trong
     # khối Giọng nói (xem _field_tiktok_episode.html).
     ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx(), **_upload_ctx()}
-    # Khối Đăng Facebook: danh sách tập chưa đăng Page (đọc đĩa + cache, không gọi mạng).
-    ctx["fb"] = core.facebook_pending()
+    # Khối Đăng Facebook: danh sách tập chưa đăng Page + lịch đang chờ (đọc đĩa +
+    # cache, không gọi mạng).
+    ctx["fb"] = _fb_ctx()
     return _page(request, "home.html", active="home", q=runner.state(),
                  on_home=True, **ctx)
 
@@ -477,17 +478,20 @@ async def save_voice_only(request: Request):
 
 @app.get("/giongnoi/kieusub-xemtruoc")
 def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
-                     vitri: str = "", khung: str = ""):
-    """Ảnh xem thử TỔ HỢP kiểu + font + màu (+ vị trí) cho popup chọn kiểu.
+                     vitri: str = "", khung: str = "", cochu: str = "",
+                     dong: int = 2):
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu + cỡ chữ + số dòng (+ vị trí).
 
     khung=ngang → khung 16:9 nguyên vẹn để thấy VỊ TRÍ chữ trên màn hình
-    (vitri = % chiều cao từ đáy). Render bằng đúng libass sẽ burn; mỗi tổ hợp
-    chỉ render một lần (cache xt_* trong static/kieusub) nên lần đầu ~1-3
-    giây, các lần sau tức thì."""
+    (vitri = % chiều cao từ đáy). cochu = % phóng to/thu nhỏ chữ, dong = số
+    dòng mỗi lần hiện chữ. Render bằng đúng libass sẽ burn; mỗi tổ hợp chỉ
+    render một lần (cache xt_* trong static/kieusub) nên lần đầu ~1-3 giây,
+    các lần sau tức thì."""
     try:
         import kieusub
         p = kieusub.ve_xemtruoc(kieu, font, mau, vitri,
-                                ca_khung=(khung == "ngang"))
+                                ca_khung=(khung == "ngang"),
+                                cochu=cochu, dong=dong)
     except Exception:
         p = None
     if not p:
@@ -811,6 +815,36 @@ def _fb_picked(form) -> list[str]:
     return [str(e) for e in form.getlist("fbtap")]
 
 
+def _fb_ctx(note: str = "") -> dict:
+    """Ngữ cảnh khối Đăng Facebook: danh sách chờ + lịch Page (đọc đĩa, không gọi
+    mạng) kèm trạng thái hàng đợi.
+
+    `busy` để khối tự gọi lại /partials/facebook mỗi 6s trong lúc hàng đợi
+    Facebook còn việc: bấm 🔄 xong là bảng tự vẽ lại theo lịch mới đọc được, khỏi
+    phải nhớ tải lại trang. Hết việc thì bản vẽ mới không còn hx-get nên vòng làm
+    mới tự tắt."""
+    ctx = core.facebook_pending()
+    ctx["busy"] = fb_runner.busy()
+    ctx["note"] = note
+    return ctx
+
+
+def _fb_block(request: Request, note: str, fallback: str = "/"):
+    """Trả lời cho ba nút của khối: htmx thì thay CHÍNH khối đó bằng bản mới vẽ
+    (kèm mẩu trả lời cạnh nút), không có JS thì chuyển hướng như cũ."""
+    if request.headers.get("hx-request"):
+        return templates.TemplateResponse(request, "_form_facebook.html",
+                                          {"fb": _fb_ctx(note)})
+    return _back(request, fallback)
+
+
+@app.get("/partials/facebook", response_class=HTMLResponse)
+def partial_facebook(request: Request):
+    """Khối Đăng Facebook vẽ lại — vòng tự làm mới của #fbblock gọi vào đây."""
+    return templates.TemplateResponse(request, "_form_facebook.html",
+                                      {"fb": _fb_ctx()})
+
+
 @app.post("/dangfacebook/chay")
 async def run_facebook_schedule(request: Request):
     """Nút '📘 Đăng các tập chưa đăng': chạy dang_video_facebook.py trong hàng đợi
@@ -821,7 +855,7 @@ async def run_facebook_schedule(request: Request):
                       else " — tất cả tập chưa đăng."))
     fb_runner.enqueue("📘 Lên lịch Facebook (9h/19h)",
                       steps_mod.facebook_steps(dry_run=False, episodes=picked))
-    return _saved(request, "/", "✓ Đã xếp việc — theo dõi ở khối Hàng đợi")
+    return _fb_block(request, "✓ Đã xếp việc — theo dõi ở khối Hàng đợi")
 
 
 @app.post("/dangfacebook/xemtruoc")
@@ -833,16 +867,18 @@ async def preview_facebook_schedule(request: Request):
     fb_runner.enqueue("📘 Kế hoạch Facebook (xem trước, không đăng)",
                       steps_mod.facebook_steps(dry_run=True, episodes=picked),
                       light=True)
-    return _saved(request, "/", "🔍 Đang xem — kế hoạch hiện ở khối Hàng đợi")
+    return _fb_block(request, "🔍 Đang xem — kế hoạch hiện ở khối Hàng đợi")
 
 
 @app.post("/dangfacebook/quet")
 def scan_facebook_page(request: Request):
-    """Nút '🔄 Đối chiếu Page': cập nhật sổ đã đăng → bảng tập chưa đăng vẽ lại
-    theo. Cũng là việc nhẹ (chỉ gọi vài request đọc)."""
-    fb_runner.enqueue("🔄 Đối chiếu Page Facebook",
+    """Nút '🔄 Cập nhật lịch Page': đọc lại bài đã đăng + lịch đang chờ + số phận
+    từng bài script đã xếp (bị xoá / bị dời giờ), rồi cập nhật sổ. Bảng tập chưa
+    đăng và bảng lịch vẽ lại theo — khối tự làm mới nên xong là thấy ngay.
+    Cũng là việc nhẹ (chỉ gọi vài request đọc)."""
+    fb_runner.enqueue("🔄 Cập nhật lịch Page Facebook",
                       steps_mod.facebook_steps(only_scan=True), light=True)
-    return _saved(request, "/", "🔄 Đang đối chiếu — xong thì tải lại trang")
+    return _fb_block(request, "🔄 Đang đọc lại lịch Page — bảng tự cập nhật khi xong")
 
 
 @app.post("/dangfacebook/tudong")
@@ -1063,10 +1099,10 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
-             "tiktok_music_db": int, "sub_max_chars": int}
+             "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
               "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",
-              "sub_vitri"]
+              "sub_vitri", "sub_cochu"]
 
 
 def _save_opts_from_form(form) -> dict:
@@ -1116,6 +1152,20 @@ def page_seo(request: Request, tap: str = ""):
             blocks = core.seo_blocks(folder, chosen)
     return _page(request, "seo.html", active="seo", rows=rows,
                  chosen=chosen, blocks=blocks)
+
+
+# ── Trang Đăng bài: hai khối đăng của Home trên một màn hình ────────────────
+@app.get("/dangbai", response_class=HTMLResponse)
+def page_post(request: Request):
+    """Trang riêng gom "Đăng YouTube" + "Đăng Facebook".
+
+    Dựng bằng ĐÚNG hai hàm ngữ cảnh mà Home dùng (_upload_ctx / _fb_ctx) và đúng
+    hai template đó, nên hai trang không thể lệch nhau: bấm bên nào cũng vào cùng
+    hàng đợi, cùng file cài đặt. `pipe` phải có vì khối YouTube chứa ô "tự động
+    đăng sau khi dựng xong" — ô ấy nằm trong taogiong_pipeline.json chứ không phải
+    cài đặt đăng."""
+    return _page(request, "dangbai.html", active="post", q=runner.state(),
+                 pipe=core.load_pipeline(), fb=_fb_ctx(), **_upload_ctx())
 
 
 # ── Khởi động ───────────────────────────────────────────────────────────────

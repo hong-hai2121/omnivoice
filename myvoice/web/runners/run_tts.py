@@ -100,6 +100,8 @@ def main(argv=None) -> int:
         sub_font=ts.get("sub_font", ""),
         sub_mau=ts.get("sub_mau", ""),
         sub_vitri=ts.get("sub_vitri", ""),
+        sub_cochu=ts.get("sub_cochu", ""),
+        sub_dong=ts.get("sub_dong", 2),
     )
 
     try:

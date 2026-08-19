@@ -92,14 +92,16 @@ def facebook_steps(dry_run: bool = False, limit: int = 0, only_scan: bool = Fals
     """Bước LÊN LỊCH Facebook (Page MimiAudio) — chạy ở hàng đợi ĐĂNG, vì cũng
     chỉ tốn băng thông như đăng YouTube.
 
-    only_scan: chỉ đọc Page rồi ghi page_cache.json (khối trên trang dựng danh
-    sách "tập chưa đăng" từ file đó, khỏi gọi mạng mỗi lần mở trang).
+    only_scan: chỉ ĐỌC Page (bài đã đăng · lịch đang chờ · bài đã xếp còn sống
+    không) rồi ghi page_cache.json + sổ da_dang.json — khối trên trang dựng danh
+    sách "tập chưa đăng" và bảng lịch từ hai file đó, khỏi gọi mạng mỗi lần mở
+    trang.
     Không dry_run thì truyền --yes: tiến trình con không có bàn phím
     (stdin=DEVNULL), mà người dùng bấm nút trên web là đã xác nhận rồi."""
     argv = [core.python_exe(), "-u", str(FB_SCRIPT)]
     if only_scan:
         argv.append("--sync")
-        label = "🔄 Đối chiếu Page Facebook"
+        label = "🔄 Cập nhật lịch Page Facebook"
     elif dry_run:
         argv.append("--dry-run")
         label = "📘 Xem kế hoạch Facebook (không đăng)"

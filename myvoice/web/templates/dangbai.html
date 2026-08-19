@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Đăng bài — myvoice{% endblock %}
+
+{# Trang ĐĂNG BÀI: đúng hai khối "Đăng YouTube" + "Đăng Facebook" của Home, gom
+   về một màn hình cho lúc chỉ ngồi canh việc đăng.
+
+   KHÔNG chép lại gì: hai khối này là chính hai file _form_upload.html /
+   _form_facebook.html mà Home đang include, các nút cũng gửi về đúng những
+   đường dẫn cũ. Nên bấm ở đây hay ở Home đều là MỘT việc: cùng hàng đợi, cùng
+   file cài đặt, và trang kia mở lên là thấy trạng thái mới. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">📤</span> Đăng bài</h1>
+  <p class="muted">Hai khối đăng của Home gom về một chỗ: YouTube (video ngang) và
+     Facebook (video dọc, Page MimiAudio). Cùng nút, cùng hàng đợi, cùng cài đặt —
+     bấm ở đây hay ở <a href="/">Home</a> đều như nhau.</p>
+</div>
+
+{# Hàng đợi để NGAY ĐẦU: bấm đăng xong là thấy việc chạy tới đâu, khỏi cuộn. #}
+<p class="colhead">⏱ Việc đang chạy</p>
+{% include "_queuepanel.html" %}
+
+<p class="colhead later"><span class="num">1</span> Đăng YouTube</p>
+{% include "_form_upload.html" %}
+
+<p class="colhead later"><span class="num">2</span> Đăng Facebook</p>
+{% include "_form_facebook.html" %}
+
+<p class="hint">Nội dung bài đăng (tiêu đề · mô tả · thẻ tag) xem ở
+   <a href="/seo">Copy SEO</a>; dựng video/thumbnail ở <a href="/">Home</a>.</p>
+{% endblock %}

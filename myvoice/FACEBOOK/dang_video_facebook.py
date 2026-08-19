@@ -7,12 +7,15 @@ Cách chạy:
     thêm --yes       → khỏi hỏi (cho chạy tự động)
 
 Cách hoạt động:
-  1. Hỏi Page (Graph API) ba nguồn: bài ĐÃ đăng · bài ĐANG chờ lịch · kho video.
-     Từ đó suy ra: tập lớn nhất đã có trên Page (đọc hashtag #MimiAudioSo<n>)
-     và mốc giờ đã xếp lịch xa nhất.
-  2. Các tập trong kịch_bản/ có SỐ LỚN HƠN tập đó và đã dựng xong video dọc
-     là hàng chờ. Xếp lần lượt vào các khung 09:00 / 19:00 hằng ngày, nối tiếp
-     NGAY SAU mốc lịch xa nhất (Page trống thì bắt đầu từ khung gần nhất).
+  1. Hỏi Page (Graph API) LỊCH ĐANG CHỜ: /scheduled_posts + /videos, rồi hỏi lại
+     từng bài chính script đã xếp (theo video_id trong sổ) bằng một request batch.
+     Từ đó biết khung 09:00/19:00 nào đang có bài, bài nào đã bị XOÁ, bài nào bị
+     DỜI giờ trong app Facebook.
+  2. Các tập trong kịch_bản/ chưa đăng và đã dựng xong video dọc là hàng chờ.
+     Xếp vào các khung 09:00 / 19:00 CÒN TRỐNG tính từ bây giờ — xoá bài đã lên
+     lịch ngày mai thì lần xếp sau lấp lại đúng ngày mai, không đẩy hết ra sau
+     bài chờ xa nhất. Đọc Page thiếu (mạng/API lỗi) thì lùi về nếp cũ: nối tiếp
+     ngay sau mốc xa nhất, cho khỏi đăng chồng lên bài đã có.
   3. Upload kiểu resumable (start/transfer/finish) — video dài cỡ nào cũng được,
      đứt mạng giữa chừng thì chỉ hỏng tập đang dở, chạy lại là tiếp.
 
@@ -246,48 +249,248 @@ def _get(session, path: str, **params) -> dict:
     return _resp(session.get(f"{GRAPH}/{path}", params=params, timeout=60))
 
 
-def _parse_fbtime(s: str) -> datetime:
-    """'2026-08-18T09:00:00+0000' → datetime giờ ĐỊA PHƯƠNG (naive, để so sánh)."""
+def _parse_fbtime(s) -> datetime:
+    """Mốc thời gian của Graph API → datetime giờ ĐỊA PHƯƠNG (naive, để so sánh).
+
+    Graph trả về HAI kiểu cho cùng một ý: chuỗi ISO '2026-08-18T09:00:00+0000'
+    (/posts, /videos) và SỐ GIÂY epoch 1755500400 (/scheduled_posts, batch). Nhận
+    cả hai ở một chỗ, không thì mỗi nơi gọi lại phải tự đoán kiểu.
+    Kiểu lạ → ValueError, đúng nhánh mà mọi chỗ gọi đang bắt sẵn.
+    """
+    if isinstance(s, (int, float)) or (isinstance(s, str) and s.isdecimal()):
+        try:
+            return datetime.fromtimestamp(int(s))
+        except (OverflowError, OSError) as e:
+            raise ValueError(f"mốc thời gian không hợp lệ: {s!r}") from e
+    if not isinstance(s, str):
+        raise ValueError(f"mốc thời gian không hợp lệ: {s!r}")
     return (datetime.strptime(s, "%Y-%m-%dT%H:%M:%S%z")
             .astimezone().replace(tzinfo=None))
 
 
-def latest_time(session) -> tuple[datetime | None, str]:
-    """Mốc để xếp lịch tiếp → (thời điểm, nguồn của nó).
+def _ep_of(text: str) -> int | None:
+    """Số tập đọc từ nội dung bài đăng (#MimiAudioSo42 / "Mimi audio Số 42")."""
+    for pat in EP_PATTERNS:
+        m = pat.search(text or "")
+        if m:
+            return int(m.group(1))
+    return None
 
-    Đây là TẤT CẢ những gì việc đăng thường ngày cần hỏi Page, nên chỉ tốn 1–2
-    request:
-      1. `/scheduled_posts` — bài đang CHỜ lịch. Lấy giờ xa nhất trong đó; danh
-         sách này vốn ngắn (chỉ bài chưa đăng) nên đọc một trang là hết.
-      2. Không có bài chờ nào → `/posts?limit=1` lấy bài đăng gần nhất, để không
-         xếp đè lên khoảng vừa đăng.
-    Tập nào đã đăng thì tra SỔ LOCAL (load_ledger), không hỏi Page.
+
+def fetch_scheduled(session) -> tuple[list[dict], list[str], bool]:
+    """Bài ĐANG CHỜ LỊCH trên Page → ([{when, ep, id, edge}], cảnh báo, đọc đủ chưa).
+
+    Chỉ lấy mốc còn ở TƯƠNG LAI — đó là thứ quyết định khung 9h/19h nào còn trống.
+    Hai nguồn vì bài video xếp lịch có nơi chỉ hiện ở một chỗ:
+      /scheduled_posts  danh sách chờ lịch — vốn ngắn (đăng rồi là rời danh sách)
+                        nên đọc hết, trần 5 trang.
+      /videos           video chưa đăng còn scheduled_publish_time. Video tải lên
+                        sau nằm TRÊN CÙNG (sắp theo created_time) nên chỉ đọc
+                        tiếp chừng nào trang vừa đọc còn thấy bài chờ lịch.
+
+    complete=False nghĩa là đọc thiếu → bên gọi phải coi như CHƯA BIẾT chỗ trống;
+    lấp chỗ trống lúc đó dễ xếp chồng lên bài đã có.
     """
-    try:
-        d = _get(session, f"{PAGE_ID}/scheduled_posts",
-                 fields="scheduled_publish_time", limit=25)
-        times = []
-        for item in d.get("data", []):
-            if item.get("scheduled_publish_time"):
-                try:
-                    times.append(_parse_fbtime(item["scheduled_publish_time"]))
-                except ValueError:
-                    pass
-        if times:
-            return max(times), f"bài chờ lịch xa nhất ({len(times)} bài đang chờ)"
-    except FbError as e:
-        if e.fatal:
-            raise
-        print(f"⚠️ Không đọc được /scheduled_posts: {e}")
+    now = datetime.now()
+    found: dict[tuple, dict] = {}
+    warns, complete = [], True
 
-    d = _get(session, f"{PAGE_ID}/posts", fields="created_time", limit=1)
-    for item in d.get("data", []):
-        if item.get("created_time"):
+    def take(item: dict, edge: str) -> bool:
+        raw = item.get("scheduled_publish_time")
+        if not raw:
+            return False
+        try:
+            when = _parse_fbtime(raw)
+        except ValueError:
+            return False
+        if when <= now:                    # đã đăng rồi thì không chiếm khung nào nữa
+            return False
+        ep = _ep_of(item.get("message") or item.get("description") or "")
+        pid = str(item.get("id") or "")
+        # Cùng một bài hiện ở cả hai edge với id khác nhau (id bài đăng vs id
+        # video) → gộp theo (tập, giờ) khi đọc được số tập.
+        key = (ep, when) if ep is not None else (pid, when)
+        found.setdefault(key, {"when": when, "ep": ep, "id": pid, "edge": edge})
+        return True
+
+    for edge, fields, keep_paging in (
+            ("scheduled_posts", "id,message,scheduled_publish_time", True),
+            ("videos", "id,description,scheduled_publish_time,created_time", False)):
+        try:
+            data = _get(session, f"{PAGE_ID}/{edge}", fields=fields, limit=100)
+        except FbError as e:
+            if e.fatal:
+                raise
+            warns.append(f"⚠️ Không đọc được /{edge}: {e}")
+            complete = False
+            continue
+        except Exception as e:
+            warns.append(f"⚠️ Không đọc được /{edge}: {e}")
+            complete = False
+            continue
+        for _page_no in range(5):
+            hits = sum(1 for item in data.get("data", []) if take(item, edge))
+            nxt = (data.get("paging") or {}).get("next")
+            # /videos: trang này hết bài chờ lịch là dừng — phần sau toàn video đã
+            # đăng, đọc thêm chỉ tốn lượt gọi.
+            if not nxt or (not keep_paging and not hits):
+                break
             try:
-                return _parse_fbtime(item["created_time"]), "bài đăng gần nhất"
+                data = _resp(session.get(nxt, timeout=60))
+            except FbError as e:
+                if e.fatal:
+                    raise
+                warns.append(f"⚠️ /{edge} đọc dở giữa chừng: {e}")
+                complete = False
+                break
+            except Exception as e:
+                warns.append(f"⚠️ /{edge} đọc dở giữa chừng: {e}")
+                complete = False
+                break
+    return sorted(found.values(), key=lambda x: x["when"]), warns, complete
+
+
+# "Bài không còn nữa" — chỉ nhận đúng hai dạng trả lời này. Mọi lỗi khác (mạng
+# chập, thiếu quyền, hạn mức, hỏi sai tên trường) KHÔNG được hiểu là đã xoá:
+# nhầm chỗ này là tập đó bị xếp lịch lần thứ hai, đăng trùng lên Page.
+#   mã 100 + error_subcode 33 (hoặc câu "does not exist") · id không tra được
+#   mã 803                                                · đối tượng đã biến mất
+def _looks_gone(err: dict) -> bool:
+    code = int(err.get("code") or 0)
+    if code == 803:
+        return True
+    if code != 100:
+        return False
+    if int(err.get("error_subcode") or 0) == 33:
+        return True
+    msg = str(err.get("message") or "").lower()
+    return "does not exist" in msg or "cannot be loaded" in msg
+
+
+def _sched_of(body: dict) -> datetime | None:
+    """scheduled_publish_time trong trả lời batch (epoch hoặc ISO — xem
+    _parse_fbtime) → None nếu bài không còn hẹn giờ nữa."""
+    raw = body.get("scheduled_publish_time")
+    if not raw:
+        return None
+    try:
+        return _parse_fbtime(raw)
+    except ValueError:
+        return None
+
+
+def verify_ledger(session, led: dict) -> tuple[dict, dict, list[str], bool]:
+    """Đối chiếu từng bài SCRIPT ĐÃ XẾP còn ở tương lai với Page.
+
+    Một request BATCH hỏi cùng lúc mọi video_id trong sổ có giờ đăng ở tương lai:
+      · còn trên Page → lấy giờ HIỆN TẠI (dời giờ trong app Facebook thì theo)
+      · mất           → bài đã bị xoá, tập đó phải quay lại hàng chờ
+    → ({tập: giờ trên Page}, {tập: giờ cũ của bài đã mất}, cảnh báo, hỏi đủ chưa)
+
+    Hỏi thẳng từng video_id chứ không suy từ /scheduled_posts: bài chờ lịch dạng
+    video có lúc không hiện ở edge đó, mà nhầm "không thấy" thành "đã xoá" là
+    đăng trùng cả loạt.
+    """
+    now = datetime.now()
+    want = []                     # [(tập, video_id, giờ đang ghi trong sổ)]
+    for ep, info in sorted((led.get("eps") or {}).items(), key=lambda kv: int(kv[0])):
+        if not isinstance(info, dict) or not info.get("video_id"):
+            continue
+        try:
+            when = datetime.fromisoformat(info.get("scheduled") or "")
+        except ValueError:
+            continue
+        if when > now:
+            want.append((ep, str(info["video_id"]), when))
+    if not want:
+        return {}, {}, [], True
+
+    alive, gone, warns, complete = {}, {}, [], True
+    for start in range(0, len(want), 50):            # batch tối đa 50 việc con
+        chunk = want[start:start + 50]
+        # Chỉ hỏi scheduled_publish_time: hỏi thêm trường mà node video không có
+        # thì Graph trả về mã 100 y như id đã xoá, hoá ra tự nhận nhầm là mất bài.
+        batch = [{"method": "GET", "relative_url": f"{vid}?fields=scheduled_publish_time"}
+                 for _ep, vid, _when in chunk]
+        try:
+            res = _resp(session.post(GRAPH, data={
+                "access_token": TOKEN, "include_headers": "false",
+                "batch": json.dumps(batch)}, timeout=120))
+        except FbError as e:
+            if e.fatal:
+                raise
+            warns.append(f"⚠️ Không hỏi được các bài đã xếp: {e}")
+            return alive, {}, warns, False
+        except Exception as e:
+            warns.append(f"⚠️ Không hỏi được các bài đã xếp: {e}")
+            return alive, {}, warns, False
+        if not isinstance(res, list) or len(res) != len(chunk):
+            warns.append("⚠️ Trả lời batch không khớp số bài đã hỏi — bỏ qua bước đối chiếu.")
+            return alive, {}, warns, False
+        for (ep, _vid, old), part in zip(chunk, res):
+            code = (part or {}).get("code")
+            try:
+                body = json.loads((part or {}).get("body") or "{}")
             except ValueError:
-                pass
-    return None, "Page chưa có bài nào"
+                body = {}
+            if code == 200 and "error" not in body:
+                alive[ep] = _sched_of(body) or old
+                continue
+            err = body.get("error") or {}
+            ecode = int(err.get("code") or 0)
+            if ecode in FATAL_CODES:
+                raise FbError(err)
+            if _looks_gone(err):
+                gone[ep] = old
+                continue
+            warns.append(f"⚠️ Không tra được bài của tập {ep}: [mã {ecode}] "
+                         f"{err.get('message') or code}")
+            complete = False
+    return alive, gone, warns, complete
+
+
+def page_schedule(session, led: dict) -> dict:
+    """Ảnh chụp LỊCH ĐANG CÓ trên Page — nền để biết khung nào còn trống.
+
+    → {"slots": [{when, ep, id, edge}], "gone": {tập: giờ cũ},
+       "moved": {tập: giờ mới}, "warns": [...], "complete": bool}
+
+    Gộp hai đường: đọc danh sách chờ lịch của Page, và hỏi lại từng bài chính
+    script đã xếp (bài vừa tải lên có khi chưa kịp hiện ở /scheduled_posts).
+    """
+    sched, warns, ok_sched = fetch_scheduled(session)
+    alive, gone, warns2, ok_led = verify_ledger(session, led)
+    slots = [dict(s) for s in sched]
+    have = {(s["ep"], s["when"].replace(second=0, microsecond=0))
+            for s in sched if s["ep"] is not None}
+    moved = {}
+    for ep, when in alive.items():
+        try:
+            old = datetime.fromisoformat(
+                ((led.get("eps") or {}).get(ep) or {}).get("scheduled") or "")
+        except ValueError:
+            old = None
+        if old and abs((when - old).total_seconds()) > 60:
+            moved[ep] = when
+        if (int(ep), when.replace(second=0, microsecond=0)) not in have:
+            slots.append({"when": when, "ep": int(ep), "id": "", "edge": "sổ"})
+
+    # Bài trong sổ KHÔNG có video_id (ghi từ đời cũ) thì không tra thẳng được →
+    # cứ coi khung đó là bận. Thà bỏ trống một khung còn hơn đăng chồng lên bài
+    # cũ mà mình không tra ra.
+    now = datetime.now()
+    for ep, info in (led.get("eps") or {}).items():
+        if not isinstance(info, dict) or info.get("video_id") or not info.get("scheduled"):
+            continue
+        try:
+            when = datetime.fromisoformat(info["scheduled"])
+        except ValueError:
+            continue
+        if when > now:
+            slots.append({"when": when, "ep": int(ep), "id": "", "edge": "sổ (chưa tra được)"})
+    slots.sort(key=lambda s: s["when"])
+    return {"slots": slots, "gone": gone, "moved": moved,
+            "warns": warns + warns2, "complete": ok_sched and ok_led}
 
 
 def page_state(session, prev: dict | None = None) -> tuple[set[int], datetime | None,
@@ -399,20 +602,45 @@ def page_state(session, prev: dict | None = None) -> tuple[set[int], datetime | 
     return seen, last_when, warns, complete, newest_now
 
 
+def _write_cache(data: dict) -> None:
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    except OSError:
+        pass
+
+
 def save_cache(seen: set[int], last_when: datetime | None, newest: dict) -> None:
     """Ghi những gì vừa đọc được từ Page ra file. Hai công dụng:
       • TRANG WEB dựng danh sách "tập chưa đăng" mà không phải gọi mạng;
-      • lượt quét sau chỉ đọc phần MỚI hơn `newest` rồi dừng (xem page_state)."""
-    try:
-        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_FILE.write_text(json.dumps({
-            "eps": sorted(seen),
-            "last_when": last_when.isoformat() if last_when else "",
-            "newest": newest,
-            "fetched": datetime.now().isoformat(timespec="seconds"),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+      • lượt quét sau chỉ đọc phần MỚI hơn `newest` rồi dừng (xem page_state).
+
+    Phần LỊCH (slots) do save_slots ghi, ở đây chỉ chép lại nguyên si — hai thứ
+    đọc bằng hai đường khác nhau, ghi đè lẫn nhau là mất lịch vừa đọc được."""
+    old = load_cache()
+    _write_cache({
+        "eps": sorted(seen),
+        "last_when": last_when.isoformat() if last_when else "",
+        "newest": newest,
+        "fetched": datetime.now().isoformat(timespec="seconds"),
+        "slots": old.get("slots") or [],
+        "slots_at": old.get("slots_at", ""),
+    })
+
+
+def save_slots(slots: list[dict]) -> None:
+    """Ghi LỊCH ĐANG CÓ trên Page vừa đọc được (giữ nguyên phần còn lại của file).
+
+    Trang web xem trước giờ đăng bằng chính bản này: biết khung nào bận thì bảng
+    "chưa đăng" hiện đúng ngày dự kiến mà không phải gọi API mỗi lần mở trang.
+    """
+    d = load_cache()
+    d["slots"] = [{"when": s["when"].isoformat(timespec="minutes"),
+                   "ep": s.get("ep"), "src": s.get("edge") or s.get("src") or ""}
+                  for s in slots]
+    d["slots_at"] = datetime.now().isoformat(timespec="seconds")
+    _write_cache(d)
 
 
 def load_cache() -> dict:
@@ -473,20 +701,47 @@ def next_slot(after: datetime) -> datetime:
     raise AssertionError("unreachable")
 
 
-def plan_slots(count: int, anchor: datetime | None) -> list[datetime]:
-    """Giờ đăng cho `count` tập kế tiếp, nối sau `anchor` (và không sớm hơn
-    bây giờ + MIN_LEAD_MIN).
+def slot_key(t: datetime) -> datetime:
+    """Khung 9h/19h mà mốc `t` CHIẾM CHỖ — khung gần nó nhất.
+
+    Bài đăng tay hiếm khi rơi đúng 09:00/19:00; không quy về khung thì bài 09:12
+    vẫn bị coi là khung trống rồi xếp thêm một bài nữa chồng lên.
+    """
+    best = None
+    for day_offset in (-1, 0, 1):
+        day = (t + timedelta(days=day_offset)).date()
+        for hour in SLOT_HOURS:
+            slot = datetime.combine(day, datetime.min.time()).replace(hour=hour)
+            if best is None or abs(slot - t) < abs(best - t):
+                best = slot
+    return best
+
+
+def plan_slots(count: int, anchor: datetime | None,
+               busy: list[datetime] | None = None) -> list[datetime]:
+    """Giờ đăng cho `count` tập kế tiếp (không sớm hơn bây giờ + MIN_LEAD_MIN).
+
+    `busy` = các mốc ĐÃ CÓ BÀI trên Page (đọc bằng page_schedule). Có busy thì
+    LẤP CHỖ TRỐNG: duyệt khung 9h/19h từ bây giờ, khung nào chưa có bài thì lấy.
+    Nhờ vậy xoá bớt bài đã lên lịch là lần sau lấp lại đúng chỗ đó, chứ không đẩy
+    hết ra sau mốc xa nhất — mà mốc xa nhất ấy có khi là bài đã bị xoá.
+
+    busy=None (chưa đọc được lịch Page lần nào) thì giữ nếp cũ: nối tiếp sau
+    `anchor`. Không biết khung nào bận mà cứ lấp thì dễ đăng chồng lên bài đã có.
 
     Tách riêng để TRANG WEB xem trước giờ dự kiến bằng đúng phép tính mà lúc
     chạy thật sẽ dùng — hai bên tính khác nhau thì bảng trên màn hình nói một
     đằng, Facebook nhận một nẻo.
     """
     cursor = datetime.now() + timedelta(minutes=MIN_LEAD_MIN)
-    if anchor and anchor > cursor:
+    if busy is None and anchor and anchor > cursor:
         cursor = anchor
-    out = []
-    for _ in range(max(0, count)):
+    taken = {slot_key(t) for t in (busy or [])}
+    out: list[datetime] = []
+    while len(out) < max(0, count):
         cursor = next_slot(cursor)
+        if cursor in taken:
+            continue                       # khung này đã có bài → xét khung sau
         out.append(cursor)
     return out
 
@@ -495,8 +750,9 @@ def known_anchor(led: dict) -> datetime | None:
     """Mốc xếp lịch SUY TỪ SỔ LOCAL — cho trang web xem trước mà không gọi API.
 
     Lấy cái muộn nhất trong: các giờ script đã xếp (ghi trong sổ) và mốc Page đọc
-    được ở lần chạy gần nhất. Lúc chạy thật vẫn hỏi lại Page (`latest_time`) rồi
-    lấy mốc muộn hơn, nên xem trước lệch thì kết quả thật vẫn đúng.
+    được ở lần chạy gần nhất. Chỉ còn dùng làm ĐƯỜNG LUI cho lúc đọc lịch Page
+    không đủ; bình thường đã có `known_busy` (biết từng khung bận/trống) nên xem
+    trước bằng đúng phép tính mà lúc chạy thật sẽ dùng.
     """
     times = []
     for info in (led.get("eps") or {}).values():
@@ -514,7 +770,83 @@ def known_anchor(led: dict) -> datetime | None:
     return max(times) if times else None
 
 
+def known_busy(led: dict | None = None,
+               cache: dict | None = None) -> list[datetime] | None:
+    """Các mốc ĐÃ CÓ BÀI suy từ dữ liệu LOCAL — cho trang web xem trước giờ đăng
+    mà không gọi API.
+
+    Gộp hai nguồn: lịch đọc được ở lần bấm 🔄 gần nhất (page_cache.json) và các
+    bài chính script vừa xếp (sổ da_dang.json) — bài mới xếp có khi chưa kịp hiện
+    ở /scheduled_posts.
+
+    → None khi CHƯA từng đọc lịch Page lần nào; lúc đó plan_slots giữ nếp cũ
+    (nối sau mốc xa nhất) thay vì tưởng mọi khung đều trống.
+    """
+    led = load_ledger() if led is None else led
+    cache = load_cache() if cache is None else cache
+    if not cache.get("slots_at"):
+        return None
+    now, out = datetime.now(), []
+    for s in cache.get("slots") or []:
+        try:
+            t = datetime.fromisoformat(str(s.get("when")))
+        except (TypeError, ValueError):
+            continue
+        if t > now:
+            out.append(t)
+    for info in (led.get("eps") or {}).values():
+        if not isinstance(info, dict) or not info.get("scheduled"):
+            continue
+        try:
+            t = datetime.fromisoformat(info["scheduled"])
+        except ValueError:
+            continue
+        if t > now:
+            out.append(t)
+    return out
+
+
 # ── Tập chờ đăng + nội dung bài ─────────────────────────────────────────────
+def marker_alive(folder) -> bool:
+    """Thư mục tập có biên nhận đăng Page CÒN HIỆU LỰC không.
+
+    facebook_upload.json bị đánh dấu `removed_from_page` khi nút 🔄 thấy bài đã
+    bị xoá khỏi Page: giữ nguyên file (còn video_id để tra lại) nhưng KHÔNG chặn
+    tập đó xếp lịch lần nữa. Đánh dấu thay vì xoá file để lỡ nhận nhầm thì bỏ
+    dòng dấu là hoàn nguyên.
+    """
+    f = folder / "facebook_upload.json"
+    if not f.exists():
+        return False
+    try:
+        return not json.loads(f.read_text(encoding="utf-8")).get("removed_from_page")
+    except (OSError, ValueError):
+        return True            # đọc không được thì cứ coi là đã đăng, an toàn hơn
+
+
+def unmark_removed(folder) -> None:
+    """Đánh dấu biên nhận facebook_upload.json là "bài không còn trên Page".
+
+    GIỮ NGUYÊN file (còn video_id, giờ đã xếp để tra lại) và chỉ ghi thêm một
+    dòng dấu — bỏ dòng đó là hoàn nguyên, không mất gì. Sau khi đánh dấu, tập ấy
+    lại hiện trong danh sách chờ đăng (xem marker_alive).
+    """
+    f = folder / "facebook_upload.json"
+    if not f.exists():
+        return
+    try:
+        info = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        info = {}
+    if not isinstance(info, dict):
+        info = {}
+    info["removed_from_page"] = datetime.now().isoformat(timespec="seconds")
+    try:
+        f.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def find_video(folder: Path) -> Path | None:
     """Video dọc của tập — đúng thứ tự nhánh video_doc bên web/core.py."""
     if (folder / "facebook.mp4").exists():
@@ -560,7 +892,7 @@ def pending_episodes(core, led: dict) -> tuple[list[dict], list[str]]:
         folder = core.episode_folder(r["episode"])
         if folder is None:
             continue
-        if (folder / "facebook_upload.json").exists():   # biên nhận lần đăng trước
+        if marker_alive(folder):            # biên nhận lần đăng trước còn hiệu lực
             continue
         video = find_video(folder)
         if video is None:
@@ -667,13 +999,45 @@ def main() -> int:
     if args.sync:
         print("🔎 Đang đối chiếu với Page…")
         seen, last_when, warns, complete, newest = page_state(session, load_cache())
-        for w in warns:
+        snap = page_schedule(session, led)          # lịch ĐANG CÓ trên Page
+        for w in warns + snap["warns"]:
             print(w)
-        if not complete:
+        if not complete or not snap["complete"]:
             print("⛔ Đọc Page KHÔNG ĐỦ — không cập nhật sổ (sổ thiếu sẽ hoá thành "
                   "đăng trùng). Chạy lại khi mạng/API ổn.")
             return 1
+
+        # Bài đã bị XOÁ khỏi Page → gạch khỏi sổ để tập đó quay lại hàng chờ, và
+        # trả khung giờ ấy về chỗ trống. Đây chính là việc mà nút này sinh ra:
+        # xoá bài trên Facebook rồi thì lần xếp sau phải lấp lại đúng chỗ đó.
+        # … trừ khi Page đang có bài KHÁC của đúng tập ấy chờ lịch (xoá bài cũ rồi
+        # đăng/xếp lại bằng tay): tập đó vẫn sẽ lên, gạch khỏi sổ là đăng trùng.
+        sched_eps = {sl["ep"] for sl in snap["slots"] if sl["ep"]}
+        for ep, old in sorted(snap["gone"].items(), key=lambda kv: int(kv[0])):
+            if int(ep) in sched_eps:
+                print(f"   ↔ tập {ep}: bài cũ không còn, nhưng Page đang có bài khác "
+                      "của tập này chờ lịch → giữ nguyên trong sổ")
+                continue
+            (led.get("eps") or {}).pop(ep, None)
+            seen.discard(int(ep))
+            folder = core.episode_folder(str(int(ep)).zfill(2))
+            if folder is not None:
+                unmark_removed(folder)
+            print(f"   ❌ tập {ep}: bài lên lịch {old:%d/%m %H:%M} không còn trên "
+                  "Page → đưa lại vào hàng chờ")
+        # Dời giờ trong app Facebook thì sổ theo giờ mới (để xem trước khỏi lệch).
+        for ep, when in sorted(snap["moved"].items(), key=lambda kv: int(kv[0])):
+            info = (led.get("eps") or {}).get(ep)
+            if isinstance(info, dict):
+                info["scheduled"] = when.isoformat(timespec="seconds")
+            print(f"   ↔ tập {ep}: đã dời sang {when:%d/%m %H:%M}")
+
+        # Mốc xa nhất lấy theo LỊCH VỪA ĐỌC, không giữ mốc cũ trong cache: mốc cũ
+        # có khi chính là bài vừa bị xoá.
+        if snap["slots"]:
+            last_when = max(sl["when"] for sl in snap["slots"])
         save_cache(seen, last_when, newest)
+        save_slots(snap["slots"])
         added = [str(n) for n in sorted(seen) if str(n) not in (led.get("eps") or {})]
         for n in added:
             led.setdefault("eps", {})[n] = {"source": "quét Page"}
@@ -681,8 +1045,21 @@ def main() -> int:
         save_ledger(led)
         print(f"   Page đang có {len(seen)} tập · sổ ghi thêm {len(added)} tập"
               + (f": {', '.join(added)}" if added else " (sổ đã khớp)"))
+
+        print(f"\n📅 Lịch đang chờ trên Page ({len(snap['slots'])} bài):")
+        for sl in snap["slots"]:
+            print(f"   {sl['when']:%a %d/%m %H:%M} · "
+                  + (f"tập {sl['ep']}" if sl["ep"] else "(bài khác)"))
+        if not snap["slots"]:
+            print("   (không còn bài nào chờ đăng)")
+
         queue, _ = pending_episodes(core, led)
-        print(f"📋 Chưa đăng: {', '.join(it['ep'] for it in queue) or '(không có tập nào)'}")
+        print(f"\n📋 Chưa đăng: {', '.join(it['ep'] for it in queue) or '(không có tập nào)'}")
+        if queue:
+            print("   Khung trống sẽ nhận các tập này:")
+            for it, when in zip(queue, plan_slots(len(queue), None,
+                                                  known_busy(led, load_cache()))):
+                print(f"   · tập {it['ep']} → {when:%a %d/%m %H:%M}")
         return 0
 
     # ── Việc thường ngày: "đăng chưa" tra SỔ LOCAL, không hỏi Page ──────────
@@ -705,24 +1082,40 @@ def main() -> int:
         print("✅ Không có tập nào cần xếp lịch.")
         return 0
 
-    # Hỏi Page ĐÚNG MỘT VIỆC: bài lên lịch/đăng mới nhất, để biết xếp tiếp từ đâu.
-    print("🔎 Đang hỏi mốc lịch trên Page…")
-    last_when, nguon = latest_time(session)
-    print(f"   Mốc: {last_when:%d/%m %H:%M} ({nguon})" if last_when
-          else f"   Mốc: — ({nguon})")
-    # Nhớ mốc vào sổ để TRANG WEB xem trước giờ dự kiến mà không phải gọi API.
+    # Hỏi Page LỊCH ĐANG CHỜ để biết khung 9h/19h nào còn trống.
+    print("🔎 Đang đọc lịch đang chờ trên Page…")
+    snap = page_schedule(session, led)
+    for w in snap["warns"]:
+        print(w)
+    busy = [sl["when"] for sl in snap["slots"]]
+    last_when = max(busy) if busy else None
+    print(f"   Đang chờ {len(busy)} bài · xa nhất {last_when:%d/%m %H:%M}" if last_when
+          else "   Page không còn bài nào chờ lịch")
+    if snap["gone"]:
+        print("⚠️ " + ", ".join(f"tập {ep}" for ep in sorted(snap["gone"], key=int))
+              + " đã bị xoá khỏi Page — bấm 🔄 Cập nhật lịch Page để đưa lại vào hàng chờ.")
+    for ep, when in snap["moved"].items():      # dời giờ trong app Facebook
+        info = (led.get("eps") or {}).get(ep)
+        if isinstance(info, dict):
+            info["scheduled"] = when.isoformat(timespec="seconds")
+    # Nhớ mốc + lịch vừa đọc để TRANG WEB xem trước giờ dự kiến, khỏi gọi API.
     if last_when:
         led["anchor"] = {"when": last_when.isoformat(timespec="seconds"),
-                         "nguon": nguon,
+                         "nguon": "bài chờ lịch xa nhất",
                          "at": datetime.now().isoformat(timespec="seconds")}
-        save_ledger(led)
+    save_ledger(led)
+    if snap["complete"]:
+        save_slots(snap["slots"])
 
-    # Xếp khung 9h/19h nối tiếp sau mốc muộn hơn giữa Page và sổ (lịch script vừa
-    # xếp có thể chưa kịp hiện ở /scheduled_posts).
+    # Đọc đủ thì LẤP CHỖ TRỐNG (khung nào chưa có bài thì xếp vào, kể cả khung
+    # nằm trước bài chờ xa nhất). Đọc thiếu = không biết khung nào bận → lùi về
+    # nếp cũ, nối tiếp sau mốc xa nhất cho khỏi đăng chồng.
     anchor = max([t for t in (last_when, known_anchor(led)) if t], default=None)
+    slots = (plan_slots(len(queue), None, busy) if snap["complete"]
+             else plan_slots(len(queue), anchor))
     deadline = datetime.now() + timedelta(days=MAX_AHEAD_DAYS)
     plan, dropped = [], 0
-    for item, when in zip(queue, plan_slots(len(queue), anchor)):
+    for item, when in zip(queue, slots):
         if when > deadline:
             dropped += 1
             continue

@@ -36,7 +36,7 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | Không tự mở trình duyệt | đặt `MYVOICE_WEB_NO_OPEN=1` |
 | Đổi token | xoá `web/token.txt` rồi chạy lại |
 
-## Sáu trang — menu trái, xếp theo thứ tự làm việc
+## Bảy trang — menu trái, xếp theo thứ tự làm việc
 
 | Trang | Tab tương ứng bên GUI | Có gì |
 |---|---|---|
@@ -46,10 +46,19 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 | **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
+| **📤 Đăng bài** (`/dangbai`) | — | Hàng đợi + **đúng hai khối "Đăng YouTube" và "Đăng Facebook" của Home** cho lúc chỉ ngồi canh việc đăng |
 
 Làm việc hằng ngày chỉ cần trang **Home** — các trang còn lại là chỗ xem kỹ từng
 phần và vài tuỳ chọn ít dùng (tập bỏ qua, câu mở đầu Gemini, reset quy trình, xóa
 output, xem trước thumbnail, copy SEO).
+
+Riêng **📤 Đăng bài** không thêm chức năng nào: nó `include` đúng hai partial
+`_form_upload.html` + `_form_facebook.html` mà Home đang dùng, context lấy từ
+chính `_upload_ctx()` / `_fb_ctx()` — nên hai trang **không thể lệch nhau**, bấm
+bên nào cũng vào cùng hàng đợi, cùng file cài đặt (kiểm bằng cách so HTML hai
+trang: hai khối giống nhau từng ký tự). Các nút quay về đúng trang vừa bấm nhờ
+`_back()` đọc Referer, còn nút Facebook trả thẳng khối đã vẽ lại nên trang nào
+cũng tự cập nhật tại chỗ.
 
 Ở Home, mỗi khối tự dàn thành nhiều cột bằng **CSS columns** (`body.p-home
 .form-grid`) — grid xếp theo hàng nên khối cao thấp lệch nhau để lại lỗ hổng, còn
@@ -86,11 +95,21 @@ không bị chặn gì. CỐ Ý không lưu (mỗi lần mở trang là trống/
 đã có kết quả" và "♻ Dùng lại audio/video đã có", tiêu đề thumbnail (nội dung
 của từng tập), và "Số tập (chữ trên video)" (tự suy từ bộ đếm thumbnail + 1).
 
-**📘 Đăng Facebook** — khối cuối trang Home (dưới Đăng YouTube): **bảng các tập
-chưa đăng Page** kèm **giờ lên lịch dự kiến** và **tiêu đề đúng như bài sẽ đăng**,
-xem được TRƯỚC khi bấm chạy; ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế hoạch
-(dry-run) · 🔄 đối chiếu Page. Tick vài tập thì chỉ làm những tập đó, không tick ô
-nào = làm tất cả. Lịch xếp **9h/19h hằng ngày**, nối tiếp bài mới nhất trên Page.
+**📘 Đăng Facebook** — khối cuối trang Home (dưới Đăng YouTube), cũng có ở trang
+📤 Đăng bài: **bảng lịch đang chờ trên Page** + **bảng các tập chưa đăng** kèm
+**ngày dự kiến đăng** và **tiêu đề đúng như bài sẽ đăng**, xem được TRƯỚC khi bấm
+chạy; ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế hoạch (dry-run) · 🔄 cập nhật
+lịch Page. Tick vài tập thì chỉ làm những tập đó, không tick ô nào = làm tất cả.
+
+Lịch xếp vào các khung **9h/19h còn TRỐNG** tính từ bây giờ, chứ không nối đuôi
+bài chờ xa nhất: xoá bài đã lên lịch ngày mai thì lần xếp sau lấp lại đúng ngày
+mai. Mỗi mốc đọc được quy về khung gần nhất (`slot_key`) nên bài đăng tay lúc
+09:12 vẫn tính là đã chiếm khung 9h. Đọc Page thiếu thì tự lùi về nếp cũ (nối sau
+mốc xa nhất) cho khỏi đăng chồng — xem `plan_slots(count, anchor, busy)`.
+
+Khối tự vẽ lại mỗi 6 giây (`/partials/facebook`) trong lúc hàng đợi Facebook còn
+việc, nên bấm 🔄 xong là bảng tự cập nhật; hàng đợi rảnh thì bản vẽ mới không còn
+`hx-get` nên vòng làm mới tự tắt.
 
 **Nằm trong chuỗi tự động** — ô tick “📘 Dựng xong video thì TỰ lên lịch đăng
 Page” (mặc định BẬT, lưu ở `web_settings.json` khoá `fb_auto`). Dựng xong video
@@ -105,10 +124,10 @@ cùng lúc sẽ cùng đọc “giờ lên lịch xa nhất” rồi cùng xếp
 `fb_runner` cũng được tính vào `heavy_busy` của 🌙/⏻ và vào `upload_busy` của
 `/api/trangthai` — đang tải video lên Page mà máy ngủ là hỏng.
 
-Giờ dự kiến tính bằng **đúng hàm** mà lúc chạy thật sẽ dùng (`plan_slots` của
-script, mốc suy từ sổ qua `known_anchor`) — bảng nói một đằng Facebook nhận một
-nẻo là kiểu sai khó chịu nhất, nên hai bên không được có hai phép tính. Lúc bấm
-chạy script vẫn hỏi Page một lần rồi chốt theo mốc muộn hơn.
+Ngày dự kiến tính bằng **đúng hàm** mà lúc chạy thật sẽ dùng (`plan_slots` của
+script, khung bận suy từ file qua `known_busy`) — bảng nói một đằng Facebook nhận
+một nẻo là kiểu sai khó chịu nhất, nên hai bên không được có hai phép tính. Lúc
+bấm chạy script vẫn đọc lại lịch Page một lần rồi chốt.
 
 Tiêu đề bài đăng do **`compose_facebook_title`** (trong `YOUTUBE/thumbnail_gui.py`,
 cạnh `compose_youtube_title` / `compose_tiktok_title`) dựng: lấy **tiêu đề
@@ -137,25 +156,46 @@ thử lại 3 lần của bước tải khúc video, ngưng cả lượt chạy 
 (khác mã 1 của lỗi thường) — thử lại chỉ kéo dài thời gian bị Facebook chặn,
 còn token hỏng thì lần nào cũng hỏng như nhau.
 
-*“Đã đăng chưa” tra SỔ LOCAL, Page chỉ hỏi mốc thời gian* — `FACEBOOK/da_dang.json`
+*“Đã đăng chưa” tra SỔ LOCAL, Page chỉ hỏi LỊCH ĐANG CHỜ* — `FACEBOOK/da_dang.json`
 là nguồn sự thật cho câu hỏi tập nào đã lên Page: script ghi vào đó ngay khi
 Facebook nhận video (và ghi thêm biên nhận `facebook_upload.json` trong thư mục
-tập). Việc thường ngày vì thế chỉ hỏi Page **đúng một việc** — bài lên lịch/đăng
-mới nhất, để biết xếp tiếp từ đâu (`latest_time`). Số request đo thật:
+tập). Việc thường ngày vì thế chỉ hỏi Page **lịch đang chờ** (`page_schedule`), đủ
+để biết khung nào còn trống. Số request đo thật:
 
 | Thao tác | Request |
 |---|---|
-| Trang web dựng bảng tập chưa đăng | **0** (đọc file) |
-| 🔍 xem kế hoạch · 📘 đăng (phần lên kế hoạch) | **1–2** |
-| 🔄 đối chiếu Page (chỉ khi cần) | ~3 |
+| Trang web dựng bảng tập chưa đăng + bảng lịch | **0** (đọc file) |
+| 🔍 xem kế hoạch · 📘 đăng (phần lên kế hoạch) | **3** (2 edge + 1 batch) |
+| 🔄 cập nhật lịch Page (chỉ khi cần) | ~6 |
 | mỗi tập đăng thật | 1 mở phiên + số khúc do FB chia + 1 kết thúc |
 
-Nút 🔄 (`--sync`) quét Page rồi cập nhật sổ — chỉ cần khi có bài đăng tay ngoài
-script hoặc mất sổ. Lần quét đó dùng **quét gia tăng**: `/posts` và `/videos` trả
+`page_schedule` gộp hai đường: `fetch_scheduled` đọc `/scheduled_posts` +
+`/videos` (chỉ lấy mốc còn ở tương lai), và `verify_ledger` hỏi lại **từng bài
+script đã xếp theo `video_id`** bằng MỘT request batch. Phải có đường thứ hai:
+bài video xếp lịch nhiều lúc **không hiện ở `/scheduled_posts`** (đo thật: tập 65
+chỉ tra ra được bằng `video_id`) — thiếu nó là tưởng khung đó trống rồi xếp chồng.
+Đường batch còn cho biết bài nào **đã bị xoá** và bài nào **bị dời giờ** trong app
+Facebook.
+
+Nút 🔄 (`--sync`) quét bài đã đăng + đọc lịch + đối chiếu sổ:
+* bài đã bị xoá → gạch khỏi sổ, tập đó **quay lại hàng chờ**, khung giờ thành
+  trống. Biên nhận trong thư mục tập chỉ được **đánh dấu** `removed_from_page`
+  (giữ nguyên `video_id` để tra lại, bỏ dòng dấu là hoàn nguyên);
+* bài bị dời giờ → sổ theo giờ mới;
+* Page đang có bài KHÁC của đúng tập ấy chờ lịch (xoá rồi đăng lại bằng tay) thì
+  **không** gạch — gạch là đăng trùng.
+
+Chỉ mã `100` + `error_subcode 33` (hoặc câu “does not exist”) và `803` mới được
+hiểu là *mất bài*; mọi lỗi khác chỉ hạ cờ `complete` — nhầm chỗ này là đăng trùng
+cả loạt. Phần quét bài đã đăng vẫn **quét gia tăng**: `/posts` và `/videos` trả
 bài mới nhất trước nên chỉ đọc tới bài đã thấy lần trước (mốc `newest` trong
 `page_cache.json`) rồi dừng — đo thử Page 1200 bài: lần đầu 25 request, các lần
-sau 3. `/scheduled_posts` đọc hết vì nó chỉ chứa bài CHỜ lịch (ít, đăng rồi là
-rời danh sách).
+sau 3.
+
+*Mốc thời gian của Graph API có HAI kiểu* — `/posts` và `/videos` trả chuỗi ISO
+`2026-08-18T09:00:00+0000`, còn `/scheduled_posts` và batch trả **số giây epoch**.
+`_parse_fbtime` nhận cả hai; chỉ đỡ được kiểu ISO là hỏng ngay khi Page có bài
+chờ lịch.
 
 *Chạm 75% hạn mức là TỰ NGƯNG, không đợi Meta chặn* — mọi response của Graph API
 kèm header `X-App-Usage` / `X-Page-Usage` / `X-Business-Use-Case-Usage`, mỗi cái
@@ -207,6 +247,7 @@ web/
     run_thumbnail.py  tạo thumbnail từ tiêu đề tự nhập
   templates/     Jinja2 + HTMX
     _form_script.html / _form_voice.html   khối dùng chung cho Home và trang riêng
+    _form_upload.html / _form_facebook.html  khối đăng — dùng chung Home + /dangbai
   static/        CSS, JS, htmx.min.js (kèm sẵn — chạy được khi không có mạng)
 ```
 
