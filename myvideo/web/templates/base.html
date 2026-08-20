@@ -9,7 +9,9 @@
   <script src="/static/htmx.min.js" defer></script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎬</text></svg>">
 </head>
-<body class="p-video">
+{# data-lang = tiếng GỐC đang chọn: CSS dùng nó để hiện đúng chữ/ô của tiếng đó
+   (.l-zh / .l-en) — đổi ô ngôn ngữ là đổi ngay tại chỗ, không tải lại trang. #}
+<body class="p-video" data-lang="{{ settings.lang | default('zh') }}">
 <aside class="side">
   <div class="brand">
     <span class="logo">🎬</span>

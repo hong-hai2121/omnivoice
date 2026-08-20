@@ -1,0 +1,24 @@
+{# Hàng chip "Gần đây" dưới ô Nguồn — GIỐNG khối Nguồn bên myvoice.
+
+   Gửi kèm mọi lượt trả lời htmx (xem _nguon_ctx trong server.py) nên nguồn vừa
+   chạy hiện ra ngay và dấu ✓/◐ chạy theo tiến độ, dù trang không tải lại.
+
+   Dấu đã-làm đọc từ output (_tien_do): ✓ = video đã dựng đủ 4 bước, ◐ = mới
+   được mấy bước. Nguồn chưa chạy bao giờ thì không có dấu nào. Dấu đặt TRƯỚC
+   nhãn vì chip cắt đuôi bằng ellipsis — để sau thì tên dài che mất. #}
+{% if src_history %}
+  <div class="chiprow">
+    <span class="chiplabel">Gần đây — bấm để thêm/bỏ</span>
+    {% for h in src_history %}
+      <button type="button" data-src="{{ h.full }}"
+              class="chip {{ 'chip-xong' if h.xong else ('chip-dang' if h.lam) }}"
+              title="{{ h.full }}{% if h.lam %} — {{ 'đã dựng xong' if h.xong else 'đang dở, mới ' ~ h.buoc ~ ' bước' }}{% endif %}">{%
+        if h.lam %}<i class="dalam">{{ '✓' if h.xong else '◐' }}</i>{% endif %}{{ h.label }}</button>
+    {% endfor %}
+    {# type=button + fetch ngầm, KHÔNG submit: khối Nguồn là panel đầu form nên
+       nút submit đặt ở đây sẽ thành nút mặc định — bấm Enter trong ô nhập hoá
+       ra xoá lịch sử thay vì xuống dòng. #}
+    <button type="button" id="srcForget" class="chip chip-x"
+            title="Quên danh sách gần đây (không đụng ô nhập)">🗑</button>
+  </div>
+{% endif %}

@@ -229,54 +229,81 @@
       </div>
       <div class="ksubbox">
         <div class="ksubbox-chon">
-          {# Hai lưới thẻ dài nhất (kiểu · font) nằm trong <details> THU LẠI được,
-             kẻo chúng chiếm cả màn hình phải cuộn mãi. Thu lại vẫn thấy tên đang
-             chọn ngay trên nhãn; mở/thu nhớ ở localStorage nên tải lại trang vẫn
-             y như lúc rời đi. Radio bị thu vẫn gửi lên server bình thường. #}
-          <details class="ksubthu" id="ksubThuKieu">
-            <summary class="colhead">🖼 Kiểu trình bày — bấm một thẻ để chọn
-              <span class="ksub-nay" id="ksubNayKieu">{{ sel.ten }}</span></summary>
-            <div class="ksubs">
-              {% for k in kieusubs %}
-                <label class="ksub" title="{{ k.mota }}">
-                  <input type="radio" name="sub_kieu" value="{{ k.id }}"
-                         {{ 'checked' if (opts.sub_kieu or 'hopbo') == k.id }}>
-                  {% if k.anh %}
-                    <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
-                  {% else %}
-                    <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
-                  {% endif %}
-                  <b>{{ k.ten }}</b>
-                  <span>{{ k.mota }}</span>
-                </label>
-              {% endfor %}
+          {# Hai lưới thẻ dài nhất (kiểu · font) nằm trong POPUP — ngoài trang
+             chỉ còn hàng "đang chọn + nút Chọn…" cho gọn; màu, cỡ, vị trí và
+             ảnh xem thử vẫn bày ngay tại chỗ. #}
+          <div class="ksubhang">
+            <span class="colhead">🖼 Kiểu trình bày</span>
+            <span class="ksub-nay" id="ksubNayKieu">{{ sel.ten }}</span>
+            <span class="spacer"></span>
+            <button type="button" class="small" data-mo="ksubModalKieu">Chọn…</button>
+          </div>
+          <div class="modal ksubchon" id="ksubModalKieu" style="display:none">
+            <div class="modal-card ksubmodal">
+              <div class="modal-head">
+                <b>🖼 Kiểu trình bày</b>
+                <span class="hint">bấm một thẻ là chọn xong — ảnh là xem trước thật, kiểu động có chuyển động</span>
+                <span class="spacer"></span>
+                <button type="button" class="small" data-dong>✕ Đóng</button>
+              </div>
+              <div class="modal-body">
+                <div class="ksubs">
+                  {% for k in kieusubs %}
+                    <label class="ksub" title="{{ k.mota }}">
+                      <input type="radio" name="sub_kieu" value="{{ k.id }}"
+                             {{ 'checked' if (opts.sub_kieu or 'hopbo') == k.id }}>
+                      {% if k.anh %}
+                        <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
+                      {% else %}
+                        <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
+                      {% endif %}
+                      <b>{{ k.ten }}</b>
+                      <span>{{ k.mota }}</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              </div>
             </div>
-          </details>
-          <details class="ksubthu" id="ksubThuFont">
-            <summary class="colhead">🔤 Font chữ — đè font của kiểu đã chọn ở trên
-              <span class="ksub-nay" id="ksubNayFont">{{ opts.sub_font or '(theo kiểu)' }}</span></summary>
-            <div class="ksubs">
-              <label class="ksub" title="Dùng font gốc của từng kiểu">
-                <input type="radio" name="sub_font" value="" {{ 'checked' if not opts.sub_font }}>
-                <span class="ksub-noanh">— không đè font —</span>
-                <b>(theo kiểu đã chọn)</b>
-                <span>Mỗi kiểu dùng đúng font gốc của nó</span>
-              </label>
-              {% for f in sub_fonts %}
-                <label class="ksub" title="{{ f.ten }}">
-                  <input type="radio" name="sub_font" value="{{ f.ten }}"
-                         {{ 'checked' if opts.sub_font == f.ten }}>
-                  {% if f.anh %}
-                    <img src="/static/kieusub/{{ f.anh }}?v={{ f.v }}" alt="{{ f.ten }}" loading="lazy">
-                  {% else %}
-                    <span class="ksub-noanh">{{ f.ten }}</span>
-                  {% endif %}
-                  <b>{{ f.ten }}</b>
-                  <span>{{ 'Font Windows' if f.he_thong else 'Font rời myvoice/fonts' }}</span>
-                </label>
-              {% endfor %}
+          </div>
+          <div class="ksubhang">
+            <span class="colhead">🔤 Font chữ</span>
+            <span class="ksub-nay" id="ksubNayFont">{{ opts.sub_font or '(theo kiểu)' }}</span>
+            <span class="spacer"></span>
+            <button type="button" class="small" data-mo="ksubModalFont">Chọn…</button>
+          </div>
+          <div class="modal ksubchon" id="ksubModalFont" style="display:none">
+            <div class="modal-card ksubmodal">
+              <div class="modal-head">
+                <b>🔤 Font chữ</b>
+                <span class="hint">đè font của kiểu đã chọn — bấm một thẻ là chọn xong</span>
+                <span class="spacer"></span>
+                <button type="button" class="small" data-dong>✕ Đóng</button>
+              </div>
+              <div class="modal-body">
+                <div class="ksubs">
+                  <label class="ksub" title="Dùng font gốc của từng kiểu">
+                    <input type="radio" name="sub_font" value="" {{ 'checked' if not opts.sub_font }}>
+                    <span class="ksub-noanh">— không đè font —</span>
+                    <b>(theo kiểu đã chọn)</b>
+                    <span>Mỗi kiểu dùng đúng font gốc của nó</span>
+                  </label>
+                  {% for f in sub_fonts %}
+                    <label class="ksub" title="{{ f.ten }}">
+                      <input type="radio" name="sub_font" value="{{ f.ten }}"
+                             {{ 'checked' if opts.sub_font == f.ten }}>
+                      {% if f.anh %}
+                        <img src="/static/kieusub/{{ f.anh }}?v={{ f.v }}" alt="{{ f.ten }}" loading="lazy">
+                      {% else %}
+                        <span class="ksub-noanh">{{ f.ten }}</span>
+                      {% endif %}
+                      <b>{{ f.ten }}</b>
+                      <span>{{ 'Font Windows' if f.he_thong else 'Font rời myvoice/fonts' }}</span>
+                    </label>
+                  {% endfor %}
+                </div>
+              </div>
             </div>
-          </details>
+          </div>
           {# Màu CHỮ: chỉ đè mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên. #}
           <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
           {{ bang_mau('sub_mau', opts.sub_mau, 'FFD700', 'ksubHienMau') }}
@@ -340,6 +367,21 @@
           const box = document.getElementById("ksubBox");
           if (!box || box.dataset.gan) return;
           box.dataset.gan = "1";
+          // Hai POPUP chọn kiểu / font: nút "Chọn…" mở; ✕, bấm nền hoặc Esc đóng;
+          // bấm một thẻ là chọn xong nên popup cũng tự đóng luôn. Popup nằm TRONG
+          // form nên radio bên trong vẫn gửi lên như thường, kể cả lúc đang đóng.
+          const dongPopup = () => box.querySelectorAll(".ksubchon")
+            .forEach(m => { m.style.display = "none"; });
+          box.querySelectorAll("[data-mo]").forEach(b =>
+            b.addEventListener("click", () => {
+              document.getElementById(b.dataset.mo).style.display = "flex";
+            }));
+          box.querySelectorAll(".ksubchon").forEach(m => {
+            m.addEventListener("click", e => {
+              if (e.target === m) m.style.display = "none";
+            });
+            m.querySelector("[data-dong]").addEventListener("click", dongPopup);
+          });
           // Tên kiểu/font đang chọn hiện ở HAI chỗ: dòng tóm tắt đầu khối và nhãn
           // của lưới thu lại (thu rồi vẫn biết đang chọn gì) → ghi cả cặp một lượt.
           const ten = [document.getElementById("ksubHienTen"),
@@ -357,7 +399,10 @@
           };
           zoom.addEventListener("click", () => { zoom.style.display = "none"; });
           document.addEventListener("keydown", e => {
-            if (e.key === "Escape") zoom.style.display = "none";
+            if (e.key !== "Escape") return;
+            // Đang phóng to ảnh thì Esc thu ảnh lại trước, còn lại đóng popup chọn.
+            if (zoom.style.display !== "none") zoom.style.display = "none";
+            else dongPopup();
           });
           // Xem thử TỔ HỢP đang chọn: server render đúng libass (có cache).
           const xemThu = document.getElementById("ksubXemThu");
@@ -439,23 +484,18 @@
           xemThu.addEventListener("click", () => moZoom(xemThu.src));
           capNhatXemThu();
           capNhatViTri();
-          // Lưới kiểu/font thu lại được — nhớ mở/thu, tải lại trang vẫn y như cũ.
-          box.querySelectorAll("details.ksubthu").forEach(td => {
-            const khoa = "ksubthu:" + td.id;
-            if (localStorage.getItem(khoa) === "1") td.open = true;
-            td.addEventListener("toggle",
-                                () => localStorage.setItem(khoa, td.open ? "1" : "0"));
-          });
           // Bấm thẻ: cập nhật tên đang chọn + vẽ lại hai ảnh xem thử.
           box.querySelectorAll("input[name=sub_kieu]").forEach(r =>
             r.addEventListener("change", () => {
               ghi(ten, r.closest(".ksub").querySelector("b").textContent);
               capNhatCaHai();
+              dongPopup();
             }));
           box.querySelectorAll("input[name=sub_font]").forEach(r =>
             r.addEventListener("change", () => {
               ghi(fontHien, r.value || "(theo kiểu)");
               capNhatCaHai();
+              dongPopup();
             }));
           // Bảng màu: swatch có sẵn + ô tự chọn (input color gắn radio riêng).
           // MÀU CHỮ và MÀU VIỀN là hai bảng cùng khuôn, nên chạy chung một đoạn —

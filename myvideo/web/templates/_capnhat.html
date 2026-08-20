@@ -1,0 +1,16 @@
+{# Mẩu trả lời chung cho MỌI nút bấm đi qua htmx (xem _tra() trong server.py):
+   phần đầu thay vào #queue (mọi nút đều trỏ hx-target="#queue"), hai khối sau
+   là swap "ngoài luồng" — lời nhắn góc phải và bảng Kết quả. Trang KHÔNG tải
+   lại: chỗ đang cuộn, ô Nguồn đang gõ và các tuỳ chọn vừa chỉnh giữ nguyên.
+
+   Dùng "innerHTML:#…" (không phải oob=true) để #tinnhan và #bang giữ nguyên
+   thẻ ngoài — #bang còn mang hx-get/hx-trigger tự làm mới 5 giây/lần. #}
+{% include "_queue.html" %}
+
+<div hx-swap-oob="innerHTML:#tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% elif ok %}<p class="okmsg">✓ {{ ok }}</p>{% endif %}</div>
+
+<div hx-swap-oob="innerHTML:#bang">{% include "_bang.html" %}</div>
+
+{# Hàng chip "Gần đây": nguồn vừa chạy hiện ra ngay và dấu ✓/◐ chạy theo tiến
+   độ — trang không tải lại nên phải tự thay khối này. Ô nhập KHÔNG bị đụng. #}
+<div hx-swap-oob="innerHTML:#nguonchip">{% include "_nguon.html" %}</div>

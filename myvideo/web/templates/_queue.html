@@ -45,7 +45,9 @@
       <span class="badge">chờ</span>
       <b>{{ j.title }}</b>
       <span class="spacer"></span>
-      <form method="post" action="/hangdoi/bo/{{ j.id }}"><button class="ghost small">✕</button></form>
+      <form method="post" action="/hangdoi/bo/{{ j.id }}"><button class="ghost small"
+        hx-post="/hangdoi/bo/{{ j.id }}" hx-target="#queue" hx-swap="innerHTML"
+        title="Bỏ việc này khỏi hàng đợi">✕</button></form>
     </div>
   </div>
 {% endfor %}

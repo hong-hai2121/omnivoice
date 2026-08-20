@@ -2,29 +2,79 @@
 
 {# Trang duy nhất của myvideo, bố cục theo THỨ TỰ LÀM VIỆC như Home của myvoice:
    hàng đợi → nguồn (danh sách) → bốn khối bước ①②③④, MỖI KHỐI mang cài đặt
-   riêng của bước đó (bấm nút chạy là lưu lại cài đặt mới nhất). Bấm nút của
-   bước nào thì chạy từ bước đó; ô ⛓ quyết định có nối tiếp bước sau không. #}
+   riêng của bước đó. Bấm nút của bước nào thì chạy từ bước đó; ô ⛓ quyết định
+   có nối tiếp bước sau không. Muốn chạy trọn gói thì bấm ▶ Chạy tất cả ở khối
+   Nguồn — nút đó đi thẳng ①→④, không nhìn tới các ô ⛓.
+
+   MỌI thao tác chọn/tick/ghim ⭐ chỉ đổi ngay trên trang (HTML/CSS), KHÔNG gọi
+   server: tới lúc bấm nút chạy (hoặc 💾) mới lưu cài đặt rồi mới chạy. Các nút
+   đều đi qua htmx và chỉ thay khối hàng đợi + bảng kết quả + lời nhắn góc phải
+   — trang không tải lại nên không mất chỗ đang cuộn hay ô đang gõ dở. #}
 {% block content %}
+{# Bảng chọn MÀU dùng chung cho "màu chữ" và "màu viền" — y khuôn myvoice:
+   dãy ô màu sẵn + ô "tự chọn" (input color gắn radio riêng). data-truong/data-tom
+   khai cho JS biết bảng này sửa ô nào và cập nhật chấm màu nào ở dòng Đang chọn. #}
+{% macro bang_mau(ten, hien_tai, pick_md, tom) %}
+  {% set mau_san = ['FFFFFF', 'FFD700', 'FF9800', 'FF4D4D', 'FF6FA5',
+                    '3DFF73', '00E5FF', '9C6BFF', '141414'] %}
+  {% set tuchon = hien_tai and hien_tai not in mau_san %}
+  <div class="kmaus" data-truong="{{ ten }}" data-tom="{{ tom }}">
+    <label class="kmau" title="Dùng màu gốc của từng kiểu">
+      <input type="radio" name="{{ ten }}" value="" {{ 'checked' if not hien_tai }}>
+      <i class="kmau-goc">×</i><span>(theo kiểu)</span>
+    </label>
+    {% for m in mau_san %}
+      <label class="kmau" title="#{{ m }}">
+        <input type="radio" name="{{ ten }}" value="{{ m }}"
+               {{ 'checked' if hien_tai == m }}>
+        <i style="background:#{{ m }}"></i><span>#{{ m }}</span>
+      </label>
+    {% endfor %}
+    <label class="kmau" title="Tự chọn màu bất kỳ">
+      <input type="radio" name="{{ ten }}" class="kmau-khac"
+             value="{{ hien_tai if tuchon else '' }}" {{ 'checked' if tuchon }}>
+      <input type="color" class="kmau-pick"
+             value="#{{ hien_tai if tuchon else pick_md }}">
+      <span>tự chọn</span>
+    </label>
+  </div>
+{% endmacro %}
 <div class="pagehead">
   <h1><span class="ico">🎬</span> myvideo — quy trình 4 bước</h1>
-  <p class="muted">Video tiếng Trung → <b>①</b> làm chậm + SRT Trung →
+  <p class="muted">Video tiếng <b class="l-zh">Trung</b><b class="l-en">Anh</b> →
+     <b>①</b> làm chậm + SRT <span class="l-zh">Trung</span><span class="l-en">Anh</span> →
      <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice xếp timeline →
      <b>④</b> video sub cứng + tiếng Việt.</p>
 </div>
 
-{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}
+{# Lời nhắn (lỗi / đã xong): khối nổi góc phải dưới, bấm vào là tắt. Mọi nút
+   bấm đều nhả kết quả vào đây nên đứng ở đâu trên trang cũng thấy. #}
+<div id="tinnhan" class="tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}</div>
 
 <p class="colhead">⏱ Việc đang chạy</p>
 {% include "_queuepanel.html" %}
 
-<form method="post" action="/chay">
+{# method/action là đường lui khi không có JS; bình thường htmx gửi thay. #}
+<form method="post" action="/chay" id="mainform"
+      hx-post="/chay" hx-target="#queue" hx-swap="innerHTML">
   <p class="colhead later">🎞 Nguồn — danh sách, mỗi dòng một file</p>
   <div class="panel srcbox">
     <div class="phead">
       <h2>Nguồn</h2>
       <span class="phead-gap"></span>
+      <button type="button" class="small" id="srcAdd">📂 Thêm từ máy</button>
       <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
     </div>
+    {# Tiếng GỐC: đổi ô này là cả trang đổi theo ngay (chữ + ô số chữ/dòng),
+       chưa gọi server — lưu lúc bấm chạy như mọi cài đặt khác. #}
+    <label class="field langbox">
+      <span>🌐 Tiếng GỐC của video — bước ① nhận diện theo tiếng này; bước ②
+        tự nhận ra tiếng của SRT nên chạy lẻ video cũ vẫn dịch đúng.</span>
+      <select name="lang" id="langSel">
+        <option value="zh" {{ 'selected' if settings.lang != 'en' }}>🇨🇳 Tiếng Trung</option>
+        <option value="en" {{ 'selected' if settings.lang == 'en' }}>🇬🇧 Tiếng Anh</option>
+      </select>
+    </label>
     <label class="field">
       <span>Mỗi dòng một file — mỗi dòng thành MỘT việc riêng trong hàng đợi.
         Bước ① cần file video gốc; chạy lẻ bước ②③④ thì dán file/tên
@@ -32,19 +82,33 @@
       <textarea id="srcBox" name="sources" rows="4" spellcheck="false"
                 placeholder="C:\Users\PC\Downloads\video1.mp4&#10;C:\Users\PC\Downloads\video2.mp4"></textarea>
     </label>
-    {% if downloads %}
-      <div class="chiprow">
-        <span class="chiplabel">Mới tải về — bấm để thêm/bỏ</span>
-        {% for f in downloads %}
-          <button type="button" class="chip" data-src="{{ f.path }}"
-                  title="{{ f.path }} · {{ f.size }}">{{ f.name }}</button>
-        {% endfor %}
-      </div>
-    {% endif %}
+    {# File trong Downloads/Videos/output giờ nằm trong bảng 📂 Thêm từ máy (có
+       ô lọc tên, cỡ file, ngày sửa và dấu đã-làm) — hàng chip dưới đây dành cho
+       nguồn ĐÃ CHẠY, giống hệt bên myvoice. #}
+    <div id="nguonchip">{% include "_nguon.html" %}</div>
     <div class="actions">
+      {# MỘT nút cho cả quy trình: chạy thẳng ①→④ và KHÔNG nhìn tới các ô ⛓
+         (những ô đó chỉ dành cho mấy nút "Chạy bước …" riêng lẻ bên dưới). #}
+      <button class="primary" name="start" value="tatca"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Mỗi dòng trong ô Nguồn thành một việc chạy trọn bốn bước:
+① chậm + SRT → ② dịch → ③ giọng → ④ video sub, không cần tick ô ⛓ nào">▶ Chạy tất cả ①②③④</button>
       <button name="start" value="thu60"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
               title="Cắt 60 giây đầu của mỗi file trong danh sách rồi chạy trọn 4 bước
 — duyệt giọng đọc, kiểu sub, vùng che trước khi chạy cả bài">🧪 Thử 60 giây đầu (bản nháp đủ 4 bước)</button>
+      <span class="spacer"></span>
+      {# Xoá cả output để ngay đây cho gần chỗ bắt đầu một mẻ mới (trước nằm tít
+         dưới bảng Kết quả). type=button + hx-post chứ KHÔNG phải submit: <form>
+         lồng trong <form> là HTML sai, mà để submit thì nó thành một nút chạy
+         của form chính. Xoá = đưa vào Thùng rác, khôi phục được. #}
+      <button type="button" class="ghost danger"
+              hx-post="/xoa-het" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              hx-confirm="Đưa TẤT CẢ file trong thư mục output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+              title="Dọn sạch myvideo/output để làm mẻ mới — chỉ đưa vào Thùng rác Windows, khôi phục được">🗑 Xoá cả output</button>
     </div>
   </div>
 
@@ -52,8 +116,10 @@
 
   <div class="panel">
     <div class="phead">
-      <span class="num">1</span><h2>Làm chậm video + SRT tiếng Trung</h2>
-      <p class="hint">Whisper mốc giờ từng chữ, ngắt theo dấu câu Trung →
+      <span class="num">1</span><h2>Làm chậm video + SRT tiếng
+        <span class="l-zh">Trung</span><span class="l-en">Anh</span></h2>
+      <p class="hint">Whisper mốc giờ từng chữ, ngắt theo dấu câu
+        <span class="l-zh">Trung (。！？，、)</span><span class="l-en">Anh (. ! ? , ; :)</span> →
         <code>_x0.7.mp4</code> + <code>_x0.7.srt</code> trong output.</p>
     </div>
     <div class="grid">
@@ -73,13 +139,23 @@
           {% endfor %}
         </select>
       </label>
-      <label class="field">
+      {# Hai ngưỡng RIÊNG: 16 chữ Hán vs 42 ký tự Anh. Cả hai ô đều gửi lên nên
+         đổi qua đổi lại không mất số của tiếng kia; chỉ ô của tiếng đang chọn
+         hiện ra (CSS theo body[data-lang]). #}
+      <label class="field l-zh">
         <span>Số chữ tối đa/dòng SRT Trung</span>
         <input name="maxchars" type="number" min="4" max="60" value="{{ settings.maxchars }}">
       </label>
+      <label class="field l-en">
+        <span>Số ký tự tối đa/dòng SRT Anh (chuẩn phụ đề ~42)</span>
+        <input name="maxchars_en" type="number" min="10" max="120"
+               value="{{ settings.maxchars_en | default('42') }}">
+      </label>
     </div>
     <div class="actions">
-      <button class="primary" name="start" value="cham">🐢 Chạy bước ①</button>
+      <button class="primary" name="start" value="cham"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🐢 Chạy bước ①</button>
     </div>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="redoasr">
@@ -92,7 +168,8 @@
   <div class="panel">
     <div class="phead">
       <span class="num">2</span><h2>Dịch Gemini → SRT tiếng Việt</h2>
-      <p class="hint"><code>_x0.7.srt</code> → <code>_vi.srt</code> + <code>_zhvi.srt</code>
+      <p class="hint"><code>_x0.7.srt</code> → <code>_vi.srt</code> +
+        <code class="l-zh">_zhvi.srt</code><code class="l-en">_envi.srt</code>
         (song ngữ), giữ nguyên mốc giờ; lô nào xong lưu lô đó, lỗi chạy lại là dịch tiếp.</p>
     </div>
     <div class="grid">
@@ -103,11 +180,15 @@
       </label>
     </div>
     <div class="actions">
-      <button class="primary" name="start" value="dich">🌐 Chạy bước ②</button>
+      <button class="primary" name="start" value="dich"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🌐 Chạy bước ②</button>
     </div>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="offline" {{ 'checked' if settings.offline }}>
-        📴 Dịch offline bằng opus-mt (nhanh, KHÔNG cần Firefox — chất lượng thô, chỉ nên làm nháp)</label>
+        📴 Dịch offline bằng opus-mt
+        <span class="l-zh">zh-vi</span><span class="l-en">en-vi (lần đầu tự tải model ~300MB)</span>
+        (nhanh, KHÔNG cần Firefox — chất lượng thô, chỉ nên làm nháp)</label>
       <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if settings.auto3 }}>
         ⛓ Xong thì tự chạy bước ③ tạo giọng</label>
     </div>
@@ -125,21 +206,28 @@
     <div class="grid">
       <label class="field">
         <span>Giọng đọc — kho riêng <code>myvideo/voice</code>; bấm ⭐ để
-          ghim/bỏ ghim giọng đang chọn lên đầu danh sách</span>
+          ghim/bỏ ghim giọng đang chọn lên đầu danh sách (xếp lại ngay trên
+          trang, ghi xuống đĩa khi bấm chạy hoặc 💾)</span>
         <span style="display:flex; gap:6px; align-items:stretch">
-          <select name="voice" style="flex:1 1 auto; min-width:0">
+          <select name="voice" id="voiceSel" style="flex:1 1 auto; min-width:0">
             <option value="">(tự lấy file đầu tiên trong myvideo/voice)</option>
             {% for v in voices %}
-              <option value="{{ v }}" {{ 'selected' if settings.voice == v }}>{{ '★ ' if v in voice_stars }}{{ v }}</option>
+              <option value="{{ v.ten }}" data-i="{{ v.i }}"
+                      {{ 'selected' if settings.voice == v.ten }}>{{ '★ ' if v.sao }}{{ v.ten }}</option>
             {% endfor %}
           </select>
-          <button formaction="/giong-sao" formnovalidate class="small"
+          <button type="button" class="small sao" id="voiceSao"
                   title="Ghim/bỏ ghim giọng đang chọn lên đầu danh sách">⭐</button>
         </span>
+        {# Danh sách ⭐ do trang tự sửa, đi kèm form lúc lưu/chạy. #}
+        <input type="hidden" name="voice_stars" id="voiceStars"
+               value="{{ voice_stars|join('\n') }}">
       </label>
     </div>
     <div class="actions">
-      <button class="primary" name="start" value="giong">🔊 Chạy bước ③</button>
+      <button class="primary" name="start" value="giong"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🔊 Chạy bước ③</button>
     </div>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="redotts">
@@ -153,66 +241,206 @@
     <div class="phead">
       <span class="num">4</span><h2>Vẽ sub cứng + thay tiếng</h2>
       <p class="hint">Burn phụ đề theo KIỂU chọn bên dưới vào
-        <code>_x0.7.mp4</code> → <code>_sub.mp4</code>; NVENC trước, lỗi tự lùi CPU.</p>
+        <code>_x0.7.mp4</code> → <code>_sub.mp4</code>; NVENC trước, lỗi tự lùi CPU.
+        Ba việc (vẽ sub · che mờ · thay tiếng) bỏ được từng cái — bỏ cả vẽ sub
+        lẫn che mờ thì hình giữ NGUYÊN, chỉ ghép lại tiếng (không encode lại).</p>
     </div>
-    {# Kho kiểu: myvideo/kieusub_mau/*.json — thêm file JSON là có thẻ mới,
-       ảnh xem trước tự vẽ khi khởi động lại (vẽ bằng đúng libass sẽ burn).
-       Mặc định THU GỌN chỉ hiện kiểu đang chọn; nút 🎨 mở cả kho ra. #}
-    <div class="ksubhead">
-      <span class="hint">🎨 Kiểu phụ đề — ảnh là xem trước thật, kiểu động có chuyển động</span>
-      <button type="button" class="small" id="ksubToggle"
-              data-mo="▲ Thu gọn" data-dong="▼ Hiện cả {{ kieusubs|length }} kiểu"></button>
+    {# Ô này quyết định có vẽ chữ hay không → bỏ tick là ẩn luôn cả kho kiểu,
+       font và số ký tự/dòng (CSS theo body.khongsub, không tải lại trang). #}
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="vesub" id="veSub"
+                                {{ 'checked' if settings.vesub }}>
+        ✍️ Vẽ sub tiếng Việt lên video (bỏ tick = video SẠCH chữ — chỉ thay tiếng)</label>
     </div>
-    <div class="ksubs thu" id="ksubs">
-      {% for k in kieusubs %}
-        <label class="ksub" title="{{ k.mota }}">
-          <input type="radio" name="kieusub" value="{{ k.id }}"
-                 {{ 'checked' if settings.kieusub == k.id }}>
-          {% if k.anh %}
-            <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
-          {% else %}
-            <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
-          {% endif %}
-          <b>{{ k.ten }}</b>
-          <span>{{ k.mota }}</span>
-        </label>
-      {% endfor %}
-    </div>
-    <div class="grid">
-      <label class="field">
-        <span>Font chữ — đè font của kiểu đang chọn (font rời <code>myvoice/fonts</code>
-          không cần cài; ảnh xem trước ở trên vẫn vẽ bằng font gốc của kiểu)</span>
-        <select name="subfont">
-          <option value="">(theo kiểu đã chọn)</option>
-          {% for f in fonts %}
-            <option value="{{ f.ten }}" {{ 'selected' if settings.subfont == f.ten }}>{{ f.ten }}{{ ' (font Windows)' if f.he_thong }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label class="field">
-        <span>Số ký tự tối đa mỗi dòng hiển thị</span>
-        <input name="subchars" type="number" min="10" max="120" value="{{ settings.subchars }}">
-      </label>
+    {# ── Kho KIỂU PHỤ ĐỀ — cùng một khối với myvoice ────────────────────────
+       Kho mẫu (myvoice/scripts/kieusub_mau) và kho font (myvoice/fonts) dùng
+       chung hai bên; MỌI ảnh xem trước đều do kieusub.py vẽ bằng đúng libass
+       sẽ burn nên nhìn sao ra vậy — kiểu động là ảnh CHUYỂN ĐỘNG thật.
+       Cột trái là kho thẻ (kiểu · font · màu chữ · màu viền), cột phải là ảnh
+       xem thử DÍNH theo màn hình: chọn tới đâu thấy tới đó, khỏi cuộn tới lui. #}
+    {# Kiểu đang chọn — dùng cho dòng tóm tắt và nhãn của lưới thu lại. Kho rỗng
+       thì kieusubs[0] ra Undefined chứ không nổ (nhánh dưới cũng không đụng sel). #}
+    {% set sel = (kieusubs | selectattr('id', 'equalto', settings.kieusub or 'hopbo')
+                  | list | first) or kieusubs[0] %}
+    <div id="ksubBox">
+      <div class="ksubhead">
+        <span class="hint">🎨 Kiểu phụ đề — ảnh là xem trước thật, kiểu động có chuyển động</span>
+        {% if kieusubs %}
+          <span class="ksub-dangchon">Đang chọn
+            <b id="ksubHienTen">{{ sel.ten }}</b> · font
+            <b id="ksubHienFont">{{ settings.subfont or '(theo kiểu)' }}</b> · chữ
+            <i class="kmau-dot" id="ksubHienMauDot"
+               style="background:#{{ settings.submau or 'FFF' }};{{ 'display:none' if not settings.submau }}"></i><b
+               id="ksubHienMau">{{ ('#' ~ settings.submau) if settings.submau else '(theo kiểu)' }}</b> · viền
+            <i class="kmau-dot" id="ksubHienVienDot"
+               style="background:#{{ settings.submauvien or 'FFF' }};{{ 'display:none' if not settings.submauvien }}"></i><b
+               id="ksubHienVien">{{ ('#' ~ settings.submauvien) if settings.submauvien else '(theo kiểu)' }}</b></span>
+        {% endif %}
+      </div>
+      {% if not kieusubs %}
+        <p class="hint">Không đọc được kho kiểu
+           (<code>myvoice/scripts/kieusub.py</code>) — sub vẽ cứng sẽ dùng kiểu mặc định.</p>
+      {% else %}
+        {# Lightbox: bấm ảnh xem thử nào cũng phóng to được. #}
+        <div class="modal" id="ksubZoom" style="display:none" title="Bấm để đóng">
+          <img id="ksubZoomAnh" class="ksub-zoom" alt="">
+        </div>
+        <div class="ksubbox">
+          <div class="ksubbox-chon">
+            {# Hai lưới thẻ dài nhất (kiểu · font) nằm trong POPUP — ngoài trang
+               chỉ còn hàng "đang chọn + nút Chọn…" cho gọn; màu, cỡ, vị trí và
+               ảnh xem thử vẫn bày ngay tại chỗ. #}
+            <div class="ksubhang">
+              <span class="colhead">🖼 Kiểu trình bày</span>
+              <span class="ksub-nay" id="ksubNayKieu">{{ sel.ten }}</span>
+              <span class="spacer"></span>
+              <button type="button" class="small" data-mo="ksubModalKieu">Chọn…</button>
+            </div>
+            <div class="modal ksubchon" id="ksubModalKieu" style="display:none">
+              <div class="modal-card ksubmodal">
+                <div class="modal-head">
+                  <b>🖼 Kiểu trình bày</b>
+                  <span class="hint">bấm một thẻ là chọn xong — ảnh là xem trước thật, kiểu động có chuyển động</span>
+                  <span class="spacer"></span>
+                  <button type="button" class="small" data-dong>✕ Đóng</button>
+                </div>
+                <div class="modal-body">
+                  <div class="ksubs">
+                    {% for k in kieusubs %}
+                      <label class="ksub" title="{{ k.mota }}">
+                        <input type="radio" name="kieusub" value="{{ k.id }}"
+                               {{ 'checked' if (settings.kieusub or 'hopbo') == k.id }}>
+                        {% if k.anh %}
+                          <img src="/static/kieusub/{{ k.anh }}?v={{ k.v }}" alt="{{ k.ten }}" loading="lazy">
+                        {% else %}
+                          <span class="ksub-noanh">ảnh xem trước sẽ tự vẽ, tải lại trang sau ít giây</span>
+                        {% endif %}
+                        <b>{{ k.ten }}</b>
+                        <span>{{ k.mota }}</span>
+                      </label>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="ksubhang">
+              <span class="colhead">🔤 Font chữ</span>
+              <span class="ksub-nay" id="ksubNayFont">{{ settings.subfont or '(theo kiểu)' }}</span>
+              <span class="spacer"></span>
+              <button type="button" class="small" data-mo="ksubModalFont">Chọn…</button>
+            </div>
+            <div class="modal ksubchon" id="ksubModalFont" style="display:none">
+              <div class="modal-card ksubmodal">
+                <div class="modal-head">
+                  <b>🔤 Font chữ</b>
+                  <span class="hint">đè font của kiểu đã chọn — bấm một thẻ là chọn xong</span>
+                  <span class="spacer"></span>
+                  <button type="button" class="small" data-dong>✕ Đóng</button>
+                </div>
+                <div class="modal-body">
+                  <div class="ksubs">
+                    <label class="ksub" title="Dùng font gốc của từng kiểu">
+                      <input type="radio" name="subfont" value="" {{ 'checked' if not settings.subfont }}>
+                      <span class="ksub-noanh">— không đè font —</span>
+                      <b>(theo kiểu đã chọn)</b>
+                      <span>Mỗi kiểu dùng đúng font gốc của nó</span>
+                    </label>
+                    {% for f in sub_fonts %}
+                      <label class="ksub" title="{{ f.ten }}">
+                        <input type="radio" name="subfont" value="{{ f.ten }}"
+                               {{ 'checked' if settings.subfont == f.ten }}>
+                        {% if f.anh %}
+                          <img src="/static/kieusub/{{ f.anh }}?v={{ f.v }}" alt="{{ f.ten }}" loading="lazy">
+                        {% else %}
+                          <span class="ksub-noanh">{{ f.ten }}</span>
+                        {% endif %}
+                        <b>{{ f.ten }}</b>
+                        <span>{{ 'Font Windows' if f.he_thong else 'Font rời myvoice/fonts' }}</span>
+                      </label>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+            </div>
+            {# Màu CHỮ: chỉ đè mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên. #}
+            <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
+            {{ bang_mau('submau', settings.submau, 'FFD700', 'ksubHienMau') }}
+            {# Màu VIỀN quanh chữ: chỉ đè mau_vien — thân chữ/bóng/nền giữ nguyên. #}
+            <p class="colhead later">🖍 Màu viền chữ — đè viền của kiểu (chữ/nền giữ nguyên)</p>
+            {{ bang_mau('submauvien', settings.submauvien, '000000', 'ksubHienVien') }}
+            <p class="hint">Kiểu KHÔNG có viền (hộp bo góc, mấy kiểu CapCut) hoặc kiểu
+               vẽ khối nền đặc thì đổi màu viền không thấy gì — nhìn ảnh xem thử là rõ.</p>
+          </div>
+          {# Cột xem thử DÍNH theo màn hình (sticky): ảnh trên là tổ hợp kiểu+font+màu,
+             ảnh dưới là CẢ khung ngang 16:9 để ngắm vị trí chữ. Server render bằng
+             đúng libass sẽ burn — lần đầu mỗi tổ hợp ~1-3s, có cache nên lần sau
+             hiện luôn. #}
+          <div class="ksubbox-xem">
+            <p class="colhead">👁 Xem thử — bấm ảnh để phóng to</p>
+            <img id="ksubXemThu" alt=""
+                 title="Xem thử kiểu + font + màu + cỡ chữ đang chọn">
+            <p class="hint">Tổ hợp đang chọn — kiểu động là ảnh chuyển động.</p>
+            {# Vị trí + CỠ CHỮ trên KHUNG NGANG 16:9. Vị trí tính theo % chiều cao
+               từ đáy; ĐỂ TRỐNG = tự đặt (ngồi ngay trên dải che sub gốc nếu bước
+               này có che, không che thì lề mặc định của kiểu). Cỡ chữ là % so với
+               cỡ gốc của kiểu — trần ký tự/dòng tự rút theo, khỏi tràn mép. #}
+            <img id="kvitriAnh" alt="" title="Vị trí chữ trên khung ngang — bấm để phóng to">
+            <div class="kvitri-dk">
+              <label class="kvitri-thanh">
+                <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
+                <input type="range" id="kvitriKeo" min="0" max="100" step="1">
+              </label>
+              <label class="kvitri-thanh">
+                <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>
+                <input type="range" name="subcochu" id="kcochuKeo"
+                       min="50" max="200" step="5"
+                       value="{{ settings.subcochu or 100 }}">
+              </label>
+              <label class="kvitri-thanh">
+                <span class="hint">📏 Số ký tự tối đa mỗi dòng hiển thị</span>
+                <input name="subchars" type="number" min="10" max="120"
+                       value="{{ settings.subchars }}">
+              </label>
+              <button type="button" class="small" id="kvitriMacDinh">↺ Mặc định</button>
+              <input type="hidden" name="subvitri" id="kvitriGiaTri"
+                     value="{{ settings.subvitri }}">
+            </div>
+            {# Lưu tại chỗ — chọn xong bấm luôn, khỏi cuộn xuống cuối trang. Vẫn là
+               đường /luu của nút 💾 dưới cùng (lưu CẢ form); formaction là đường
+               lui khi không có JS. #}
+            <div class="savebar">
+              <button class="small" formaction="/luu" hx-post="/luu"
+                      hx-target="#queue" hx-swap="innerHTML">💾 Lưu cài đặt</button>
+            </div>
+          </div>
+        </div>
+      {% endif %}
     </div>
     <div class="actions">
-      <button class="primary" name="start" value="gan">🎬 Chạy bước ④</button>
+      <button class="primary" name="start" value="gan"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🎬 Chạy bước ④</button>
     </div>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="chesub" {{ 'checked' if settings.chesub }}>
-        🫥 Che sub Trung gốc: tự dò dải chữ đốt sẵn (10 khung hình) rồi LÀM MỜ dải đó
-        suốt video, sub Việt đè lên trên dải mờ (dò lệch: sửa file <code>_vungsub.json</code>)</label>
+        🫥 Che mờ sub gốc đốt trong hình: tự dò dải chữ (10 khung hình) rồi LÀM MỜ dải đó
+        suốt video, sub Việt đè lên trên dải mờ (bỏ tick = để nguyên sub gốc;
+        dò lệch: sửa file <code>_vungsub.json</code>)</label>
       <label class="chk"><input type="checkbox" name="thaytieng" {{ 'checked' if settings.thaytieng }}>
         🔊 Thay tiếng bằng giọng Việt đã xếp (dùng <code>_vi_sapxep.srt</code> +
-        <code>_vi_audio.wav</code>; bỏ tick = giữ tiếng Trung gốc, sub <code>_vi.srt</code>)</label>
+        <code>_vi_audio.wav</code>; bỏ tick = giữ tiếng gốc, sub <code>_vi.srt</code>)</label>
       <label class="chk"><input type="checkbox" name="cpu" {{ 'checked' if settings.cpu }}>
         🖥 Ép encode CPU (khi GPU đang bận nhận diện/TTS)</label>
     </div>
   </div>
 
   <div class="savebar">
-    <button formaction="/luu">💾 Lưu cài đặt</button>
-    <span class="hint">Nhớ toàn bộ cài đặt của cả 4 bước.
-      Bấm nút chạy bước nào cũng tự lưu cài đặt mới nhất trước khi chạy.</span>
+    <button formaction="/luu" hx-post="/luu" hx-target="#queue" hx-swap="innerHTML"
+            hx-disabled-elt="this">💾 Lưu cài đặt</button>
+    <span class="chualuu">● có thay đổi chưa lưu</span>
+    <span class="hint">Chỉnh gì trên trang cũng chỉ đổi TẠI CHỖ — bấm nút chạy
+      bước nào (hoặc 💾) mới ghi xuống <code>web_settings.json</code>.
+      Nhớ cài đặt của cả 4 bước.</span>
   </div>
 </form>
 
@@ -222,44 +450,418 @@
 </div>
 
 <script>
-  // Chip "Mới tải về": bấm thêm dòng vào ô Nguồn, bấm lại thì bỏ ra (chip xanh
-  // = đang có trong danh sách). type=button nên không submit form.
+  // ── Lời nhắn góc phải: bấm vào là tắt ────────────────────────────────────
+  const tin = document.getElementById("tinnhan");
+  const nhan = (msg, ok) => {
+    const p = document.createElement("p");
+    p.className = ok ? "okmsg" : "warn";
+    p.textContent = (ok ? "✓ " : "⚠️ ") + msg;
+    tin.replaceChildren(p);
+  };
+  tin.addEventListener("click", () => tin.replaceChildren());
+
+  // ── Ô ngôn ngữ: đổi chữ + ô số chữ/dòng NGAY TRÊN TRANG ─────────────────
+  // Chỉ đặt lại body[data-lang], CSS lo phần hiện/ẩn (.l-zh / .l-en). Không hỏi
+  // server, không tải lại — lưu cùng cài đặt khi bấm chạy hoặc 💾.
+  const langSel = document.getElementById("langSel");
+  langSel.addEventListener("change", () => {
+    document.body.dataset.lang = langSel.value;
+  });
+
+  // ── Khối Nguồn: chip "Gần đây" · 📂 bảng chọn file · ✕ xoá ô nhập ────────
+  // Giống hệt khối Nguồn bên myvoice. Trình duyệt KHÔNG cho biết đường dẫn thật
+  // của file khi dùng <input type=file> (chỉ trả "C:\fakepath\…") mà các script
+  // lại cần đường dẫn thật, nên danh sách file do server đọc từ đĩa rồi trả về
+  // (/api/tep-nguon) — server chạy ngay trên máy này nên đó đúng là đĩa đang ngồi.
   const srcBox = document.getElementById("srcBox");
   const layDs = () => srcBox.value.split("\n").map(l => l.trim()).filter(Boolean);
-  const chips = [...document.querySelectorAll(".chip[data-src]")];
-  const toChip = () => {
+
+  // Bấm một lần thêm dòng, bấm lại thì bỏ ra — dấu xanh = đang có trong ô Nguồn.
+  const doiNguon = (text) => {
     const ds = layDs();
-    chips.forEach(c => c.classList.toggle("chip-hit", ds.includes(c.dataset.src)));
-  };
-  chips.forEach(b => b.addEventListener("click", () => {
-    const ds = layDs();
-    const i = ds.indexOf(b.dataset.src);
-    if (i >= 0) ds.splice(i, 1); else ds.push(b.dataset.src);
+    const i = ds.indexOf(text);
+    if (i >= 0) ds.splice(i, 1); else ds.push(text);
     srcBox.value = ds.join("\n") + (ds.length ? "\n" : "");
     toChip();
-  }));
+    return i < 0;                       // true = vừa thêm vào
+  };
+  // Chip vẽ lại sau mỗi lượt htmx (hàng "Gần đây" là khối swap ngoài luồng) nên
+  // phải hỏi lại DOM mỗi lần, và bắt click ở cấp trang thay vì gắn từng nút.
+  const toChip = () => {
+    const ds = layDs();
+    document.querySelectorAll(".chip[data-src]").forEach(
+      c => c.classList.toggle("chip-hit", ds.includes(c.dataset.src)));
+    document.querySelectorAll(".filerow[data-path]").forEach(
+      r => danhDauThem(r, ds.includes(r.dataset.path)));
+  };
+  document.addEventListener("click", e => {
+    const chip = e.target.closest(".chip[data-src]");
+    if (chip) { doiNguon(chip.dataset.src); return; }
+    if (e.target.closest("#srcForget")) { quenLichSu(); return; }
+    if (e.target.closest("#srcAdd")) moBangChon();
+  });
   srcBox.addEventListener("input", toChip);
   document.getElementById("srcClear").addEventListener("click", () => {
+    // Ô trống mà cũng bật hộp thoại thì phiền, nên gõ rồi mới hỏi.
+    if (srcBox.value.trim() && !confirm("Xoá hết nội dung ô Nguồn?")) return;
     srcBox.value = "";
+    srcBox.focus();
     toChip();
   });
   toChip();
+  // Sau mỗi lượt htmx (hàng chip "Gần đây" vừa được thay) thì tô lại dấu xanh.
+  document.body.addEventListener("htmx:afterSwap", toChip);
 
-  // Ô chọn kiểu phụ đề: mặc định THU GỌN (chỉ hiện kiểu đang chọn) cho đỡ tốn
-  // chỗ; bấm nút là mở cả kho, trạng thái nhớ trong localStorage.
-  const ksubs = document.getElementById("ksubs");
-  const ksubBtn = document.getElementById("ksubToggle");
-  const ksubVe = () => {
-    const thu = ksubs.classList.contains("thu");
-    ksubBtn.textContent = thu ? ksubBtn.dataset.dong : ksubBtn.dataset.mo;
+  async function quenLichSu() {
+    if (!confirm("Quên danh sách nguồn gần đây? (ô nhập giữ nguyên)")) return;
+    try {
+      await fetch("/nguon/xoalichsu", { method: "POST", credentials: "same-origin" });
+      document.getElementById("nguonchip").replaceChildren();
+    } catch (_) {
+      nhan("Không xoá được — server còn chạy không?");
+    }
+  }
+
+  // ── Bảng chọn file ───────────────────────────────────────────────────────
+  let bang = null;
+  const dongBang = () => {
+    if (bang) { bang.remove(); bang = null; }
+    document.removeEventListener("keydown", thoat);
   };
-  ksubs.classList.toggle("thu", localStorage.getItem("ksub_mo") !== "1");
-  if (!ksubs.querySelector("input:checked")) ksubs.classList.remove("thu");
-  ksubVe();
-  ksubBtn.addEventListener("click", () => {
-    ksubs.classList.toggle("thu");
-    localStorage.setItem("ksub_mo", ksubs.classList.contains("thu") ? "0" : "1");
-    ksubVe();
+  function thoat(e) { if (e.key === "Escape") dongBang(); }
+
+  async function moBangChon() {
+    dongBang();
+    bang = document.createElement("div");
+    bang.className = "modal";
+    bang.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-head">
+          <b>Chọn file từ máy</b>
+          <input class="modal-find" type="text" placeholder="Lọc theo tên…" autofocus>
+          <button type="button" class="small modal-x">✕</button>
+        </div>
+        <div class="modal-body"><p class="hint">Đang đọc thư mục…</p></div>
+        <div class="modal-foot">
+          <span class="hint">Bấm vào file để thêm vào ô Nguồn, bấm lại thì bỏ ra
+            — chọn được nhiều file.</span>
+          <button type="button" class="primary small modal-x">Xong</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bang);
+    document.addEventListener("keydown", thoat);
+    bang.addEventListener("click", e => {
+      if (e.target === bang || e.target.closest(".modal-x")) { dongBang(); return; }
+      const hang = e.target.closest(".filerow");
+      if (!hang) return;
+      danhDauThem(hang, doiNguon(hang.dataset.path));
+      hang.classList.add("filerow-hit");
+      setTimeout(() => hang.classList.remove("filerow-hit"), 700);
+    });
+    bang.querySelector(".modal-find").addEventListener("input", e => {
+      const q = e.target.value.trim().toLowerCase();
+      bang.querySelectorAll(".filerow").forEach(r => {
+        r.hidden = q && !r.dataset.name.toLowerCase().includes(q);
+      });
+    });
+
+    const than = bang.querySelector(".modal-body");
+    let nhom;
+    try {
+      const resp = await fetch("/api/tep-nguon", { credentials: "same-origin" });
+      nhom = (await resp.json()).groups || [];
+    } catch (_) {
+      than.innerHTML = '<p class="warn">Không đọc được danh sách file — server còn chạy không?</p>';
+      return;
+    }
+    if (!nhom.some(g => g.files.length)) {
+      than.innerHTML = '<p class="empty">Không thấy file video/audio nào trong các thư mục nguồn.</p>';
+      return;
+    }
+    than.innerHTML = nhom.map(g => `
+      <div class="filegroup">
+        <div class="filegroup-head">${esc(g.label)}
+          <span class="hint">${esc(g.folder)}</span></div>
+        ${g.files.length ? g.files.map(f => `
+          <button type="button" class="filerow${f.lam ? (f.xong ? " filerow-xong" : " filerow-dang") : ""}"
+                  data-path="${esc(f.path)}" data-name="${esc(f.name)}">
+            <span class="filerow-name">${esc(f.name)}</span>
+            ${dauDaLam(f)}
+            <span class="filerow-meta">${esc(f.size)} · ${esc(f.when)}</span>
+          </button>`).join("")
+          : '<p class="empty">Thư mục trống.</p>'}
+        ${g.more ? `<p class="hint">…và ${g.more} file cũ hơn không hiện ở đây.</p>` : ""}
+      </div>`).join("");
+    toChip();          // file đã nằm sẵn trong ô Nguồn thì mang dấu ngay từ đầu
+    bang.querySelector(".modal-find").focus();
+  }
+
+  // Nhãn "đã làm" của một file: đã dựng đủ 4 bước hay còn dở mấy bước. Video
+  // chưa chạy bao giờ (không có gì trong output) thì không có nhãn nào.
+  function dauDaLam(f) {
+    if (!f.lam) return "";
+    return f.xong
+      ? '<span class="dalam xong" title="Đã dựng xong đủ các bước">✓ xong</span>'
+      : `<span class="dalam dang" title="Đang dở — mới ${esc(f.buoc)} bước">◐ ${esc(f.buoc)}</span>`;
+  }
+
+  // Dấu "✓ đã thêm" NẰM LẠI trên hàng (không nháy rồi mất): danh sách dài thì
+  // mới nhớ được đã bấm những file nào. co=false là vừa bấm bỏ ra → gỡ dấu.
+  function danhDauThem(hang, co) {
+    hang.classList.toggle("filerow-them", !!co);
+    const cu = hang.querySelector(".themroi");
+    if (co && !cu) {
+      hang.querySelector(".filerow-name")
+          .insertAdjacentHTML("afterend", '<span class="dalam themroi">✓ đã thêm</span>');
+    } else if (!co && cu) {
+      cu.remove();
+    }
+  }
+
+  const esc = s => String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // ── ⭐ ghim giọng: xếp lại danh sách NGAY TRÊN TRANG ─────────────────────
+  // Trước đây nút này gửi lên server rồi tải lại cả trang (mất chỗ cuộn, mất ô
+  // Nguồn đang gõ). Giờ chỉ đổi <option> tại chỗ; danh sách ghim nằm trong ô ẩn
+  // voice_stars và được ghi xuống đĩa lúc bấm chạy hoặc 💾. data-i = chỗ đứng
+  // theo tên, để lúc BỎ ghim còn trả giọng về đúng chỗ cũ.
+  const gSel = document.getElementById("voiceSel");
+  const gSao = document.getElementById("voiceSao");
+  const gStars = document.getElementById("voiceStars");
+  const layStars = () => gStars.value.split("\n").map(s => s.trim()).filter(Boolean);
+  const veGiong = () => {
+    const stars = layStars();
+    const opts = [...gSel.querySelectorAll("option[data-i]")];
+    opts.forEach(o => { o.textContent = (stars.includes(o.value) ? "★ " : "") + o.value; });
+    opts.sort((a, b) => {
+      const ia = stars.indexOf(a.value), ib = stars.indexOf(b.value);
+      if (ia >= 0 || ib >= 0) return (ia < 0 ? 9e9 : ia) - (ib < 0 ? 9e9 : ib);
+      return (+a.dataset.i) - (+b.dataset.i);
+    });
+    const dangChon = gSel.value;
+    opts.forEach(o => gSel.appendChild(o));   // appendChild = dời chỗ, không nhân bản
+    gSel.value = dangChon;
+    const co = stars.includes(gSel.value);
+    gSao.classList.toggle("on", co);
+    gSao.title = co ? "Bỏ ghim giọng này khỏi đầu danh sách"
+                    : "Ghim giọng đang chọn lên đầu danh sách";
+  };
+  gSao.addEventListener("click", () => {
+    const v = gSel.value;
+    if (!v) { nhan("Chọn một giọng trong danh sách rồi bấm ⭐ để ghim."); return; }
+    const stars = layStars();
+    const i = stars.indexOf(v);
+    if (i >= 0) stars.splice(i, 1); else stars.unshift(v);
+    gStars.value = stars.join("\n");
+    veGiong();
+    danhDauDoi(true);
+  });
+  gSel.addEventListener("change", veGiong);
+  veGiong();
+
+  // ── Khối chọn KIỂU PHỤ ĐỀ (giống hệt myvoice) ───────────────────────────
+  // Kho thẻ kiểu/font thu lại được, hai bảng màu, thanh vị trí + cỡ chữ, và HAI
+  // ảnh xem thử do server render bằng đúng libass sẽ burn (có cache nên lần sau
+  // hiện ngay). Bọc IIFE cho khỏi đụng tên biến với các đoạn khác trên trang.
+  (() => {
+    const box = document.getElementById("ksubBox");
+    const xemThu = document.getElementById("ksubXemThu");
+    if (!box || !xemThu) return;            // kho kiểu rỗng → không có gì để gắn
+    // Hai POPUP chọn kiểu / font: nút "Chọn…" mở; ✕, bấm nền hoặc Esc đóng;
+    // bấm một thẻ là chọn xong nên popup cũng tự đóng luôn. Popup nằm TRONG
+    // form nên radio bên trong vẫn gửi lên như thường, kể cả lúc đang đóng.
+    const dongPopup = () => box.querySelectorAll(".ksubchon")
+      .forEach(m => { m.style.display = "none"; });
+    box.querySelectorAll("[data-mo]").forEach(b =>
+      b.addEventListener("click", () => {
+        document.getElementById(b.dataset.mo).style.display = "flex";
+      }));
+    box.querySelectorAll(".ksubchon").forEach(m => {
+      m.addEventListener("click", e => {
+        if (e.target === m) m.style.display = "none";
+      });
+      m.querySelector("[data-dong]").addEventListener("click", dongPopup);
+    });
+    // Tên kiểu/font đang chọn hiện ở HAI chỗ: dòng tóm tắt đầu khối và nhãn của
+    // lưới thu lại (thu rồi vẫn biết đang chọn gì) → ghi cả cặp một lượt.
+    const ten = [document.getElementById("ksubHienTen"),
+                 document.getElementById("ksubNayKieu")];
+    const fontHien = [document.getElementById("ksubHienFont"),
+                      document.getElementById("ksubNayFont")];
+    const ghi = (o, v) => o.forEach(e => { e.textContent = v; });
+    // Lightbox phóng to ảnh: bấm ảnh để mở, bấm nền hoặc Esc để đóng.
+    const zoom = document.getElementById("ksubZoom");
+    const zoomAnh = document.getElementById("ksubZoomAnh");
+    const moZoom = src => {
+      if (!src) return;
+      zoomAnh.src = src;
+      zoom.style.display = "flex";
+    };
+    zoom.addEventListener("click", () => { zoom.style.display = "none"; });
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape") return;
+      // Đang phóng to ảnh thì Esc thu ảnh lại trước, còn lại đóng popup chọn.
+      if (zoom.style.display !== "none") zoom.style.display = "none";
+      else dongPopup();
+    });
+    const chon = n => {
+      const r = document.querySelector("input[name=" + n + "]:checked");
+      return r ? r.value : "";
+    };
+    // Cỡ chữ (% cỡ gốc của kiểu) + màu viền đi kèm MỌI ảnh xem trước, kẻo ảnh
+    // một đằng video một nẻo.
+    const cochuKeo = document.getElementById("kcochuKeo");
+    const cochuSo = document.getElementById("kcochuSo");
+    const themCo = () => "&cochu=" + encodeURIComponent(cochuKeo.value) +
+      "&mauvien=" + encodeURIComponent(chon("submauvien"));
+    const capNhatXemThu = () => {
+      const url = "/kieusub-xemtruoc?kieu=" +
+        encodeURIComponent(chon("kieusub") || "hopbo") +
+        "&font=" + encodeURIComponent(chon("subfont")) +
+        "&mau=" + encodeURIComponent(chon("submau")) + themCo();
+      xemThu.style.opacity = ".35";
+      xemThu.onload = () => { xemThu.style.opacity = "1"; };
+      xemThu.src = url;
+    };
+    // Khung ngang 16:9 xem VỊ TRÍ chữ + thanh kéo chỉnh % từ đáy. Kéo thanh →
+    // chờ 350ms mới render (mỗi giá trị cache riêng phía server).
+    const vitriAnh = document.getElementById("kvitriAnh");
+    const vitriKeo = document.getElementById("kvitriKeo");
+    const vitriSo = document.getElementById("kvitriSo");
+    const vitriGT = document.getElementById("kvitriGiaTri");
+    const VITRI_MD = 16;                 // ≈ 173px trên khung 1080 (lề mặc định)
+    let vitriHen = null, cochuHen = null;
+    // Ô trống = TỰ ĐẶT: bước ④ hạ chữ xuống ngồi ngay trên dải che sub gốc (nếu
+    // có che), không che thì dùng lề mặc định của kiểu.
+    const veVitriNhan = () => {
+      vitriSo.textContent = (vitriGT.value || VITRI_MD) + "%" +
+        (vitriGT.value ? "" : " (tự đặt theo dải che)");
+    };
+    const capNhatViTri = () => {
+      const url = "/kieusub-xemtruoc?khung=ngang&kieu=" +
+        encodeURIComponent(chon("kieusub") || "hopbo") +
+        "&font=" + encodeURIComponent(chon("subfont")) +
+        "&mau=" + encodeURIComponent(chon("submau")) +
+        "&vitri=" + encodeURIComponent(vitriGT.value) + themCo();
+      vitriAnh.style.opacity = ".35";
+      vitriAnh.onload = () => { vitriAnh.style.opacity = "1"; };
+      vitriAnh.src = url;
+    };
+    const veCochuNhan = () => {
+      cochuSo.textContent = cochuKeo.value + "%" +
+        (cochuKeo.value === "100" ? " (giữ nguyên)" : "");
+    };
+    // Đổi cỡ chữ làm đổi CẢ hai ảnh vì nó đổi cả dáng chữ lẫn cách ngắt dòng.
+    const capNhatCaHai = () => { capNhatXemThu(); capNhatViTri(); };
+    vitriKeo.value = vitriGT.value || VITRI_MD;
+    veVitriNhan();
+    veCochuNhan();
+    vitriKeo.addEventListener("input", () => {
+      vitriGT.value = vitriKeo.value;
+      veVitriNhan();
+      clearTimeout(vitriHen);
+      vitriHen = setTimeout(capNhatViTri, 350);
+    });
+    cochuKeo.addEventListener("input", () => {
+      veCochuNhan();
+      clearTimeout(cochuHen);            // hẹn riêng, khỏi nuốt lượt vẽ của vị trí
+      cochuHen = setTimeout(capNhatCaHai, 350);
+    });
+    document.getElementById("kvitriMacDinh").addEventListener("click", () => {
+      vitriGT.value = "";
+      vitriKeo.value = VITRI_MD;
+      cochuKeo.value = 100;
+      veVitriNhan();
+      veCochuNhan();
+      capNhatCaHai();
+      danhDauDoi(true);
+    });
+    vitriAnh.addEventListener("click", () => moZoom(vitriAnh.src));
+    xemThu.addEventListener("click", () => moZoom(xemThu.src));
+    capNhatXemThu();
+    capNhatViTri();
+    // Bấm thẻ: cập nhật tên đang chọn + vẽ lại hai ảnh xem thử.
+    box.querySelectorAll("input[name=kieusub]").forEach(r =>
+      r.addEventListener("change", () => {
+        ghi(ten, r.closest(".ksub").querySelector("b").textContent);
+        capNhatCaHai();
+        dongPopup();
+      }));
+    box.querySelectorAll("input[name=subfont]").forEach(r =>
+      r.addEventListener("change", () => {
+        ghi(fontHien, r.value || "(theo kiểu)");
+        capNhatCaHai();
+        dongPopup();
+      }));
+    // Bảng màu: swatch có sẵn + ô tự chọn (input color gắn radio riêng). MÀU CHỮ
+    // và MÀU VIỀN là hai bảng cùng khuôn nên chạy chung một đoạn — .kmaus tự khai
+    // qua data-truong/data-tom nó sửa ô nào, cập nhật chấm màu nào ở dòng Đang chọn.
+    box.querySelectorAll(".kmaus").forEach(bang => {
+      const truong = bang.dataset.truong;
+      const chu = document.getElementById(bang.dataset.tom);
+      const dot = document.getElementById(bang.dataset.tom + "Dot");
+      const veTom = v => {
+        if (chu) chu.textContent = v ? "#" + v : "(theo kiểu)";
+        if (!dot) return;
+        dot.style.display = v ? "" : "none";
+        if (v) dot.style.background = "#" + v;
+      };
+      const khac = bang.querySelector(".kmau-khac");
+      const pick = bang.querySelector(".kmau-pick");
+      bang.querySelectorAll("input[name=" + truong + "]").forEach(r =>
+        r.addEventListener("change", () => { veTom(r.value); capNhatCaHai(); }));
+      pick.addEventListener("input", () => {
+        khac.value = pick.value.slice(1).toUpperCase();
+        khac.checked = true;
+        veTom(khac.value);
+        capNhatCaHai();
+        danhDauDoi(true);
+      });
+      khac.addEventListener("change", () => {
+        if (!khac.value) khac.value = pick.value.slice(1).toUpperCase();
+        veTom(khac.value);
+        capNhatCaHai();
+      });
+    });
+  })();
+
+  // ── Ô ✍️ vẽ sub: bỏ tick là ẩn luôn kho kiểu + font + số ký tự/dòng ─────
+  // Bỏ vẽ sub thì mấy ô đó chẳng còn tác dụng gì — giấu đi cho khối ④ gọn lại.
+  // Vẫn nằm trong form nên giá trị đang chọn không mất, tick lại là hiện y cũ.
+  const veSub = document.getElementById("veSub");
+  const veSubVe = () => document.body.classList.toggle("khongsub", !veSub.checked);
+  veSub.addEventListener("change", veSubVe);
+  veSubVe();
+
+  // ── Dấu “chưa lưu” ───────────────────────────────────────────────────────
+  // Mọi ô trên form chỉ đổi trên trang; tới lúc bấm chạy/💾 mới ghi xuống
+  // web_settings.json — dấu này nhắc đúng chỗ đó. Server trả về HX-Trigger
+  // "mvid:xong" khi lưu xong: xoá dấu, và nếu là lượt CHẠY thì bỏ tick hai ô
+  // “làm lại” (chúng chỉ có giá trị cho đúng lượt vừa bấm — trước đây trang tải
+  // lại nên tự sạch, nay không tải lại nữa nên phải tự bỏ).
+  const form = document.getElementById("mainform");
+
+  // Enter trong một ô chữ/số là bấm nút chạy ĐẦU TIÊN của form (▶ Chạy tất cả) —
+  // đang gõ số chữ/dòng mà lỡ Enter là cả mẻ video chạy luôn. Chặn hẳn: muốn
+  // chạy thì phải bấm đúng nút. Ô Nguồn là textarea nên Enter vẫn xuống dòng.
+  form.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey && e.target.tagName === "INPUT"
+        && e.target.type !== "checkbox" && e.target.type !== "radio") {
+      e.preventDefault();
+    }
+  });
+
+  const KHONG_LUU = ["sources", "redoasr", "redotts"];   // ba ô không nằm trong cài đặt
+  const danhDauDoi = (co) => document.body.classList.toggle("doi", co);
+  const coDoi = e => { if (!KHONG_LUU.includes(e.target.name)) danhDauDoi(true); };
+  form.addEventListener("input", coDoi);
+  form.addEventListener("change", coDoi);
+  document.body.addEventListener("mvid:xong", e => {
+    danhDauDoi(false);
+    if (e.detail && e.detail.chay)
+      form.querySelectorAll("input[name=redoasr], input[name=redotts]")
+          .forEach(o => { o.checked = false; });
   });
 
   // Nhật ký trong khối hàng đợi: luôn cuộn xuống dòng mới nhất, kể cả sau khi

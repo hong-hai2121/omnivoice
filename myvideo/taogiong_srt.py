@@ -185,17 +185,45 @@ def generate_all(cues, voice_path, tts_dir, redo=False):
     """Sinh wav cho từng câu (bỏ qua câu đã có — chạy lại là tiếp tục).
 
     Trả về (files, model, sr): files là list đường dẫn wav song song với cues
-    (None nếu câu rỗng/lỗi); model/sr để bước kiểm mất chữ đọc lại câu hỏng
+    (None nếu câu rỗng/lỗi); model/sr để bên gọi tự dỡ khỏi VRAM
     (model = None khi mọi câu đã có sẵn, chưa phải nạp).
     """
     import soundfile as sf
 
     tts_dir.mkdir(exist_ok=True)
+    # SỔ VĂN BẢN của từng wav: 0007.wav là câu nào. Không có sổ này thì "wav đã
+    # có → bỏ qua" là bẫy — dịch lại (đổi cách cắt câu, sửa tay bản dịch) làm
+    # câu thứ 7 thành câu khác hẳn, mà wav cũ vẫn nằm đó nên video ra lắp giọng
+    # của câu cũ vào chỗ câu mới. So sổ thì chỉ đọc lại đúng câu đã đổi.
+    so_van_ban = tts_dir / "_vanban.json"
+    moi = [tts_text(t) for _tl, t in cues]
+    try:
+        cu = json.loads(so_van_ban.read_text(encoding="utf-8"))
+    except Exception:
+        # Thư mục của bản cũ (chưa có sổ): tin đám wav đang có nếu SỐ LƯỢNG khớp
+        # số câu; lệch số là chắc chắn cắt câu đã khác → đọc lại từ đầu.
+        co = sorted(tts_dir.glob("[0-9][0-9][0-9][0-9].wav"))
+        cu = list(moi) if len(co) == len(cues) else []
+        if len(co) != len(cues):
+            print(f"⚠️ Thư mục có {len(co)} wav cũ mà bản dịch nay {len(cues)} câu "
+                  "— cắt câu đã khác, đọc lại từ đầu cho khỏi lắp nhầm giọng.")
     todo = []
-    for i, (_t, text) in enumerate(cues):
+    for i, text in enumerate(moi):
         f = tts_dir / f"{i + 1:04d}.wav"
-        if redo or not f.exists():
-            todo.append((i, f, tts_text(text)))
+        if redo or not f.exists() or i >= len(cu) or cu[i] != text:
+            todo.append((i, f, text))
+    doi = sum(1 for i, _f, _t in todo
+              if i < len(cu) and cu[i] and (tts_dir / f"{i + 1:04d}.wav").exists())
+    if doi:
+        print(f"✏️ {doi} câu đã đổi lời so với lần chạy trước → đọc lại đúng mấy câu đó.")
+    # Wav thừa của lần cắt câu trước: KHÔNG xoá (mọi thứ xoá được phải khôi phục
+    # được), chỉ báo để biết mà dọn tay nếu tiếc chỗ.
+    thua = [p for p in tts_dir.glob("[0-9][0-9][0-9][0-9].wav")
+            if int(p.stem) > len(cues)]
+    if thua:
+        print(f"🧺 {len(thua)} wav thừa của lần cắt câu trước còn nằm trong "
+              f"{tts_dir.name}/ (không dùng nữa — xoá tay nếu muốn lấy lại chỗ).")
+    so_van_ban.write_text(json.dumps(moi, ensure_ascii=False), encoding="utf-8")
 
     files = [tts_dir / f"{i + 1:04d}.wav" for i in range(len(cues))]
     if not todo:
@@ -204,6 +232,7 @@ def generate_all(cues, voice_path, tts_dir, redo=False):
 
     print(f"🔊 Giọng mẫu: {voice_path.name}")
     model, sr = _load_omnivoice()
+    prompt = _voice_prompt(model, voice_path)
 
     done_before = len(cues) - len(todo)
     if done_before:
@@ -214,7 +243,7 @@ def generate_all(cues, voice_path, tts_dir, redo=False):
             continue
         print(f"  [{n}/{len(todo)}] câu {i + 1}: {text[:50]!r}")
         try:
-            sf.write(str(f), _doc_cau(model, text, voice_path), sr)
+            sf.write(str(f), _doc_cau(model, text, prompt), sr)
         except Exception as e:
             print(f"  ⚠️ Câu {i + 1} lỗi TTS: {e} — bỏ qua.")
             files[i] = None
@@ -233,23 +262,126 @@ def _load_omnivoice():
     return model, model.sampling_rate
 
 
-def _doc_cau(model, text, voice_path, dur_scale=1.0):
+def _tra_vram(ly_do=""):
+    """Trả các khối VRAM torch đang GIỮ LẠI về cho driver, rồi ghi mức trống.
+
+    Bỏ tham chiếu tới model thì tensor mới chỉ về tay allocator của torch; các
+    tiến trình khác (faster-whisper của bước kiểm chữ, NVENC, Chrome) vẫn thấy
+    card đầy cho tới khi empty_cache(). CHỈ gọi khi đã hết tham chiếu tới model,
+    không thì log in ra một con số đẹp mà chẳng trả được gì."""
+    import gc
+
+    import torch
+    gc.collect()
+    try:
+        torch.cuda.empty_cache()
+        free_b, total_b = torch.cuda.mem_get_info()
+        print(f"🧹 Đã trả VRAM{f' ({ly_do})' if ly_do else ''} — còn trống "
+              f"{free_b / 2**30:.1f}/{total_b / 2**30:.1f} GB.")
+    except Exception as e:
+        print(f"⚠️ Không dọn được VRAM ({ly_do or 'không rõ bước'}): {e}")
+
+
+def _nha_whisper(model):
+    """Nhả Whisper mà OmniVoice tự nạp để PHIÊN ÂM GIỌNG MẪU.
+
+    Không truyền ref_text thì create_voice_clone_prompt() nạp
+    whisper-large-v3-turbo để nghe file giọng mẫu — dùng đúng một lần rồi nằm lì
+    tới hết bài. Đo trên card 8GB (RTX 4060, Chrome đang mở): nạp OmniVoice xong
+    còn trống 5.0 GB, dựng prompt xong còn 0.0 GB → mọi thứ tràn sang RAM, mỗi
+    câu từ 2 giây phình lên gần 20 giây. Nhả nó ra là về lại 4.9 GB trống.
+
+    Tham chiếu DUY NHẤT nằm ở chính thuộc tính này nên gán None là chết hẳn."""
+    if getattr(model, "_asr_pipe", None) is None:
+        return
+    model._asr_pipe = None
+    _tra_vram("nhả Whisper phiên âm giọng mẫu")
+
+
+def _do_omnivoice(model, ly_do="nhường VRAM cho ASR kiểm mất chữ"):
+    """Bỏ tham chiếu tới OmniVoice; trả None để BÊN GỌI gán lại vào biến của nó.
+
+    ⚠️ Phải viết đúng hai dòng, đúng thứ tự:
+        model = _do_omnivoice(model, "lý do")   # bên gọi bỏ tham chiếu của mình
+        _tra_vram()                             # giờ mới trả được VRAM
+    `del model` bên trong hàm chỉ bỏ tham chiếu CỦA HÀM — biến của bên gọi vẫn
+    trỏ vào đúng model đó nên trọng số chưa chết."""
+    if model is not None:
+        _nha_whisper(model)
+        print(f"📤 Dỡ OmniVoice khỏi VRAM ({ly_do})…")
+    return None
+
+
+_PROMPT_CACHE = {}
+
+
+def _voice_prompt(model, voice_path):
+    """VoiceClonePrompt dựng MỘT lần rồi dùng cho mọi câu — và mọi lần chạy sau.
+
+    model.generate(ref_audio=…) dựng LẠI prompt cho TỪNG câu: đọc mp3, cắt lặng,
+    chạy Whisper phiên âm, mã hoá token. Bài 895 câu tức là làm lại 895 lần cho
+    đúng một file giọng mẫu. Đo trên máy này: 3.7s/câu → 2.2s/câu khi dùng lại
+    prompt (bài 895 câu: 55 phút → 33 phút).
+
+    Prompt còn được LƯU cạnh file giọng mẫu (<giọng>.prompt.pt) nên từ lần chạy
+    sau Whisper phiên âm không phải vào VRAM lần nào nữa. Sửa file giọng mẫu
+    (mtime mới hơn) thì prompt tự dựng lại. Đuôi .pt nên file này không lọt vào
+    danh sách giọng của trang web (lọc theo AUDIO_EXTS)."""
+    key = str(voice_path)
+    if key in _PROMPT_CACHE:
+        return _PROMPT_CACHE[key]
+
+    from omnivoice.models.omnivoice import VoiceClonePrompt
+
+    ref = Path(key)
+    pt = ref.with_name(ref.name + ".prompt.pt")
+    prompt = None
+    try:
+        if pt.exists() and pt.stat().st_mtime >= ref.stat().st_mtime:
+            prompt = VoiceClonePrompt.load(str(pt))
+            print(f"🎙️ Dùng prompt giọng mẫu đã lưu: {pt.name} — khỏi chạy Whisper.")
+    except Exception as e:
+        print(f"⚠️ Prompt giọng mẫu đã lưu không đọc được ({e}) → dựng lại.")
+        prompt = None
+
+    if prompt is None:
+        prompt = model.create_voice_clone_prompt(ref_audio=key)
+        print(f"🎙️ Đã dựng prompt giọng mẫu (dùng lại cho mọi câu): {ref.name}")
+        try:
+            prompt.save(str(pt))
+            print(f"💾 Đã lưu prompt giọng mẫu → {pt.name}")
+        except Exception as e:
+            print(f"⚠️ Không lưu được prompt giọng mẫu: {e}")
+
+    # Dựng xong hay nạp từ đĩa thì tới đây Whisper phiên âm hết việc cho cả bài.
+    _nha_whisper(model)
+    _PROMPT_CACHE[key] = prompt
+    return prompt
+
+
+def _doc_cau(model, text, prompt, dur_scale=1.0):
     """Đọc MỘT câu → mảng audio. language + duration + num_step: cùng bộ tham
     số bên myvoice — thiếu duration là khung bị đoán hụt, nuốt từ cuối câu.
     dur_scale: nới khung khi đọc lại câu bị nuốt chữ (lượt 2 dùng 1.08)."""
     dur = vn_duration(text)
     if dur is not None:
         dur *= dur_scale
-    return model.generate(text=text, ref_audio=str(voice_path),
+    return model.generate(text=text, voice_clone_prompt=prompt,
                           language="vi", duration=dur, num_step=NUM_STEP)[0]
 
 
 # ── Kiểm MẤT CHỮ + đọc lại câu hỏng (tái dùng taogiong_kiemtra_matchu) ───────
-def kiemtra_va_docla(cues, files, tts_dir, voice_path, model, sr):
-    """ASR đối chiếu TỪNG câu với văn bản (2 tầng small→medium, chạy CPU).
-    Câu bị nuốt chữ được đọc lại ngay: lượt 1 re-roll, lượt 2 nới khung +8%.
-    OmniVoice là masked-diffusion nên thi thoảng nuốt cụm từ — đo bên myvoice
-    là 7–12% số đoạn; có vòng này thì mọi video tự được "bảo hành đủ chữ"."""
+def kiemtra_va_docla(cues, files, tts_dir, voice_path):
+    """ASR đối chiếu TỪNG câu với văn bản (large-v3-turbo, xem
+    taogiong_kiemtra_matchu). Câu bị nuốt chữ được đọc lại ngay: lượt 1 re-roll,
+    lượt 2 nới khung +8%. OmniVoice là masked-diffusion nên thi thoảng nuốt cụm
+    từ — đo bên myvoice là 7–12% số đoạn; có vòng này thì mọi video tự được
+    "bảo hành đủ chữ".
+
+    VRAM: card 8GB không chứa nổi cả OmniVoice lẫn ASR nên hai model LUÂN PHIÊN
+    — bên gọi phải dỡ OmniVoice TRƯỚC khi vào đây (bộ kiểm đo VRAM trống, thấy
+    chật là tự lùi về CPU int8, chậm hơn nhiều lần), và ở đây trả VRAM của ASR
+    trước mỗi lượt nạp lại OmniVoice để đọc lại câu hỏng."""
     import shutil
 
     import soundfile as sf
@@ -272,21 +404,27 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path, model, sr):
 
     try:
         _sync(range(len(cues)))
-        print(f"🕵️ Kiểm tra mất chữ {len(cues)} câu (ASR trên CPU)...")
+        print(f"🕵️ Kiểm tra mất chữ {len(cues)} câu (ASR nghe lại)...")
         bad = ktm.quet_va_xac_minh(texts, shim, on_log=print)
         for lan, scale in ((1, 1.0), (2, 1.08)):
             if not bad:
                 break
             print(f"🔁 Lượt đọc lại {lan}: {len(bad)} câu nuốt chữ "
                   f"(câu {', '.join(str(i + 1) for i in sorted(bad))})...")
-            if model is None:
-                model, sr = _load_omnivoice()
+            # Trả VRAM của ASR RỒI mới nạp OmniVoice — hai model không cùng lúc
+            # nằm trên card 8GB được.
+            ktm.giai_phong()
+            _tra_vram("trả VRAM của ASR để nạp lại OmniVoice")
+            model, sr = _load_omnivoice()
+            prompt = _voice_prompt(model, voice_path)
             for i in sorted(bad):
                 try:
                     sf.write(str(files[i]),
-                             _doc_cau(model, texts[i], voice_path, dur_scale=scale), sr)
+                             _doc_cau(model, texts[i], prompt, dur_scale=scale), sr)
                 except Exception as e:
                     print(f"  ⚠️ Câu {i + 1} lỗi khi đọc lại: {e}")
+            model = _do_omnivoice(model, "quét lại lượt sau")
+            _tra_vram()
             _sync(sorted(bad))
             bad = ktm.quet_va_xac_minh(texts, shim, on_log=print,
                                        chi_cac_doan=set(bad))
@@ -297,6 +435,7 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path, model, sr):
             print("✅ Kiểm tra mất chữ: đủ chữ toàn bộ.")
     finally:
         ktm.giai_phong()
+        _tra_vram("xong bước kiểm mất chữ")
         shutil.rmtree(shim, ignore_errors=True)
 
 
@@ -588,11 +727,15 @@ def main():
         if voice is None:
             print(f"❌ Không tìm thấy giọng mẫu nào trong {VOICE_DIR}")
             sys.exit(1)
-        files, model, sr = generate_all(cues, voice, tts_dir, redo=args.redo_tts)
+        files, model, _sr = generate_all(cues, voice, tts_dir, redo=args.redo_tts)
+        # Dỡ OmniVoice NGAY: bước kiểm chữ cần cả card cho ASR, còn phần xếp
+        # timeline + ghép wav bên dưới chạy CPU nên giữ model lại chỉ tổ chiếm chỗ.
+        model = _do_omnivoice(model, "TTS xong")
+        _tra_vram()
         # 1b. Kiểm mất chữ + đọc lại câu hỏng NGAY (trước khi xếp timeline —
         # câu đọc lại có thể đổi thời lượng nên phải xong xuôi rồi mới xếp).
         if not args.no_kiemtra:
-            kiemtra_va_docla(cues, files, tts_dir, voice, model, sr)
+            kiemtra_va_docla(cues, files, tts_dir, voice)
 
     # ── 2. Dựng segment (μs) và sắp xếp ─────────────────────────────────────
     import soundfile as sf

@@ -1,10 +1,16 @@
 {# Bảng trạng thái từng video trong output + danh sách file mới — cần rows,
-   files, output_dir. Khối này được htmx làm mới 5 giây/lần. #}
+   files, output_dir. Khối này được htmx làm mới 5 giây/lần.
+
+   Mọi nút ở đây đi qua htmx: server trả về khối hàng đợi (vào #queue) kèm bảng
+   này và lời nhắn — bấm nút nào trang cũng KHÔNG tải lại. Thẻ <form> giữ lại
+   làm đường lui khi không có JS; onsubmit=confirm cũng chỉ dành cho đường lui
+   đó, còn htmx hỏi bằng hx-confirm. #}
 <div class="panel">
   <div class="phead">
     <b>📼 Video trong output — bước nào xong, bước nào thiếu</b>
     <span class="spacer"></span>
-    <form method="post" action="/mo-thumuc"><button class="ghost">📂 Mở thư mục</button></form>
+    <form method="post" action="/mo-thumuc"><button class="ghost"
+      hx-post="/mo-thumuc" hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button></form>
   </div>
   {% if rows %}
   <div class="tablewrap">
@@ -34,7 +40,9 @@
             {% if r.missing %}
               <form method="post" action="/tiep">
                 <input type="hidden" name="base" value="{{ r.base }}">
-                <button class="small">⏩ {{ r.missing_label }}</button>
+                <button class="small" hx-post="/tiep" hx-include="closest form"
+                        hx-target="#queue" hx-swap="innerHTML"
+                        hx-disabled-elt="this">⏩ {{ r.missing_label }}</button>
               </form>
             {% elif r.resume_err %}
               <span title="{{ r.resume_err }}">⚠️</span>
@@ -45,7 +53,9 @@
               <form method="post" action="/buoc" style="display:inline">
                 <input type="hidden" name="base" value="{{ r.base }}">
                 <input type="hidden" name="key" value="{{ k }}">
-                <button class="ghost small" title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
+                <button class="ghost small" hx-post="/buoc" hx-include="closest form"
+                        hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                        title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
                   {'dich':'②','giong':'③','gan':'④'}[k] }}</button>
               </form>
             {% endfor %}
@@ -62,6 +72,9 @@
                   onsubmit="return confirm('Đưa TOÀN BỘ file của video này vào Thùng rác?\n\n{{ r.base }}\n\n(Khôi phục được từ Thùng rác Windows)')">
               <input type="hidden" name="base" value="{{ r.base }}">
               <button class="ghost small danger"
+                      hx-post="/xoa" hx-include="closest form"
+                      hx-target="#queue" hx-swap="innerHTML"
+                      hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
                       title="Đưa mọi file của gốc này vào Thùng rác (khôi phục được)">🗑</button>
             </form>
           </td>
@@ -80,13 +93,11 @@
 <div class="panel">
   <div class="phead">
     <b>📁 File mới trong output</b>
-    <span class="spacer"></span>
-    <form method="post" action="/xoa-het"
-          onsubmit="return confirm('Đưa TẤT CẢ file trong thư mục output vào Thùng rác?\n\n(Khôi phục được từ Thùng rác Windows)')">
-      <button class="ghost danger">🗑 Xoá cả output</button>
-    </form>
   </div>
-  <p class="hint">{{ output_dir }} — xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
+  {# Nút 🗑 Xoá cả output đã dời LÊN khối Nguồn (cạnh nút ▶ Chạy tất cả) — chỗ
+     bắt đầu một mẻ mới cũng là chỗ hay muốn dọn sạch mẻ cũ. #}
+  <p class="hint">{{ output_dir }} — dọn sạch bằng nút 🗑 ở khối Nguồn trên đầu
+     trang; xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
   {% if files %}
   <div class="tablewrap">
     <table class="grid">

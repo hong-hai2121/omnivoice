@@ -1,0 +1,1585 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>myvideo — bảng điều khiển</title>
+  
+  <link rel="stylesheet" href="/static/app.css?v=1787223094">
+  <script src="/static/htmx.min.js" defer></script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎬</text></svg>">
+</head>
+
+<body class="p-video" data-lang="en">
+<aside class="side">
+  <div class="brand">
+    <span class="logo">🎬</span>
+    <span><b>myvideo</b><span>bảng điều khiển</span></span>
+  </div>
+  <nav>
+    <a href="/" class="on"><span>🎬</span> Quy trình 4 bước</a>
+  </nav>
+  <p class="sidefoot">① chậm + SRT Trung → ② dịch Gemini → ③ giọng OmniVoice
+  → ④ sub cứng + thay tiếng.<br><br>
+  ⚠️ Bước ② điều khiển Firefox — nhớ <b>đóng Firefox</b> trước khi chạy.</p>
+</aside>
+
+<main>
+
+
+
+<div class="pagehead">
+  <h1><span class="ico">🎬</span> myvideo — quy trình 4 bước</h1>
+  <p class="muted">Video tiếng <b class="l-zh">Trung</b><b class="l-en">Anh</b> →
+     <b>①</b> làm chậm + SRT <span class="l-zh">Trung</span><span class="l-en">Anh</span> →
+     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice xếp timeline →
+     <b>④</b> video sub cứng + tiếng Việt.</p>
+</div>
+
+
+<div id="tinnhan" class="tinnhan"></div>
+
+<p class="colhead">⏱ Việc đang chạy</p>
+
+<div class="panel">
+  <div class="phead">
+    <b>Hàng đợi</b>
+    <span class="spacer"></span>
+    <form method="post" action="/hangdoi/pause"><button class="ghost"
+      hx-post="/hangdoi/pause" hx-target="#queue" hx-swap="innerHTML">⏸ Tạm dừng</button></form>
+    <form method="post" action="/hangdoi/resume"><button class="ghost"
+      hx-post="/hangdoi/resume" hx-target="#queue" hx-swap="innerHTML">▶ Tiếp</button></form>
+    <form method="post" action="/hangdoi/skip"><button class="ghost"
+      hx-post="/hangdoi/skip" hx-target="#queue" hx-swap="innerHTML"
+      hx-confirm="Bỏ việc đang chạy? (tiến trình con sẽ bị tắt)">⏭ Bỏ việc này</button></form>
+    <form method="post" action="/hangdoi/stop"><button class="ghost danger"
+      hx-post="/hangdoi/stop" hx-target="#queue" hx-swap="innerHTML"
+      hx-confirm="Dừng hết: tắt việc đang chạy và xoá các việc đang chờ?">⏹ Dừng hết</button></form>
+  </div>
+  <div id="queue" hx-get="/partials/queue" hx-trigger="every 2s" hx-swap="innerHTML">
+    
+<form class="sleeprow" method="post" action="/hangdoi/power"
+      hx-post="/hangdoi/power" hx-target="#queue" hx-swap="innerHTML">
+  <label class="chk">
+    <input type="checkbox" name="on" value="1" checked
+           onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+    Xong hết thì
+  </label>
+  <select name="mode" style="width:auto"
+          onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+    <option value="ngu" selected>🌙 cho máy ngủ</option>
+    <option value="tat" >⏻ tắt máy</option>
+  </select>
+  <span class="spacer"></span>
+  <noscript><button class="ghost small">Lưu</button></noscript>
+  
+    <span class="badge">chờ xong hết · rảnh 3 phút</span>
+  
+</form>
+
+
+
+
+  <p class="empty">Không có việc nào đang chạy.</p>
+
+
+
+
+
+
+
+
+  </div>
+</div>
+
+
+<form method="post" action="/chay" id="mainform"
+      hx-post="/chay" hx-target="#queue" hx-swap="innerHTML">
+  <p class="colhead later">🎞 Nguồn — danh sách, mỗi dòng một file</p>
+  <div class="panel srcbox">
+    <div class="phead">
+      <h2>Nguồn</h2>
+      <span class="phead-gap"></span>
+      <button type="button" class="small" id="srcAdd">📂 Thêm từ máy</button>
+      <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
+    </div>
+    
+    <label class="field langbox">
+      <span>🌐 Tiếng GỐC của video — bước ① nhận diện theo tiếng này; bước ②
+        tự nhận ra tiếng của SRT nên chạy lẻ video cũ vẫn dịch đúng.</span>
+      <select name="lang" id="langSel">
+        <option value="zh" >🇨🇳 Tiếng Trung</option>
+        <option value="en" selected>🇬🇧 Tiếng Anh</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Mỗi dòng một file — mỗi dòng thành MỘT việc riêng trong hàng đợi.
+        Bước ① cần file video gốc; chạy lẻ bước ②③④ thì dán file/tên
+        <code>_x0.7</code> trong output (hoặc dùng nút ở bảng dưới).</span>
+      <textarea id="srcBox" name="sources" rows="4" spellcheck="false"
+                placeholder="C:\Users\PC\Downloads\video1.mp4&#10;C:\Users\PC\Downloads\video2.mp4"></textarea>
+    </label>
+    
+    <div id="nguonchip">
+</div>
+    <div class="actions">
+      
+      <button class="primary" name="start" value="tatca"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Mỗi dòng trong ô Nguồn thành một việc chạy trọn bốn bước:
+① chậm + SRT → ② dịch → ③ giọng → ④ video sub, không cần tick ô ⛓ nào">▶ Chạy tất cả ①②③④</button>
+      <button name="start" value="thu60"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Cắt 60 giây đầu của mỗi file trong danh sách rồi chạy trọn 4 bước
+— duyệt giọng đọc, kiểu sub, vùng che trước khi chạy cả bài">🧪 Thử 60 giây đầu (bản nháp đủ 4 bước)</button>
+      <span class="spacer"></span>
+      
+      <button type="button" class="ghost danger"
+              hx-post="/xoa-het" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              hx-confirm="Đưa TẤT CẢ file trong thư mục output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+              title="Dọn sạch myvideo/output để làm mẻ mới — chỉ đưa vào Thùng rác Windows, khôi phục được">🗑 Xoá cả output</button>
+    </div>
+  </div>
+
+  <p class="colhead later">Các bước — bấm nút bước nào thì chạy từ bước đó</p>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">1</span><h2>Làm chậm video + SRT tiếng
+        <span class="l-zh">Trung</span><span class="l-en">Anh</span></h2>
+      <p class="hint">Whisper mốc giờ từng chữ, ngắt theo dấu câu
+        <span class="l-zh">Trung (。！？，、)</span><span class="l-en">Anh (. ! ? , ; :)</span> →
+        <code>_x0.7.mp4</code> + <code>_x0.7.srt</code> trong output.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Tốc độ sau khi làm chậm</span>
+        <select name="speed">
+          
+            <option value="0.6" >0.6x</option>
+          
+            <option value="0.7" selected>0.7x</option>
+          
+            <option value="0.8" >0.8x</option>
+          
+            <option value="0.9" >0.9x</option>
+          
+            <option value="1.0" >1.0x</option>
+          
+        </select>
+      </label>
+      <label class="field">
+        <span>Model nhận diện</span>
+        <select name="model">
+          
+            <option value="tiny" >tiny</option>
+          
+            <option value="base" >base</option>
+          
+            <option value="small" >small</option>
+          
+            <option value="medium" >medium</option>
+          
+            <option value="large-v3" selected>large-v3</option>
+          
+        </select>
+      </label>
+      
+      <label class="field l-zh">
+        <span>Số chữ tối đa/dòng SRT Trung</span>
+        <input name="maxchars" type="number" min="4" max="60" value="16">
+      </label>
+      <label class="field l-en">
+        <span>Số ký tự tối đa/dòng SRT Anh (chuẩn phụ đề ~42)</span>
+        <input name="maxchars_en" type="number" min="10" max="120"
+               value="42">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="cham"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🐢 Chạy bước ①</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="ngucanh" checked>
+        🧠 Nghe theo ngữ cảnh câu trước (tiếng Anh): Whisper chấm câu đúng chỗ hơn
+        hẳn — đo trên 4 phút audio thật: 17 → 34 dấu kết câu. Bỏ tick thì nhận diện
+        nhanh hơn ~3× nhưng hay trả về một dải chữ không dấu câu, kéo theo dịch và
+        đọc đều cắt sai chỗ</label>
+      <label class="chk"><input type="checkbox" name="redoasr">
+        Nhận diện lại từ đầu (bỏ mốc giờ đã lưu trong words.json — không lưu ô này)</label>
+      <label class="chk"><input type="checkbox" name="auto2" checked>
+        ⛓ Xong thì tự chạy bước ② dịch</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">2</span><h2>Dịch Gemini → SRT tiếng Việt</h2>
+      <p class="hint"><code>_x0.7.srt</code> → <code>_vi.srt</code> +
+        <code class="l-zh">_zhvi.srt</code><code class="l-en">_envi.srt</code>
+        (song ngữ), giữ nguyên mốc giờ; lô nào xong lưu lô đó, lỗi chạy lại là dịch tiếp.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Cỡ mỗi lô gửi Gemini (ký tự)</span>
+        <input name="batchchars" type="number" min="200" max="5000" step="100"
+               value="1200">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="dich"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🌐 Chạy bước ②</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="gopcau" checked>
+        🧩 Gộp dòng thành CÂU trọn vẹn rồi mới dịch (nên bật): SRT bước ① cắt dòng
+        theo bề ngang màn hình nên phần lớn dòng đứt giữa câu (đo bài tiếng Anh:
+        83%) — dịch từng mẩu thì ý câu này trào sang dòng kia và bước ③ đọc cụt.
+        Gộp lại: 895 dòng → 233 câu, dịch trọn nghĩa, đọc trọn hơi</label>
+      <label class="chk"><input type="checkbox" name="offline" >
+        📴 Dịch offline bằng opus-mt
+        <span class="l-zh">zh-vi</span><span class="l-en">en-vi (lần đầu tự tải model ~300MB)</span>
+        (nhanh, KHÔNG cần Firefox — chất lượng thô, chỉ nên làm nháp)</label>
+      <label class="chk"><input type="checkbox" name="auto3" checked>
+        ⛓ Xong thì tự chạy bước ③ tạo giọng</label>
+    </div>
+    <p class="hint">⚠️ Gemini dùng Firefox với profile đã đăng nhập —
+      <b>đóng Firefox</b> trước khi chạy bước này.</p>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">3</span><h2>Giọng OmniVoice + xếp timeline</h2>
+      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav, xếp chống đè →
+        <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>. Chạy lại tự bỏ qua
+        câu đã có audio.</p>
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>Giọng đọc — kho riêng <code>myvideo/voice</code>; bấm ⭐ để
+          ghim/bỏ ghim giọng đang chọn lên đầu danh sách (xếp lại ngay trên
+          trang, ghi xuống đĩa khi bấm chạy hoặc 💾)</span>
+        <span style="display:flex; gap:6px; align-items:stretch">
+          <select name="voice" id="voiceSel" style="flex:1 1 auto; min-width:0">
+            <option value="">(tự lấy file đầu tiên trong myvideo/voice)</option>
+            
+              <option value="ngochuyen.mp3" data-i="10"
+                      selected>★ ngochuyen.mp3</option>
+            
+              <option value="cô gái hoạt ngôn.MP3" data-i="0"
+                      >cô gái hoạt ngôn.MP3</option>
+            
+              <option value="giongbittetaudio.MP3" data-i="1"
+                      >giongbittetaudio.MP3</option>
+            
+              <option value="hachi.mp3" data-i="2"
+                      >hachi.mp3</option>
+            
+              <option value="hamhamvoiceGOiME2.MP3" data-i="3"
+                      >hamhamvoiceGOiME2.MP3</option>
+            
+              <option value="kiepsau_vocal_10s.wav" data-i="4"
+                      >kiepsau_vocal_10s.wav</option>
+            
+              <option value="kiepsau_vocal_full.wav" data-i="5"
+                      >kiepsau_vocal_full.wav</option>
+            
+              <option value="manhdung.mp3" data-i="6"
+                      >manhdung.mp3</option>
+            
+              <option value="MiniMax_2026-08-08_17_27_51_Crisp_Woman.mp3" data-i="7"
+                      >MiniMax_2026-08-08_17_27_51_Crisp_Woman.mp3</option>
+            
+              <option value="MiniMax_2026-08-08_17_28_56_Cute_Girl.mp3" data-i="8"
+                      >MiniMax_2026-08-08_17_28_56_Cute_Girl.mp3</option>
+            
+              <option value="MiniMax_2026-08-08_17_29_40_Polished_Announcer.mp3" data-i="9"
+                      >MiniMax_2026-08-08_17_29_40_Polished_Announcer.mp3</option>
+            
+              <option value="nguồn nhỏ ngọt ngào.MP3" data-i="11"
+                      >nguồn nhỏ ngọt ngào.MP3</option>
+            
+              <option value="thiện tâm.mp3" data-i="12"
+                      >thiện tâm.mp3</option>
+            
+          </select>
+          <button type="button" class="small sao" id="voiceSao"
+                  title="Ghim/bỏ ghim giọng đang chọn lên đầu danh sách">⭐</button>
+        </span>
+        
+        <input type="hidden" name="voice_stars" id="voiceStars"
+               value="ngochuyen.mp3">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="giong"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🔊 Chạy bước ③</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="redotts">
+        Đọc lại TOÀN BỘ câu (bỏ wav đã có — dùng khi đổi giọng; không lưu ô này)</label>
+      <label class="chk"><input type="checkbox" name="auto4" checked>
+        ⛓ Xong thì tự chạy bước ④ gắn vào video</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">4</span><h2>Vẽ sub cứng + thay tiếng</h2>
+      <p class="hint">Burn phụ đề theo KIỂU chọn bên dưới vào
+        <code>_x0.7.mp4</code> → <code>_sub.mp4</code>; NVENC trước, lỗi tự lùi CPU.
+        Ba việc (vẽ sub · che mờ · thay tiếng) bỏ được từng cái — bỏ cả vẽ sub
+        lẫn che mờ thì hình giữ NGUYÊN, chỉ ghép lại tiếng (không encode lại).</p>
+    </div>
+    
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="vesub" id="veSub"
+                                checked>
+        ✍️ Vẽ sub tiếng Việt lên video (bỏ tick = video SẠCH chữ — chỉ thay tiếng)</label>
+    </div>
+    
+    
+    
+    
+      <div class="ksubpick" id="ksubPick">
+        <img id="ksubHienAnh" alt="" title="Tổ hợp đang chọn — bấm để phóng to">
+        <div class="ksubpick-ten">
+          <b id="ksubHienTen">Hộp bo góc (cổ điển)</b>
+          <span class="hint">Font <b id="ksubHienFont">(theo kiểu)</b>
+            · chữ <i class="kmau-dot" id="ksubHienMauDot"
+               style="background:#FFF;display:none"></i><b
+               id="ksubHienMau">(theo kiểu)</b>
+            · viền <i class="kmau-dot" id="ksubHienVienDot"
+               style="background:#FFF;display:none"></i><b
+               id="ksubHienVien">(theo kiểu)</b>
+            · cỡ <b id="ksubHienCo"></b> · vị trí <b id="ksubHienViTri"></b>
+            · <b id="ksubHienChu"></b> ký tự/dòng</span>
+        </div>
+        <button type="button" class="small" id="ksubMo">🎨 Chọn kiểu phụ đề…</button>
+      </div>
+      
+      <div class="modal" id="ksubZoom" style="display:none" title="Bấm để đóng">
+        <img id="ksubZoomAnh" class="ksub-zoom" alt="">
+      </div>
+      <div class="modal" id="ksubModal" style="display:none">
+        <div class="modal-card ksubmodal">
+          <div class="modal-head">
+            <b>🎨 Kiểu phụ đề vẽ cứng</b>
+            <span class="hint">ảnh là xem trước thật, kiểu động có chuyển động</span>
+            <span class="spacer"></span>
+            <button type="button" class="small" id="ksubDong">✕ Đóng</button>
+          </div>
+          
+          <div class="modal-body ksubbox">
+            <div class="ksubbox-chon">
+              
+              <details class="ksubthu" id="ksubThuKieu">
+                <summary class="colhead">🖼 Kiểu trình bày — bấm một thẻ để chọn
+                  <span class="ksub-nay" id="ksubNayKieu">Hộp bo góc (cổ điển)</span></summary>
+                <div class="ksubs">
+                  
+                    <label class="ksub" title="Chữ trắng trên khung đen mờ bo góc — kiểu quen thuộc của myvoice">
+                      <input type="radio" name="kieusub" value="hopbo"
+                             checked>
+                      
+                        <img src="/static/kieusub/hopbo.png?v=1786878433" alt="Hộp bo góc (cổ điển)" loading="lazy">
+                      
+                      <b>Hộp bo góc (cổ điển)</b>
+                      <span>Chữ trắng trên khung đen mờ bo góc — kiểu quen thuộc của myvoice</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chuẩn TikTok/Shorts: chữ trắng đậm viền đen dày, rõ trên mọi nền">
+                      <input type="radio" name="kieusub" value="viendam"
+                             >
+                      
+                        <img src="/static/kieusub/viendam.png?v=1786878433" alt="Trắng viền đậm" loading="lazy">
+                      
+                      <b>Trắng viền đậm</b>
+                      <span>Chuẩn TikTok/Shorts: chữ trắng đậm viền đen dày, rõ trên mọi nền</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ vàng đậm viền đen — kiểu caption viral bắt mắt tức thì">
+                      <input type="radio" name="kieusub" value="vangchoi"
+                             >
+                      
+                        <img src="/static/kieusub/vangchoi.png?v=1786878433" alt="Vàng chói" loading="lazy">
+                      
+                      <b>Vàng chói</b>
+                      <span>Chữ vàng đậm viền đen — kiểu caption viral bắt mắt tức thì</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ đen trên khối vàng đặc — kiểu background block của Reels">
+                      <input type="radio" name="kieusub" value="nenvang"
+                             >
+                      
+                        <img src="/static/kieusub/nenvang.png?v=1786878433" alt="Khối nền vàng" loading="lazy">
+                      
+                      <b>Khối nền vàng</b>
+                      <span>Chữ đen trên khối vàng đặc — kiểu background block của Reels</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ trắng toả quầng neon xanh — hợp video đêm, gaming, nhạc">
+                      <input type="radio" name="kieusub" value="neon"
+                             >
+                      
+                        <img src="/static/kieusub/neon.png?v=1786878433" alt="Neon phát sáng" loading="lazy">
+                      
+                      <b>Neon phát sáng</b>
+                      <span>Chữ trắng toả quầng neon xanh — hợp video đêm, gaming, nhạc</span>
+                    </label>
+                  
+                    <label class="ksub" title="Cả câu hiện sẵn, từ đang đọc nhuộm vàng dần theo giọng">
+                      <input type="radio" name="kieusub" value="karaoke"
+                             >
+                      
+                        <img src="/static/kieusub/karaoke.webp?v=1786878434" alt="Karaoke nhuộm vàng" loading="lazy">
+                      
+                      <b>Karaoke nhuộm vàng</b>
+                      <span>Cả câu hiện sẵn, từ đang đọc nhuộm vàng dần theo giọng</span>
+                    </label>
+                  
+                    <label class="ksub" title="IN HOA hiện dần từng từ, từ đang đọc đổi màu + nảy nhẹ — kiểu clip triệu view">
+                      <input type="radio" name="kieusub" value="hormozi"
+                             >
+                      
+                        <img src="/static/kieusub/hormozi.webp?v=1786878434" alt="Hormozi từng chữ" loading="lazy">
+                      
+                      <b>Hormozi từng chữ</b>
+                      <span>IN HOA hiện dần từng từ, từ đang đọc đổi màu + nảy nhẹ — kiểu clip triệu view</span>
+                    </label>
+                  
+                    <label class="ksub" title="Mỗi từ bật to đúng lúc đọc rồi nhường chỗ từ sau — nhịp nhanh TikTok">
+                      <input type="radio" name="kieusub" value="battungtu"
+                             >
+                      
+                        <img src="/static/kieusub/battungtu.webp?v=1786878522" alt="Bật từng từ" loading="lazy">
+                      
+                      <b>Bật từng từ</b>
+                      <span>Mỗi từ bật to đúng lúc đọc rồi nhường chỗ từ sau — nhịp nhanh TikTok</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Anton — đúng chất Hormozi gốc: IN HOA nét dày, hiện dần từng từ đổi màu">
+                      <input type="radio" name="kieusub" value="anton"
+                             >
+                      
+                        <img src="/static/kieusub/anton.webp?v=1786881606" alt="Anton từng chữ" loading="lazy">
+                      
+                      <b>Anton từng chữ</b>
+                      <span>Font Anton — đúng chất Hormozi gốc: IN HOA nét dày, hiện dần từng từ đổi màu</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Be Vietnam Pro Black — thiết kế riêng cho tiếng Việt, hiện đại sạch sẽ">
+                      <input type="radio" name="kieusub" value="bevietnam"
+                             >
+                      
+                        <img src="/static/kieusub/bevietnam.png?v=1786881606" alt="Be Việt Nam đậm" loading="lazy">
+                      
+                      <b>Be Việt Nam đậm</b>
+                      <span>Font Be Vietnam Pro Black — thiết kế riêng cho tiếng Việt, hiện đại sạch sẽ</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Montserrat — chuẩn caption Reels/TikTok, từ đang đọc nhuộm xanh lá">
+                      <input type="radio" name="kieusub" value="montserrat"
+                             >
+                      
+                        <img src="/static/kieusub/montserrat.webp?v=1786881606" alt="Montserrat karaoke xanh" loading="lazy">
+                      
+                      <b>Montserrat karaoke xanh</b>
+                      <span>Font Montserrat — chuẩn caption Reels/TikTok, từ đang đọc nhuộm xanh lá</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Bangers kiểu truyện tranh — chữ vàng nghiêng vui nhộn, hợp clip hài">
+                      <input type="radio" name="kieusub" value="bangers"
+                             >
+                      
+                        <img src="/static/kieusub/bangers.png?v=1786881607" alt="Truyện tranh Bangers" loading="lazy">
+                      
+                      <b>Truyện tranh Bangers</b>
+                      <span>Font Bangers kiểu truyện tranh — chữ vàng nghiêng vui nhộn, hợp clip hài</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Bungee kiểu biển hiệu retro — trắng viền hồng, nổi bần bật">
+                      <input type="radio" name="kieusub" value="bungee"
+                             >
+                      
+                        <img src="/static/kieusub/bungee.png?v=1786881669" alt="Bungee retro" loading="lazy">
+                      
+                      <b>Bungee retro</b>
+                      <span>Font Bungee kiểu biển hiệu retro — trắng viền hồng, nổi bần bật</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Lobster viết tay bay bổng — hợp phim tình cảm, vlog kể chuyện">
+                      <input type="radio" name="kieusub" value="lobster"
+                             >
+                      
+                        <img src="/static/kieusub/lobster.png?v=1786881607" alt="Lobster mềm mại" loading="lazy">
+                      
+                      <b>Lobster mềm mại</b>
+                      <span>Font Lobster viết tay bay bổng — hợp phim tình cảm, vlog kể chuyện</span>
+                    </label>
+                  
+                    <label class="ksub" title="Font Paytone One tròn trịa dễ thương — trắng viền hồng, hợp clip nhẹ nhàng">
+                      <input type="radio" name="kieusub" value="paytone"
+                             >
+                      
+                        <img src="/static/kieusub/paytone.png?v=1786881669" alt="Paytone tròn đầy" loading="lazy">
+                      
+                      <b>Paytone tròn đầy</b>
+                      <span>Font Paytone One tròn trịa dễ thương — trắng viền hồng, hợp clip nhẹ nhàng</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ đen trên hộp trắng bo góc — caption mặc định quen mắt của CapCut">
+                      <input type="radio" name="kieusub" value="capcut_nentrang"
+                             >
+                      
+                        <img src="/static/kieusub/capcut_nentrang.png?v=1786889115" alt="CapCut nền trắng" loading="lazy">
+                      
+                      <b>CapCut nền trắng</b>
+                      <span>Chữ đen trên hộp trắng bo góc — caption mặc định quen mắt của CapCut</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ trắng trên hộp đen gần đặc — caption CapCut cổ điển, nổi trên mọi nền">
+                      <input type="radio" name="kieusub" value="capcut_nenden"
+                             >
+                      
+                        <img src="/static/kieusub/capcut_nenden.png?v=1786889115" alt="CapCut nền đen" loading="lazy">
+                      
+                      <b>CapCut nền đen</b>
+                      <span>Chữ trắng trên hộp đen gần đặc — caption CapCut cổ điển, nổi trên mọi nền</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ trắng bóng đổ mềm, không viền — text shadow mặc định của CapCut">
+                      <input type="radio" name="kieusub" value="capcut_bongdo"
+                             >
+                      
+                        <img src="/static/kieusub/capcut_bongdo.png?v=1786889115" alt="CapCut bóng đổ" loading="lazy">
+                      
+                      <b>CapCut bóng đổ</b>
+                      <span>Chữ trắng bóng đổ mềm, không viền — text shadow mặc định của CapCut</span>
+                    </label>
+                  
+                    <label class="ksub" title="Chữ trắng tách lớp đỏ–xanh hai phía — hiệu ứng glitch TikTok/CapCut">
+                      <input type="radio" name="kieusub" value="capcut_glitch"
+                             >
+                      
+                        <img src="/static/kieusub/capcut_glitch.png?v=1786889207" alt="CapCut glitch" loading="lazy">
+                      
+                      <b>CapCut glitch</b>
+                      <span>Chữ trắng tách lớp đỏ–xanh hai phía — hiệu ứng glitch TikTok/CapCut</span>
+                    </label>
+                  
+                    <label class="ksub" title="IN HOA vàng viền đỏ + viền đen ngoài, font tròn dày — kiểu tiêu đề phim recap">
+                      <input type="radio" name="kieusub" value="tieude"
+                             >
+                      
+                        <img src="/static/kieusub/tieude.png?v=1786891872" alt="Tiêu đề phim" loading="lazy">
+                      
+                      <b>Tiêu đề phim</b>
+                      <span>IN HOA vàng viền đỏ + viền đen ngoài, font tròn dày — kiểu tiêu đề phim recap</span>
+                    </label>
+                  
+                </div>
+              </details>
+              <details class="ksubthu" id="ksubThuFont">
+                <summary class="colhead">🔤 Font chữ — đè font của kiểu đã chọn ở trên
+                  <span class="ksub-nay" id="ksubNayFont">(theo kiểu)</span></summary>
+                <div class="ksubs">
+                  <label class="ksub" title="Dùng font gốc của từng kiểu">
+                    <input type="radio" name="subfont" value="" checked>
+                    <span class="ksub-noanh">— không đè font —</span>
+                    <b>(theo kiểu đã chọn)</b>
+                    <span>Mỗi kiểu dùng đúng font gốc của nó</span>
+                  </label>
+                  
+                    <label class="ksub" title="Anton">
+                      <input type="radio" name="subfont" value="Anton"
+                             >
+                      
+                        <img src="/static/kieusub/font_anton.png?v=1786986773" alt="Anton" loading="lazy">
+                      
+                      <b>Anton</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Baloo 2 ExtraBold">
+                      <input type="radio" name="subfont" value="Baloo 2 ExtraBold"
+                             >
+                      
+                        <img src="/static/kieusub/font_baloo-2-extrabold.png?v=1786986774" alt="Baloo 2 ExtraBold" loading="lazy">
+                      
+                      <b>Baloo 2 ExtraBold</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Bangers">
+                      <input type="radio" name="subfont" value="Bangers"
+                             >
+                      
+                        <img src="/static/kieusub/font_bangers.png?v=1786986774" alt="Bangers" loading="lazy">
+                      
+                      <b>Bangers</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Be Vietnam Pro">
+                      <input type="radio" name="subfont" value="Be Vietnam Pro"
+                             >
+                      
+                        <img src="/static/kieusub/font_be-vietnam-pro.png?v=1786986774" alt="Be Vietnam Pro" loading="lazy">
+                      
+                      <b>Be Vietnam Pro</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Bungee">
+                      <input type="radio" name="subfont" value="Bungee"
+                             >
+                      
+                        <img src="/static/kieusub/font_bungee.png?v=1786986774" alt="Bungee" loading="lazy">
+                      
+                      <b>Bungee</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Lobster">
+                      <input type="radio" name="subfont" value="Lobster"
+                             >
+                      
+                        <img src="/static/kieusub/font_lobster.png?v=1786986774" alt="Lobster" loading="lazy">
+                      
+                      <b>Lobster</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Montserrat">
+                      <input type="radio" name="subfont" value="Montserrat"
+                             >
+                      
+                        <img src="/static/kieusub/font_montserrat.png?v=1786986774" alt="Montserrat" loading="lazy">
+                      
+                      <b>Montserrat</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Paytone One">
+                      <input type="radio" name="subfont" value="Paytone One"
+                             >
+                      
+                        <img src="/static/kieusub/font_paytone-one.png?v=1786986774" alt="Paytone One" loading="lazy">
+                      
+                      <b>Paytone One</b>
+                      <span>Font rời myvoice/fonts</span>
+                    </label>
+                  
+                    <label class="ksub" title="Arial">
+                      <input type="radio" name="subfont" value="Arial"
+                             >
+                      
+                        <img src="/static/kieusub/font_arial.png?v=1786986774" alt="Arial" loading="lazy">
+                      
+                      <b>Arial</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Arial Black">
+                      <input type="radio" name="subfont" value="Arial Black"
+                             >
+                      
+                        <img src="/static/kieusub/font_arial-black.png?v=1786986774" alt="Arial Black" loading="lazy">
+                      
+                      <b>Arial Black</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Segoe UI">
+                      <input type="radio" name="subfont" value="Segoe UI"
+                             >
+                      
+                        <img src="/static/kieusub/font_segoe-ui.png?v=1786986774" alt="Segoe UI" loading="lazy">
+                      
+                      <b>Segoe UI</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Tahoma">
+                      <input type="radio" name="subfont" value="Tahoma"
+                             >
+                      
+                        <img src="/static/kieusub/font_tahoma.png?v=1786986774" alt="Tahoma" loading="lazy">
+                      
+                      <b>Tahoma</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Verdana">
+                      <input type="radio" name="subfont" value="Verdana"
+                             >
+                      
+                        <img src="/static/kieusub/font_verdana.png?v=1786986775" alt="Verdana" loading="lazy">
+                      
+                      <b>Verdana</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Times New Roman">
+                      <input type="radio" name="subfont" value="Times New Roman"
+                             >
+                      
+                        <img src="/static/kieusub/font_times-new-roman.png?v=1786986775" alt="Times New Roman" loading="lazy">
+                      
+                      <b>Times New Roman</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                    <label class="ksub" title="Calibri">
+                      <input type="radio" name="subfont" value="Calibri"
+                             >
+                      
+                        <img src="/static/kieusub/font_calibri.png?v=1786986775" alt="Calibri" loading="lazy">
+                      
+                      <b>Calibri</b>
+                      <span>Font Windows</span>
+                    </label>
+                  
+                </div>
+              </details>
+              
+              <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
+              
+  
+  
+  <div class="kmaus" data-truong="submau" data-tom="ksubHienMau">
+    <label class="kmau" title="Dùng màu gốc của từng kiểu">
+      <input type="radio" name="submau" value="" checked>
+      <i class="kmau-goc">×</i><span>(theo kiểu)</span>
+    </label>
+    
+      <label class="kmau" title="#FFFFFF">
+        <input type="radio" name="submau" value="FFFFFF"
+               >
+        <i style="background:#FFFFFF"></i><span>#FFFFFF</span>
+      </label>
+    
+      <label class="kmau" title="#FFD700">
+        <input type="radio" name="submau" value="FFD700"
+               >
+        <i style="background:#FFD700"></i><span>#FFD700</span>
+      </label>
+    
+      <label class="kmau" title="#FF9800">
+        <input type="radio" name="submau" value="FF9800"
+               >
+        <i style="background:#FF9800"></i><span>#FF9800</span>
+      </label>
+    
+      <label class="kmau" title="#FF4D4D">
+        <input type="radio" name="submau" value="FF4D4D"
+               >
+        <i style="background:#FF4D4D"></i><span>#FF4D4D</span>
+      </label>
+    
+      <label class="kmau" title="#FF6FA5">
+        <input type="radio" name="submau" value="FF6FA5"
+               >
+        <i style="background:#FF6FA5"></i><span>#FF6FA5</span>
+      </label>
+    
+      <label class="kmau" title="#3DFF73">
+        <input type="radio" name="submau" value="3DFF73"
+               >
+        <i style="background:#3DFF73"></i><span>#3DFF73</span>
+      </label>
+    
+      <label class="kmau" title="#00E5FF">
+        <input type="radio" name="submau" value="00E5FF"
+               >
+        <i style="background:#00E5FF"></i><span>#00E5FF</span>
+      </label>
+    
+      <label class="kmau" title="#9C6BFF">
+        <input type="radio" name="submau" value="9C6BFF"
+               >
+        <i style="background:#9C6BFF"></i><span>#9C6BFF</span>
+      </label>
+    
+      <label class="kmau" title="#141414">
+        <input type="radio" name="submau" value="141414"
+               >
+        <i style="background:#141414"></i><span>#141414</span>
+      </label>
+    
+    <label class="kmau" title="Tự chọn màu bất kỳ">
+      <input type="radio" name="submau" class="kmau-khac"
+             value="" >
+      <input type="color" class="kmau-pick"
+             value="#FFD700">
+      <span>tự chọn</span>
+    </label>
+  </div>
+
+              
+              <p class="colhead later">🖍 Màu viền chữ — đè viền của kiểu (chữ/nền giữ nguyên)</p>
+              
+  
+  
+  <div class="kmaus" data-truong="submauvien" data-tom="ksubHienVien">
+    <label class="kmau" title="Dùng màu gốc của từng kiểu">
+      <input type="radio" name="submauvien" value="" checked>
+      <i class="kmau-goc">×</i><span>(theo kiểu)</span>
+    </label>
+    
+      <label class="kmau" title="#FFFFFF">
+        <input type="radio" name="submauvien" value="FFFFFF"
+               >
+        <i style="background:#FFFFFF"></i><span>#FFFFFF</span>
+      </label>
+    
+      <label class="kmau" title="#FFD700">
+        <input type="radio" name="submauvien" value="FFD700"
+               >
+        <i style="background:#FFD700"></i><span>#FFD700</span>
+      </label>
+    
+      <label class="kmau" title="#FF9800">
+        <input type="radio" name="submauvien" value="FF9800"
+               >
+        <i style="background:#FF9800"></i><span>#FF9800</span>
+      </label>
+    
+      <label class="kmau" title="#FF4D4D">
+        <input type="radio" name="submauvien" value="FF4D4D"
+               >
+        <i style="background:#FF4D4D"></i><span>#FF4D4D</span>
+      </label>
+    
+      <label class="kmau" title="#FF6FA5">
+        <input type="radio" name="submauvien" value="FF6FA5"
+               >
+        <i style="background:#FF6FA5"></i><span>#FF6FA5</span>
+      </label>
+    
+      <label class="kmau" title="#3DFF73">
+        <input type="radio" name="submauvien" value="3DFF73"
+               >
+        <i style="background:#3DFF73"></i><span>#3DFF73</span>
+      </label>
+    
+      <label class="kmau" title="#00E5FF">
+        <input type="radio" name="submauvien" value="00E5FF"
+               >
+        <i style="background:#00E5FF"></i><span>#00E5FF</span>
+      </label>
+    
+      <label class="kmau" title="#9C6BFF">
+        <input type="radio" name="submauvien" value="9C6BFF"
+               >
+        <i style="background:#9C6BFF"></i><span>#9C6BFF</span>
+      </label>
+    
+      <label class="kmau" title="#141414">
+        <input type="radio" name="submauvien" value="141414"
+               >
+        <i style="background:#141414"></i><span>#141414</span>
+      </label>
+    
+    <label class="kmau" title="Tự chọn màu bất kỳ">
+      <input type="radio" name="submauvien" class="kmau-khac"
+             value="" >
+      <input type="color" class="kmau-pick"
+             value="#000000">
+      <span>tự chọn</span>
+    </label>
+  </div>
+
+              <p class="hint">Kiểu KHÔNG có viền (hộp bo góc, mấy kiểu CapCut) hoặc kiểu
+                 vẽ khối nền đặc thì đổi màu viền không thấy gì — nhìn ảnh xem thử là rõ.</p>
+            </div>
+            
+            <div class="ksubbox-xem">
+              <p class="colhead">👁 Xem thử — bấm ảnh để phóng to</p>
+              <img id="ksubXemThu" alt=""
+                   title="Xem thử kiểu + font + màu + cỡ chữ đang chọn">
+              <p class="hint">Tổ hợp đang chọn — kiểu động là ảnh chuyển động.</p>
+              
+              <img id="kvitriAnh" alt="" title="Vị trí chữ trên khung ngang — bấm để phóng to">
+              <div class="kvitri-dk">
+                <label class="kvitri-thanh">
+                  <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
+                  <input type="range" id="kvitriKeo" min="0" max="100" step="1">
+                </label>
+                <label class="kvitri-thanh">
+                  <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>
+                  <input type="range" name="subcochu" id="kcochuKeo"
+                         min="50" max="200" step="5"
+                         value="100">
+                </label>
+                <label class="kvitri-thanh">
+                  <span class="hint">📏 Số ký tự tối đa mỗi dòng hiển thị</span>
+                  <input name="subchars" type="number" min="10" max="120"
+                         value="50">
+                </label>
+                <button type="button" class="small" id="kvitriMacDinh">↺ Mặc định</button>
+                <input type="hidden" name="subvitri" id="kvitriGiaTri"
+                       value="">
+              </div>
+            </div>
+          </div>
+          
+          <div class="modal-foot">
+            <span class="hint">Chọn xong bấm 💾 để ghi xuống <code>web_settings.json</code>.</span>
+            <span class="spacer"></span>
+            <button class="small" formaction="/luu" hx-post="/luu"
+                    hx-target="#queue" hx-swap="innerHTML">💾 Lưu cài đặt</button>
+            <button type="button" class="primary small" id="ksubXong">✔ Xong</button>
+          </div>
+        </div>
+      </div>
+    
+    <div class="actions">
+      <button class="primary" name="start" value="gan"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this">🎬 Chạy bước ④</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="chesub" >
+        🫥 Che mờ sub gốc đốt trong hình: tự dò dải chữ (10 khung hình) rồi LÀM MỜ dải đó
+        suốt video, sub Việt đè lên trên dải mờ (bỏ tick = để nguyên sub gốc;
+        dò lệch: sửa file <code>_vungsub.json</code>)</label>
+      <label class="chk"><input type="checkbox" name="thaytieng" checked>
+        🔊 Thay tiếng bằng giọng Việt đã xếp (dùng <code>_vi_sapxep.srt</code> +
+        <code>_vi_audio.wav</code>; bỏ tick = giữ tiếng gốc, sub <code>_vi.srt</code>)</label>
+      <label class="chk"><input type="checkbox" name="cpu" >
+        🖥 Ép encode CPU (khi GPU đang bận nhận diện/TTS)</label>
+    </div>
+  </div>
+
+  <div class="savebar">
+    <button formaction="/luu" hx-post="/luu" hx-target="#queue" hx-swap="innerHTML"
+            hx-disabled-elt="this">💾 Lưu cài đặt</button>
+    <span class="chualuu">● có thay đổi chưa lưu</span>
+    <span class="hint">Chỉnh gì trên trang cũng chỉ đổi TẠI CHỖ — bấm nút chạy
+      bước nào (hoặc 💾) mới ghi xuống <code>web_settings.json</code>.
+      Nhớ cài đặt của cả 4 bước.</span>
+  </div>
+</form>
+
+<p class="colhead later">📼 Kết quả</p>
+<div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
+  
+<div class="panel">
+  <div class="phead">
+    <b>📼 Video trong output — bước nào xong, bước nào thiếu</b>
+    <span class="spacer"></span>
+    <form method="post" action="/mo-thumuc"><button class="ghost"
+      hx-post="/mo-thumuc" hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button></form>
+  </div>
+  
+  <div class="tablewrap">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th style="text-align:left">Video</th>
+          <th>① Chậm + SRT</th>
+          <th>② SRT Việt</th>
+          <th>③ Giọng + xếp</th>
+          <th>④ Video sub</th>
+          <th>Làm tiếp</th>
+          <th>Chạy lại</th>
+          <th>Xoá</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr class="done">
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7</td>
+          <td class="okc">✔</td>
+          <td class="okc">✔</td>
+          <td class="okc">✔</td>
+          <td class="okc">✔</td>
+          <td>
+            ✅
+          </td>
+          <td>
+            
+              <form method="post" action="/buoc" style="display:inline">
+                <input type="hidden" name="base" value="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">
+                <input type="hidden" name="key" value="dich">
+                <button class="ghost small" hx-post="/buoc" hx-include="closest form"
+                        hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                        title="Chạy lại bước ② dịch">②</button>
+              </form>
+            
+              <form method="post" action="/buoc" style="display:inline">
+                <input type="hidden" name="base" value="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">
+                <input type="hidden" name="key" value="giong">
+                <button class="ghost small" hx-post="/buoc" hx-include="closest form"
+                        hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                        title="Chạy lại bước ③ giọng">③</button>
+              </form>
+            
+              <form method="post" action="/buoc" style="display:inline">
+                <input type="hidden" name="base" value="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">
+                <input type="hidden" name="key" value="gan">
+                <button class="ghost small" hx-post="/buoc" hx-include="closest form"
+                        hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                        title="Chạy lại bước ④ gắn sub">④</button>
+              </form>
+            
+            
+              <form method="get" action="/timeline" style="display:inline">
+                <input type="hidden" name="base" value="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">
+                <button class="ghost small"
+                        title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</button>
+              </form>
+            
+          </td>
+          <td>
+            <form method="post" action="/xoa"
+                  onsubmit="return confirm('Đưa TOÀN BỘ file của video này vào Thùng rác?\n\nHow to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7\n\n(Khôi phục được từ Thùng rác Windows)')">
+              <input type="hidden" name="base" value="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7">
+              <button class="ghost small danger"
+                      hx-post="/xoa" hx-include="closest form"
+                      hx-target="#queue" hx-swap="innerHTML"
+                      hx-confirm="Đưa TOÀN BỘ file của “How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7” vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+                      title="Đưa mọi file của gốc này vào Thùng rác (khôi phục được)">🗑</button>
+            </form>
+          </td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">⚠️ = thiếu file mà không tự chạy tiếp được (di chuột lên xem lý do).
+     Nút ⏩ xếp các bước còn thiếu vào hàng đợi, chạy liền một mạch.</p>
+  
+</div>
+
+<div class="panel">
+  <div class="phead">
+    <b>📁 File mới trong output</b>
+  </div>
+  
+  <p class="hint">D:\Python\omnivoice\OmniVoice\myvideo\output — dọn sạch bằng nút 🗑 ở khối Nguồn trên đầu
+     trang; xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
+  
+  <div class="tablewrap">
+    <table class="grid">
+      <tbody>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_sub.mp4">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_sub.mp4</td>
+          <td>617.5 MB</td>
+          <td class="no">20/08 14:27</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_sub.ass">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_sub.ass</td>
+          <td>311.4 KB</td>
+          <td class="no">20/08 14:25</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_audio.wav">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_audio.wav</td>
+          <td>122.9 MB</td>
+          <td class="no">20/08 14:24</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_sapxep.srt">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_sapxep.srt</td>
+          <td>74.7 KB</td>
+          <td class="no">20/08 14:24</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_timeline.json">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi_timeline.json</td>
+          <td>349.8 KB</td>
+          <td class="no">20/08 14:24</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_envi.srt">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_envi.srt</td>
+          <td>106.6 KB</td>
+          <td class="no">20/08 13:30</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi.srt">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_vi.srt</td>
+          <td>74.7 KB</td>
+          <td class="no">20/08 13:30</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7.mp4">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7.mp4</td>
+          <td>377.8 MB</td>
+          <td class="no">20/08 13:14</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7.srt">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7.srt</td>
+          <td>65.0 KB</td>
+          <td class="no">20/08 13:08</td>
+        </tr>
+        
+        <tr>
+          <td class="left clip" title="How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_words_en.json">How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)/How to Analyze Facebook Ads Data the Right Way (The 2026 Guide)_x0.7_words_en.json</td>
+          <td>155.9 KB</td>
+          <td class="no">20/08 13:08</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+  
+</div>
+</div>
+
+<script>
+  // ── Lời nhắn góc phải: bấm vào là tắt ────────────────────────────────────
+  const tin = document.getElementById("tinnhan");
+  const nhan = (msg, ok) => {
+    const p = document.createElement("p");
+    p.className = ok ? "okmsg" : "warn";
+    p.textContent = (ok ? "✓ " : "⚠️ ") + msg;
+    tin.replaceChildren(p);
+  };
+  tin.addEventListener("click", () => tin.replaceChildren());
+
+  // ── Ô ngôn ngữ: đổi chữ + ô số chữ/dòng NGAY TRÊN TRANG ─────────────────
+  // Chỉ đặt lại body[data-lang], CSS lo phần hiện/ẩn (.l-zh / .l-en). Không hỏi
+  // server, không tải lại — lưu cùng cài đặt khi bấm chạy hoặc 💾.
+  const langSel = document.getElementById("langSel");
+  langSel.addEventListener("change", () => {
+    document.body.dataset.lang = langSel.value;
+  });
+
+  // ── Khối Nguồn: chip "Gần đây" · 📂 bảng chọn file · ✕ xoá ô nhập ────────
+  // Giống hệt khối Nguồn bên myvoice. Trình duyệt KHÔNG cho biết đường dẫn thật
+  // của file khi dùng <input type=file> (chỉ trả "C:\fakepath\…") mà các script
+  // lại cần đường dẫn thật, nên danh sách file do server đọc từ đĩa rồi trả về
+  // (/api/tep-nguon) — server chạy ngay trên máy này nên đó đúng là đĩa đang ngồi.
+  const srcBox = document.getElementById("srcBox");
+  const layDs = () => srcBox.value.split("\n").map(l => l.trim()).filter(Boolean);
+
+  // Bấm một lần thêm dòng, bấm lại thì bỏ ra — dấu xanh = đang có trong ô Nguồn.
+  const doiNguon = (text) => {
+    const ds = layDs();
+    const i = ds.indexOf(text);
+    if (i >= 0) ds.splice(i, 1); else ds.push(text);
+    srcBox.value = ds.join("\n") + (ds.length ? "\n" : "");
+    toChip();
+    return i < 0;                       // true = vừa thêm vào
+  };
+  // Chip vẽ lại sau mỗi lượt htmx (hàng "Gần đây" là khối swap ngoài luồng) nên
+  // phải hỏi lại DOM mỗi lần, và bắt click ở cấp trang thay vì gắn từng nút.
+  const toChip = () => {
+    const ds = layDs();
+    document.querySelectorAll(".chip[data-src]").forEach(
+      c => c.classList.toggle("chip-hit", ds.includes(c.dataset.src)));
+    document.querySelectorAll(".filerow[data-path]").forEach(
+      r => danhDauThem(r, ds.includes(r.dataset.path)));
+  };
+  document.addEventListener("click", e => {
+    const chip = e.target.closest(".chip[data-src]");
+    if (chip) { doiNguon(chip.dataset.src); return; }
+    if (e.target.closest("#srcForget")) { quenLichSu(); return; }
+    if (e.target.closest("#srcAdd")) moBangChon();
+  });
+  srcBox.addEventListener("input", toChip);
+  document.getElementById("srcClear").addEventListener("click", () => {
+    // Ô trống mà cũng bật hộp thoại thì phiền, nên gõ rồi mới hỏi.
+    if (srcBox.value.trim() && !confirm("Xoá hết nội dung ô Nguồn?")) return;
+    srcBox.value = "";
+    srcBox.focus();
+    toChip();
+  });
+  toChip();
+  // Sau mỗi lượt htmx (hàng chip "Gần đây" vừa được thay) thì tô lại dấu xanh.
+  document.body.addEventListener("htmx:afterSwap", toChip);
+
+  async function quenLichSu() {
+    if (!confirm("Quên danh sách nguồn gần đây? (ô nhập giữ nguyên)")) return;
+    try {
+      await fetch("/nguon/xoalichsu", { method: "POST", credentials: "same-origin" });
+      document.getElementById("nguonchip").replaceChildren();
+    } catch (_) {
+      nhan("Không xoá được — server còn chạy không?");
+    }
+  }
+
+  // ── Bảng chọn file ───────────────────────────────────────────────────────
+  let bang = null;
+  const dongBang = () => {
+    if (bang) { bang.remove(); bang = null; }
+    document.removeEventListener("keydown", thoat);
+  };
+  function thoat(e) { if (e.key === "Escape") dongBang(); }
+
+  async function moBangChon() {
+    dongBang();
+    bang = document.createElement("div");
+    bang.className = "modal";
+    bang.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-head">
+          <b>Chọn file từ máy</b>
+          <input class="modal-find" type="text" placeholder="Lọc theo tên…" autofocus>
+          <button type="button" class="small modal-x">✕</button>
+        </div>
+        <div class="modal-body"><p class="hint">Đang đọc thư mục…</p></div>
+        <div class="modal-foot">
+          <span class="hint">Bấm vào file để thêm vào ô Nguồn, bấm lại thì bỏ ra
+            — chọn được nhiều file.</span>
+          <button type="button" class="primary small modal-x">Xong</button>
+        </div>
+      </div>`;
+    document.body.appendChild(bang);
+    document.addEventListener("keydown", thoat);
+    bang.addEventListener("click", e => {
+      if (e.target === bang || e.target.closest(".modal-x")) { dongBang(); return; }
+      const hang = e.target.closest(".filerow");
+      if (!hang) return;
+      danhDauThem(hang, doiNguon(hang.dataset.path));
+      hang.classList.add("filerow-hit");
+      setTimeout(() => hang.classList.remove("filerow-hit"), 700);
+    });
+    bang.querySelector(".modal-find").addEventListener("input", e => {
+      const q = e.target.value.trim().toLowerCase();
+      bang.querySelectorAll(".filerow").forEach(r => {
+        r.hidden = q && !r.dataset.name.toLowerCase().includes(q);
+      });
+    });
+
+    const than = bang.querySelector(".modal-body");
+    let nhom;
+    try {
+      const resp = await fetch("/api/tep-nguon", { credentials: "same-origin" });
+      nhom = (await resp.json()).groups || [];
+    } catch (_) {
+      than.innerHTML = '<p class="warn">Không đọc được danh sách file — server còn chạy không?</p>';
+      return;
+    }
+    if (!nhom.some(g => g.files.length)) {
+      than.innerHTML = '<p class="empty">Không thấy file video/audio nào trong các thư mục nguồn.</p>';
+      return;
+    }
+    than.innerHTML = nhom.map(g => `
+      <div class="filegroup">
+        <div class="filegroup-head">${esc(g.label)}
+          <span class="hint">${esc(g.folder)}</span></div>
+        ${g.files.length ? g.files.map(f => `
+          <button type="button" class="filerow${f.lam ? (f.xong ? " filerow-xong" : " filerow-dang") : ""}"
+                  data-path="${esc(f.path)}" data-name="${esc(f.name)}">
+            <span class="filerow-name">${esc(f.name)}</span>
+            ${dauDaLam(f)}
+            <span class="filerow-meta">${esc(f.size)} · ${esc(f.when)}</span>
+          </button>`).join("")
+          : '<p class="empty">Thư mục trống.</p>'}
+        ${g.more ? `<p class="hint">…và ${g.more} file cũ hơn không hiện ở đây.</p>` : ""}
+      </div>`).join("");
+    toChip();          // file đã nằm sẵn trong ô Nguồn thì mang dấu ngay từ đầu
+    bang.querySelector(".modal-find").focus();
+  }
+
+  // Nhãn "đã làm" của một file: đã dựng đủ 4 bước hay còn dở mấy bước. Video
+  // chưa chạy bao giờ (không có gì trong output) thì không có nhãn nào.
+  function dauDaLam(f) {
+    if (!f.lam) return "";
+    return f.xong
+      ? '<span class="dalam xong" title="Đã dựng xong đủ các bước">✓ xong</span>'
+      : `<span class="dalam dang" title="Đang dở — mới ${esc(f.buoc)} bước">◐ ${esc(f.buoc)}</span>`;
+  }
+
+  // Dấu "✓ đã thêm" NẰM LẠI trên hàng (không nháy rồi mất): danh sách dài thì
+  // mới nhớ được đã bấm những file nào. co=false là vừa bấm bỏ ra → gỡ dấu.
+  function danhDauThem(hang, co) {
+    hang.classList.toggle("filerow-them", !!co);
+    const cu = hang.querySelector(".themroi");
+    if (co && !cu) {
+      hang.querySelector(".filerow-name")
+          .insertAdjacentHTML("afterend", '<span class="dalam themroi">✓ đã thêm</span>');
+    } else if (!co && cu) {
+      cu.remove();
+    }
+  }
+
+  const esc = s => String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  // ── ⭐ ghim giọng: xếp lại danh sách NGAY TRÊN TRANG ─────────────────────
+  // Trước đây nút này gửi lên server rồi tải lại cả trang (mất chỗ cuộn, mất ô
+  // Nguồn đang gõ). Giờ chỉ đổi <option> tại chỗ; danh sách ghim nằm trong ô ẩn
+  // voice_stars và được ghi xuống đĩa lúc bấm chạy hoặc 💾. data-i = chỗ đứng
+  // theo tên, để lúc BỎ ghim còn trả giọng về đúng chỗ cũ.
+  const gSel = document.getElementById("voiceSel");
+  const gSao = document.getElementById("voiceSao");
+  const gStars = document.getElementById("voiceStars");
+  const layStars = () => gStars.value.split("\n").map(s => s.trim()).filter(Boolean);
+  const veGiong = () => {
+    const stars = layStars();
+    const opts = [...gSel.querySelectorAll("option[data-i]")];
+    opts.forEach(o => { o.textContent = (stars.includes(o.value) ? "★ " : "") + o.value; });
+    opts.sort((a, b) => {
+      const ia = stars.indexOf(a.value), ib = stars.indexOf(b.value);
+      if (ia >= 0 || ib >= 0) return (ia < 0 ? 9e9 : ia) - (ib < 0 ? 9e9 : ib);
+      return (+a.dataset.i) - (+b.dataset.i);
+    });
+    const dangChon = gSel.value;
+    opts.forEach(o => gSel.appendChild(o));   // appendChild = dời chỗ, không nhân bản
+    gSel.value = dangChon;
+    const co = stars.includes(gSel.value);
+    gSao.classList.toggle("on", co);
+    gSao.title = co ? "Bỏ ghim giọng này khỏi đầu danh sách"
+                    : "Ghim giọng đang chọn lên đầu danh sách";
+  };
+  gSao.addEventListener("click", () => {
+    const v = gSel.value;
+    if (!v) { nhan("Chọn một giọng trong danh sách rồi bấm ⭐ để ghim."); return; }
+    const stars = layStars();
+    const i = stars.indexOf(v);
+    if (i >= 0) stars.splice(i, 1); else stars.unshift(v);
+    gStars.value = stars.join("\n");
+    veGiong();
+    danhDauDoi(true);
+  });
+  gSel.addEventListener("change", veGiong);
+  veGiong();
+
+  // ── Khối chọn KIỂU PHỤ ĐỀ (giống hệt myvoice) ───────────────────────────
+  // Kho thẻ kiểu/font thu lại được, hai bảng màu, thanh vị trí + cỡ chữ, và HAI
+  // ảnh xem thử do server render bằng đúng libass sẽ burn (có cache nên lần sau
+  // hiện ngay). Bọc IIFE cho khỏi đụng tên biến với các đoạn khác trên trang.
+  (() => {
+    const box = document.getElementById("ksubModal");
+    const xemThu = document.getElementById("ksubXemThu");
+    if (!box || !xemThu) return;            // kho kiểu rỗng → không có gì để gắn
+    // Mở/đóng popup: nút 🎨 ngoài trang mở, ✕/✔ và bấm ra nền thì đóng. Popup
+    // chỉ ẩn đi chứ không bị gỡ khỏi form nên ô nào cũng vẫn gửi lên như thường.
+    // Ảnh khung ngang 16:9 chỉ nhìn được trong popup → để dành tới lúc mở lần
+    // đầu mới vẽ, tải trang khỏi tốn thêm một lượt render.
+    let daVeViTri = false;
+    const moPopup = () => {
+      box.style.display = "flex";
+      if (!daVeViTri) { daVeViTri = true; capNhatViTri(); }
+    };
+    const dongPopup = () => { box.style.display = "none"; };
+    document.getElementById("ksubMo").addEventListener("click", moPopup);
+    document.getElementById("ksubDong").addEventListener("click", dongPopup);
+    document.getElementById("ksubXong").addEventListener("click", dongPopup);
+    box.addEventListener("click", e => { if (e.target === box) dongPopup(); });
+    // Tên kiểu/font đang chọn hiện ở HAI chỗ: ô tóm tắt ngoài trang và nhãn của
+    // lưới thu lại (thu rồi vẫn biết đang chọn gì) → ghi cả cặp một lượt.
+    const ten = [document.getElementById("ksubHienTen"),
+                 document.getElementById("ksubNayKieu")];
+    const fontHien = [document.getElementById("ksubHienFont"),
+                      document.getElementById("ksubNayFont")];
+    const ghi = (o, v) => o.forEach(e => { e.textContent = v; });
+    // Lightbox phóng to ảnh: bấm ảnh để mở, bấm nền hoặc Esc để đóng.
+    const zoom = document.getElementById("ksubZoom");
+    const zoomAnh = document.getElementById("ksubZoomAnh");
+    const moZoom = src => {
+      if (!src) return;
+      zoomAnh.src = src;
+      zoom.style.display = "flex";
+    };
+    zoom.addEventListener("click", () => { zoom.style.display = "none"; });
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape") return;
+      // Đang phóng to ảnh thì Esc thu ảnh lại trước, bấm lần nữa mới đóng popup.
+      if (zoom.style.display !== "none") zoom.style.display = "none";
+      else dongPopup();
+    });
+    const chon = n => {
+      const r = document.querySelector("input[name=" + n + "]:checked");
+      return r ? r.value : "";
+    };
+    // Cỡ chữ (% cỡ gốc của kiểu) + màu viền đi kèm MỌI ảnh xem trước, kẻo ảnh
+    // một đằng video một nẻo.
+    const cochuKeo = document.getElementById("kcochuKeo");
+    const cochuSo = document.getElementById("kcochuSo");
+    const themCo = () => "&cochu=" + encodeURIComponent(cochuKeo.value) +
+      "&mauvien=" + encodeURIComponent(chon("submauvien"));
+    // Ô tóm tắt ngoài trang bày ĐÚNG ảnh xem thử của popup (cùng URL nên trình
+    // duyệt chỉ tải một lần) — đóng popup rồi vẫn thấy mình đang chọn gì.
+    const hienAnh = document.getElementById("ksubHienAnh");
+    const capNhatXemThu = () => {
+      const url = "/kieusub-xemtruoc?kieu=" +
+        encodeURIComponent(chon("kieusub") || "hopbo") +
+        "&font=" + encodeURIComponent(chon("subfont")) +
+        "&mau=" + encodeURIComponent(chon("submau")) + themCo();
+      xemThu.style.opacity = ".35";
+      xemThu.onload = () => { xemThu.style.opacity = "1"; };
+      xemThu.src = url;
+      hienAnh.src = url;
+    };
+    // Khung ngang 16:9 xem VỊ TRÍ chữ + thanh kéo chỉnh % từ đáy. Kéo thanh →
+    // chờ 350ms mới render (mỗi giá trị cache riêng phía server).
+    const vitriAnh = document.getElementById("kvitriAnh");
+    const vitriKeo = document.getElementById("kvitriKeo");
+    const vitriSo = document.getElementById("kvitriSo");
+    const vitriGT = document.getElementById("kvitriGiaTri");
+    const VITRI_MD = 16;                 // ≈ 173px trên khung 1080 (lề mặc định)
+    let vitriHen = null, cochuHen = null;
+    // Ô trống = TỰ ĐẶT: bước ④ hạ chữ xuống ngồi ngay trên dải che sub gốc (nếu
+    // có che), không che thì dùng lề mặc định của kiểu.
+    const hienViTri = document.getElementById("ksubHienViTri");
+    const hienCo = document.getElementById("ksubHienCo");
+    const hienChu = document.getElementById("ksubHienChu");
+    const oChu = box.querySelector("input[name=subchars]");
+    const veVitriNhan = () => {
+      vitriSo.textContent = (vitriGT.value || VITRI_MD) + "%" +
+        (vitriGT.value ? "" : " (tự đặt theo dải che)");
+      hienViTri.textContent = vitriGT.value ? vitriGT.value + "%" : "tự đặt";
+    };
+    const veChuNhan = () => { hienChu.textContent = oChu.value; };
+    oChu.addEventListener("input", veChuNhan);
+    veChuNhan();
+    const capNhatViTri = () => {
+      const url = "/kieusub-xemtruoc?khung=ngang&kieu=" +
+        encodeURIComponent(chon("kieusub") || "hopbo") +
+        "&font=" + encodeURIComponent(chon("subfont")) +
+        "&mau=" + encodeURIComponent(chon("submau")) +
+        "&vitri=" + encodeURIComponent(vitriGT.value) + themCo();
+      vitriAnh.style.opacity = ".35";
+      vitriAnh.onload = () => { vitriAnh.style.opacity = "1"; };
+      vitriAnh.src = url;
+    };
+    const veCochuNhan = () => {
+      cochuSo.textContent = cochuKeo.value + "%" +
+        (cochuKeo.value === "100" ? " (giữ nguyên)" : "");
+      hienCo.textContent = cochuKeo.value + "%";
+    };
+    // Đổi cỡ chữ làm đổi CẢ hai ảnh vì nó đổi cả dáng chữ lẫn cách ngắt dòng.
+    const capNhatCaHai = () => { capNhatXemThu(); capNhatViTri(); };
+    vitriKeo.value = vitriGT.value || VITRI_MD;
+    veVitriNhan();
+    veCochuNhan();
+    vitriKeo.addEventListener("input", () => {
+      vitriGT.value = vitriKeo.value;
+      veVitriNhan();
+      clearTimeout(vitriHen);
+      vitriHen = setTimeout(capNhatViTri, 350);
+    });
+    cochuKeo.addEventListener("input", () => {
+      veCochuNhan();
+      clearTimeout(cochuHen);            // hẹn riêng, khỏi nuốt lượt vẽ của vị trí
+      cochuHen = setTimeout(capNhatCaHai, 350);
+    });
+    document.getElementById("kvitriMacDinh").addEventListener("click", () => {
+      vitriGT.value = "";
+      vitriKeo.value = VITRI_MD;
+      cochuKeo.value = 100;
+      veVitriNhan();
+      veCochuNhan();
+      capNhatCaHai();
+      danhDauDoi(true);
+    });
+    vitriAnh.addEventListener("click", () => moZoom(vitriAnh.src));
+    xemThu.addEventListener("click", () => moZoom(xemThu.src));
+    hienAnh.addEventListener("click", () => moZoom(hienAnh.src));
+    capNhatXemThu();
+    // Lưới kiểu/font thu lại được — nhớ mở/thu, tải lại trang vẫn y như cũ.
+    box.querySelectorAll("details.ksubthu").forEach(td => {
+      const khoa = "ksubthu:" + td.id;
+      if (localStorage.getItem(khoa) === "1") td.open = true;
+      td.addEventListener("toggle",
+                          () => localStorage.setItem(khoa, td.open ? "1" : "0"));
+    });
+    // Bấm thẻ: cập nhật tên đang chọn + vẽ lại hai ảnh xem thử.
+    box.querySelectorAll("input[name=kieusub]").forEach(r =>
+      r.addEventListener("change", () => {
+        ghi(ten, r.closest(".ksub").querySelector("b").textContent);
+        capNhatCaHai();
+      }));
+    box.querySelectorAll("input[name=subfont]").forEach(r =>
+      r.addEventListener("change", () => {
+        ghi(fontHien, r.value || "(theo kiểu)");
+        capNhatCaHai();
+      }));
+    // Bảng màu: swatch có sẵn + ô tự chọn (input color gắn radio riêng). MÀU CHỮ
+    // và MÀU VIỀN là hai bảng cùng khuôn nên chạy chung một đoạn — .kmaus tự khai
+    // qua data-truong/data-tom nó sửa ô nào, cập nhật chấm màu nào ở dòng Đang chọn.
+    box.querySelectorAll(".kmaus").forEach(bang => {
+      const truong = bang.dataset.truong;
+      const chu = document.getElementById(bang.dataset.tom);
+      const dot = document.getElementById(bang.dataset.tom + "Dot");
+      const veTom = v => {
+        if (chu) chu.textContent = v ? "#" + v : "(theo kiểu)";
+        if (!dot) return;
+        dot.style.display = v ? "" : "none";
+        if (v) dot.style.background = "#" + v;
+      };
+      const khac = bang.querySelector(".kmau-khac");
+      const pick = bang.querySelector(".kmau-pick");
+      bang.querySelectorAll("input[name=" + truong + "]").forEach(r =>
+        r.addEventListener("change", () => { veTom(r.value); capNhatCaHai(); }));
+      pick.addEventListener("input", () => {
+        khac.value = pick.value.slice(1).toUpperCase();
+        khac.checked = true;
+        veTom(khac.value);
+        capNhatCaHai();
+        danhDauDoi(true);
+      });
+      khac.addEventListener("change", () => {
+        if (!khac.value) khac.value = pick.value.slice(1).toUpperCase();
+        veTom(khac.value);
+        capNhatCaHai();
+      });
+    });
+  })();
+
+  // ── Ô ✍️ vẽ sub: bỏ tick là ẩn luôn kho kiểu + font + số ký tự/dòng ─────
+  // Bỏ vẽ sub thì mấy ô đó chẳng còn tác dụng gì — giấu đi cho khối ④ gọn lại.
+  // Vẫn nằm trong form nên giá trị đang chọn không mất, tick lại là hiện y cũ.
+  const veSub = document.getElementById("veSub");
+  const veSubVe = () => document.body.classList.toggle("khongsub", !veSub.checked);
+  veSub.addEventListener("change", veSubVe);
+  veSubVe();
+
+  // ── Dấu “chưa lưu” ───────────────────────────────────────────────────────
+  // Mọi ô trên form chỉ đổi trên trang; tới lúc bấm chạy/💾 mới ghi xuống
+  // web_settings.json — dấu này nhắc đúng chỗ đó. Server trả về HX-Trigger
+  // "mvid:xong" khi lưu xong: xoá dấu, và nếu là lượt CHẠY thì bỏ tick hai ô
+  // “làm lại” (chúng chỉ có giá trị cho đúng lượt vừa bấm — trước đây trang tải
+  // lại nên tự sạch, nay không tải lại nữa nên phải tự bỏ).
+  const form = document.getElementById("mainform");
+
+  // Enter trong một ô chữ/số là bấm nút chạy ĐẦU TIÊN của form (▶ Chạy tất cả) —
+  // đang gõ số chữ/dòng mà lỡ Enter là cả mẻ video chạy luôn. Chặn hẳn: muốn
+  // chạy thì phải bấm đúng nút. Ô Nguồn là textarea nên Enter vẫn xuống dòng.
+  form.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey && e.target.tagName === "INPUT"
+        && e.target.type !== "checkbox" && e.target.type !== "radio") {
+      e.preventDefault();
+    }
+  });
+
+  const KHONG_LUU = ["sources", "redoasr", "redotts"];   // ba ô không nằm trong cài đặt
+  const danhDauDoi = (co) => document.body.classList.toggle("doi", co);
+  const coDoi = e => { if (!KHONG_LUU.includes(e.target.name)) danhDauDoi(true); };
+  form.addEventListener("input", coDoi);
+  form.addEventListener("change", coDoi);
+  document.body.addEventListener("mvid:xong", e => {
+    danhDauDoi(false);
+    if (e.detail && e.detail.chay)
+      form.querySelectorAll("input[name=redoasr], input[name=redotts]")
+          .forEach(o => { o.checked = false; });
+  });
+
+  // Nhật ký trong khối hàng đợi: luôn cuộn xuống dòng mới nhất, kể cả sau khi
+  // htmx thay nội dung.
+  const cuonNhatKy = (root) =>
+    (root.querySelectorAll ? root : document)
+      .querySelectorAll(".loglines").forEach(p => { p.scrollTop = p.scrollHeight; });
+  cuonNhatKy(document);
+  document.body.addEventListener("htmx:afterSwap", e => cuonNhatKy(e.target));
+</script>
+
+</main>
+</body>
+</html>

@@ -152,6 +152,9 @@ body.p-home .form-grid { columns: 340px; column-gap: 12px; }
 body.p-home .form-grid > * {
   display: block; margin: 0 0 12px; break-inside: avoid; page-break-inside: avoid;
 }
+/* Popup kho kiểu để <script> nằm rời ngay trong form — luật > * ở trên lỡ
+   bật display:block cho nó là cả đoạn JS hiện thành chữ trên trang → giấu lại. */
+body.p-home .form-grid > script { display: none; }
 body.p-home .form-grid > .span-all,
 body.p-home .form-grid > .runbar { column-span: all; }
 
@@ -603,9 +606,19 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
    Ảnh do scripts/kieusub.py vẽ bằng đúng libass sẽ burn (kiểu động là webp
    chuyển động) nên nhìn thẻ nào là ra đúng kiểu đó. Radio giấu đi, viền tô
    bằng :has(input:checked) — cùng mẹo với .mode. Dùng chung với myvideo. */
-/* Kho kiểu có KHỐI RIÊNG (#ksubBox, span-all) chứ không nhét trong popup nữa:
-   cột trái là kho thẻ, cột phải là ảnh xem thử DÍNH theo màn hình nên kéo thanh
-   nào cũng thấy đổi ngay. Màn hẹp thì xếp dọc, ảnh xem thử lên trên. */
+/* Hàng chọn KIỂU / FONT trong khối: tên đang chọn + nút mở POPUP chứa lưới thẻ
+   — CHỈ hai lưới dài này vào popup, còn màu / cỡ / vị trí / ảnh xem thử vẫn
+   bày ngay trên trang. Bấm một thẻ trong popup là chọn xong, popup tự đóng. */
+.ksubhang {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--sunken);
+}
+.ksubhang .colhead { margin: 0; }
+.ksubmodal { width: min(980px, 100%); }
+/* Cột trái là kho điều khiển (hàng chọn kiểu/font + bảng màu), cột phải là
+   ảnh xem thử DÍNH theo màn hình nên kéo thanh nào cũng thấy đổi ngay.
+   Màn hẹp thì xếp dọc, ảnh xem thử lên trên. */
 .ksubbox {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 380px);
   gap: 0 20px; align-items: start;
@@ -638,21 +651,7 @@ table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(-
   .ksubbox { grid-template-columns: 1fr; gap: 14px 0; }
   .ksubbox-xem { position: static; order: -1; }
 }
-/* Hai lưới dài nhất (kiểu · font) bọc trong <details> để THU LẠI cho gọn —
-   nhãn thành thanh bấm được, tên đang chọn nằm luôn trên đó, mũi tên quay khi mở. */
-.ksubthu { margin-bottom: 12px; }
-.ksubthu > summary {
-  cursor: pointer; user-select: none; list-style: none; margin-bottom: 0;
-  padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
-  background: var(--sunken); transition: border-color .14s;
-}
-.ksubthu > summary::-webkit-details-marker { display: none; }
-.ksubthu > summary::after { content: "▾"; margin-left: auto; transition: transform .15s; }
-.ksubthu[open] > summary::after { transform: rotate(180deg); }
-.ksubthu > summary:hover { border-color: var(--accent2); }
-.ksubthu[open] > summary { margin-bottom: 10px; }
-.ksubthu > .ksubs { margin-bottom: 0; }
-/* Tên kiểu/font đang chọn trên nhãn — chữ thường, khỏi lẫn với nhãn viết hoa. */
+/* Tên kiểu/font đang chọn trên hàng chọn — chữ thường, khỏi lẫn nhãn viết hoa. */
 .ksub-nay {
   font-weight: 650; color: var(--fg); text-transform: none; letter-spacing: 0;
 }

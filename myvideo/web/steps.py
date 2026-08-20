@@ -3,10 +3,11 @@
 
 Quy trình 4 bước, mỗi bước là một script CLI có sẵn trong myvideo/ — web chỉ
 xếp lệnh vào hàng đợi, không import logic nặng nào:
-  ① video_chamlai_srt.py  chậm video + SRT Trung (luôn kèm --no-dich: dịch là bước ②)
-  ② dich_srt.py           SRT Trung → SRT Việt qua Gemini (Firefox phải ĐÓNG)
+  ① video_chamlai_srt.py  chậm video + SRT tiếng gốc (luôn kèm --no-dich: dịch là bước ②)
+  ② dich_srt.py           SRT gốc → SRT Việt qua Gemini (Firefox phải ĐÓNG)
   ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
+                          — cả vẽ sub, che mờ lẫn thay tiếng đều bỏ được
 
 Mọi đường dẫn suy ra từ MỘT gốc <output>/<tên>_x<tốc độ> (đúng quy ước đặt tên
 của các script), nên xếp bước ②③④ vào hàng đợi TRƯỚC khi bước ① chạy xong
@@ -33,8 +34,12 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
 ORDER = ["cham", "dich", "giong", "gan"]
 NUM = {"cham": "①", "dich": "②", "giong": "③", "gan": "④"}
+# Tiếng GỐC của video (ô chọn trên trang) — quyết định Whisper nhận diện tiếng gì
+# ở bước ① và số chữ/dòng SRT. Bước ② KHÔNG cần biết: dich_srt.py tự đoán từ
+# chính file SRT nó đọc — chạy lẻ bước ② cho video cũ vẫn đúng tiếng của nó.
+TEN_LANG = {"zh": "Trung", "en": "Anh"}
 LABELS = {
-    "cham": "① Chậm video + SRT tiếng Trung",
+    "cham": "① Chậm video + SRT tiếng gốc",
     "dich": "② Dịch Gemini → SRT tiếng Việt",
     "giong": "③ Giọng OmniVoice + xếp timeline",
     "gan": "④ Vẽ sub cứng + thay tiếng",
@@ -59,6 +64,24 @@ def list_voices() -> list[str]:
                       key=str.lower)
     except OSError:
         return []
+
+
+def tenchinh(name: str) -> str:
+    """Tên video GỐC từ một tên bất kỳ: cắt tag _x… và mọi thứ sau nó, hạ chữ.
+
+    "abc_x0.7", "abc_x0.7_vi_audio", "abc" → "abc". Dùng để nhận ra một video
+    đã chạy tới đâu dù đang cầm file nguồn hay file kết quả, ở tốc độ nào."""
+    tags = list(_XTAG.finditer(name))
+    return (name[:tags[-1].start()] if tags else name).lower()
+
+
+def la_video_cham(name: str) -> bool:
+    """Tên (không đuôi) kết thúc ĐÚNG bằng tag _x… → video ra lò từ bước ①.
+
+    Chặt hơn is_base: "abc_x0.7" đúng, còn "abc_x0.7_sub" (video thành phẩm
+    của bước ④) thì không — dán cái đó vào ô Nguồn là chạy nhầm."""
+    tags = list(_XTAG.finditer(name))
+    return bool(tags) and tags[-1].end() == len(name)
 
 
 def base_for(src: str, speed) -> Path:
@@ -107,7 +130,7 @@ def _flags(base: str) -> dict:
     }
 
 
-def missing_steps(r: dict, thaytieng: bool) -> tuple[list[str], str]:
+def missing_steps(r: dict, thaytieng: bool, vesub: bool = True) -> tuple[list[str], str]:
     """→ (các bước còn thiếu theo thứ tự chạy, lý do nếu KHÔNG chạy tiếp được)."""
     miss = []
     if not r["vi"]:
@@ -120,11 +143,15 @@ def missing_steps(r: dict, thaytieng: bool) -> tuple[list[str], str]:
         return [], ""
     # Bước đầu chuỗi phải có sẵn đầu vào; các bước sau do bước trước sinh ra.
     if miss[0] == "dich" and not r["srt"]:
-        return [], "thiếu SRT tiếng Trung — chạy lại bước ① từ file nguồn"
+        return [], "thiếu SRT tiếng gốc — chạy lại bước ① từ file nguồn"
     if "gan" in miss and not r["video"]:
         miss.remove("gan")
         if not miss:
             return [], "thiếu video _x….mp4 — chạy lại bước ① từ file nguồn"
+    if "gan" in miss and not (vesub or thaytieng):
+        miss.remove("gan")
+        if not miss:
+            return [], "đã bỏ cả vẽ sub lẫn thay tiếng — bước ④ không còn việc gì"
     return miss, ""
 
 
@@ -135,7 +162,8 @@ def _mtime(p: Path) -> float:
         return 0.0
 
 
-def scan_rows(thaytieng: bool = True, limit: int = 25) -> list[dict]:
+def scan_rows(thaytieng: bool = True, limit: int = 25,
+              vesub: bool = True) -> list[dict]:
     """Mỗi gốc _x… trong output → một hàng: bước nào đã xong, còn thiếu gì.
 
     Gốc là ĐƯỜNG DẪN TƯƠNG ĐỐI so với output: video mới nằm thư mục riêng
@@ -170,7 +198,7 @@ def scan_rows(thaytieng: bool = True, limit: int = 25) -> list[dict]:
     rows = []
     for b, _mt in sorted(seen.items(), key=lambda kv: kv[1], reverse=True)[:limit]:
         r = _flags(b)
-        r["missing"], r["resume_err"] = missing_steps(r, thaytieng)
+        r["missing"], r["resume_err"] = missing_steps(r, thaytieng, vesub)
         r["missing_label"] = "".join(NUM[k] for k in r["missing"])
         rows.append(r)
     return rows
@@ -184,17 +212,26 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
     for k in keys:
         label = LABELS[k]
         if k == "cham":
-            n = str(s["maxchars"])
+            lang = s.get("lang") or "zh"
+            ten = TEN_LANG.get(lang, "Trung")
+            label = f"① Chậm video + SRT tiếng {ten}"
+            # Mỗi tiếng một ngưỡng dài dòng riêng (16 chữ Hán · 42 ký tự Anh) nên
+            # trang lưu hai số khác nhau, đổi ô ngôn ngữ không làm mất số của tiếng kia.
+            n = str(s.get("maxchars_en") or "42") if lang == "en" else str(s["maxchars"])
             # --out-dir là THƯ MỤC RIÊNG của video (base.parent) — script tự tạo.
             argv = [_python(), "-u", str(BASE_DIR / "video_chamlai_srt.py"), src,
                     "--speed", str(s["speed"]), "--model", s["model"],
                     "--max-chars", n, "--hard-max", n, "--no-dich",
-                    "--out-dir", str(base.parent)]
+                    "--lang", lang, "--out-dir", str(base.parent)]
+            if not s.get("ngucanh", True):
+                argv.append("--khong-ngu-canh")
             if s.get("redoasr"):
                 argv.append("--redo-asr")
         elif k == "dich":
             argv = [_python(), "-u", str(BASE_DIR / "dich_srt.py"), f"{B}.srt",
                     "--batch-chars", str(s.get("batchchars", "1200"))]
+            if not s.get("gopcau", True):
+                argv.append("--giu-dong")
             if s.get("offline"):
                 argv.append("--offline")
                 label = "② Dịch offline opus-mt (nháp)"
@@ -205,18 +242,33 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
             if s.get("redotts"):
                 argv.append("--redo-tts")
         else:                                   # gan
+            # Ba việc của bước ④ bỏ được từng cái: vẽ sub · che mờ sub gốc ·
+            # thay tiếng. Bỏ cả vẽ sub lẫn che mờ thì script giữ nguyên hình
+            # (-c:v copy), chỉ ghép lại tiếng.
+            ve_sub = bool(s.get("vesub", True))
+            thay = bool(s.get("thaytieng", True))
             argv = [_python(), "-u", str(BASE_DIR / "video_gansub_cung.py"), f"{B}.mp4",
                     "--max-chars", str(s.get("subchars", "50")),
                     "--kieu", s.get("kieusub") or "hopbo"]
-            if s.get("subfont"):
-                argv += ["--font", s["subfont"]]
+            # Font · màu chữ · màu viền · cỡ chữ · vị trí: chỉ gửi ô nào có
+            # đặt — bỏ trống là giữ đúng của kiểu (và vị trí tự đặt theo dải che).
+            for co, ten in (("subfont", "--font"), ("submau", "--mau"),
+                            ("submauvien", "--mau-vien"), ("subcochu", "--cochu"),
+                            ("subvitri", "--vitri")):
+                if s.get(co):
+                    argv += [ten, str(s[co])]
             if s.get("chesub", True):
                 argv.append("--che-sub-goc")
-            if s.get("thaytieng", True):
-                argv += ["--srt", f"{B}_vi_sapxep.srt", "--audio", f"{B}_vi_audio.wav"]
-            else:
-                argv += ["--srt", f"{B}_vi.srt"]
-                label = "④ Vẽ sub cứng (giữ tiếng gốc)"
+            if thay:
+                argv += ["--audio", f"{B}_vi_audio.wav"]
+            if ve_sub:
+                # Thay tiếng thì vẽ bản ĐÃ XẾP (khớp giọng đọc), giữ tiếng gốc
+                # thì vẽ bản _vi.srt (khớp mốc giờ gốc).
+                argv += ["--srt", f"{B}_vi_sapxep.srt" if thay else f"{B}_vi.srt"]
+            label = ("④ Vẽ sub cứng + thay tiếng" if (ve_sub and thay) else
+                     "④ Vẽ sub cứng (giữ tiếng gốc)" if ve_sub else
+                     "④ Thay tiếng, không vẽ sub" if thay else
+                     "④ Chỉ che mờ sub gốc")
             if s.get("cpu"):
                 argv.append("--cpu")
         steps.append(Step(label=label, argv=argv, cwd=str(REPO_ROOT), env=env))
@@ -244,8 +296,14 @@ def _check_input(start: str, B: str, s: dict) -> str:
     if start == "gan":
         if not os.path.isfile(f"{B}.mp4"):
             return f"Chưa có {name}.mp4 — chạy bước ① trước."
-        if s.get("thaytieng", True):
-            for f in (f"{B}_vi_sapxep.srt", f"{B}_vi_audio.wav"):
+        ve_sub, thay = bool(s.get("vesub", True)), bool(s.get("thaytieng", True))
+        if not ve_sub and not thay:
+            return ("Bước ④ không còn việc gì: đã bỏ cả vẽ sub lẫn thay tiếng "
+                    "(tick lại một trong hai).")
+        if thay:
+            # Không vẽ sub thì chỉ cần file audio, khỏi đòi bản SRT đã xếp.
+            can = [f"{B}_vi_audio.wav"] + ([f"{B}_vi_sapxep.srt"] if ve_sub else [])
+            for f in can:
                 if not os.path.isfile(f):
                     return f"Chưa có {Path(f).name} — chạy bước ③ trước (hoặc bỏ tick thay tiếng)."
         elif not os.path.isfile(f"{B}_vi.srt"):
@@ -269,6 +327,15 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
                    cwd=str(REPO_ROOT), env=_env())
         steps = [cut] + _steps_for(ORDER, str(clip), base, s)
         return f"{Path(src).name} — 🧪 thử 60s ①②③④", steps, ""
+    if start == "tatca":
+        # ▶ CHẠY TẤT CẢ: từ bước ① tới bước ④ một mạch, BỎ QUA các ô ⛓ (chúng
+        # chỉ điều khiển mấy nút "Chạy bước …" riêng lẻ ở từng khối). Một nút
+        # cho cả quy trình — khỏi phải nhớ đã tick đủ ba ô ⛓ hay chưa.
+        if not src or not os.path.isfile(src):
+            return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
+        base = base_for(src, s["speed"])
+        return (f"{base.name} — ▶ {''.join(NUM[k] for k in ORDER)}",
+                _steps_for(ORDER, src, base, s), "")
     if start == "cham":
         if not src or not os.path.isfile(src):
             return "", [], f"Không thấy file nguồn: {src or '(trống)'}"

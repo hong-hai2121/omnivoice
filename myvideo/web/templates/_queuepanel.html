@@ -1,12 +1,20 @@
-{# Khối hàng đợi — cần q + loglines trong context; tự làm mới 2 giây/lần. #}
+{# Khối hàng đợi — cần q + loglines trong context; tự làm mới 2 giây/lần.
+   Bốn nút điều khiển đi qua htmx (chỉ thay lại chính khối này, không tải lại
+   trang); thẻ <form> giữ nguyên làm đường lui khi không có JS. #}
 <div class="panel">
   <div class="phead">
     <b>Hàng đợi</b>
     <span class="spacer"></span>
-    <form method="post" action="/hangdoi/pause"><button class="ghost">⏸ Tạm dừng</button></form>
-    <form method="post" action="/hangdoi/resume"><button class="ghost">▶ Tiếp</button></form>
-    <form method="post" action="/hangdoi/skip"><button class="ghost">⏭ Bỏ việc này</button></form>
-    <form method="post" action="/hangdoi/stop"><button class="ghost danger">⏹ Dừng hết</button></form>
+    <form method="post" action="/hangdoi/pause"><button class="ghost"
+      hx-post="/hangdoi/pause" hx-target="#queue" hx-swap="innerHTML">⏸ Tạm dừng</button></form>
+    <form method="post" action="/hangdoi/resume"><button class="ghost"
+      hx-post="/hangdoi/resume" hx-target="#queue" hx-swap="innerHTML">▶ Tiếp</button></form>
+    <form method="post" action="/hangdoi/skip"><button class="ghost"
+      hx-post="/hangdoi/skip" hx-target="#queue" hx-swap="innerHTML"
+      hx-confirm="Bỏ việc đang chạy? (tiến trình con sẽ bị tắt)">⏭ Bỏ việc này</button></form>
+    <form method="post" action="/hangdoi/stop"><button class="ghost danger"
+      hx-post="/hangdoi/stop" hx-target="#queue" hx-swap="innerHTML"
+      hx-confirm="Dừng hết: tắt việc đang chạy và xoá các việc đang chờ?">⏹ Dừng hết</button></form>
   </div>
   <div id="queue" hx-get="/partials/queue" hx-trigger="every 2s" hx-swap="innerHTML">
     {% include "_queue.html" %}
