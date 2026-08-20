@@ -2936,7 +2936,9 @@ class App(tk.Tk):
         ttk.Label(sub_row2b, text="Vị trí % đáy:").pack(side="left", padx=(26, 2))
         self.var_sub_vitri = tk.StringVar(
             value=str(self._opt_settings.get("sub_vitri", "")))
-        ttk.Spinbox(sub_row2b, from_=4, to=45, increment=1, width=4,
+        # 0–100: hết chiều cao khung, cùng khoảng với thanh kéo bên web (chung
+        # taogiong_options.json) — để hẹp hơn thì mũi tên sẽ kéo tụt giá trị web.
+        ttk.Spinbox(sub_row2b, from_=0, to=100, increment=1, width=4,
                     textvariable=self.var_sub_vitri).pack(side="left")
         # Cỡ chữ theo % cỡ gốc của kiểu — để TRỐNG (hoặc 100) là giữ nguyên.
         ttk.Label(sub_row2b, text="Cỡ chữ %:").pack(side="left", padx=(10, 2))

@@ -301,8 +301,11 @@
           <img id="kvitriAnh" alt="" title="Vị trí chữ trên khung ngang — bấm để phóng to">
           <div class="kvitri-dk">
             <label class="kvitri-thanh">
+              {# Kéo hết chiều cao khung (0–100%), không chặn ở 45% nữa — đặt chữ
+                 lên giữa hay sát mép trên đều được; càng gần 100% chữ càng trồi
+                 khỏi mép trên, nhìn ảnh khung ngang ngay trên là rõ. #}
               <span class="hint">↕ Chữ cách đáy <b id="kvitriSo"></b> chiều cao màn hình</span>
-              <input type="range" id="kvitriKeo" min="4" max="45" step="1">
+              <input type="range" id="kvitriKeo" min="0" max="100" step="1">
             </label>
             <label class="kvitri-thanh">
               <span class="hint">🔍 Cỡ chữ <b id="kcochuSo"></b> cỡ gốc của kiểu</span>

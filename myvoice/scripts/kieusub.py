@@ -693,12 +693,18 @@ def _nen_ngang() -> Path | None:
 
 
 def vitri_margin(vitri, play_h: int, macdinh: int) -> int:
-    """'% chiều cao tính từ đáy' → MarginV px; rỗng/sai → mặc định của khung."""
+    """'% chiều cao tính từ đáy' → MarginV px; rỗng/sai → mặc định của khung.
+
+    Nhận HẾT chiều cao khung (0–100%) chứ không chặn ở 60% như trước: muốn đặt
+    chữ lên giữa hay sát mép trên cũng được. Càng gần 100% thì dòng chữ càng
+    trồi lên khỏi mép trên (MarginV đo từ đáy lên) — cứ nhìn ảnh xem thử khung
+    ngang là thấy ngay chữ rơi vào đâu.
+    """
     try:
         pct = float(str(vitri).strip())
     except (TypeError, ValueError):
         return macdinh
-    if not 1 <= pct <= 60:
+    if not 0 <= pct <= 100:
         return macdinh
     return round(play_h * pct / 100)
 
