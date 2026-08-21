@@ -28,9 +28,17 @@ REPO_ROOT = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "output"
 VENV_PY = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 # Kho giọng RIÊNG của myvideo (myvideo/voice) — độc lập hẳn với myvoice, chỉ
-# mượn ý tưởng chức năng; không đọc kho file hay cài đặt đã lưu bên đó.
+# mượn ý tưởng chức năng; không đọc kho file hay cài đặt bên đó.
 VOICE_DIR = BASE_DIR / "voice"
+# Kho NHẠC NỀN: bỏ file mp3/wav vào đây là ô chọn ở khối ④ thấy ngay.
+NHAC_DIR = BASE_DIR / "nhac"
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+
+# Hồ sơ kênh (logo.png / outro.mp4 nằm trong thư mục hồ sơ) — kenh_hoso đứng
+# một mình, không kéo FastAPI hay GUI nào theo.
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+import kenh_hoso  # noqa: E402
 
 ORDER = ["cham", "dich", "giong", "gan"]
 NUM = {"cham": "①", "dich": "②", "giong": "③", "gan": "④"}
@@ -60,6 +68,16 @@ def list_voices() -> list[str]:
     """Giọng mẫu trong kho riêng myvideo/voice — cho ô chọn của bước ③."""
     try:
         return sorted((p.name for p in VOICE_DIR.iterdir()
+                       if p.is_file() and p.suffix.lower() in AUDIO_EXTS),
+                      key=str.lower)
+    except OSError:
+        return []
+
+
+def list_nhac() -> list[str]:
+    """File nhạc nền trong myvideo/nhac — cho ô chọn 🎵 của bước ④."""
+    try:
+        return sorted((p.name for p in NHAC_DIR.iterdir()
                        if p.is_file() and p.suffix.lower() in AUDIO_EXTS),
                       key=str.lower)
     except OSError:
@@ -127,6 +145,11 @@ def _flags(base: str) -> dict:
         "sub": os.path.isfile(f"{B}_sub.mp4"),
         # có timeline.json → bảng hiện nút 🎞 xem trang xếp audio kiểu CapCut
         "tl": os.path.isfile(f"{B}_vi_timeline.json"),
+        # Khâu SAU DỰNG: SEO · thumbnail · biên nhận đã đăng YouTube/Facebook.
+        "seo": os.path.isfile(f"{B}_seo.json"),
+        "thumb": os.path.isfile(f"{B}_thumb.jpg") or os.path.isfile(f"{B}_thumb.png"),
+        "yt": os.path.isfile(f"{B}_youtube_upload.json"),
+        "fb": os.path.isfile(f"{B}_facebook_upload.json"),
     }
 
 
@@ -205,6 +228,19 @@ def scan_rows(thaytieng: bool = True, limit: int = 25,
 
 
 # ── Dựng Step cho hàng đợi ───────────────────────────────────────────────────
+# server.py gắn hàm vào đây lúc khởi động: dựng xong bước ④ của một video thì
+# gọi hook(base_tương_đối) để xếp việc TỰ ĐĂNG (nếu bật và đã có kênh). Đặt là
+# biến module thay vì import server — steps không được kéo FastAPI vào.
+after_build_hook = None
+
+
+def _base_rel(base: Path) -> str:
+    try:
+        return base.relative_to(OUTPUT_DIR).as_posix()
+    except ValueError:
+        return base.as_posix()
+
+
 def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
     B = str(base)
     env = _env()
@@ -249,6 +285,7 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
             thay = bool(s.get("thaytieng", True))
             argv = [_python(), "-u", str(BASE_DIR / "video_gansub_cung.py"), f"{B}.mp4",
                     "--max-chars", str(s.get("subchars", "50")),
+                    "--dong", str(s.get("subdong") or "2"),
                     "--kieu", s.get("kieusub") or "hopbo"]
             # Font · màu chữ · màu viền · cỡ chữ · vị trí: chỉ gửi ô nào có
             # đặt — bỏ trống là giữ đúng của kiểu (và vị trí tự đặt theo dải che).
@@ -257,6 +294,27 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                             ("subvitri", "--vitri")):
                 if s.get(co):
                     argv += [ten, str(s[co])]
+            # Phóng to video nền: 0/rỗng = giữ nguyên, khỏi gửi cờ.
+            if str(s.get("zoom") or "").strip() not in ("", "0"):
+                argv += ["--zoom", str(s["zoom"])]
+            # 🎵 Nhạc nền nhỏ dưới tiếng chính — chọn ở khối ④, mặc định tắt.
+            if s.get("nhacnen"):
+                nf = NHAC_DIR / s["nhacnen"]
+                if nf.is_file():
+                    argv += ["--nhac", str(nf),
+                             "--nhac-db", str(s.get("nhacnen_db") or "-18")]
+            # 🏷 Logo / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi khi ô bật VÀ
+            # file có thật trong myvideo/kenh/<tên>/ (thiếu file thì thôi, không
+            # làm hỏng lượt dựng; script cũng tự bỏ qua nếu file biến mất sau).
+            if s.get("logo_kenh") or s.get("outro_kenh"):
+                kenh = kenh_hoso.hien_tai()
+                if kenh:
+                    lg = kenh_hoso.thu_muc(kenh) / "logo.png"
+                    ot = kenh_hoso.thu_muc(kenh) / "outro.mp4"
+                    if s.get("logo_kenh") and lg.is_file():
+                        argv += ["--logo", str(lg)]
+                    if s.get("outro_kenh") and ot.is_file():
+                        argv += ["--outro", str(ot)]
             if s.get("chesub", True):
                 argv.append("--che-sub-goc")
             if thay:
@@ -271,7 +329,18 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                      "④ Chỉ che mờ sub gốc")
             if s.get("cpu"):
                 argv.append("--cpu")
-        steps.append(Step(label=label, argv=argv, cwd=str(REPO_ROOT), env=env))
+        extra = {}
+        if k == "gan" and after_build_hook is not None:
+            # Xong bước ④ = video thành phẩm → cho server cơ hội xếp việc tự
+            # đăng. Hook tự kiểm ô bật/tắt + kênh đã có chưa, ở đây chỉ báo.
+            extra["on_success"] = (lambda rb=_base_rel(base): after_build_hook(rb))
+        steps.append(Step(label=label, argv=argv, cwd=str(REPO_ROOT), env=env, **extra))
+        if k == "gan" and s.get("xuatdoc"):
+            # 📱 Bản DỌC 9:16 kèm theo — cùng bộ tuỳ chọn, chỉ thêm --khung doc
+            # (script tự đặt tên <B>_doc.mp4 và soạn chữ theo khung 1080×1920).
+            steps.append(Step(label="④ 📱 Bản dọc 9:16 (TikTok/Shorts)",
+                              argv=argv + ["--khung", "doc"],
+                              cwd=str(REPO_ROOT), env=env))
     return steps
 
 
@@ -315,14 +384,24 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
     """Từ form chính: → (tiêu đề việc, các bước, lỗi — khác rỗng là chưa chạy được)."""
     src = (src or "").strip().strip('"')
     if start == "thu60":
-        # 🧪 BẢN NHÁP: cắt 60 giây đầu rồi chạy TRỌN 4 bước (bỏ qua các ô ⛓) —
+        # 🧪 BẢN NHÁP: cắt 60 giây rồi chạy TRỌN 4 bước (bỏ qua các ô ⛓) —
         # duyệt giọng/kiểu sub/vùng che trước khi tốn nửa tiếng cho cả bài.
+        # Ô "từ phút thứ…" dời khúc cắt vào giữa bài: 60s ĐẦU thường là intro
+        # nhạc hiệu, không đại diện cho giọng đọc lẫn vùng sub của cả video.
         if not src or not os.path.isfile(src):
             return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
+        try:
+            tu_phut = max(0.0, float(str(s.get("thu60_tu") or "0").replace(",", ".")))
+        except ValueError:
+            tu_phut = 0.0
         clip = OUTPUT_DIR / f"{Path(src).stem}_thu60.mp4"
         base = base_for(str(clip), s["speed"])
-        cut = Step(label="✂ Cắt 60 giây đầu",
-                   argv=["ffmpeg", "-y", "-loglevel", "error", "-t", "60",
+        # -ss TRƯỚC -i + -c copy: nhảy theo keyframe, cắt tức thì — bản nháp
+        # lệch vài giây quanh mốc không sao.
+        seek = ["-ss", f"{tu_phut * 60:g}"] if tu_phut > 0 else []
+        nhan = f"✂ Cắt 60 giây từ phút {tu_phut:g}" if tu_phut > 0 else "✂ Cắt 60 giây đầu"
+        cut = Step(label=nhan,
+                   argv=["ffmpeg", "-y", "-loglevel", "error", *seek, "-t", "60",
                          "-i", src, "-c", "copy", str(clip)],
                    cwd=str(REPO_ROOT), env=_env())
         steps = [cut] + _steps_for(ORDER, str(clip), base, s)
@@ -372,6 +451,78 @@ def single(base: str, key: str, s: dict) -> tuple[str, list[Step], str]:
     if err:
         return "", [], err
     return f"{base} — {NUM[key]}", _steps_for([key], "", OUTPUT_DIR / base, s), ""
+
+
+# ── Khâu SAU DỰNG: SEO · thumbnail · đăng YouTube · lên lịch Facebook ────────
+# SEO đi HÀNG ĐỢI CHÍNH (dùng Firefox — chạy song song với bước ② là giẫm
+# profile); thumbnail cũng hàng chính (ffmpeg). Đăng YouTube/Facebook đi hai
+# hàng đợi riêng (jobs.q_dang / jobs.q_fb) vì chỉ tốn băng thông.
+def seo_steps(bases: list[str], force: bool = False) -> tuple[str, list[Step]]:
+    argv = [_python(), "-u", str(BASE_DIR / "seo_video.py")]
+    for b in bases:
+        argv += ["--base", b]
+    if force:
+        argv.append("--force")
+    ten = Path(bases[0]).name if len(bases) == 1 else f"{len(bases)} video"
+    return (f"📑 SEO — {ten}",
+            [Step(label="📑 Sinh SEO (Gemini)", argv=argv,
+                  cwd=str(REPO_ROOT), env=_env())])
+
+
+def thumb_steps(bases: list[str], force: bool = False) -> tuple[str, list[Step]]:
+    argv = [_python(), "-u", str(BASE_DIR / "thumbnail_video.py")]
+    for b in bases:
+        argv += ["--base", b]
+    if force:
+        argv.append("--force")
+    ten = Path(bases[0]).name if len(bases) == 1 else f"{len(bases)} video"
+    return (f"🖼 Thumbnail — {ten}",
+            [Step(label="🖼 Vẽ thumbnail", argv=argv,
+                  cwd=str(REPO_ROOT), env=_env())])
+
+
+def youtube_steps(base: str, kenh: str) -> tuple[str, list[Step]]:
+    """Một video một việc, đăng bằng HỒ SƠ KÊNH `kenh` — mã 77 (kênh này đã
+    đăng rồi / hồ sơ chưa cấu hình) là bỏ qua có chủ ý, hàng đợi hiện
+    "stopped" chứ không đỏ."""
+    return (f"⬆ YouTube [{kenh}] — {Path(base).name}",
+            [Step(label="⬆ Đăng YouTube", argv=[
+                _python(), "-u", str(BASE_DIR / "dang_youtube.py"),
+                "--base", base, "--kenh", kenh],
+                cwd=str(REPO_ROOT), env=_env(), soft_fail_codes=(77,))])
+
+
+def youtube_login_steps(kenh: str, doi_kenh: bool = False) -> tuple[str, list[Step]]:
+    argv = [_python(), "-u", str(BASE_DIR / "dang_youtube.py"), "--dangnhap",
+            "--kenh", kenh]
+    if doi_kenh:
+        argv.append("--doi-kenh")
+    return (f"🔑 Đăng nhập YouTube [{kenh}]",
+            [Step(label="🔑 Đăng nhập YouTube", argv=argv,
+                  cwd=str(REPO_ROOT), env=_env(), soft_fail_codes=(77,))])
+
+
+def facebook_steps(mode: str, kenh: str,
+                   chon: list[str] | None = None) -> tuple[str, list[Step]]:
+    """mode: 'chay' (đăng thật, --yes) · 'xemtruoc' (--dry-run) · 'quet' (--sync),
+    trên Page của HỒ SƠ KÊNH `kenh`.
+
+    Mã thoát 2 của script = tạm ngưng vì hạn mức/token — vẫn để đỏ cho dễ thấy,
+    nhật ký nói rõ phải làm gì."""
+    argv = [_python(), "-u", str(BASE_DIR / "FACEBOOK" / "dang_video_facebook.py"),
+            "--kenh", kenh]
+    if mode == "quet":
+        argv.append("--sync")
+        label = f"🔄 Cập nhật lịch Page [{kenh}]"
+    elif mode == "xemtruoc":
+        argv.append("--dry-run")
+        label = f"🔍 Xem kế hoạch đăng Page [{kenh}]"
+    else:
+        argv.append("--yes")
+        label = f"📘 Lên lịch đăng Page [{kenh}]"
+    for b in chon or []:
+        argv += ["--chon", b]
+    return (label, [Step(label=label, argv=argv, cwd=str(REPO_ROOT), env=_env())])
 
 
 # ── Xoá output: CHỈ đưa vào Thùng rác (mọi thao tác xoá phải khôi phục được) ──

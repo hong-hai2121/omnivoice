@@ -1,0 +1,15 @@
+{
+  "thutu": 25,
+  "ten": "Trích dẫn serif",
+  "mota": "Merriweather ExtraBold có chân — trắng ngà viền đen, chất văn học, hợp kể chuyện/tâm sự",
+  "hieuung": "tinh",
+  "font": "Merriweather ExtraBold",
+  "fontfile": "fonts/Merriweather-ExtraBold.ttf",
+  "size": 58,
+  "bold": false,
+  "mau_chu": "FFF6E0",
+  "mau_vien": "000000",
+  "vien": 4,
+  "bong": 2,
+  "max_chars": 34
+}

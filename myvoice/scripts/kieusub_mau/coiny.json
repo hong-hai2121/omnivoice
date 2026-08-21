@@ -1,0 +1,17 @@
+{
+  "thutu": 28,
+  "ten": "Coiny kẹo ngọt",
+  "mota": "Coiny tròn trịa (font thiết kế sẵn cho tiếng Việt) — hồng viền trắng + tím, dễ thương",
+  "hieuung": "viendoi",
+  "font": "Coiny",
+  "fontfile": "fonts/Coiny-Regular.ttf",
+  "size": 62,
+  "bold": false,
+  "mau_chu": "FF6FA5",
+  "mau_vien": "FFFFFF",
+  "vien": 5,
+  "mau_vien2": "7C3AED",
+  "vien2": 3,
+  "bong": 2,
+  "max_chars": 30
+}

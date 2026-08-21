@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}⏱ Hàng đợi — myvideo{% endblock %}
+
+{# TAB RIÊNG cho khối HÀNG ĐỢI — nguyên khối "⏱ Việc đang chạy" của trang
+   chính dời sang đây, KHÔNG đổi logic nào: vẫn _queuepanel.html (bốn nút điều
+   khiển + tự làm mới 2 giây/lần + VRAM + ngủ/tắt máy).
+
+   Hai trang kia giữ một mỏ neo #queue ẨN nên mọi nút bên đó vẫn nhả kết quả
+   như cũ — muốn nhìn tiến độ thì mở tab này. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">⏱</span> Hàng đợi</h1>
+  <p class="muted">Việc đang chạy · các việc chờ · nhật ký · VRAM · ngủ/tắt máy
+    khi xong. Xếp việc mới ở tab <a href="/">🎬 Quy trình 4 bước</a>.</p>
+</div>
+
+{# Lời nhắn (lỗi / đã xong): khối nổi góc phải dưới, bấm vào là tắt. #}
+<div id="tinnhan" class="tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}</div>
+
+{% include "_queuepanel.html" %}
+
+<script>
+  // Lời nhắn góc phải: bấm vào là tắt. Nhật ký luôn cuộn xuống dòng mới nhất,
+  // kể cả sau khi htmx thay nội dung — y trang chính.
+  const tin = document.getElementById("tinnhan");
+  tin.addEventListener("click", () => tin.replaceChildren());
+  const cuonNhatKy = (root) =>
+    (root.querySelectorAll ? root : document)
+      .querySelectorAll(".loglines").forEach(p => { p.scrollTop = p.scrollHeight; });
+  cuonNhatKy(document);
+  document.body.addEventListener("htmx:afterSwap", e => cuonNhatKy(e.target));
+</script>
+{% endblock %}

@@ -673,9 +673,9 @@ body.p-video .phead h2 { color: var(--accent); }
   margin-bottom: 10px;
 }
 .ksubhead .hint { flex: 1 1 auto; margin: 0; }
-/* Hàng chọn KIỂU / FONT trong khối: tên đang chọn + nút mở POPUP chứa lưới thẻ
-   — CHỈ hai lưới dài này vào popup, còn màu / cỡ / vị trí / ảnh xem thử vẫn
-   bày ngay trên trang. Bấm một thẻ trong popup là chọn xong, popup tự đóng. */
+/* Hàng chọn KIỂU / FONT / MÀU CHỮ / MÀU VIỀN trong khối: tên đang chọn + nút
+   mở POPUP chứa lưới thẻ hoặc bảng màu — cỡ / vị trí / ảnh xem thử vẫn bày
+   ngay trên trang. Bấm một thẻ trong popup là chọn xong, popup tự đóng. */
 .ksubhang {
   display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
   padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
@@ -683,6 +683,8 @@ body.p-video .phead h2 { color: var(--accent); }
 }
 .ksubhang .colhead { margin: 0; }
 .ksubmodal { width: min(980px, 100%); }
+/* Popup bảng màu (chữ · viền): ít ô hơn lưới kiểu/font nên khung hẹp lại. */
+.ksubmodal-mau { width: min(640px, 100%); }
 /* Cột trái là kho điều khiển (hàng chọn kiểu/font + bảng màu), cột phải là
    ảnh xem thử DÍNH theo màn hình nên kéo thanh nào cũng thấy đổi ngay.
    Màn hẹp thì xếp dọc, ảnh xem thử lên trên. */
@@ -839,3 +841,51 @@ body.p-video .phead h2 { color: var(--accent); }
 }
 .tl-block:hover { z-index: 10; border-color: var(--accent); }
 .tl-end { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--warn); z-index: 1; }
+
+/* ── 📤 Đăng bài — kênh riêng của myvideo (YouTube + Facebook) ───────────── */
+.dangcot { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+@media (max-width: 1000px) { .dangcot { grid-template-columns: 1fr; } }
+.dangkhung {
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--sunken); min-width: 0;
+}
+.dangkhung > .colhead:first-child { margin-top: 0; }
+.dangtab { width: 100%; border-collapse: collapse; }
+.dangtab th, .dangtab td {
+  padding: 5px 8px; font-size: 12.5px; border-bottom: 1px solid var(--line);
+  text-align: center; white-space: nowrap;
+}
+.dangtab th { color: var(--muted); font-size: 11.5px; }
+.dangtab td.ten {
+  text-align: left; max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+}
+/* Dòng nhật ký của hai hàng đợi đăng — một dòng một mục, dài thì cắt đuôi. */
+.logline { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 🫥 Trang sửa vùng che sub gốc ─────────────────────────────────────────── */
+.vsbox { position: relative; margin-top: 10px; user-select: none; }
+.vsbox img { display: block; width: 100%; border-radius: var(--r-sm); }
+.vsdai {
+  position: absolute; left: 0; right: 0; cursor: grab; touch-action: none;
+  background: rgba(220, 38, 38, .28);
+  border-top: 2px solid #dc2626; border-bottom: 2px solid #dc2626;
+}
+.vsdai:active { cursor: grabbing; }
+.vsgrip {
+  position: absolute; left: 0; right: 0; height: 14px; cursor: ns-resize;
+}
+.vsgrip-tren { top: -8px; }
+.vsgrip-duoi { bottom: -8px; }
+
+/* ── 📊 Đồng hồ VRAM trên khối hàng đợi ───────────────────────────────────── */
+.vramrow {
+  display: flex; gap: 8px; align-items: center;
+  margin: 0 0 8px; font-size: 12.5px; color: var(--muted);
+}
+.vrambar {
+  flex: 0 1 160px; height: 6px; border-radius: 999px;
+  background: var(--sunken); overflow: hidden;
+}
+.vrambar i { display: block; height: 100%; background: var(--accent); }
+.vramrow.vram-warn { color: var(--warn); font-weight: 600; }
+.vramrow.vram-warn .vrambar i { background: var(--warn); }

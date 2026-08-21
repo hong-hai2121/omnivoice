@@ -9,8 +9,17 @@
 
 <div hx-swap-oob="innerHTML:#tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% elif ok %}<p class="okmsg">✓ {{ ok }}</p>{% endif %}</div>
 
-<div hx-swap-oob="innerHTML:#bang">{% include "_bang.html" %}</div>
+{# tren_dang / tren_hangdoi (xem _tra): nút bấm từ TAB nào thì chỉ vẽ lại các
+   khối của tab đó — #bang/#nguonchip ở trang quy trình, #dangkhoi ở tab 📤,
+   tab ⏱ chỉ có mỗi khối hàng đợi (phần chính ở trên) nên không cần OOB nào. #}
+{% if tren_dang %}
+  {# Khối 📤 Đăng bài: vẽ lại sau mỗi nút bấm để trạng thái SEO/thumb/đã đăng và
+     nhật ký hai hàng đợi đăng chạy theo ngay; còn việc thì nó tự vẽ 5s/lần. #}
+  <div hx-swap-oob="innerHTML:#dangkhoi">{% include "_dang.html" %}</div>
+{% elif not tren_hangdoi %}
+  <div hx-swap-oob="innerHTML:#bang">{% include "_bang.html" %}</div>
 
-{# Hàng chip "Gần đây": nguồn vừa chạy hiện ra ngay và dấu ✓/◐ chạy theo tiến
-   độ — trang không tải lại nên phải tự thay khối này. Ô nhập KHÔNG bị đụng. #}
-<div hx-swap-oob="innerHTML:#nguonchip">{% include "_nguon.html" %}</div>
+  {# Hàng chip "Gần đây": nguồn vừa chạy hiện ra ngay và dấu ✓/◐ chạy theo tiến
+     độ — trang không tải lại nên phải tự thay khối này. Ô nhập KHÔNG bị đụng. #}
+  <div hx-swap-oob="innerHTML:#nguonchip">{% include "_nguon.html" %}</div>
+{% endif %}

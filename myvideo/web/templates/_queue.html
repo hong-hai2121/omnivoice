@@ -1,3 +1,14 @@
+{# 📊 VRAM còn trống — card 8GB chia với Chrome: sắp cạn thì khoan xếp mẻ mới,
+   kẻo model tràn sang RAM chậm gấp chục lần. Máy không có nvidia thì ẩn. #}
+{% if vram %}
+  <div class="vramrow {{ 'vram-warn' if vram.warn }}"
+       title="nvidia-smi, làm mới ~5 giây/lần — trống dưới 1.5GB là cảnh báo">
+    <span>🎮 VRAM {{ '%.1f' % (vram.used / 1024) }}/{{ '%.1f' % (vram.total / 1024) }} GB</span>
+    <div class="vrambar"><i style="width: {{ vram.pct }}%"></i></div>
+    <span>trống {{ '%.1f' % (vram.free / 1024) }} GB{{ ' — sắp cạn, khoan xếp việc GPU mới' if vram.warn }}</span>
+  </div>
+{% endif %}
+
 {# Xong hết thì ngủ / tắt máy — nằm TRONG khối tự làm mới 2 giây/lần để đếm
    ngược hiện ngay tại đây. Bỏ tick là huỷ, kể cả lúc đang đếm. #}
 <form class="sleeprow" method="post" action="/hangdoi/power"

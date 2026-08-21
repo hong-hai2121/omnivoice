@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}📤 Đăng bài — myvideo{% endblock %}
+
+{# TAB RIÊNG cho khâu ĐĂNG BÀI — nằm ngoài vòng lặp 4 bước (dựng xong cả mẻ
+   mới ngó tới) nên tách khỏi trang chính cho cả hai trang đều gọn.
+
+   Vẫn cần khối hàng đợi ở đây: SEO + thumbnail chạy ở HÀNG ĐỢI CHÍNH (SEO
+   dùng Firefox như bước ②), và mọi nút của khối Đăng bài đều nhả kết quả vào
+   #queue. Ruột khối Đăng nằm trong _dang.html (dùng chung với swap ngoài
+   luồng của _capnhat.html); còn việc trong hàng đăng thì nó tự vẽ 5s/lần. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">📤</span> Đăng bài — theo hồ sơ kênh</h1>
+  <p class="muted">Video dựng xong bước ④ chờ ở đây: 📑 SEO → 🖼 thumbnail →
+    ⬆ YouTube · 📘 Facebook. Quy trình dựng nằm ở tab
+    <a href="/">🎬 Quy trình 4 bước</a>.</p>
+</div>
+
+{# Lời nhắn (lỗi / đã xong): khối nổi góc phải dưới, bấm vào là tắt. #}
+<div id="tinnhan" class="tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}</div>
+
+{# Khối hàng đợi đã ra TAB RIÊNG (/hangdoi) — SEO/thumbnail vẫn chạy ở hàng
+   đợi chính, theo dõi ở tab ⏱. #queue ẨN giữ làm mỏ neo cho mọi nút ở đây. #}
+<div id="queue" hidden></div>
+
+<div id="dangkhoi">
+  {% include "_dang.html" %}
+</div>
+
+<script>
+  // Lời nhắn góc phải: bấm vào là tắt. Nhật ký hàng đợi luôn cuộn xuống dòng
+  // mới nhất, kể cả sau khi htmx thay nội dung — y trang chính.
+  const tin = document.getElementById("tinnhan");
+  tin.addEventListener("click", () => tin.replaceChildren());
+  const cuonNhatKy = (root) =>
+    (root.querySelectorAll ? root : document)
+      .querySelectorAll(".loglines").forEach(p => { p.scrollTop = p.scrollHeight; });
+  cuonNhatKy(document);
+  document.body.addEventListener("htmx:afterSwap", e => cuonNhatKy(e.target));
+</script>
+{% endblock %}

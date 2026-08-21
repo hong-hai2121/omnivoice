@@ -1,0 +1,199 @@
+{# Khối 📤 ĐĂNG BÀI — YouTube + Facebook trên KÊNH RIÊNG của myvideo.
+
+   Kênh/Page mới CHƯA LẬP: nút đăng bị khoá kèm dòng "⏳" nói rõ bước cần làm
+   (client_secret + 🔑 cho YouTube; hai biến FB_*_MYVIDEO trong .env cho
+   Facebook). Logic đăng đã mang sẵn từ myvoice sang — điền cấu hình là chạy,
+   KHÔNG có đường lui nào sang kênh MimiAudio của myvoice.
+
+   Khối nằm trong #dangkhoi và được _capnhat.html vẽ lại sau mỗi nút bấm; còn
+   việc trong hàng đăng thì tự vẽ lại 5 giây/lần (hx-get dưới đây), rảnh thì
+   bản vẽ mới không còn hx-get nên vòng tự tắt — đúng nếp khối 📘 của myvoice. #}
+<div class="panel dangbox"
+     {% if dang.ban %}hx-get="/partials/dang" hx-trigger="every 5s"
+     hx-target="#dangkhoi" hx-swap="innerHTML"{% endif %}>
+  <div class="phead">
+    <span class="num">📤</span><h2>Đăng bài — theo hồ sơ kênh</h2>
+    <p class="hint">Video dựng xong bước ④ chờ ở đây: 📑 SEO → 🖼 thumbnail →
+      ⬆ YouTube (khung 08h/18h) · 📘 Facebook (khung 09h/19h). Tick vài video
+      thì các nút chỉ làm những video đó.</p>
+  </div>
+
+  <form method="post" action="/dang/youtube" id="dangform"
+        hx-post="/dang/youtube" hx-target="#queue" hx-swap="innerHTML">
+    {# ── HỒ SƠ KÊNH: mỗi tài khoản (YouTube + Page) một thư mục trong
+       myvideo/kenh/<tên>/ chứa trọn token + sổ sách — nhiều kênh không lẫn
+       nhau; trạng thái "đã đăng" ở bảng dưới tính theo kênh đang chọn. #}
+    <div class="ksubhang">
+      <span class="colhead">📡 Kênh đang dùng</span>
+      {% if dang.kenhs %}
+        <select name="kenh" style="max-width:220px"
+                hx-post="/dang/luu" hx-target="#queue" hx-swap="innerHTML"
+                title="Mỗi hồ sơ một thư mục trong myvideo/kenh/ — token, sổ đã đăng, lịch riêng hết">
+          {% for k in dang.kenhs %}
+            <option value="{{ k }}" {{ 'selected' if dang.kenh == k }}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      {% else %}
+        <span class="hint">chưa có hồ sơ nào — tạo hồ sơ đầu tiên ở ô bên phải ➡</span>
+      {% endif %}
+      <span class="spacer"></span>
+      <input name="tenmoi" placeholder="tên kênh mới (vd: kenh-phim)"
+             style="max-width:200px">
+      <button type="button" class="small"
+              hx-post="/kenh/tao" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Tạo thư mục hồ sơ myvideo/kenh/<tên> kèm facebook.json mẫu, rồi chọn luôn kênh đó">➕ Tạo hồ sơ kênh</button>
+    </div>
+    {# ── Bảng video đã dựng xong ──────────────────────────────────────────── #}
+    <div class="tablewrap">
+      <table class="dangtab">
+        <tr><th></th><th>Video</th><th>📑 SEO</th><th>🖼 Thumb</th>
+            <th>▶️ YouTube</th><th>📘 Facebook</th></tr>
+        {% for r in dang.rows %}
+          <tr>
+            <td><input type="checkbox" name="chon" value="{{ r.base }}"></td>
+            <td class="ten" title="{{ r.base }}">{{ r.ten }}</td>
+            <td>{{ '✔' if r.seo else '—' }}</td>
+            <td>{{ '✔' if r.thumb else '—' }}</td>
+            <td>{{ '✔ đã đăng' if r.yt else 'chưa' }}</td>
+            <td>{% if r.fb %}✔ đã đăng/chờ lịch{% elif r.fb_when %}dự kiến
+                {{ r.fb_when.strftime('%d/%m %H:%M') }}{% else %}chưa{% endif %}</td>
+          </tr>
+        {% endfor %}
+        {% if not dang.rows %}
+          <tr><td colspan="6" class="hint">Chưa có video nào dựng xong bước ④.</td></tr>
+        {% endif %}
+      </table>
+    </div>
+    <div class="actions">
+      {# SEO/Thumbnail chạy ở HÀNG ĐỢI CHÍNH (SEO cần Firefox như bước ②). #}
+      <button type="button" class="small"
+              hx-post="/seo" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Sinh tiêu đề + mô tả + tag từ SRT tiếng Việt bằng Gemini
+— cần TICK video, Firefox phải đóng, chạy ở hàng đợi chính">📑 Sinh SEO (tick video trước)</button>
+      <button type="button" class="small"
+              hx-post="/thumb" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Bắt khung hình của video + đè tiêu đề SEO — cần TICK video">🖼 Vẽ thumbnail (tick video trước)</button>
+      <label class="field" style="flex-direction:row; align-items:center; gap:6px">
+        <span class="hint" style="margin:0">Tên kênh (cho SEO nhắc tới, để trống nếu chưa đặt)</span>
+        <input name="seo_kenh" value="{{ settings.seo_kenh }}" style="max-width:180px">
+      </label>
+      <span class="spacer"></span>
+      <button type="button" class="small"
+              hx-post="/dang/luu" hx-target="#queue" hx-swap="innerHTML">💾 Lưu cài đặt đăng</button>
+    </div>
+
+    <div class="dangcot">
+      {# ── ▶️ YouTube ─────────────────────────────────────────────────────── #}
+      <div class="dangkhung">
+        <p class="colhead">▶️ YouTube — khung 08:00 &amp; 18:00</p>
+        {% if dang.yt_thieu %}
+          <p class="warn">⏳ {{ dang.yt_thieu }}</p>
+        {% elif dang.yt_note %}
+          <p class="hint">{{ dang.yt_note }}</p>
+        {% endif %}
+        <div class="grid">
+          <label class="field"><span>Danh mục</span>
+            <select name="yt_category">
+              {% for ten, id in dang.categories.items() %}
+                <option value="{{ id }}" {{ 'selected' if settings.yt_category == id }}>{{ ten }}</option>
+              {% endfor %}
+            </select></label>
+          <label class="field"><span>Chế độ đăng</span>
+            <select name="yt_privacy">
+              <option value="schedule" {{ 'selected' if settings.yt_privacy == 'schedule' }}>Hẹn giờ — khung trống kế tiếp</option>
+              <option value="public" {{ 'selected' if settings.yt_privacy == 'public' }}>Công khai ngay</option>
+              <option value="unlisted" {{ 'selected' if settings.yt_privacy == 'unlisted' }}>Không công khai (ai có link)</option>
+            </select></label>
+        </div>
+        <label class="chk"><input type="checkbox" name="yt_ai"
+               {{ 'checked' if settings.yt_ai }}> 🤖 Khai báo nội dung có dùng AI (giọng đọc tổng hợp)</label>
+        <label class="chk"><input type="checkbox" name="yt_kids"
+               {{ 'checked' if settings.yt_kids }}> 👶 Nội dung làm cho trẻ em (dưới 14 tuổi)</label>
+        <label class="chk"><input type="checkbox" name="auto_dang"
+               {{ 'checked' if settings.auto_dang }}> ⬆ Dựng xong video thì TỰ đăng
+               YouTube <span class="hint">(chỉ chạy khi kênh đã cấu hình — chưa có kênh thì chỉ ghi dòng nhắc)</span></label>
+        <div class="actions">
+          <button class="primary" hx-disabled-elt="this" {{ 'disabled' if dang.yt_thieu }}
+                  title="Không tick ô nào = đăng mọi video chưa đăng, cũ trước">⬆ Đăng các video chưa đăng</button>
+          <button type="button" class="small"
+                  hx-post="/dang/youtube/dangnhap" hx-target="#queue" hx-swap="innerHTML"
+                  hx-disabled-elt="this">🔑 Đăng nhập YouTube</button>
+          <button type="button" class="small"
+                  hx-post="/dang/youtube/dangnhap" hx-target="#queue" hx-swap="innerHTML"
+                  hx-vals='{"doikenh": "1"}' hx-disabled-elt="this"
+                  title="Bỏ token cũ (có backup), mở màn hình chọn tài khoản/kênh của Google">🔁 Đổi kênh…</button>
+        </div>
+        {% if dang.qd.busy or dang.qd.pending or dang.qd_log %}
+          <div class="uploadq">
+            <p class="colhead">Hàng đợi đăng YouTube
+              {% if dang.qd.current %}— {{ dang.qd.current.title }}{% endif %}
+              {% if dang.qd.pending %} · chờ {{ dang.qd.pending|length }}{% endif %}</p>
+            {% for l in dang.qd_log %}<p class="hint logline">{{ l }}</p>{% endfor %}
+            {% if dang.qd.busy or dang.qd.pending %}
+              <div class="actions">
+                <button type="button" class="small"
+                        hx-post="/hangdoi2/dang/skip" hx-target="#queue" hx-swap="innerHTML">⏭ Bỏ việc này</button>
+                <button type="button" class="small danger"
+                        hx-post="/hangdoi2/dang/stop" hx-target="#queue" hx-swap="innerHTML">⏹ Dừng hết</button>
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+
+      {# ── 📘 Facebook ────────────────────────────────────────────────────── #}
+      <div class="dangkhung">
+        <p class="colhead">📘 Facebook Page — khung 09:00 &amp; 19:00</p>
+        {% if dang.fb_thieu %}
+          <p class="warn">⏳ {{ dang.fb_thieu }}.</p>
+        {% endif %}
+        {% if dang.fb_cooldown %}<p class="warn">{{ dang.fb_cooldown }}</p>{% endif %}
+        <p class="hint">Sổ local: đã đăng {{ dang.fb_dadang }} bài
+          {% if dang.fb_synced %}· đối chiếu Page lần cuối {{ dang.fb_synced }}{% else %}· chưa đối chiếu Page lần nào{% endif %}.
+          Ngày "dự kiến" ở bảng trên tính bằng đúng phép tính lúc đăng thật.</p>
+        <label class="chk"><input type="checkbox" name="fb_auto"
+               {{ 'checked' if settings.fb_auto }}> 📘 Dựng xong video thì TỰ lên lịch
+               đăng Page <span class="hint">(mặc định TẮT — chỉ bật sau khi Page mới đã cấu hình)</span></label>
+        <div class="actions">
+          <button type="button" class="primary" {{ 'disabled' if dang.fb_thieu }}
+                  hx-post="/dang/facebook/chay" hx-target="#queue" hx-swap="innerHTML"
+                  hx-disabled-elt="this"
+                  title="Không tick = mọi video kênh này chưa đăng, cũ trước; xếp vào khung 9h/19h còn trống">📘 Lên lịch các video chưa đăng</button>
+          <button type="button" class="small" {{ 'disabled' if dang.fb_thieu }}
+                  hx-post="/dang/facebook/xemtruoc" hx-target="#queue" hx-swap="innerHTML"
+                  hx-disabled-elt="this">🔍 Xem kế hoạch (chưa đăng gì)</button>
+          <button type="button" class="small" {{ 'disabled' if dang.fb_thieu }}
+                  hx-post="/dang/facebook/quet" hx-target="#queue" hx-swap="innerHTML"
+                  hx-disabled-elt="this"
+                  title="Quét Page + đối chiếu sổ — bài bị xoá trên Page sẽ quay lại hàng chờ">🔄 Cập nhật lịch Page</button>
+        </div>
+        {% if dang.slots %}
+          <p class="colhead later">📅 Lịch đang chờ trên Page ({{ dang.slots|length }} bài)</p>
+          <p class="hint">
+            {% for s in dang.slots[:12] %}{{ s.when.strftime('%d/%m %H:%M') }}{% if s.ep %} (bài {{ s.ep }}){% endif %}{{ ' · ' if not loop.last }}{% endfor %}
+            {% if dang.slots|length > 12 %} …{% endif %}
+          </p>
+        {% endif %}
+        {% if dang.qf.busy or dang.qf.pending or dang.qf_log %}
+          <div class="uploadq">
+            <p class="colhead">Hàng đợi Facebook
+              {% if dang.qf.current %}— {{ dang.qf.current.title }}{% endif %}
+              {% if dang.qf.pending %} · chờ {{ dang.qf.pending|length }}{% endif %}</p>
+            {% for l in dang.qf_log %}<p class="hint logline">{{ l }}</p>{% endfor %}
+            {% if dang.qf.busy or dang.qf.pending %}
+              <div class="actions">
+                <button type="button" class="small"
+                        hx-post="/hangdoi2/fb/skip" hx-target="#queue" hx-swap="innerHTML">⏭ Bỏ việc này</button>
+                <button type="button" class="small danger"
+                        hx-post="/hangdoi2/fb/stop" hx-target="#queue" hx-swap="innerHTML">⏹ Dừng hết</button>
+              </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+</div>

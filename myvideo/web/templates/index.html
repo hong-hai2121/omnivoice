@@ -12,8 +12,9 @@
    — trang không tải lại nên không mất chỗ đang cuộn hay ô đang gõ dở. #}
 {% block content %}
 {# Bảng chọn MÀU dùng chung cho "màu chữ" và "màu viền" — y khuôn myvoice:
-   dãy ô màu sẵn + ô "tự chọn" (input color gắn radio riêng). data-truong/data-tom
-   khai cho JS biết bảng này sửa ô nào và cập nhật chấm màu nào ở dòng Đang chọn. #}
+   dãy ô màu sẵn + ô "tự chọn" (input color gắn radio riêng). Bảng nằm trong POPUP
+   như kiểu/font; data-truong khai cho JS bảng này sửa ô nào, data-tom liệt kê
+   (cách nhau dấu cách) các chỗ hiện màu đang chọn (chữ + chấm màu id+"Dot"). #}
 {% macro bang_mau(ten, hien_tai, pick_md, tom) %}
   {% set mau_san = ['FFFFFF', 'FFD700', 'FF9800', 'FF4D4D', 'FF6FA5',
                     '3DFF73', '00E5FF', '9C6BFF', '141414'] %}
@@ -51,8 +52,11 @@
    bấm đều nhả kết quả vào đây nên đứng ở đâu trên trang cũng thấy. #}
 <div id="tinnhan" class="tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}</div>
 
-<p class="colhead">⏱ Việc đang chạy</p>
-{% include "_queuepanel.html" %}
+{# Khối "⏱ Việc đang chạy" đã ra TAB RIÊNG (/hangdoi). #queue ẨN giữ lại làm
+   MỎ NEO: mọi nút trên trang vẫn hx-target="#queue" như cũ (không đổi logic) —
+   kết quả rơi vào đây (không hiển thị), còn lời nhắn góc phải vẫn hiện qua
+   swap ngoài luồng #tinnhan; muốn nhìn tiến độ thì mở tab ⏱. #}
+<div id="queue" hidden></div>
 
 {# method/action là đường lui khi không có JS; bình thường htmx gửi thay. #}
 <form method="post" action="/chay" id="mainform"
@@ -97,8 +101,17 @@
       <button name="start" value="thu60"
               hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
               hx-disabled-elt="this"
-              title="Cắt 60 giây đầu của mỗi file trong danh sách rồi chạy trọn 4 bước
-— duyệt giọng đọc, kiểu sub, vùng che trước khi chạy cả bài">🧪 Thử 60 giây đầu (bản nháp đủ 4 bước)</button>
+              title="Cắt 60 giây của mỗi file trong danh sách rồi chạy trọn 4 bước
+— duyệt giọng đọc, kiểu sub, vùng che trước khi chạy cả bài">🧪 Thử 60 giây (bản nháp đủ 4 bước)</button>
+      {# Mốc cắt của nút 🧪: 60s ĐẦU thường là intro nhạc hiệu, không đại diện
+         — điền số là cắt từ PHÚT đó (cho lẻ 2.5); trống/0 = từ đầu như cũ. #}
+      <label class="field" style="flex-direction:row; align-items:center; gap:6px">
+        <span class="hint" style="margin:0">từ phút thứ</span>
+        <input name="thu60_tu" type="number" min="0" max="600" step="0.5"
+               value="{{ settings.thu60_tu }}" placeholder="0 = đầu"
+               style="width:90px"
+               title="Cắt 60 giây bắt đầu từ phút này — nhảy vào giữa bài cho bản nháp đại diện hơn; trống/0 = từ đầu">
+      </label>
       <span class="spacer"></span>
       {# Xoá cả output để ngay đây cho gần chỗ bắt đầu một mẻ mới (trước nằm tít
          dưới bảng Kết quả). type=button + hx-post chứ KHÔNG phải submit: <form>
@@ -224,6 +237,15 @@
                value="{{ voice_stars|join('\n') }}">
       </label>
     </div>
+    {# 🔊 Nghe thử NGAY TRÊN TRANG (mang từ myvoice sang): đổi ô chọn là audio
+       trỏ sang file giọng đó — hết cảnh chọn giọng "mù" rồi tốn một lượt chạy
+       mới biết giọng ra sao. Nghe KẾT QUẢ từng video: nút 🔊 ở bảng Kết quả. #}
+    <div class="inline">
+      <span class="hint">🔊 Nghe thử giọng đang chọn:</span>
+      <audio id="gNghe" controls preload="none"></audio>
+      <span class="hint" id="gNgheTrong" style="display:none">— chọn một giọng
+        trong danh sách để nghe</span>
+    </div>
     <div class="actions">
       <button class="primary" name="start" value="giong"
               hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
@@ -251,6 +273,10 @@
       <label class="chk"><input type="checkbox" name="vesub" id="veSub"
                                 {{ 'checked' if settings.vesub }}>
         ✍️ Vẽ sub tiếng Việt lên video (bỏ tick = video SẠCH chữ — chỉ thay tiếng)</label>
+      <label class="chk"><input type="checkbox" name="xuatdoc"
+                                {{ 'checked' if settings.xuatdoc }}>
+        📱 Xuất thêm bản DỌC 9:16 (<code>_doc.mp4</code> — video giữa, nền chính nó
+        làm mờ kiểu TikTok/Shorts; chữ tự soạn lại theo khung dọc)</label>
     </div>
     {# ── Kho KIỂU PHỤ ĐỀ — cùng một khối với myvoice ────────────────────────
        Kho mẫu (myvoice/scripts/kieusub_mau) và kho font (myvoice/fonts) dùng
@@ -287,9 +313,9 @@
         </div>
         <div class="ksubbox">
           <div class="ksubbox-chon">
-            {# Hai lưới thẻ dài nhất (kiểu · font) nằm trong POPUP — ngoài trang
-               chỉ còn hàng "đang chọn + nút Chọn…" cho gọn; màu, cỡ, vị trí và
-               ảnh xem thử vẫn bày ngay tại chỗ. #}
+            {# Kiểu · font · màu chữ · màu viền đều nằm trong POPUP — ngoài trang
+               chỉ còn hàng "đang chọn + nút Chọn…" cho gọn; cỡ, vị trí và ảnh
+               xem thử vẫn bày ngay tại chỗ. #}
             <div class="ksubhang">
               <span class="colhead">🖼 Kiểu trình bày</span>
               <span class="ksub-nay" id="ksubNayKieu">{{ sel.ten }}</span>
@@ -362,14 +388,54 @@
                 </div>
               </div>
             </div>
-            {# Màu CHỮ: chỉ đè mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên. #}
-            <p class="colhead later">🎨 Màu chữ — đè màu chữ của kiểu (viền/nền giữ nguyên)</p>
-            {{ bang_mau('submau', settings.submau, 'FFD700', 'ksubHienMau') }}
+            {# Màu CHỮ: chỉ đè mau_chu — viền/bóng/nền/màu nổi bật karaoke giữ nguyên.
+               Cùng khuôn hàng + popup như kiểu/font; data-tom liệt kê CẢ HAI chỗ
+               hiện màu đang chọn (dòng tóm tắt đầu khối + ngay trên hàng này). #}
+            <div class="ksubhang">
+              <span class="colhead">🎨 Màu chữ</span>
+              <span class="ksub-nay"><i class="kmau-dot" id="ksubNayMauDot"
+                 style="background:#{{ settings.submau or 'FFF' }};{{ 'display:none' if not settings.submau }}"></i><span
+                 id="ksubNayMau">{{ ('#' ~ settings.submau) if settings.submau else '(theo kiểu)' }}</span></span>
+              <span class="spacer"></span>
+              <button type="button" class="small" data-mo="ksubModalMau">Chọn…</button>
+            </div>
+            <div class="modal ksubchon" id="ksubModalMau" style="display:none">
+              <div class="modal-card ksubmodal ksubmodal-mau">
+                <div class="modal-head">
+                  <b>🎨 Màu chữ</b>
+                  <span class="hint">đè màu chữ của kiểu — viền/nền giữ nguyên; bấm một ô là chọn xong</span>
+                  <span class="spacer"></span>
+                  <button type="button" class="small" data-dong>✕ Đóng</button>
+                </div>
+                <div class="modal-body">
+                  {{ bang_mau('submau', settings.submau, 'FFD700', 'ksubHienMau ksubNayMau') }}
+                </div>
+              </div>
+            </div>
             {# Màu VIỀN quanh chữ: chỉ đè mau_vien — thân chữ/bóng/nền giữ nguyên. #}
-            <p class="colhead later">🖍 Màu viền chữ — đè viền của kiểu (chữ/nền giữ nguyên)</p>
-            {{ bang_mau('submauvien', settings.submauvien, '000000', 'ksubHienVien') }}
-            <p class="hint">Kiểu KHÔNG có viền (hộp bo góc, mấy kiểu CapCut) hoặc kiểu
-               vẽ khối nền đặc thì đổi màu viền không thấy gì — nhìn ảnh xem thử là rõ.</p>
+            <div class="ksubhang">
+              <span class="colhead">🖍 Màu viền chữ</span>
+              <span class="ksub-nay"><i class="kmau-dot" id="ksubNayVienDot"
+                 style="background:#{{ settings.submauvien or 'FFF' }};{{ 'display:none' if not settings.submauvien }}"></i><span
+                 id="ksubNayVien">{{ ('#' ~ settings.submauvien) if settings.submauvien else '(theo kiểu)' }}</span></span>
+              <span class="spacer"></span>
+              <button type="button" class="small" data-mo="ksubModalVien">Chọn…</button>
+            </div>
+            <div class="modal ksubchon" id="ksubModalVien" style="display:none">
+              <div class="modal-card ksubmodal ksubmodal-mau">
+                <div class="modal-head">
+                  <b>🖍 Màu viền chữ</b>
+                  <span class="hint">đè viền của kiểu — chữ/nền giữ nguyên; bấm một ô là chọn xong</span>
+                  <span class="spacer"></span>
+                  <button type="button" class="small" data-dong>✕ Đóng</button>
+                </div>
+                <div class="modal-body">
+                  {{ bang_mau('submauvien', settings.submauvien, '000000', 'ksubHienVien ksubNayVien') }}
+                  <p class="hint">Kiểu KHÔNG có viền (hộp bo góc, mấy kiểu CapCut) hoặc kiểu
+                     vẽ khối nền đặc thì đổi màu viền không thấy gì — nhìn ảnh xem thử là rõ.</p>
+                </div>
+              </div>
+            </div>
           </div>
           {# Cột xem thử DÍNH theo màn hình (sticky): ảnh trên là tổ hợp kiểu+font+màu,
              ảnh dưới là CẢ khung ngang 16:9 để ngắm vị trí chữ. Server render bằng
@@ -397,6 +463,13 @@
                        value="{{ settings.subcochu or 100 }}">
               </label>
               <label class="kvitri-thanh">
+                <span class="hint">📏 Số dòng mỗi lần hiện chữ</span>
+                <select name="subdong" id="kdongChon">
+                  <option value="2" {{ 'selected' if settings.subdong != '1' }}>2 dòng (như ảnh mẫu)</option>
+                  <option value="1" {{ 'selected' if settings.subdong == '1' }}>1 dòng</option>
+                </select>
+              </label>
+              <label class="kvitri-thanh">
                 <span class="hint">📏 Số ký tự tối đa mỗi dòng hiển thị</span>
                 <input name="subchars" type="number" min="10" max="120"
                        value="{{ settings.subchars }}">
@@ -416,6 +489,35 @@
         </div>
       {% endif %}
     </div>
+    <div class="grid">
+      <label class="field">
+        <span>🔎 Phóng to video nền % — phóng bấy nhiêu % (vd 20 = to gấp 1.2 lần)
+          rồi cắt giữa về đúng khung cũ: mép hình mất đều bốn phía, độ phân giải
+          giữ nguyên. 0 hoặc bỏ trống = không phóng. Chữ vẽ SAU zoom nên không
+          bị phóng theo; dải che mờ vẫn che đúng chỗ.</span>
+        <input name="zoom" type="number" min="0" max="100" step="5"
+               value="{{ settings.zoom }}" placeholder="0 = giữ nguyên">
+      </label>
+      {# 🎵 Nhạc nền: kho là thư mục myvideo/nhac — bỏ file vào là ô này thấy.
+         Mặc định "(không)" — chưa chọn thì bước ④ không đụng gì tới tiếng. #}
+      <label class="field">
+        <span>🎵 Nhạc nền nhỏ dưới tiếng đọc — file trong <code>myvideo/nhac</code>
+          (bỏ mp3/wav vào đó rồi tải lại trang); nhạc ngắn tự lặp phủ hết video.
+          Chọn “(không)” = tắt.</span>
+        <select name="nhacnen">
+          <option value="">(không — mặc định)</option>
+          {% for n in nhacs %}
+            <option value="{{ n }}" {{ 'selected' if settings.nhacnen == n }}>{{ n }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field">
+        <span>🔉 Âm lượng nhạc nền (dB — càng âm càng nhỏ; −18 nghe rõ tiếng
+          đọc, nhạc chỉ lót nền)</span>
+        <input name="nhacnen_db" type="number" min="-40" max="0" step="1"
+               value="{{ settings.nhacnen_db }}">
+      </label>
+    </div>
     <div class="actions">
       <button class="primary" name="start" value="gan"
               hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
@@ -425,7 +527,17 @@
       <label class="chk"><input type="checkbox" name="chesub" {{ 'checked' if settings.chesub }}>
         🫥 Che mờ sub gốc đốt trong hình: tự dò dải chữ (10 khung hình) rồi LÀM MỜ dải đó
         suốt video, sub Việt đè lên trên dải mờ (bỏ tick = để nguyên sub gốc;
-        dò lệch: sửa file <code>_vungsub.json</code>)</label>
+        dò lệch: bấm nút 🫥 ở bảng Kết quả để KÉO dải trên khung hình thật)</label>
+      {# 🏷 Nhận diện KÊNH — hai ô mặc định TẮT; file lấy theo HỒ SƠ KÊNH đang
+         chọn ở khối 📤 Đăng bài (kenh/<tên>/logo.png · outro.mp4). Thiếu file
+         thì lượt dựng tự bỏ qua phần đó, không lỗi. #}
+      <label class="chk"><input type="checkbox" name="logo_kenh" {{ 'checked' if settings.logo_kenh }}>
+        🏷 Đóng LOGO kênh góc phải trên suốt video — đặt file
+        <code>kenh/&lt;tên kênh&gt;/logo.png</code> (PNG nền trong suốt, rộng ~12% khung)</label>
+      <label class="chk"><input type="checkbox" name="outro_kenh" {{ 'checked' if settings.outro_kenh }}>
+        🎬 Nối OUTRO kênh vào cuối video (kêu gọi đăng ký…) — đặt file
+        <code>kenh/&lt;tên kênh&gt;/outro.mp4</code>; outro được nối
+        <b>không encode lại</b> video chính nên không mất chất lượng</label>
       <label class="chk"><input type="checkbox" name="thaytieng" {{ 'checked' if settings.thaytieng }}>
         🔊 Thay tiếng bằng giọng Việt đã xếp (dùng <code>_vi_sapxep.srt</code> +
         <code>_vi_audio.wav</code>; bỏ tick = giữ tiếng gốc, sub <code>_vi.srt</code>)</label>
@@ -448,6 +560,9 @@
 <div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
   {% include "_bang.html" %}
 </div>
+
+{# 📤 Đăng bài đã ra TAB RIÊNG (/dangbai): khâu đó nằm NGOÀI vòng lặp 4 bước —
+   dựng xong cả mẻ mới ngó tới, để chung chỉ làm trang chính dài ra. #}
 
 <script>
   // ── Lời nhắn góc phải: bấm vào là tắt ────────────────────────────────────
@@ -646,6 +761,22 @@
     gSao.classList.toggle("on", co);
     gSao.title = co ? "Bỏ ghim giọng này khỏi đầu danh sách"
                     : "Ghim giọng đang chọn lên đầu danh sách";
+    // 🔊 Nghe thử: trỏ audio sang giọng đang chọn (preload=none nên chưa tải
+    // gì cho tới lúc bấm ▶). Đang phát mà đổi giọng thì dừng cho đỡ hẫng.
+    const nghe = document.getElementById("gNghe");
+    const trong = document.getElementById("gNgheTrong");
+    if (nghe) {
+      nghe.pause();
+      if (gSel.value) {
+        nghe.src = "/nghe/giong?ten=" + encodeURIComponent(gSel.value);
+        nghe.style.display = "";
+        trong.style.display = "none";
+      } else {
+        nghe.removeAttribute("src");
+        nghe.style.display = "none";
+        trong.style.display = "";
+      }
+    }
   };
   gSao.addEventListener("click", () => {
     const v = gSel.value;
@@ -709,11 +840,13 @@
       const r = document.querySelector("input[name=" + n + "]:checked");
       return r ? r.value : "";
     };
-    // Cỡ chữ (% cỡ gốc của kiểu) + màu viền đi kèm MỌI ảnh xem trước, kẻo ảnh
-    // một đằng video một nẻo.
+    // Cỡ chữ (% cỡ gốc của kiểu) + số dòng mỗi lần hiện chữ + màu viền —
+    // cùng đi kèm MỌI ảnh xem trước, kẻo ảnh một đằng video một nẻo.
     const cochuKeo = document.getElementById("kcochuKeo");
     const cochuSo = document.getElementById("kcochuSo");
+    const dongChon = document.getElementById("kdongChon");
     const themCo = () => "&cochu=" + encodeURIComponent(cochuKeo.value) +
+      "&dong=" + encodeURIComponent(dongChon.value) +
       "&mauvien=" + encodeURIComponent(chon("submauvien"));
     const capNhatXemThu = () => {
       const url = "/kieusub-xemtruoc?kieu=" +
@@ -768,10 +901,13 @@
       clearTimeout(cochuHen);            // hẹn riêng, khỏi nuốt lượt vẽ của vị trí
       cochuHen = setTimeout(capNhatCaHai, 350);
     });
+    // Đổi số dòng vẽ lại luôn (không hẹn giờ như thanh kéo — chọn là chốt).
+    dongChon.addEventListener("change", capNhatCaHai);
     document.getElementById("kvitriMacDinh").addEventListener("click", () => {
       vitriGT.value = "";
       vitriKeo.value = VITRI_MD;
       cochuKeo.value = 100;
+      dongChon.value = "2";
       veVitriNhan();
       veCochuNhan();
       capNhatCaHai();
@@ -796,21 +932,28 @@
       }));
     // Bảng màu: swatch có sẵn + ô tự chọn (input color gắn radio riêng). MÀU CHỮ
     // và MÀU VIỀN là hai bảng cùng khuôn nên chạy chung một đoạn — .kmaus tự khai
-    // qua data-truong/data-tom nó sửa ô nào, cập nhật chấm màu nào ở dòng Đang chọn.
+    // qua data-truong nó sửa ô nào; data-tom liệt kê (cách nhau dấu cách) các chỗ
+    // hiện màu đang chọn: dòng tóm tắt đầu khối + hàng "Chọn…", mỗi id kèm chấm
+    // màu id+"Dot". Bấm ô màu SẴN là chọn xong nên popup tự đóng như kiểu/font;
+    // riêng ô "tự chọn" giữ popup mở cho hộp màu hệ thống còn chỗ đứng.
     box.querySelectorAll(".kmaus").forEach(bang => {
       const truong = bang.dataset.truong;
-      const chu = document.getElementById(bang.dataset.tom);
-      const dot = document.getElementById(bang.dataset.tom + "Dot");
-      const veTom = v => {
+      const veTom = v => bang.dataset.tom.split(" ").forEach(id => {
+        const chu = document.getElementById(id);
+        const dot = document.getElementById(id + "Dot");
         if (chu) chu.textContent = v ? "#" + v : "(theo kiểu)";
         if (!dot) return;
         dot.style.display = v ? "" : "none";
         if (v) dot.style.background = "#" + v;
-      };
+      });
       const khac = bang.querySelector(".kmau-khac");
       const pick = bang.querySelector(".kmau-pick");
       bang.querySelectorAll("input[name=" + truong + "]").forEach(r =>
-        r.addEventListener("change", () => { veTom(r.value); capNhatCaHai(); }));
+        r.addEventListener("change", () => {
+          veTom(r.value);
+          capNhatCaHai();
+          if (r !== khac) dongPopup();
+        }));
       pick.addEventListener("input", () => {
         khac.value = pick.value.slice(1).toUpperCase();
         khac.checked = true;

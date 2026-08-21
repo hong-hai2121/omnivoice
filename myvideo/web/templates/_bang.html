@@ -22,6 +22,7 @@
           <th>② SRT Việt</th>
           <th>③ Giọng + xếp</th>
           <th>④ Video sub</th>
+          <th title="Soát tự động: câu còn sót chữ Hán trong bản dịch · câu bị xếp lệch mốc quá 3 giây">🚨 Soát</th>
           <th>Làm tiếp</th>
           <th>Chạy lại</th>
           <th>Xoá</th>
@@ -34,8 +35,29 @@
           <td class="{{ 'okc' if r.video and r.srt else 'no' }}">{{
             '✔' if r.video and r.srt else ('chỉ SRT' if r.srt else ('chỉ video' if r.video else '—')) }}</td>
           <td class="{{ 'okc' if r.vi else 'no' }}">{{ '✔' if r.vi else '—' }}</td>
-          <td class="{{ 'okc' if r.audio else 'no' }}">{{ '✔' if r.audio else '—' }}</td>
+          <td class="{{ 'okc' if r.audio else 'no' }}">{{ '✔' if r.audio else '—' }}{%
+            if r.audio %} <a class="ghost small" target="_blank"
+               href="/nghe/ketqua?base={{ r.base | urlencode }}"
+               title="Nghe audio tiếng Việt đã xếp — duyệt giọng TRƯỚC khi dựng bước ④">🔊</a>{% endif %}</td>
           <td class="{{ 'okc' if r.sub else 'no' }}">{{ '✔' if r.sub else '—' }}</td>
+          {# 🚨 Soát HAI BẬC: sót Hán / lệch >10s → ⚠️ đỏ; lệch 3-10s → ghi chú
+             mờ (bộ xếp chống đè lệch vài giây là thường). Bấm được thì mở
+             timeline xếp audio để xem đúng chỗ. #}
+          <td>
+            {% if r.soat and r.soat.loi %}
+              {% if r.tl %}
+                <form method="get" action="/timeline" style="display:inline">
+                  <input type="hidden" name="base" value="{{ r.base }}">
+                  <button class="ghost small" title="{{ (r.soat.loi + r.soat.nhe) | join(' · ') }}">⚠️</button>
+                </form>
+              {% else %}
+                <span title="{{ (r.soat.loi + r.soat.nhe) | join(' · ') }}">⚠️</span>
+              {% endif %}
+            {% elif r.soat and r.soat.nhe %}
+              <span class="no" title="{{ r.soat.nhe | join(' · ') }}">±{{ '%.0f' % (r.soat.lech_max / 1000) }}s</span>
+            {% elif r.vi %}<span class="okc" title="Bản dịch không sót chữ Hán, timeline không câu nào lệch quá 3s">✓</span>
+            {% else %}—{% endif %}
+          </td>
           <td>
             {% if r.missing %}
               <form method="post" action="/tiep">
@@ -64,6 +86,13 @@
                 <input type="hidden" name="base" value="{{ r.base }}">
                 <button class="ghost small"
                         title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</button>
+              </form>
+            {% endif %}
+            {% if r.video %}
+              <form method="get" action="/vungsub" style="display:inline">
+                <input type="hidden" name="base" value="{{ r.base }}">
+                <button class="ghost small"
+                        title="Sửa VÙNG CHE sub gốc bằng mắt — kéo dải trên khung hình thật thay vì đoán số trong _vungsub.json">🫥</button>
               </form>
             {% endif %}
           </td>

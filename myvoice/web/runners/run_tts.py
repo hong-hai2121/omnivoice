@@ -102,6 +102,7 @@ def main(argv=None) -> int:
         sub_mau_vien=ts.get("sub_mau_vien", ""),
         sub_vitri=ts.get("sub_vitri", ""),
         sub_cochu=ts.get("sub_cochu", ""),
+        sub_bengang=ts.get("sub_bengang", ""),
         sub_dong=ts.get("sub_dong", 2),
     )
 

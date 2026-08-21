@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -27,7 +29,7 @@ from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
-                               RedirectResponse)
+                               RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -36,7 +38,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvideo.web"
 
 from . import steps as st            # noqa: E402
-from .jobs import q, tail            # noqa: E402
+from .jobs import (q, q_dang, q_fb, tail, tail_dang, tail_fb)  # noqa: E402
 from .power import watcher as power  # noqa: E402
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -90,8 +92,33 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 # Đè lên kiểu đã chọn (rỗng = giữ của kiểu): màu chữ · màu viền
                 # · cỡ chữ (% cỡ gốc) · vị trí (% chiều cao từ đáy; rỗng = tự đặt).
                 submau="", submauvien="", subcochu="100", subvitri="",
+                # Số dòng mỗi lần hiện chữ (2 = như ảnh mẫu của kho kiểu; câu
+                # dài hơn thì bước ④ tách thành nhiều lần hiện nối nhau).
+                subdong="2",
+                # Phóng to video NỀN bấy nhiêu % rồi cắt giữa về khung cũ
+                # (rỗng/0 = giữ nguyên). Chữ vẽ sau zoom nên không phóng theo.
+                zoom="",
                 chesub=True, vesub=True,
+                # 📱 kèm bản DỌC 9:16 (<B>_doc.mp4) sau bước ④ — mặc định tắt.
+                xuatdoc=False,
+                # 🎵 Nhạc nền nhỏ dưới tiếng chính: tên file trong myvideo/nhac
+                # (rỗng = không nhạc — mặc định tắt) + âm lượng dB (âm).
+                nhacnen="", nhacnen_db="-18",
+                # 🏷 Đóng logo / nối outro của HỒ SƠ KÊNH đang chọn
+                # (kenh/<tên>/logo.png · outro.mp4) — mặc định tắt cả hai.
+                logo_kenh=False, outro_kenh=False,
+                # 🧪 Nút thử cắt 60 giây TỪ PHÚT THỨ này (0/rỗng = từ đầu).
+                thu60_tu="",
                 auto2=True, auto3=True, auto4=True, thaytieng=True, cpu=False,
+                # Khối 📤 ĐĂNG BÀI (lưu qua /dang/luu, KHÔNG nằm trong form chính):
+                # `kenh` = HỒ SƠ KÊNH đang dùng (thư mục trong myvideo/kenh/ —
+                # nhiều tài khoản, xem kenh_hoso.py); cài đặt YouTube + tên kênh
+                # cho SEO. Hai ô TỰ ĐỘNG đăng sau bước ④ mặc định TẮT (khác
+                # myvoice) — hồ sơ chưa cấu hình thì không tự ý lên lịch đi đâu
+                # cả; cấu hình xong người dùng tự bật.
+                kenh="",
+                yt_category="22", yt_privacy="schedule", yt_kids=False, yt_ai=True,
+                seo_kenh="", auto_dang=False, fb_auto=False,
                 # Nguồn đã chạy, mới nhất đứng đầu — hiện thành hàng chip
                 # "Gần đây" dưới ô Nguồn, bấm là điền lại, khỏi đi tìm.
                 src_history=[])
@@ -147,6 +174,16 @@ def _pct(v, lo: int, hi: int) -> str:
         return ""
     try:
         return str(max(lo, min(int(round(float(t))), hi)))
+    except ValueError:
+        return ""
+
+
+def _phut(v) -> str:
+    """Ô "từ phút thứ…" của nút 🧪: số phút (cho lẻ 2.5), rỗng/0/rác = từ đầu."""
+    t = str(v or "").strip().replace(",", ".")
+    try:
+        m = max(0.0, min(600.0, float(t)))
+        return f"{m:g}" if m else ""
     except ValueError:
         return ""
 
@@ -327,11 +364,106 @@ def _list_output(limit: int = 15) -> list[dict]:
             for p in items[:limit]]
 
 
+# ── 🚨 Soát chất lượng từng video (cột "Soát" của bảng Kết quả) ──────────────
+# Đọc _vi.srt (câu còn sót chữ Hán = dịch thiếu) + _vi_timeline.json (câu bị
+# xếp lệch xa mốc SRT = giọng đè nhau phải dời). Bảng tự vẽ lại 5 giây/lần nên
+# cache theo mtime — file không đổi thì không đọc lại.
+#
+# HAI BẬC báo — đo trên video thật: giọng Việt dài hơn khe tiếng gốc nên vài
+# giây lệch là chuyện THƯỜNG của bộ xếp chống đè, video nào cũng ⚠️ thì cột
+# thành vô dụng. Sót chữ Hán hoặc lệch quá 10s mới ⚠️ đỏ; lệch 3-10s chỉ ghi
+# chú mờ (di chuột đọc chi tiết, bấm 🎞 xem timeline).
+_HAN_RE = re.compile(r"[一-鿿㐀-䶿]")
+_LECH_MS = 3000                 # từ mức này tính là "có lệch" (ghi chú mờ)
+_LECH_NANG_MS = 10000           # lệch quá 10 giây = giọng lạc hẳn khỏi hình → ⚠️
+_SOAT_CACHE: dict[str, tuple[tuple, dict]] = {}
+
+
+def _soat(base: str) -> dict:
+    """→ {"han", "lech", "lech_max", "loi": [nặng → ⚠️], "nhe": [ghi chú mờ]}."""
+    srt = OUTPUT_DIR / f"{base}_vi.srt"
+    tl = OUTPUT_DIR / f"{base}_vi_timeline.json"
+
+    def _mt(p):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    key = (_mt(srt), _mt(tl))
+    hit = _SOAT_CACHE.get(base)
+    if hit and hit[0] == key:
+        return hit[1]
+
+    han = 0
+    if key[0]:
+        try:
+            for block in re.split(r"\n\s*\n", srt.read_text(encoding="utf-8-sig")):
+                text = "\n".join(l for l in block.splitlines()
+                                 if l.strip() and not l.strip().isdigit()
+                                 and "-->" not in l)
+                if len(_HAN_RE.findall(text)) >= 2:   # 1 chữ lẻ có thể là tên riêng
+                    han += 1
+        except OSError:
+            pass
+    lech = lech_max = 0
+    if key[1]:
+        try:
+            cues = json.loads(tl.read_text(encoding="utf-8")).get("cues", [])
+            do_lech = [abs(int(c.get("shift_ms", 0))) for c in cues]
+            lech = sum(1 for x in do_lech if x > _LECH_MS)
+            lech_max = max(do_lech, default=0)
+        except (OSError, ValueError):
+            pass
+    loi, nhe = [], []
+    if han:
+        loi.append(f"{han} câu còn sót chữ Hán trong bản dịch — sửa {base}_vi.srt "
+                   "rồi chạy lại ③④")
+    ghi_lech = (f"{lech} câu xếp lệch mốc quá {_LECH_MS // 1000}s "
+                f"(xa nhất {lech_max / 1000:.1f}s) — bấm 🎞 xem timeline")
+    if lech_max > _LECH_NANG_MS:
+        loi.append(ghi_lech)
+    elif lech:
+        nhe.append(ghi_lech)
+    out = {"han": han, "lech": lech, "lech_max": lech_max, "loi": loi, "nhe": nhe}
+    _SOAT_CACHE[base] = (key, out)
+    return out
+
+
 def _bang_ctx() -> dict:
     s = load_settings()
-    return {"rows": st.scan_rows(bool(s.get("thaytieng", True)),
-                                 vesub=bool(s.get("vesub", True))),
-            "files": _list_output(), "output_dir": str(OUTPUT_DIR)}
+    rows = st.scan_rows(bool(s.get("thaytieng", True)),
+                        vesub=bool(s.get("vesub", True)))
+    for r in rows:
+        r["soat"] = _soat(r["base"])
+    return {"rows": rows, "files": _list_output(), "output_dir": str(OUTPUT_DIR)}
+
+
+# ── 📊 VRAM còn trống (card 8GB dùng chung với Chrome — thấy sắp cạn thì khoan
+# xếp mẻ mới, kẻo model tràn sang RAM chậm gấp chục lần). Hỏi nvidia-smi tối đa
+# 5 giây/lần dù khối hàng đợi vẽ lại 2 giây/lần; máy không có nvidia thì thôi. #
+_VRAM_CACHE: dict = {"t": 0.0, "v": None}
+
+
+def _vram() -> dict | None:
+    now = time.time()
+    if now - _VRAM_CACHE["t"] < 5:
+        return _VRAM_CACHE["v"]
+    v = None
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=0x08000000 if sys.platform == "win32" else 0)
+        used, total = (int(x) for x in r.stdout.strip().splitlines()[0].split(","))
+        v = {"used": used, "total": total, "free": total - used,
+             "pct": round(100 * used / total),
+             "warn": total - used < 1500}       # dưới ~1.5GB là sắp tràn
+    except Exception:
+        v = None
+    _VRAM_CACHE.update(t=now, v=v)
+    return v
 
 
 def _home(loi: str = "") -> RedirectResponse:
@@ -355,10 +487,21 @@ def _tra(request: Request, loi: str = "", ok: str = "",
         return _home(loi)
     headers = ({"HX-Trigger": json.dumps({"mvid:xong": {"chay": chay}})}
                if luu and not loi else {})
-    return templates.TemplateResponse(
-        request, "_capnhat.html",
-        {"loi": loi, "ok": ok, **_queue_ctx(), **_bang_ctx(), **_nguon_ctx()},
-        headers=headers)
+    # 📤 Đăng bài và ⏱ Hàng đợi giờ là TAB RIÊNG: chỉ vẽ lại các khối CÓ MẶT
+    # trên trang vừa bấm nút (htmx gửi HX-Current-URL) — swap vào id không tồn
+    # tại là htmx la lỗi ở console, mà dựng context thừa cũng phí (quét sổ
+    # Facebook cho một nút bấm bên trang quy trình chẳng hạn). Khối hàng đợi
+    # LUÔN trả (trang nào cũng có #queue — hai trang kia là mỏ neo ẩn).
+    url = request.headers.get("hx-current-url") or ""
+    tren_dang, tren_hangdoi = "/dangbai" in url, "/hangdoi" in url
+    ctx = {"loi": loi, "ok": ok, "tren_dang": tren_dang,
+           "tren_hangdoi": tren_hangdoi, **_queue_ctx()}
+    if tren_dang:
+        ctx.update(_dang_ctx())
+    elif not tren_hangdoi:
+        ctx.update(**_bang_ctx(), **_nguon_ctx())
+    return templates.TemplateResponse(request, "_capnhat.html", ctx,
+                                      headers=headers)
 
 
 def _nguon_ctx() -> dict:
@@ -369,7 +512,8 @@ def _nguon_ctx() -> dict:
 
 # ── Trang chính + partial ────────────────────────────────────────────────────
 def _queue_ctx() -> dict:
-    return {"q": q.state(), "loglines": tail.tail(18), "power": power.state()}
+    return {"q": q.state(), "loglines": tail.tail(18), "power": power.state(),
+            "vram": _vram()}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -386,14 +530,38 @@ async def index(request: Request):
         "voices": [{"ten": v, "i": tt[v], "sao": v in stars}
                    for v in stars + [v for v in vs if v not in stars]],
         "voice_stars": stars,
+        # 🎵 Kho nhạc nền myvideo/nhac — cho ô chọn ở khối ④.
+        "nhacs": st.list_nhac(),
         # Kho kiểu + kho font đều kèm ẢNH XEM TRƯỚC (kieusub.py vẽ bằng đúng
         # libass sẽ burn) — thẻ ảnh chọn kiểu/font giống hệt myvoice.
         "sub_fonts": kieusub.danh_sach_font_web(),
         "kieusubs": kieusub.danh_sach_web(),
         "loi": request.query_params.get("loi", ""),
-        **_queue_ctx(),
         **_bang_ctx(),
         **_nguon_ctx(),
+    })
+
+
+@app.get("/dangbai", response_class=HTMLResponse)
+async def dangbai_view(request: Request):
+    """TAB 📤 Đăng bài — tách khỏi trang quy trình vì khâu này nằm NGOÀI vòng
+    lặp 4 bước (dựng xong cả mẻ mới ngó tới). _dang_ctx đã kèm settings."""
+    return templates.TemplateResponse(request, "dangbai.html", {
+        "trang": "dang",
+        "loi": request.query_params.get("loi", ""),
+        **_dang_ctx(),
+    })
+
+
+@app.get("/hangdoi", response_class=HTMLResponse)
+async def hangdoi_view(request: Request):
+    """TAB ⏱ Hàng đợi — nguyên khối "Việc đang chạy" của trang chính dời sang,
+    không đổi logic nào (vẫn _queuepanel.html tự làm mới 2 giây/lần)."""
+    return templates.TemplateResponse(request, "hangdoi.html", {
+        "settings": load_settings(),      # base.html cần settings.lang
+        "trang": "hangdoi",
+        "loi": request.query_params.get("loi", ""),
+        **_queue_ctx(),
     })
 
 
@@ -422,21 +590,21 @@ async def xoa_lich_su_nguon():
 @app.get("/kieusub-xemtruoc")
 def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
                      vitri: str = "", khung: str = "", cochu: str = "",
-                     mauvien: str = ""):
-    """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ (+ vị trí).
+                     dong: int = 2, mauvien: str = ""):
+    """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ + số dòng (+ vị trí).
 
     khung=ngang → khung 16:9 nguyên vẹn để thấy VỊ TRÍ chữ trên màn hình
     (vitri = % chiều cao từ đáy). Render bằng đúng libass sẽ burn nên nhìn sao
     ra vậy; mỗi tổ hợp chỉ render MỘT lần (cache xt_* trong kho ảnh dùng chung)
     nên lần đầu ~1-3 giây, các lần sau hiện ngay.
 
-    dong=2 cố định: phụ đề myvideo lấy nguyên câu từ SRT rồi mới ngắt dòng, số
-    dòng do độ dài câu quyết định chứ không gom được như bên myvoice.
+    dong = số dòng mỗi lần hiện chữ — bước ④ giờ tách câu SRT dài thành nhiều
+    lần hiện ≤ dong dòng (chia_cue của video_gansub_cung), cùng nghĩa myvoice.
     """
     try:
         p = kieusub.ve_xemtruoc(kieu, font, mau, vitri,
                                 ca_khung=(khung == "ngang"),
-                                cochu=cochu, dong=2, mau_vien=mauvien)
+                                cochu=cochu, dong=dong, mau_vien=mauvien)
     except Exception:
         p = None
     if not p:
@@ -498,6 +666,123 @@ async def timeline_view(request: Request, base: str = ""):
     })
 
 
+# ── 🫥 Sửa VÙNG CHE sub gốc bằng mắt ─────────────────────────────────────────
+# Trước đây dò lệch là phải mở <video>_vungsub.json đoán số pixel. Trang này
+# hiện KHUNG HÌNH THẬT của video với dải che tô màu đè lên — kéo hai mép (hoặc
+# gõ số) rồi Lưu; bước ④ đọc đúng file JSON đó khi ô "Che mờ sub gốc" bật.
+def _vungsub_video(base: str) -> Path | None:
+    if not st.is_base(base):
+        return None
+    v = OUTPUT_DIR / f"{base}.mp4"
+    return v if v.is_file() else None
+
+
+@app.get("/vungsub", response_class=HTMLResponse)
+def vungsub_view(request: Request, base: str = ""):
+    video = _vungsub_video(base)
+    if video is None:
+        return _home(f"{base}: chưa có video _x… trong output — chạy bước ① trước.")
+    import timvungsub
+    try:
+        w, h, dur = timvungsub._probe(video)
+    except Exception as e:
+        return _home(f"Không đọc được thông số video: {e}")
+    vung = None
+    try:
+        d = json.loads(timvungsub._cache_path(video).read_text(encoding="utf-8"))
+        if all(k in d for k in ("y0", "y1")):
+            vung = d
+    except (OSError, ValueError):
+        pass
+    # Chưa có vùng nào thì mở dải GỢI Ý ở khoảng sub hay nằm (72–88% chiều cao)
+    # cho có cái mà kéo — chưa lưu thì chưa ảnh hưởng gì tới bước ④.
+    y0 = int(vung["y0"]) if vung else round(h * 0.72)
+    y1 = int(vung["y1"]) if vung else round(h * 0.88)
+    return templates.TemplateResponse(request, "vungsub.html", {
+        "settings": load_settings(),      # base.html cần settings.lang
+        "base": base, "w": w, "h": h, "dur": dur,
+        "y0": max(0, min(h, y0)), "y1": max(0, min(h, y1)),
+        "co_vung": vung is not None,
+    })
+
+
+@app.get("/vungsub/khung")
+def vungsub_khung(base: str = "", t: float = -1.0):
+    """MỘT khung hình JPEG của video, nguyên cỡ — toạ độ trên ảnh = pixel video."""
+    video = _vungsub_video(base)
+    if video is None:
+        return JSONResponse({"error": "không thấy video"}, status_code=404)
+    import timvungsub
+    if t < 0:
+        try:
+            t = timvungsub._probe(video)[2] * 0.3
+        except Exception:
+            t = 30.0
+    r = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", f"{max(0.0, t):.2f}", "-i", str(video),
+         "-frames:v", "1", "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"],
+        capture_output=True, timeout=60)
+    if r.returncode != 0 or not r.stdout:
+        return JSONResponse({"error": "ffmpeg không bắt được khung hình"},
+                            status_code=500)
+    return Response(content=r.stdout, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.post("/vungsub/luu")
+def vungsub_luu(base: str = Form(...), y0: int = Form(...), y1: int = Form(...)):
+    video = _vungsub_video(base)
+    if video is None:
+        return JSONResponse({"error": "không thấy video"}, status_code=404)
+    import timvungsub
+    try:
+        w, h, _d = timvungsub._probe(video)
+    except Exception as e:
+        return JSONResponse({"error": f"không đọc được video: {e}"}, status_code=500)
+    y0, y1 = max(0, min(h, int(y0))), max(0, min(h, int(y1)))
+    if y1 - y0 < 8:
+        return JSONResponse({"error": "dải mỏng quá — kéo hai mép cách nhau ra"},
+                            status_code=400)
+    timvungsub._cache_path(video).write_text(json.dumps(
+        {"y0": y0, "y1": y1, "w": w, "h": h,
+         "ghi_chu": "sửa bằng trang 🫥 trên web; xoá file để dò lại tự động"},
+        ensure_ascii=False, indent=2), encoding="utf-8")
+    tail.add(f"🫥 {base}: đã lưu vùng che y {y0}–{y1}.")
+    return JSONResponse({"ok": True, "y0": y0, "y1": y1})
+
+
+@app.post("/vungsub/dola")
+def vungsub_dola(base: str = Form(...)):
+    """Chạy lại bộ dò tự động (10 khung hình, vài giây) — CHỈ trả kết quả cho
+    trang xem thử, chưa ghi gì; ưng thì bấm Lưu."""
+    video = _vungsub_video(base)
+    if video is None:
+        return JSONResponse({"error": "không thấy video"}, status_code=404)
+    import timvungsub
+    try:
+        vung = timvungsub.tim_vung(video, dung_cache=False)
+    except Exception as e:
+        return JSONResponse({"error": f"dò lỗi: {e}"}, status_code=500)
+    if not vung:
+        return JSONResponse({"none": True})
+    return JSONResponse({"y0": vung["y0"], "y1": vung["y1"]})
+
+
+@app.post("/vungsub/xoa")
+def vungsub_xoa(base: str = Form(...)):
+    """Bỏ vùng đã lưu — lượt dựng sau sẽ tự dò lại từ đầu."""
+    video = _vungsub_video(base)
+    if video is None:
+        return JSONResponse({"error": "không thấy video"}, status_code=404)
+    import timvungsub
+    try:
+        timvungsub._cache_path(video).unlink()
+    except OSError:
+        pass
+    tail.add(f"🫥 {base}: đã bỏ vùng che — lượt dựng sau tự dò lại.")
+    return JSONResponse({"ok": True})
+
+
 # ── Chạy việc ────────────────────────────────────────────────────────────────
 def _settings_from_form(form) -> dict:
     g = form.get
@@ -519,8 +804,17 @@ def _settings_from_form(form) -> dict:
         submauvien=_hex6(g("submauvien")),
         subcochu=_pct(g("subcochu"), 50, 200) or "100",
         subvitri=_pct(g("subvitri"), 0, 100),
+        subdong=g("subdong") if g("subdong") in ("1", "2") else "2",
+        zoom=_pct(g("zoom"), 0, 100),
         chesub=bool(g("chesub")),
         vesub=bool(g("vesub")),
+        xuatdoc=bool(g("xuatdoc")),
+        # Nhạc nền: chỉ nhận TÊN FILE trần trong kho myvideo/nhac (chặn ../).
+        nhacnen=(g("nhacnen") or "").strip()
+                if (g("nhacnen") or "") == Path((g("nhacnen") or "")).name else "",
+        nhacnen_db=str(_clamp(g("nhacnen_db"), -40, 0, -18)),
+        logo_kenh=bool(g("logo_kenh")), outro_kenh=bool(g("outro_kenh")),
+        thu60_tu=_phut(g("thu60_tu")),
         auto2=bool(g("auto2")), auto3=bool(g("auto3")), auto4=bool(g("auto4")),
         thaytieng=bool(g("thaytieng")), cpu=bool(g("cpu")),
     )
@@ -625,6 +919,320 @@ async def hd_power(request: Request):
     form = await request.form()
     power.arm(bool(form.get("on")), form.get("mode") or "")
     return _tra(request)
+
+
+# ── 📤 ĐĂNG BÀI: YouTube + Facebook theo HỒ SƠ KÊNH ──────────────────────────
+# Nhiều tài khoản quản lý dễ: mỗi kênh một thư mục myvideo/kenh/<tên>/ chứa
+# trọn token + sổ sách (xem myvideo/kenh_hoso.py); trang có ô chọn kênh đang
+# dùng + nút tạo kênh mới. Hồ sơ chưa cấu hình thì nút đăng khoá kèm dòng "⏳"
+# nói rõ bước cần làm — tách hẳn kênh MimiAudio của myvoice, không có đường
+# lui nào sang bên đó.
+from datetime import datetime as _dt            # noqa: E402
+
+for _p in (str(BASE_DIR), str(BASE_DIR / "YOUTUBE")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+import dang_video_youtube as mvyt    # noqa: E402
+import kenh_hoso as kh               # noqa: E402
+
+# Script Facebook nạp theo đường dẫn (không đặt myvideo/FACEBOOK vào sys.path —
+# kẻo trùng tên module với bản của myvoice nếu sau này cùng tiến trình).
+import importlib.util                # noqa: E402
+
+_fb_spec = importlib.util.spec_from_file_location(
+    "mv_dang_facebook", str(BASE_DIR / "FACEBOOK" / "dang_video_facebook.py"))
+mvfb = importlib.util.module_from_spec(_fb_spec)
+_fb_spec.loader.exec_module(mvfb)
+
+
+def _dang_ctx() -> dict:
+    """Context khối 📤 Đăng bài — dựng từ FILE (sổ + cache của HỒ SƠ KÊNH đang
+    chọn), không gọi API nào.
+
+    Ngày dự kiến đăng Page tính bằng ĐÚNG plan_slots/known_busy của script —
+    bảng nói một đằng Facebook nhận một nẻo là kiểu sai khó chịu nhất."""
+    s = load_settings()
+    ten = kh.hien_tai()
+
+    # ── YouTube của hồ sơ đang chọn ──────────────────────────────────────────
+    yt_thieu = kh.yt_thieu(ten)
+    yt_note = ""
+    if ten and not yt_thieu:
+        mvyt.chon_kenh(kh.thu_muc(ten), kh.client_secret(ten))
+        data = mvyt.load_video_cache()
+        entry = data["channels"].get(data.get("current"))
+        if entry:
+            ch = entry.get("channel", {})
+            try:
+                yt_note = (f"Kênh: {ch.get('title', '?')} · "
+                           f"{ch.get('video_count', 0)} video · khung trống kế tiếp "
+                           f"{mvyt.next_publish_slot():%d/%m %H:%M}")
+            except Exception:
+                yt_note = f"Kênh: {ch.get('title', '?')}"
+        else:
+            yt_note = "Đã đăng nhập — bấm 🔑 lần nữa để đọc thông tin kênh."
+
+    # ── Facebook của hồ sơ đang chọn ─────────────────────────────────────────
+    fb_thieu = kh.fb_thieu(ten)
+    fb_cooldown, fb_dadang, fb_synced = "", 0, ""
+    slots, fb_cho_bases, fb_dukien = [], set(), {}
+    if ten:
+        mvfb.chon_kenh(ten)                     # trỏ sổ/cache vào hồ sơ này
+        until, ly_do = mvfb.cooldown_left()
+        if until:
+            fb_cooldown = f"⏸ Đang tạm ngưng gọi Facebook tới {until:%H:%M} — {ly_do}"
+        led = mvfb.load_ledger()
+        cache = mvfb.load_cache()
+        fb_dadang = len(led.get("eps") or {})
+        fb_synced = (led.get("synced") or "")[:16].replace("T", " ")
+        fb_cho, _ = mvfb.pending_videos(led)
+        fb_dukien = {it["base"]: when for it, when in
+                     zip(fb_cho, mvfb.plan_slots(len(fb_cho), None,
+                                                 mvfb.known_busy(led, cache)))}
+        fb_cho_bases = {it["base"] for it in fb_cho}
+        # Lịch đang chờ trên Page (bản đọc ở lần 🔄 gần nhất) — mốc còn tương lai.
+        for sl in cache.get("slots") or []:
+            try:
+                t = _dt.fromisoformat(str(sl.get("when")))
+            except (TypeError, ValueError):
+                continue
+            if t > _dt.now():
+                slots.append({"when": t, "ep": sl.get("ep")})
+        slots.sort(key=lambda x: x["when"])
+
+    # Video đã dựng xong (bước ④) — trạng thái đăng tính THEO hồ sơ đang chọn
+    # (biên nhận ghi theo kênh: video lên kênh A vẫn là "chưa" với kênh B).
+    rows = [r for r in st.scan_rows(limit=100) if r["sub"]]
+    rows.reverse()                              # cũ trước, khớp thứ tự sẽ đăng
+    table = []
+    for r in rows:
+        yt_r = bool(ten and kenh_bien_nhan_yt(r["base"], ten))
+        table.append({"base": r["base"], "ten": mvfb.ten_hienthi(r["base"]),
+                      "seo": r["seo"], "thumb": r["thumb"], "yt": yt_r,
+                      "fb": bool(ten) and r["base"] not in fb_cho_bases,
+                      "fb_when": fb_dukien.get(r["base"])})
+
+    return {"settings": s, "dang": {
+        "kenh": ten, "kenhs": kh.danh_sach(), "kenh_dir": str(kh.KENH_DIR),
+        "yt_thieu": yt_thieu, "yt_note": yt_note,
+        "categories": mvyt.CATEGORIES,
+        "fb_thieu": fb_thieu, "fb_cooldown": fb_cooldown,
+        "fb_dadang": fb_dadang, "fb_synced": fb_synced,
+        "slots": slots, "rows": table,
+        "qd": q_dang.state(), "qd_log": tail_dang.tail(8),
+        "qf": q_fb.state(), "qf_log": tail_fb.tail(8),
+        # Còn việc (đang chạy HOẶC chờ) ở một trong hai hàng đăng → khối tự vẽ
+        # lại 5 giây/lần; rảnh thì bản vẽ mới không còn hx-get, vòng tự tắt.
+        "ban": q_dang.busy() or q_fb.busy(),
+    }}
+
+
+def kenh_bien_nhan_yt(base: str, ten: str) -> dict | None:
+    """Mục biên nhận YouTube của kênh `ten` cho một video (None = chưa đăng)."""
+    return kh.doc_bien_nhan(OUTPUT_DIR / f"{base}_youtube_upload.json").get(ten)
+
+
+def _queue_after_build(base: str) -> None:
+    """Hook của steps: xong bước ④ một video → tự xếp việc đăng NẾU ô tự động
+    đang bật VÀ hồ sơ kênh đang chọn đã cấu hình. Chưa cấu hình thì chỉ ghi một
+    dòng nhắc — tuyệt đối không có đường lui sang kênh của myvoice."""
+    s = load_settings()
+    ten = kh.hien_tai()
+    if s.get("auto_dang"):
+        thieu = kh.yt_thieu(ten)
+        if thieu:
+            tail_dang.add(f"⏳ Bỏ tự đăng YouTube ({Path(base).name}): {thieu}")
+        else:
+            title, job_steps = st.youtube_steps(base, ten)
+            q_dang.enqueue(title, job_steps)
+    if s.get("fb_auto"):
+        thieu = kh.fb_thieu(ten)
+        if thieu:
+            tail_fb.add(f"⏳ Bỏ tự lên lịch Facebook ({Path(base).name}): {thieu}")
+        else:
+            title, job_steps = st.facebook_steps("chay", ten, [base])
+            q_fb.enqueue(title, job_steps)
+
+
+st.after_build_hook = _queue_after_build
+
+
+def _chon_from(form) -> list[str]:
+    """Các ô tick trong bảng đăng bài (name=chon, value=base) — lọc tên hợp lệ."""
+    return [b for b in form.getlist("chon") if st.is_base(b)]
+
+
+@app.get("/partials/dang", response_class=HTMLResponse)
+async def partial_dang(request: Request):
+    return templates.TemplateResponse(request, "_dang.html", _dang_ctx())
+
+
+def _save_dang_form(form) -> None:
+    """Cài đặt của khối 📤 — nút 💾 lẫn MỌI nút chạy trong khối đều lưu (nếp
+    "bấm chạy cũng là lưu" của cả hai web). Các checkbox đều nằm trong form
+    #dangform nên vắng mặt = bỏ tick, suy được ý định."""
+    g = form.get
+    save_settings({
+        # Hồ sơ kênh đang dùng — chỉ nhận tên có thật trong myvideo/kenh/.
+        "kenh": g("kenh") if g("kenh") in kh.danh_sach() else "",
+        "yt_category": (g("yt_category")
+                        if str(g("yt_category")) in set(mvyt.CATEGORIES.values())
+                        else "22"),
+        "yt_privacy": (g("yt_privacy")
+                       if g("yt_privacy") in ("schedule", "public", "unlisted")
+                       else "schedule"),
+        "yt_kids": bool(g("yt_kids")),
+        "yt_ai": bool(g("yt_ai")),
+        "seo_kenh": (g("seo_kenh") or "").strip()[:80],
+        "auto_dang": bool(g("auto_dang")),
+        "fb_auto": bool(g("fb_auto")),
+    })
+
+
+@app.post("/dang/luu")
+async def dang_luu(request: Request):
+    _save_dang_form(await request.form())
+    return _tra(request, ok="Đã lưu cài đặt đăng bài", luu=True)
+
+
+@app.post("/kenh/tao")
+async def kenh_tao(request: Request):
+    """Tạo hồ sơ kênh mới (thư mục + facebook.json mẫu) rồi CHỌN LUÔN nó."""
+    form = await request.form()
+    ten = (form.get("tenmoi") or "").strip()
+    loi = kh.tao(ten)
+    if loi:
+        return _tra(request, loi)
+    save_settings({"kenh": ten})
+    return _tra(request, ok=f"📡 Đã tạo hồ sơ kênh “{ten}” và chọn làm kênh đang "
+                            f"dùng — điền facebook.json + 🔑 đăng nhập YouTube là xong",
+                luu=True)
+
+
+@app.post("/dang/youtube")
+async def dang_youtube(request: Request):
+    form = await request.form()
+    _save_dang_form(form)
+    ten = kh.hien_tai()
+    thieu = kh.yt_thieu(ten)
+    if thieu:
+        return _tra(request, f"⏳ YouTube của hồ sơ kênh chưa sẵn sàng: {thieu}")
+    chon = _chon_from(form)
+    if not chon:                    # không tick ô nào = mọi video KÊNH NÀY chưa đăng
+        chon = [r["base"] for r in st.scan_rows(limit=200)
+                if r["sub"] and not kenh_bien_nhan_yt(r["base"], ten)]
+        chon.reverse()              # cũ trước — thứ tự lên sóng khớp thứ tự dựng
+    if not chon:
+        return _tra(request, ok=f"Kênh “{ten}” không còn video nào chờ đăng YouTube")
+    for b in chon:
+        title, job_steps = st.youtube_steps(b, ten)
+        q_dang.enqueue(title, job_steps)
+    return _tra(request, ok=f"⬆ Đã xếp {len(chon)} video vào hàng đợi đăng "
+                            f"YouTube (kênh “{ten}”)")
+
+
+@app.post("/dang/youtube/dangnhap")
+async def dang_youtube_dangnhap(request: Request):
+    form = await request.form()
+    _save_dang_form(form)
+    ten = kh.hien_tai()
+    if not ten:
+        return _tra(request, "⏳ Chưa chọn hồ sơ kênh nào — tạo/chọn ở đầu khối Đăng bài.")
+    if not kh.client_secret(ten).exists():
+        return _tra(request, f"⏳ Chưa có client_secret.json — tải OAuth client từ "
+                             f"Google Cloud Console rồi đặt vào {kh.KENH_DIR} "
+                             f"(dùng chung) hoặc {kh.thu_muc(ten)} (riêng hồ sơ này)")
+    title, job_steps = st.youtube_login_steps(ten, bool(form.get("doikenh")))
+    # light: lượt đăng nhập không được kích hoạt "🌙 xong hết thì ngủ".
+    q_dang.enqueue(title, job_steps, light=True)
+    return _tra(request, ok=f"🔑 Đã xếp lượt đăng nhập cho hồ sơ “{ten}” — trình "
+                            "duyệt sẽ mở, nhớ chọn ĐÚNG kênh của hồ sơ này")
+
+
+@app.post("/dang/facebook/{mode}")
+async def dang_facebook(mode: str, request: Request):
+    if mode not in ("chay", "xemtruoc", "quet"):
+        return _tra(request, f"Chế độ không hợp lệ: {mode}")
+    form = await request.form()
+    _save_dang_form(form)
+    ten = kh.hien_tai()
+    thieu = kh.fb_thieu(ten)
+    if thieu:
+        return _tra(request, f"⏳ Facebook của hồ sơ kênh chưa sẵn sàng: {thieu}.")
+    chon = _chon_from(form) if mode == "chay" else []
+    title, job_steps = st.facebook_steps(mode, ten, chon)
+    # 🔍/🔄 là việc NHẸ — không kích hoạt 🌙 (học JobRunner.heavy_busy myvoice).
+    q_fb.enqueue(title, job_steps, light=(mode != "chay"))
+    return _tra(request, ok=f"Đã xếp: {title}")
+
+
+@app.post("/seo")
+async def seo_chay(request: Request):
+    form = await request.form()
+    chon = _chon_from(form)
+    if not chon and st.is_base(form.get("base") or ""):
+        chon = [form.get("base")]           # nút 📑 trên một hàng của bảng
+    if not chon:
+        return _tra(request, "Chưa chọn video nào để sinh SEO.")
+    title, job_steps = st.seo_steps(chon, force=bool(form.get("force")))
+    # Hàng đợi CHÍNH: SEO dùng Firefox, chạy song song bước ② là giẫm profile.
+    q.enqueue(title, job_steps)
+    return _tra(request, ok=f"Đã xếp: {title} — dùng Firefox nên xếp ở hàng đợi chính")
+
+
+@app.post("/thumb")
+async def thumb_chay(request: Request):
+    form = await request.form()
+    chon = _chon_from(form)
+    if not chon and st.is_base(form.get("base") or ""):
+        chon = [form.get("base")]
+    if not chon:
+        return _tra(request, "Chưa chọn video nào để vẽ thumbnail.")
+    title, job_steps = st.thumb_steps(chon, force=bool(form.get("force")))
+    q.enqueue(title, job_steps)
+    return _tra(request, ok=f"Đã xếp: {title}")
+
+
+_Q_DANG = {"dang": q_dang, "fb": q_fb}
+
+
+@app.post("/hangdoi2/{which}/{action}")
+async def hd2(which: str, action: str, request: Request):
+    """Điều khiển hai hàng đợi đăng — cùng bộ nút với hàng đợi chính."""
+    runner = _Q_DANG.get(which)
+    acts = {"pause": ("⏸ Đã tạm dừng", lambda r: r.pause()),
+            "resume": ("▶ Chạy tiếp", lambda r: r.resume()),
+            "skip": ("⏭ Đã bỏ việc đang chạy", lambda r: r.skip_current()),
+            "stop": ("⏹ Đã dừng hết", lambda r: r.stop_all())}
+    if runner is None or action not in acts:
+        return _tra(request, "Lệnh không hợp lệ")
+    msg, fn = acts[action]
+    fn(runner)
+    return _tra(request, ok=msg + (" (hàng đăng YouTube)" if which == "dang"
+                                   else " (hàng Facebook)"))
+
+
+# ── 🔊 Nghe thử: giọng mẫu + audio tiếng Việt đã xếp ─────────────────────────
+@app.get("/nghe/giong")
+async def nghe_giong(ten: str = ""):
+    """Stream file giọng mẫu trong myvideo/voice — tên phải có trong kho."""
+    if ten not in st.list_voices():
+        return JSONResponse({"error": "không có giọng này trong myvideo/voice"},
+                            status_code=404)
+    return FileResponse(str(st.VOICE_DIR / ten))
+
+
+@app.get("/nghe/ketqua")
+async def nghe_ketqua(base: str = ""):
+    """Audio tiếng Việt đã xếp timeline (<base>_vi_audio.wav) — nghe duyệt
+    giọng TRƯỚC khi tốn thời gian dựng bước ④."""
+    if not st.is_base(base):
+        return JSONResponse({"error": f"tên không hợp lệ: {base}"}, status_code=404)
+    f = Path(f"{OUTPUT_DIR / base}_vi_audio.wav")
+    if not f.is_file():
+        return JSONResponse({"error": "chưa có audio — chạy bước ③ trước"},
+                            status_code=404)
+    return FileResponse(str(f), media_type="audio/wav")
 
 
 # ── Xoá output: CHỈ đưa vào Thùng rác, có xác nhận ở trình duyệt ─────────────

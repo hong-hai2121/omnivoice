@@ -77,6 +77,8 @@ GOC = dict(
     pop=True,                             # hienlo/tungtu: từ mới phóng nhẹ
     lech=6,                               # glitch: hai bản màu lệch đi bấy nhiêu px
     ti_co=1.0,                            # tỉ lệ ap_cochu đã phóng (hộp bo góc dãn theo)
+    ti_ngang=1.0,                         # tỉ lệ BỀ NGANG của ap_bengang (nhân vào trần
+                                          # ký tự/dòng trong chon_max_chars)
     max_chars=0,                          # >0: trần ký tự/dòng RIÊNG của kiểu (font to
 )                                         # phải xuống dòng sớm hơn kẻo tràn mép)
 
@@ -147,12 +149,17 @@ def chon_max_chars(k: dict, user_max, doc: bool = False) -> int:
     Ngang: trần riêng của kiểu (font to → trần nhỏ) ∧ số người dùng đặt.
     Dọc (1080x1920): khung hẹp bằng 1080/1920 nên trần rút theo tỉ lệ 23/50 —
     kiểu mặc định (bề rộng chuẩn 50) ra đúng 23 như SUB_MAX_CHARS_DOC cũ.
+    Cuối cùng nhân ti_ngang (bề ngang % của ap_bengang) — áp SAU CÙNG để thanh
+    kéo hẹp/nới theo đúng một tỉ lệ trên cả khung ngang lẫn khung dọc.
     """
     user_max = int(user_max)
     if doc:
         goc = k["max_chars"] or 50        # bề rộng chuẩn khung ngang của kiểu
-        return min(user_max, max(8, round(goc * 23 / 50)))
-    return min(user_max, k["max_chars"]) if k["max_chars"] else user_max
+        mc = min(user_max, max(8, round(goc * 23 / 50)))
+    else:
+        mc = min(user_max, k["max_chars"]) if k["max_chars"] else user_max
+    ti = float(k.get("ti_ngang") or 1)
+    return mc if ti == 1 else max(8, round(mc * ti))
 
 
 # ── Kho font riêng cho ffmpeg/libass ─────────────────────────────────────────
@@ -281,6 +288,23 @@ def ap_cochu(k: dict, cochu) -> dict:
     return k
 
 
+def ap_bengang(k: dict, bengang) -> dict:
+    """BỀ NGANG dòng chữ theo % bề ngang chuẩn (rỗng/100 = giữ nguyên; 20–150).
+
+    KHÔNG đụng cỡ chữ — chỉ ghi ti_ngang để chon_max_chars nhân vào trần ký
+    tự/dòng: hẹp lại thì xuống dòng sớm hơn (chữ gom về giữa khung), nới quá
+    100% thì dòng dài ra — kéo quá tay là chữ chạm mép, nhìn ảnh xem thử
+    khung ngang là thấy ngay.
+    """
+    try:
+        pct = float(str(bengang).strip())
+    except (TypeError, ValueError):
+        return k
+    if not 20 <= pct <= 150 or round(pct) == 100:
+        return k
+    return {**k, "ti_ngang": pct / 100}
+
+
 # ── Đo chữ (chỉ kiểu hopbo cần, để tính bề rộng khung nền) ───────────────────
 def _text_width(text: str, k: dict) -> float:
     try:
@@ -296,6 +320,39 @@ def _line_metrics(k: dict) -> tuple[int, int]:
         return ImageFont.truetype(_fontfile(k), k["size"]).getmetrics()
     except Exception:
         return int(k["size"] * 0.9), int(k["size"] * 0.25)
+
+
+def _ti_ass(k: dict) -> float:
+    """Hệ số quy SỐ ĐO PIL về thang libass vẽ thật.
+
+    libass theo nết VSFilter: cỡ chữ ASS = chiều cao CẢ DÒNG (ascent+descent),
+    nên nó CO font lại còn size/(ascent+descent) so với PIL (đo ở em = size).
+    Mọi bề rộng/bề cao đo bằng PIL phải nhân hệ số này mới khớp hình render —
+    không nhân là hộp nền cao/rộng hơn chữ ~15-20%, chữ tụt xuống đáy hộp,
+    phía trên dư gấp đôi (đã đo pixel trên render thật để chốt).
+    """
+    a, d = _line_metrics(k)
+    return k["size"] / max(1.0, a + d)
+
+
+def _muc_dong(k: dict, dong_dau: str, dong_cuoi: str) -> tuple[float, float]:
+    """MỰC THẬT của chữ trong khung dòng: (khoảng rỗng trên dòng ĐẦU, mép mực
+    dưới cùng của dòng CUỐI, đo từ đỉnh khung dòng).
+
+    Ascent của font chừa sẵn chỗ cho dấu chồng cao nhất (Ấ, Ữ…), nên câu thường
+    không dấu cao là hở một dải trống trên đầu — hộp hopbo vẽ theo metric thì
+    NỀN PHÍA TRÊN DƯ hẳn ra so với phía dưới. Đo bbox của đúng dòng chữ sẽ vẽ
+    để hộp ôm sát chữ, đệm trên dưới ĐỀU nhau (hộp vốn đã co dãn bề ngang theo
+    từng câu, nên cao thấp nhích theo câu cũng cùng một nết).
+    Lỗi đo (thiếu PIL/glyph) → (0, ascent+descent) = hộp như cũ.
+    """
+    try:
+        from PIL import ImageFont
+        f = ImageFont.truetype(_fontfile(k), k["size"])
+        return (max(0, f.getbbox(dong_dau)[1]), f.getbbox(dong_cuoi)[3])
+    except Exception:
+        a, d = _line_metrics(k)
+        return 0, a + d
 
 
 def _rounded_rect_path(x0, y0, x1, y1, r) -> str:
@@ -387,19 +444,24 @@ def _ev_tinh(out, k, cue, st, en, extra):
 
 
 def _ev_hopbo(out, k, cue, st, en, extra, play_w, play_h, margin_v):
-    ascent, descent = _line_metrics(k)
-    line_h = ascent + descent
+    # libass vẽ MỖI DÒNG cao đúng bằng size (nết VSFilter) — số đo PIL phải
+    # nhân _ti_ass mới ra đúng chỗ mực trên hình (xem chú thích _ti_ass).
+    ti_ass = _ti_ass(k)
+    line_h = k["size"]
     cx = play_w / 2
     text_bottom = play_h - margin_v
     lines = cue.split("\n")
-    w = max(_text_width(ln, k) for ln in lines)
+    w = max(_text_width(ln, k) for ln in lines) * ti_ass
     # Chữ phóng to thì lề/bo góc của hộp phải dãn theo, không thì hộp bó sát
     # chữ trông như thiếu chỗ thở.
     ti = float(k.get("ti_co") or 1)
     pad_x, pad_y = BOX_PAD_X * ti, BOX_PAD_Y * ti
     x0, x1 = cx - w / 2 - pad_x, cx + w / 2 + pad_x
-    y1 = text_bottom + pad_y
-    y0 = text_bottom - line_h * len(lines) - pad_y
+    # Trên dưới ôm theo MỰC THẬT của chữ (xem _muc_dong) chứ không theo metric
+    # font — không thì câu không có dấu cao là nền phía trên dư hẳn ra.
+    ho_tren, muc_duoi = _muc_dong(k, lines[0], lines[-1])
+    y1 = text_bottom - line_h + muc_duoi * ti_ass + pad_y
+    y0 = text_bottom - line_h * len(lines) + ho_tren * ti_ass - pad_y
     path = _rounded_rect_path(x0, y0, x1, y1, BOX_RADIUS * ti)
     a, b = _ass_ts(st), _ass_ts(en)
     out.append(
@@ -554,7 +616,20 @@ def _wrap_tho(text: str, n: int) -> str:
         a, b = " ".join(words[:i]), " ".join(words[i:])
         if abs(len(a) - len(b)) < lech and len(a) <= n and len(b) <= n:
             best, lech = f"{a}\n{b}", abs(len(a) - len(b))
-    return best or text
+    if best:
+        return best
+    # Trần hẹp quá không chia đôi cân nổi (bề ngang kéo nhỏ) → bẻ THAM LAM
+    # thành mẩu ≤ n như wrap_sentence của burn thật, lấy 2 dòng đầu làm mẫu.
+    cac_dong, hien = [], ""
+    for w in words:
+        thu = (hien + " " + w).strip()
+        if hien and len(thu) > n:
+            cac_dong.append(hien)
+            hien = w
+        else:
+            hien = thu
+    cac_dong.append(hien)
+    return "\n".join(cac_dong[:2])
 
 
 def _cau_mau_theo_dong(k: dict, dong: int) -> str:
@@ -563,9 +638,45 @@ def _cau_mau_theo_dong(k: dict, dong: int) -> str:
     dong>=2: hai dòng cân đối (như ảnh mẫu trong kho kiểu).
     dong==1: chỉ mẩu ĐẦU — burn thật cắt câu dài thành nhiều lần hiện chữ, mỗi
     lần một dòng, nên vẽ cả câu vào một dòng là ảnh xem trước nói dối.
+    Trần ký tự nhân ti_ngang của ap_bengang — kéo bề ngang là ảnh bẻ dòng
+    đúng như burn thật (chon_max_chars cũng nhân đúng tỉ lệ này).
     """
-    cau = _wrap_tho(CAU_MAU, k["max_chars"])
+    n, ti = k["max_chars"], float(k.get("ti_ngang") or 1)
+    if ti != 1:
+        n = max(8, round((n or 50) * ti))
+    cau = _wrap_tho(CAU_MAU, n)
     return cau if dong >= 2 else cau.splitlines()[0]
+
+
+def _moc_bengang(k: dict, play_w: int = ASS_PLAY_W,
+                 play_h: int = ASS_PLAY_H) -> str:
+    """Hai VẠCH DỌC mờ đánh dấu hai đầu BỀ NGANG chữ cho ảnh review khung ngang.
+
+    Câu mẫu ngắn nên kéo thanh ↔ nhiều khi chữ chưa đổi chỗ xuống dòng — không
+    có mốc là không thấy gì đổi. Hai vạch này xích lại/dãn ra NGAY theo thanh
+    kéo nên luôn quan sát được giới hạn đang đặt. Chỉ chèn vào ảnh xem thử
+    (_ve_anh_kieu ca_khung=True), KHÔNG BAO GIỜ dính vào burn thật.
+
+    Bề ngang ước lượng = bề rộng ký tự trung bình của câu mẫu × trần ký
+    tự/dòng (đã nhân ti_ngang) — cùng phép tính mà chon_max_chars dùng để bẻ
+    dòng; đổi cỡ chữ % thì size tăng nhưng trần rút theo tỉ lệ ngược nên mốc
+    đứng yên, đúng như bề ngang thật không đổi.
+    """
+    ti = float(k.get("ti_ngang") or 1)
+    n = max(8, round((k["max_chars"] or 50) * ti))
+    # 1 ký tự trung bình (px) — nhân _ti_ass vì libass co font (xem _ti_ass).
+    rong1 = _text_width(CAU_MAU, k) / len(CAU_MAU) * _ti_ass(k)
+    nua = min(play_w / 2 - 8, rong1 * n / 2)         # kịch mép = đặt quá rộng
+    a, b = _ass_ts(0), _ass_ts(3.4)                  # phủ trọn clip xem thử
+    mau, day = _rgb_tag("00E5FF"), 4                 # vạch xanh lơ ~4px/1920
+    out = []
+    for x in (round(play_w / 2 - nua), round(play_w / 2 + nua)):
+        path = (f"m {x - day // 2} 0 l {x + day // 2} 0 "
+                f"{x + day // 2} {play_h} {x - day // 2} {play_h}")
+        out.append(f"Dialogue: 0,{a},{b},Box,,0,0,0,,"
+                   f"{{\\p1\\pos(0,0)\\c{mau}\\alpha&H50&\\bord0\\shad0}}"
+                   f"{path}{{\\p0}}\n")
+    return "".join(out)
 
 
 def ve_mau(k: dict) -> Path | None:
@@ -590,6 +701,9 @@ def _ve_anh_kieu(k: dict, ten_goc: str, margin_v: int = SUB_MARGIN_V,
     write_ass_kieu([_cau_mau_theo_dong(k, dong)], [(0.25, 3.15)], tmp, k,
                    margin_v=margin_v)
     if ca_khung:
+        # Vạch mốc hai đầu bề ngang — chỉ ảnh review, không có trong burn thật.
+        with tmp.open("a", encoding="utf-8") as f:
+            f.write(_moc_bengang(k))
         kich, vf_them = "768x432", ""
     else:
         kich, vf_them = "960x540", ",crop=960:300:0:240"
@@ -711,23 +825,27 @@ def vitri_margin(vitri, play_h: int, macdinh: int) -> int:
 
 def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
                 vitri="", ca_khung: bool = False, cochu="",
-                dong: int = 2, mau_vien: str = "") -> Path | None:
+                dong: int = 2, mau_vien: str = "",
+                bengang="") -> Path | None:
     """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ + số dòng (+ vị trí).
 
     ca_khung=True → khung ngang 16:9 NGUYÊN VẸN để thấy chữ nằm đâu trên màn
     hình (vitri = % chiều cao từ đáy, rỗng = mặc định 173px ≈ 16%).
     cochu = % phóng to/thu nhỏ chữ, dong = số dòng mỗi lần hiện chữ (1 hoặc 2),
-    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu).
+    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu),
+    bengang = % bề ngang dòng chữ (rỗng/100 = như cũ — xem ap_bengang).
     Không đè gì → trả thẳng ảnh mẫu sẵn có của kiểu. Còn lại render bản riêng
     vào cache xt_<hash> (mỗi tổ hợp chỉ render MỘT lần, lần sau trả ngay)."""
     co = str(cochu or "").strip()
     nguyen_co = (not co) or co in ("100", "100.0")
+    ngang = str(bengang or "").strip()
+    nguyen_ngang = (not ngang) or ngang in ("100", "100.0")
     dong = 1 if str(dong) in ("1", "1.0") else 2
-    k = ap_cochu(ap_mau_vien(ap_mau(ap_font(lay(kieu_id), font), mau),
-                             mau_vien), co)
+    k = ap_bengang(ap_cochu(ap_mau_vien(ap_mau(ap_font(lay(kieu_id), font),
+                                               mau), mau_vien), co), ngang)
     ext = ".webp" if k["hieuung"] in HIEUUNG_DONG else ".png"
     if (not font and not mau and not mau_vien and not ca_khung
-            and nguyen_co and dong == 2):
+            and nguyen_co and nguyen_ngang and dong == 2):
         p = ANH_DIR / (k["id"] + ext)
         return p if p.is_file() else ve_mau(k)
     margin = vitri_margin(vitri, ASS_PLAY_H, SUB_MARGIN_V)
@@ -738,8 +856,13 @@ def ve_xemtruoc(kieu_id: str, font: str = "", mau: str = "",
         nf = _nen_ngang()
         nen_mt = int(nf.stat().st_mtime) if nf else 0
     import hashlib
+    # 'ngang-moc1': ảnh khung ngang có VẠCH MỐC bề ngang — đổi nhãn khi đổi
+    # cách vẽ mốc để cache cũ (chưa có vạch) không bị trả nhầm.
+    khung_tag = "ngang-moc1" if ca_khung else ""
+    # 'box3': hộp hopbo ôm mực thật + quy thang libass (_ti_ass) — đổi nhãn mỗi
+    # lần hình học vẽ thay đổi để cache cũ không bị trả nhầm.
     key = hashlib.md5(f"{k['id']}|{font}|{mau}|{mau_vien}|{co}|{dong}|{margin}"
-                      f"|{ca_khung}|{nen_mt}".encode("utf-8")).hexdigest()[:12]
+                      f"|{khung_tag}|{nen_mt}|{ngang}|box3".encode("utf-8")).hexdigest()[:12]
     dest = ANH_DIR / (f"xt_{key}" + ext)
     if dest.is_file():
         return dest

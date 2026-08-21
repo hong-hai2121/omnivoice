@@ -1,0 +1,15 @@
+{
+  "thutu": 26,
+  "ten": "Pacifico mềm mại",
+  "mota": "Chữ lượn Pacifico trắng viền hồng — nhẹ nhàng, hợp nội dung đời sống/ẩm thực",
+  "hieuung": "tinh",
+  "font": "Pacifico",
+  "fontfile": "fonts/Pacifico-Regular.ttf",
+  "size": 64,
+  "bold": false,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "E75480",
+  "vien": 3,
+  "bong": 2,
+  "max_chars": 30
+}

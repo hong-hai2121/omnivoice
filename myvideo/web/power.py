@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 
-from .jobs import q
+from .jobs import q, q_dang, q_fb
 
 CREATE_NO_WINDOW = 0x08000000
 POLL_SEC = 5.0
@@ -117,11 +117,18 @@ class PowerWhenDone:
         with self._lock:
             if not self._armed:
                 return ""
-            if q.busy():
+            # Cả ba hàng đợi phải rảnh: đang tải video lên YouTube/Facebook mà
+            # máy ngủ là hỏng dở lượt đăng. Việc NHẸ (🔍 xem kế hoạch, 🔑 đăng
+            # nhập) không được TÍNH LÀ "đã thấy bận" — bấm xem kế hoạch xong mà
+            # máy tự ngủ sau 3 phút thì phiền (học heavy_busy bên myvoice)...
+            if q.busy() or q_dang.heavy_busy() or q_fb.heavy_busy():
                 self._saw_busy = True
                 if self._due:               # việc mới chen vào giữa lúc đếm ngược
                     self._due = 0.0
                     q.note("Có việc mới → huỷ đếm ngược, chờ xong hết đã.")
+                return ""
+            # ...nhưng lúc nó ĐANG chạy thì cũng không ngủ đè lên nó.
+            if q_dang.busy() or q_fb.busy():
                 return ""
             if not self._saw_busy:          # tick lúc đang rảnh: chờ mẻ tới
                 return ""

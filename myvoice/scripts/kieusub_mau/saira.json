@@ -1,0 +1,16 @@
+{
+  "thutu": 22,
+  "ten": "Saira cảnh báo",
+  "mota": "Saira Condensed Black cao gọn — IN HOA trắng viền đỏ, kiểu tiêu đề cảnh báo viral",
+  "hieuung": "tinh",
+  "font": "Saira Condensed Black",
+  "fontfile": "fonts/SairaCondensed-Black.ttf",
+  "size": 76,
+  "bold": false,
+  "hoa": true,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "D7263D",
+  "vien": 3,
+  "bong": 2,
+  "max_chars": 34
+}

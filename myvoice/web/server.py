@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import os
 import secrets
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -109,6 +111,9 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     # Ô "🌙 Xong hết thì cho máy ngủ" nằm trong khối hàng đợi → trang nào có khối
     # đó cũng cần trạng thái này.
     ctx.setdefault("sleepq", power.watcher.state())
+    # Đồng hồ 📊 VRAM cũng nằm trong khối hàng đợi — đưa vào từ lượt tải đầu,
+    # khỏi đợi htmx làm mới 2 giây sau mới hiện (có cache 5s nên không tốn gì).
+    ctx.setdefault("vram", _vram())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -479,19 +484,20 @@ async def save_voice_only(request: Request):
 @app.get("/giongnoi/kieusub-xemtruoc")
 def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
                      vitri: str = "", khung: str = "", cochu: str = "",
-                     dong: int = 2, mauvien: str = ""):
+                     dong: int = 2, mauvien: str = "", bengang: str = ""):
     """Ảnh xem thử TỔ HỢP kiểu + font + màu chữ/viền + cỡ chữ + số dòng (+ vị trí).
 
     khung=ngang → khung 16:9 nguyên vẹn để thấy VỊ TRÍ chữ trên màn hình
     (vitri = % chiều cao từ đáy). cochu = % phóng to/thu nhỏ chữ, dong = số
-    dòng mỗi lần hiện chữ. Render bằng đúng libass sẽ burn; mỗi tổ hợp chỉ
-    render một lần (cache xt_* trong static/kieusub) nên lần đầu ~1-3 giây,
-    các lần sau tức thì."""
+    dòng mỗi lần hiện chữ, bengang = % bề ngang dòng chữ (đổi chỗ xuống dòng).
+    Render bằng đúng libass sẽ burn; mỗi tổ hợp chỉ render một lần (cache
+    xt_* trong static/kieusub) nên lần đầu ~1-3 giây, các lần sau tức thì."""
     try:
         import kieusub
         p = kieusub.ve_xemtruoc(kieu, font, mau, vitri,
                                 ca_khung=(khung == "ngang"),
-                                cochu=cochu, dong=dong, mau_vien=mauvien)
+                                cochu=cochu, dong=dong, mau_vien=mauvien,
+                                bengang=bengang)
     except Exception:
         p = None
     if not p:
@@ -995,6 +1001,34 @@ def api_state():
     }
 
 
+# ── 📊 VRAM còn trống (card 8GB dùng chung với Chrome — thấy sắp cạn thì khoan
+# xếp mẻ mới, kẻo model tràn sang RAM chậm gấp chục lần). Hỏi nvidia-smi tối đa
+# 5 giây/lần dù khối hàng đợi vẽ lại 2 giây/lần; máy không có nvidia thì thôi.
+# Cùng khuôn với đồng hồ VRAM bên myvideo/web/server.py. #
+_VRAM_CACHE: dict = {"t": 0.0, "v": None}
+
+
+def _vram() -> dict | None:
+    now = time.time()
+    if now - _VRAM_CACHE["t"] < 5:
+        return _VRAM_CACHE["v"]
+    v = None
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=3,
+            creationflags=0x08000000 if sys.platform == "win32" else 0)
+        used, total = (int(x) for x in r.stdout.strip().splitlines()[0].split(","))
+        v = {"used": used, "total": total, "free": total - used,
+             "pct": round(100 * used / total),
+             "warn": total - used < 1500}       # dưới ~1.5GB là sắp tràn
+    except Exception:
+        v = None
+    _VRAM_CACHE.update(t=now, v=v)
+    return v
+
+
 @app.get("/partials/queue", response_class=HTMLResponse)
 def partial_queue(request: Request):
     return templates.TemplateResponse(
@@ -1002,7 +1036,7 @@ def partial_queue(request: Request):
         {"q": runner.state(), "qu": upload_runner.state(),
          "ulog": upload_log.tail(8), "upct": upload_log.percent,
          "qf": fb_runner.state(), "flog": fb_log.tail(8),
-         "sleepq": power.watcher.state()})
+         "sleepq": power.watcher.state(), "vram": _vram()})
 
 
 @app.get("/api/nhatky-dang")
@@ -1102,7 +1136,7 @@ _NUM_KEYS = {"chunk": int,
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
               "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",
-              "sub_vitri", "sub_cochu", "sub_mau_vien"]
+              "sub_vitri", "sub_cochu", "sub_bengang", "sub_mau_vien"]
 
 
 def _save_opts_from_form(form) -> dict:

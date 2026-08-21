@@ -797,6 +797,9 @@ def tts_settings() -> tuple[dict | None, str]:
         # Cỡ chữ = % so với cỡ gốc của kiểu (rỗng/100 = giữ nguyên); số dòng mỗi
         # lần hiện chữ (2 = gom hai dòng như ảnh mẫu của kho kiểu).
         sub_cochu=str(opts.get("sub_cochu") or ""),
+        # Bề ngang dòng chữ: % so với bề ngang chuẩn (rỗng/100 = như cũ) —
+        # hẹp lại thì xuống dòng sớm, chữ gom về giữa (kieusub.ap_bengang).
+        sub_bengang=str(opts.get("sub_bengang") or ""),
         sub_dong=_i(opts.get("sub_dong"), 2, 1, 2),
     ), ""
 
@@ -984,9 +987,9 @@ def missing_episodes() -> dict:
               vì sẽ đụng thư mục đã có; việc cần làm với chúng là bấm ⑥ Đăng YouTube.
 
     Số tập lấy bằng cách đọc 'Số N' trong tiêu đề video trên kênh, nên chỉ mới tới
-    lần đọc kênh gần nhất. Đọc kênh mặc định chỉ lấy 50 video mới nhất → chỉ dò
-    thiếu từ Số của video CŨ NHẤT đọc được trở lên (lo), số nhỏ hơn nằm ngoài tầm
-    nhìn nên không bị coi là thiếu — xem yt.find_missing_episodes.
+    lần đọc kênh gần nhất. Đọc kênh mặc định chỉ lấy 50 video mới nhất, và chỉ soát
+    20 số gần nhất tính từ số tập lớn nhất — số cũ hơn nằm ngoài tầm nhìn nên không
+    bị coi là thiếu — xem yt.find_missing_episodes / MISSING_CHECK_SPAN.
     """
     try:
         import dang_video_youtube as yt

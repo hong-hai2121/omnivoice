@@ -17,8 +17,14 @@
     <span class="logo">🎬</span>
     <span><b>myvideo</b><span>bảng điều khiển</span></span>
   </div>
+  {# trang = 'home' | 'hangdoi' | 'dang' — route đặt. Hàng đợi và Đăng bài là
+     TAB RIÊNG: cả hai đều nằm ngoài vòng thao tác chính (chọn nguồn → bấm
+     chạy), tách ra cho trang nào cũng gọn. #}
+  {% set _t = trang | default('home') %}
   <nav>
-    <a href="/" class="on"><span>🎬</span> Quy trình 4 bước</a>
+    <a href="/" class="{{ 'on' if _t == 'home' }}"><span>🎬</span> Quy trình 4 bước</a>
+    <a href="/hangdoi" class="{{ 'on' if _t == 'hangdoi' }}"><span>⏱</span> Hàng đợi</a>
+    <a href="/dangbai" class="{{ 'on' if _t == 'dang' }}"><span>📤</span> Đăng bài</a>
   </nav>
   <p class="sidefoot">① chậm + SRT Trung → ② dịch Gemini → ③ giọng OmniVoice
   → ④ sub cứng + thay tiếng.<br><br>

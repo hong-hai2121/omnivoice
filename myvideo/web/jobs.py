@@ -23,3 +23,13 @@ from myvoice.web.jobs import JobRunner, LogTail, Step  # noqa: E402,F401
 # pythonw (launcher chay.py) nên không có console nào để nhìn.
 tail = LogTail(maxlen=300)
 q = JobRunner(tail=tail)
+
+# Hai hàng đợi ĐĂNG BÀI riêng (học nếp myvoice): đăng chỉ tốn băng thông chứ
+# không tranh GPU/Firefox/ffmpeg với hàng đợi chính, và YouTube với Facebook
+# chạy song song được với nhau. Mỗi hàng vẫn MỘT worker duy nhất — riêng
+# Facebook mà hai lượt chạy cùng lúc là cùng đọc lịch Page rồi xếp trùng
+# một khung giờ, đừng gộp hay thêm worker.
+tail_dang = LogTail(maxlen=300)
+q_dang = JobRunner(tail=tail_dang)          # ⬆ đăng YouTube (kênh riêng myvideo)
+tail_fb = LogTail(maxlen=300)
+q_fb = JobRunner(tail=tail_fb)              # 📘 lên lịch Facebook (Page riêng)

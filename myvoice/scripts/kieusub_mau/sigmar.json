@@ -1,0 +1,16 @@
+{
+  "thutu": 21,
+  "ten": "Sigmar siêu đậm",
+  "mota": "Font Sigmar One nét cực dày thay Impact (Impact thiếu dấu Việt) — IN HOA trắng viền đen, đập vào mắt",
+  "hieuung": "tinh",
+  "font": "Sigmar One",
+  "fontfile": "fonts/SigmarOne-Regular.ttf",
+  "size": 68,
+  "bold": false,
+  "hoa": true,
+  "mau_chu": "FFFFFF",
+  "mau_vien": "000000",
+  "vien": 6,
+  "bong": 3,
+  "max_chars": 26
+}

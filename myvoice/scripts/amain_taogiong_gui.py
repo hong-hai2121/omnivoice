@@ -193,6 +193,10 @@ OPTS_DEFAULTS = dict(
     # Cỡ chữ: % phóng to/thu nhỏ so với cỡ gốc của kiểu (rỗng/100 = giữ nguyên).
     # Trần ký tự/dòng tự rút theo tỉ lệ ngược nên chữ to không tràn mép.
     sub_cochu="",
+    # Bề ngang dòng chữ: % so với bề ngang chuẩn (rỗng/100 = như cũ; 20–150).
+    # Hẹp lại thì xuống dòng sớm — chữ gom về giữa; quá 100% dòng dài ra,
+    # kéo quá tay là chạm mép khung (xem kieusub.ap_bengang).
+    sub_bengang="",
     # Số DÒNG mỗi lần hiện chữ: 2 = gom hai dòng như ảnh mẫu của kho kiểu
     # (chữ ở lại lâu gấp đôi), 1 = mỗi lần một dòng như nếp cũ.
     sub_dong=2,
@@ -1523,7 +1527,8 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                      progress=None, doc: bool = False,
                      kieu: str = "hopbo", font: str = "",
                      mau: str = "", vitri="", cochu="",
-                     dong: int = 1, mau_vien: str = "") -> Path | None:
+                     dong: int = 1, mau_vien: str = "",
+                     bengang="") -> Path | None:
     """Tạo phụ đề cho 1 video. Trả về file .srt, None nếu lỗi.
 
     doc=False (mặc định): khung NGANG 1920x1080 — YOUTUBE.mp4.
@@ -1538,7 +1543,9 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
 
     cochu = % phóng to/thu nhỏ chữ của kiểu (rỗng/100 = cỡ gốc), dong = số dòng
     tối đa mỗi lần hiện chữ (1 như cũ, 2 = gom hai dòng giống ảnh mẫu kho kiểu),
-    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu).
+    mau_vien = màu viền quanh chữ (rỗng = viền gốc của kiểu),
+    bengang = % BỀ NGANG dòng chữ so với bề ngang chuẩn (rỗng/100 = như cũ) —
+    chỉ đổi chỗ xuống dòng, không đổi cỡ chữ (xem kieusub.ap_bengang).
 
     mode SUB_MODE_BURN thì đốt chữ vào hình rồi GHI ĐÈ lên video gốc — burn ra file
     tạm trước, xong mới thay thế, để video cũ không mất nếu ffmpeg chết giữa chừng.
@@ -1567,15 +1574,18 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
         # fontfile đo chữ; ap_mau chỉ đổi mau_chu, viền/nền giữ nguyên).
         # `cochu` (% cỡ chữ) phóng to/thu nhỏ chữ của kiểu và rút trần ký tự/dòng
         # theo tỉ lệ ngược — phải áp TRƯỚC chon_max_chars mới cắt dòng đúng.
-        kieu_dict = kieusub.ap_cochu(
+        # `bengang` (% bề ngang) áp SAU cochu: chỉ ghi ti_ngang cho
+        # chon_max_chars nhân vào trần — hẹp thì xuống dòng sớm, nới thì dài ra.
+        kieu_dict = kieusub.ap_bengang(kieusub.ap_cochu(
             kieusub.ap_mau_vien(
                 kieusub.ap_mau(kieusub.ap_font(kieusub.lay(kieu), font), mau),
-                mau_vien), cochu)
+                mau_vien), cochu), bengang)
         mc = kieusub.chon_max_chars(kieu_dict, max_chars, doc=doc)
         if mode == SUB_MODE_BURN and mc != max_chars:
             logging.info(f"📝 Kiểu '{kieu_dict['ten']}'"
                          + (" + khung dọc" if doc else "")
-                         + f": rút {max_chars} → {mc} ký tự/dòng cho vừa khung.")
+                         + f": đổi {max_chars} → {mc} ký tự/dòng theo "
+                         "khung + bề ngang.")
             max_chars = mc
         elif doc and max_chars > gs.SUB_MAX_CHARS_DOC:
             # Chế độ .srt rời không có kiểu — giữ phép rút cũ của khung dọc.
@@ -1817,7 +1827,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2145,7 +2155,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                              progress=_sub_progress, kieu=sub_kieu,
                              font=sub_font, mau=sub_mau, vitri=sub_vitri,
                              cochu=sub_cochu, dong=sub_dong,
-                             mau_vien=sub_mau_vien)
+                             mau_vien=sub_mau_vien, bengang=sub_bengang)
             progress_var.set(100)
 
         # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
@@ -2421,7 +2431,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                                  progress=_sub_doc_progress, doc=True,
                                  kieu=sub_kieu, font=sub_font, mau=sub_mau,
                                  vitri=sub_vitri, cochu=sub_cochu,
-                                 dong=sub_dong, mau_vien=sub_mau_vien)
+                                 dong=sub_dong, mau_vien=sub_mau_vien,
+                                 bengang=sub_bengang)
                 progress_var.set(100)
             else:
                 logging.warning(f"📝 Chưa có video dọc ({doc_video.name}) → bỏ qua phụ đề dọc.")
@@ -2946,6 +2957,14 @@ class App(tk.Tk):
             value=str(self._opt_settings.get("sub_cochu", "")))
         ttk.Spinbox(sub_row2b, from_=50, to=200, increment=5, width=4,
                     textvariable=self.var_sub_cochu).pack(side="left")
+        # BỀ NGANG dòng chữ theo % bề ngang chuẩn — TRỐNG (hoặc 100) là như cũ;
+        # hẹp lại thì xuống dòng sớm (chữ gom về giữa), quá 100% dòng dài ra —
+        # cùng khoảng 20–150 với thanh kéo bên web (chung taogiong_options.json).
+        ttk.Label(sub_row2b, text="Ngang %:").pack(side="left", padx=(10, 2))
+        self.var_sub_bengang = tk.StringVar(
+            value=str(self._opt_settings.get("sub_bengang", "")))
+        ttk.Spinbox(sub_row2b, from_=20, to=150, increment=5, width=4,
+                    textvariable=self.var_sub_bengang).pack(side="left")
         # Số dòng mỗi lần hiện chữ (2 = như ảnh mẫu của kho kiểu).
         ttk.Label(sub_row2b, text="Số dòng:").pack(side="left", padx=(10, 2))
         self.var_sub_dong = tk.IntVar(
@@ -5155,6 +5174,7 @@ class App(tk.Tk):
                 sub_mau_vien=self.var_sub_mau_vien.get(),
                 sub_vitri=self.var_sub_vitri.get().strip(),
                 sub_cochu=self._parse_sub_cochu(),
+                sub_bengang=self._parse_sub_bengang(),
                 sub_dong=self._parse_sub_dong(),
                 make_sub_doc=self.var_make_sub_doc.get(),
             ))
@@ -6143,6 +6163,7 @@ class App(tk.Tk):
             sub_mau_vien=self.var_sub_mau_vien.get(),
             sub_vitri=self.var_sub_vitri.get().strip(),
             sub_cochu=self._parse_sub_cochu(),
+            sub_bengang=self._parse_sub_bengang(),
             sub_dong=self._parse_sub_dong(),
             make_sub_doc=self.var_make_sub_doc.get(),
         )
@@ -6380,6 +6401,7 @@ class App(tk.Tk):
             sub_mau_vien=ts.get("sub_mau_vien", ""),
             sub_vitri=ts.get("sub_vitri", ""),
             sub_cochu=ts.get("sub_cochu", ""),
+            sub_bengang=ts.get("sub_bengang", ""),
             sub_dong=ts.get("sub_dong", 2),
             # Phụ đề cho facebook.mp4 (khung dọc) — chạy SAU TikTok, xem run_tts.
             make_sub_doc=ts.get("make_sub_doc", False),
@@ -7573,6 +7595,7 @@ class App(tk.Tk):
                     "sub_mau_vien": self.var_sub_mau_vien.get(),
                     "sub_vitri": self.var_sub_vitri.get().strip(),
                     "sub_cochu": self._parse_sub_cochu(),
+                    "sub_bengang": self._parse_sub_bengang(),
                     "sub_dong": self._parse_sub_dong(),
                     "make_sub_doc": self.var_make_sub_doc.get()},
             daemon=True,
@@ -7605,6 +7628,18 @@ class App(tk.Tk):
         except (TypeError, ValueError):
             return ""
         v = max(50, min(v, 200))
+        return "" if v == 100 else str(v)
+
+    def _parse_sub_bengang(self) -> str:
+        """Đọc ô 'Ngang %' → chuỗi số kẹp trong [20, 150]; rỗng/100 = như cũ."""
+        raw = str(self.var_sub_bengang.get()).replace(",", ".").strip()
+        if not raw:
+            return ""
+        try:
+            v = int(round(float(raw)))
+        except (TypeError, ValueError):
+            return ""
+        v = max(20, min(v, 150))
         return "" if v == 100 else str(v)
 
     def _parse_sub_dong(self) -> int:
@@ -7866,6 +7901,7 @@ class App(tk.Tk):
                 sub_mau_vien=self.var_sub_mau_vien.get(),
                 sub_vitri=self.var_sub_vitri.get().strip(),
                 sub_cochu=self._parse_sub_cochu(),
+                sub_bengang=self._parse_sub_bengang(),
                 sub_dong=self._parse_sub_dong(),
             ),
             daemon=True,

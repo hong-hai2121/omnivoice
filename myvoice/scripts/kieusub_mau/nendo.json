@@ -1,0 +1,16 @@
+{
+  "thutu": 24,
+  "ten": "Khối tin đỏ",
+  "mota": "IN HOA trắng trên khối đỏ bo góc — kiểu bản tin nóng / breaking news",
+  "hieuung": "hopbo",
+  "font": "Barlow Condensed",
+  "fontfile": "fonts/BarlowCondensed-Bold.ttf",
+  "size": 70,
+  "bold": true,
+  "hoa": true,
+  "mau_chu": "FFFFFF",
+  "mau_nen": "C8102E",
+  "nen_alpha": "00",
+  "bong": 0,
+  "max_chars": 36
+}

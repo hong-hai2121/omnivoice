@@ -470,17 +470,27 @@ def oldest_episode_number(videos):
     return None
 
 
+# Chỉ soát chừng này SỐ gần nhất tính từ số tập lớn nhất khi dò tập thiếu.
+# Số cũ hơn thường nằm ngoài cửa sổ video API đọc được: chúng ĐANG CÓ trên kênh
+# nhưng không thấy → báo thiếu oan rồi cấp lại số đã có. Thực tế đã dính: dải báo
+# 49–83 nhưng 50–58 đều đã có trên kênh từ lâu.
+MISSING_CHECK_SPAN = 20
+
+
 def find_missing_episodes(videos, complete=False):
     """Các SỐ TẬP CÒN SÓT trong dải tập của danh sách video (tính cả video hẹn giờ).
 
     Trả về (missing, lo, hi): số thiếu trong khoảng [lo..hi]; ([], None, None) nếu
     không tách được số tập nào.
 
-    complete=True  — `videos` là TOÀN BỘ kênh → dò từ tập nhỏ nhất (lo = min).
+    Chỉ soát MISSING_CHECK_SPAN số gần nhất: lo không xuống dưới
+    hi - MISSING_CHECK_SPAN + 1, kể cả khi đã đọc hết kênh — làm bù chỉ nhắm mấy
+    tập vừa sót, không nhắm kho tập cũ.
+
     complete=False — `videos` chỉ là CỬA SỔ N video mới nhất (đọc bị cắt vì chạm
-                     max_videos) → chỉ dò từ số của video CŨ NHẤT trong cửa sổ trở
-                     lên. Số nhỏ hơn nằm ngoài cửa sổ: KHÔNG BIẾT có hay không, nên
-                     không được coi là thiếu.
+                     max_videos) → còn chặn thêm: lo không xuống dưới số của video
+                     CŨ NHẤT trong cửa sổ. Số nhỏ hơn nằm ngoài cửa sổ: KHÔNG BIẾT
+                     có hay không, nên không được coi là thiếu.
 
     Vì sao phải chặn dưới: lấy lo = min(nums) là sai khi danh sách bị cắt. Một tập
     LÀM BÙ vừa đăng (số nhỏ, ngày đăng mới) luôn nằm ở đầu cửa sổ và kéo lo tụt
@@ -493,6 +503,7 @@ def find_missing_episodes(videos, complete=False):
     if not nums:
         return [], None, None
     lo, hi = min(nums), max(nums)
+    lo = max(lo, hi - MISSING_CHECK_SPAN + 1)
     if not complete:
         floor = oldest_episode_number(videos)
         if floor is not None:
