@@ -70,7 +70,10 @@ COPY_PREFIX = (
 "hãy đổi tên kênh gốc thành “Mimi audio” và dịch đúng ý, nhưng không để làm rối mạch truyện chính. "
 "CHỈ dịch câu quảng bá khi bản gốc tiếng Trung thật sự có câu đó — KHÔNG tự thêm câu quảng bá, "
 "lời chào kênh hay lời kết ở chỗ bản gốc không có (3 câu quảng bá chuẩn được chèn ở bước xử lý text sau này). "
-"Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện."
+"Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện.\n"
+"Tôi sẽ gửi nội dung tiếng Trung thành từng đoạn ở các tin nhắn tiếp theo. "
+"Mỗi tin nhắn là MỘT ĐOẠN truyện cần dịch — hãy dịch ngay đoạn đó và chỉ trả về "
+"bản dịch tiếng Việt, không hỏi lại, không chờ gửi đủ các đoạn. Bạn sẵn sàng chưa?"
 )
 
 

@@ -71,6 +71,11 @@ FIREFOX_PROFILE_PATH = os.environ.get(
 # Thời gian chờ Gemini trả lời mỗi đoạn (giây) và thời gian "đứng yên" để coi là xong.
 RESPONSE_TIMEOUT = int(os.environ.get("OMNI_GEMINI_TIMEOUT", "300"))
 RESPONSE_SETTLE = float(os.environ.get("OMNI_GEMINI_SETTLE", "6"))
+# Thời gian chờ Gemini "xác nhận" CÂU HƯỚNG DẪN DỊCH (gửi thành tin nhắn riêng trước
+# đoạn 1). Nội dung trả về KHÔNG dùng — chỉ chờ cho Gemini nói xong để ô nhập sẵn
+# sàng; hết giờ vẫn đi tiếp gửi đoạn 1. Ngắn hơn RESPONSE_TIMEOUT vì câu xác nhận
+# thường chỉ vài giây.
+PREFIX_TIMEOUT = int(os.environ.get("OMNI_GEMINI_PREFIX_TIMEOUT", "120"))
 # Số lần ĐÓNG HẲN Firefox → mở lại (chat mới) → gửi lại đoạn khi Gemini treo/không
 # trả lời gì sau RESPONSE_TIMEOUT giây (mặc định 5 phút). 0 = không tự mở lại.
 MAX_TIMEOUT_RESTARTS = int(os.environ.get("OMNI_GEMINI_RESTART", "2"))
@@ -464,6 +469,22 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     return last_text or None
 
 
+def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
+    """Gửi CÂU HƯỚNG DẪN DỊCH thành MỘT TIN NHẮN RIÊNG, trước khi gửi đoạn 1.
+
+    Nội dung Gemini trả lời (thường chỉ là câu xác nhận 'Đã hiểu...') KHÔNG được
+    dùng làm kết quả — chỉ chờ Gemini nói xong để ô nhập sẵn sàng cho đoạn kế.
+    Hết giờ / lỗi vẫn đi tiếp: đoạn 1 sẽ được gửi ngay sau đó."""
+    if not (prefix and prefix.strip()):
+        return
+    on_log("📨 Gửi câu hướng dẫn dịch (tin nhắn riêng — không dùng nội dung trả về)...")
+    try:
+        send_to_gemini(driver, prefix.strip(),
+                       timeout=(timeout or PREFIX_TIMEOUT), on_log=on_log)
+    except Exception as e:
+        on_log(f"⚠️ Gửi câu hướng dẫn lỗi ({e}) — vẫn tiếp tục gửi đoạn kế.")
+
+
 # ── Gửi nhiều đoạn ───────────────────────────────────────────────────────────
 def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                           driver=None, profile=None, keep_open=True, out_path=None,
@@ -471,8 +492,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                           max_restarts=MAX_TIMEOUT_RESTARTS, resume=False):
     """Gửi lần lượt các đoạn tới Gemini, trả về list kết quả (cùng thứ tự).
 
-    - prefix chỉ chèn vào ĐOẠN ĐẦU ĐƯỢC GỬI (Gemini nhớ ngữ cảnh các đoạn sau) —
-      đúng như cách GUI nhận diện chèn "Câu mở đầu" cho đoạn 1 khi sao chép.
+    - prefix được gửi thành MỘT TIN NHẮN RIÊNG ngay trước đoạn ĐẦU TIÊN được gửi
+      (nội dung Gemini xác nhận không dùng); các đoạn sau Gemini nhớ ngữ cảnh.
     - on_result(i, total, answer): callback sau mỗi đoạn (để cập nhật GUI).
     - driver: truyền driver có sẵn để tái dùng; None thì tự mở Firefox.
     - keep_open: True thì để Firefox mở sau khi xong (tiện xem/đối chiếu).
@@ -487,7 +508,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
       Firefox đang mở, không phải driver đã đóng.
     - resume: nếu True và out_path đã có, đọc lại các đoạn ĐÃ DỊCH và BỎ QUA chúng,
       chỉ gửi các đoạn còn thiếu (TIẾP TỤC dịch). prefix (chỉ dẫn dịch) được gửi
-      kèm đoạn ĐẦU TIÊN thực sự gửi trong phiên — vì chat mới chưa có ngữ cảnh.
+      thành tin nhắn riêng trước đoạn ĐẦU TIÊN thực sự gửi — vì chat mới chưa có
+      ngữ cảnh.
     """
     own_driver = driver is None
     total = len(chunks)
@@ -531,12 +553,15 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                         pass
                 on_log("✅ Đã mở Gemini. Bắt đầu gửi từng đoạn...")
 
-            # prefix chỉ gắn vào đoạn ĐẦU TIÊN thực sự gửi trong phiên này.
-            p = prefix if not sent_any else ""
+            # Câu hướng dẫn dịch: gửi thành TIN NHẮN RIÊNG trước đoạn ĐẦU TIÊN
+            # thực sự gửi trong phiên (không ghép chung với đoạn 1 nữa — Gemini
+            # từng tưởng cả khối là câu hỏi rồi từ chối/lạc đề thay vì dịch).
+            if not sent_any:
+                send_prefix_to_gemini(driver, prefix, on_log=on_log)
             sent_any = True
             on_log(f"📤 Gửi đoạn {i + 1}/{total} ({len(chunk)} ký tự)...")
             try:
-                ans = send_to_gemini(driver, chunk, prefix=p, on_log=on_log)
+                ans = send_to_gemini(driver, chunk, on_log=on_log)
                 # ── KHÔNG NHẬN ĐƯỢC NỘI DUNG (Gemini treo/hết 5 phút chờ) ──────
                 #    Đóng hẳn Firefox → mở lại (chat mới) → GỬI LẠI đoạn này. Chat
                 #    mới mất ngữ cảnh nên gửi kèm câu hướng dẫn dịch (prefix gốc).
@@ -552,10 +577,12 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                             on_driver(driver)
                         except Exception:
                             pass
-                    resend_prefix = prefix or RETRY_CHINESE_PREFIX
+                    # Chat mới mất ngữ cảnh → gửi lại câu hướng dẫn (tin nhắn
+                    # riêng) rồi mới gửi lại đoạn, giống đầu phiên.
+                    send_prefix_to_gemini(driver, prefix or RETRY_CHINESE_PREFIX,
+                                          on_log=on_log)
                     on_log(f"📤 Gửi lại đoạn {i + 1}/{total} sau khi mở lại Firefox...")
-                    ans = send_to_gemini(driver, chunk, prefix=resend_prefix,
-                                         on_log=on_log)
+                    ans = send_to_gemini(driver, chunk, on_log=on_log)
                 # ── Còn tiếng Trung sau lần dịch ĐẦU: KHÔNG gửi lại Gemini nữa. ──
                 #    Giữ NGUYÊN bản Gemini; chữ Hán Gemini bỏ sót sẽ được xử lý ở bước
                 #    chuẩn bị input.txt (dich_hanviet: dịch nghĩa MT offline + phiên âm

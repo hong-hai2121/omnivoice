@@ -370,12 +370,13 @@ def _doc_cau(model, text, prompt, dur_scale=1.0):
                           language="vi", duration=dur, num_step=NUM_STEP)[0]
 
 
-# ── Kiểm MẤT CHỮ + đọc lại câu hỏng (tái dùng taogiong_kiemtra_matchu) ───────
+# ── Kiểm MẤT CHỮ + TIẾNG LẠ, đọc lại câu hỏng (tái dùng taogiong_kiemtra_matchu)
 def kiemtra_va_docla(cues, files, tts_dir, voice_path):
     """ASR đối chiếu TỪNG câu với văn bản (large-v3-turbo, xem
-    taogiong_kiemtra_matchu). Câu bị nuốt chữ được đọc lại ngay: lượt 1 re-roll,
-    lượt 2 nới khung +8%. OmniVoice là masked-diffusion nên thi thoảng nuốt cụm
-    từ — đo bên myvoice là 7–12% số đoạn; có vòng này thì mọi video tự được
+    taogiong_kiemtra_matchu — bộ kiểm còn soi cả TIẾNG LẠ rè/rít không phải
+    giọng đọc). Câu dính cờ được đọc lại ngay: lượt 1 re-roll, lượt 2 nới
+    khung +8%. OmniVoice là masked-diffusion nên thi thoảng nuốt cụm từ — đo
+    bên myvoice là 7–12% số đoạn; có vòng này thì mọi video tự được
     "bảo hành đủ chữ".
 
     VRAM: card 8GB không chứa nổi cả OmniVoice lẫn ASR nên hai model LUÂN PHIÊN
@@ -388,7 +389,7 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
     try:
         import taogiong_kiemtra_matchu as ktm
     except Exception as e:
-        print(f"⚠️ Bỏ qua kiểm tra mất chữ (không nạp được bộ kiểm: {e})")
+        print(f"⚠️ Bỏ qua kiểm tra mất chữ + tiếng lạ (không nạp được bộ kiểm: {e})")
         return
 
     texts = [tts_text(t) for _t, t in cues]
@@ -404,12 +405,12 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
 
     try:
         _sync(range(len(cues)))
-        print(f"🕵️ Kiểm tra mất chữ {len(cues)} câu (ASR nghe lại)...")
+        print(f"🕵️ Kiểm tra mất chữ + tiếng lạ {len(cues)} câu (ASR nghe lại)...")
         bad = ktm.quet_va_xac_minh(texts, shim, on_log=print)
         for lan, scale in ((1, 1.0), (2, 1.08)):
             if not bad:
                 break
-            print(f"🔁 Lượt đọc lại {lan}: {len(bad)} câu nuốt chữ "
+            print(f"🔁 Lượt đọc lại {lan}: {len(bad)} câu nuốt chữ / có tiếng lạ "
                   f"(câu {', '.join(str(i + 1) for i in sorted(bad))})...")
             # Trả VRAM của ASR RỒI mới nạp OmniVoice — hai model không cùng lúc
             # nằm trên card 8GB được.
@@ -429,10 +430,10 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
             bad = ktm.quet_va_xac_minh(texts, shim, on_log=print,
                                        chi_cac_doan=set(bad))
         if bad:
-            print(f"⚠️ Còn {len(bad)} câu chưa đủ chữ sau 2 lượt đọc lại "
+            print(f"⚠️ Còn {len(bad)} câu lỗi sau 2 lượt đọc lại "
                   f"(câu {', '.join(str(i + 1) for i in sorted(bad))}) — nên nghe lại tay.")
         else:
-            print("✅ Kiểm tra mất chữ: đủ chữ toàn bộ.")
+            print("✅ Kiểm tra mất chữ + tiếng lạ: đạt toàn bộ.")
     finally:
         ktm.giai_phong()
         _tra_vram("xong bước kiểm mất chữ")

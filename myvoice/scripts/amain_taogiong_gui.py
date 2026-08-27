@@ -1982,13 +1982,21 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             else:
                 logging.info("Không phát hiện spike — tất cả chunk OK.")
 
-            # ── KIỂM TRA MẤT CHỮ (ASR đối chiếu văn bản từng đoạn) ──────────
+            # ── KIỂM TRA MẤT CHỮ + TIẾNG LẠ (ASR đối chiếu từng đoạn) ───────
             # OmniVoice thi thoảng NUỐT nguyên câu ngắn (đo tập 49/53: 7–12% số
             # đoạn — hay dính nhất là câu thuật thoại "tôi hỏi"/"tôi gật đầu"
             # và cụm lặp "không chia. không chia."). detect_spike không thấy
             # được vì audio vẫn sạch, chỉ thiếu lời. Đối chiếu ASR ↔ văn bản để
             # bắt rồi render lại; lượt 2 nới khung thời lượng +6% cho model đủ
             # chỗ nhét lại câu đã nuốt.
+            #
+            # Cùng lượt ASR đó còn soi TIẾNG LẠ (rè/rít/ù không phải giọng
+            # đọc — detect_spike bó tay khi nó ở mức âm lượng ngang lời nói):
+            # nghe thừa chữ, độ tin cậy whisper tụt, và vùng ngoài lời nói mà
+            # RMS vẫn cao (xem taogiong_kiemtra_matchu). Đoạn dính cờ nào cũng
+            # về chung dict `miss` nên vòng render-lại dưới đây xử lý cả hai
+            # loại lỗi như nhau; với tiếng lạ, render lại là re-roll — nới
+            # khung +6% ở lượt 2 vô hại.
             #
             # VRAM: bước nghe lại chạy large-v3-turbo trên GPU (nhanh hơn hẳn
             # small/medium trên CPU của bản cũ), mà card 8GB không chứa nổi cả
@@ -2001,31 +2009,31 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 import taogiong_kiemtra_matchu as _mc
             except Exception as e:
                 _mc = None
-                logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ (thiếu module: {e})")
+                logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ + tiếng lạ (thiếu module: {e})")
             if _mc is not None:
                 model = _do_omnivoice(model)
                 _tra_vram()          # dỡ xong mới thật sự còn chỗ cho turbo
-                status_var.set("Kiểm tra mất chữ (ASR đối chiếu)...")
-                logging.info("Kiểm tra mất chữ toàn bộ chunks (ASR đối chiếu văn bản)...")
+                status_var.set("Kiểm tra mất chữ & tiếng lạ (ASR đối chiếu)...")
+                logging.info("Kiểm tra mất chữ + tiếng lạ toàn bộ chunks (ASR đối chiếu văn bản)...")
                 miss = _mc.quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info,
                                             status=status_var.set)
                 for attempt in (1, 2):
                     if not miss:
                         break
                     logging.warning(
-                        f"📢 {len(miss)} đoạn bị nuốt chữ → render lại "
+                        f"📢 {len(miss)} đoạn nuốt chữ / có tiếng lạ → render lại "
                         f"(lượt {attempt}): {sorted(miss)}")
                     # Trả VRAM của ASR rồi mới nạp OmniVoice — hai model không
                     # cùng lúc nằm trên card 8GB được.
                     _mc.giai_phong()
                     status_var.set("Nạp lại OmniVoice để render lại...")
-                    logging.info("↩ Nạp lại OmniVoice để render các đoạn thiếu chữ...")
+                    logging.info("↩ Nạp lại OmniVoice để render các đoạn lỗi...")
                     model = OmniVoice.from_pretrained(
                         "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
                     )
                     for i in sorted(miss):
-                        logging.info(f"  [{i:04d}] mất: {' | '.join(miss[i])}")
-                        status_var.set(f"Render lại đoạn nuốt chữ {i+1}/{total} "
+                        logging.info(f"  [{i:04d}] lỗi: {' | '.join(miss[i])}")
+                        status_var.set(f"Render lại đoạn lỗi {i+1}/{total} "
                                        f"(lượt {attempt})...")
                         tmp_file = tmp_dir / f"{i:04d}.wav"
                         tmp_file.unlink(missing_ok=True)
@@ -2046,11 +2054,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 if miss:
                     for i in sorted(miss):
                         logging.error(
-                            f"⛔ Đoạn {i:04d} VẪN thiếu chữ sau 2 lần render lại "
+                            f"⛔ Đoạn {i:04d} VẪN lỗi sau 2 lần render lại "
                             f"({' | '.join(miss[i])}) — nghe kiểm tra tay: "
                             f"{chunks[i][:60]!r}")
                 else:
-                    logging.info("✅ Kiểm tra mất chữ: tất cả đoạn đủ lời.")
+                    logging.info("✅ Kiểm tra mất chữ + tiếng lạ: tất cả đoạn đạt.")
                 _mc.giai_phong()
 
             status_var.set("Đang ghép file...")
