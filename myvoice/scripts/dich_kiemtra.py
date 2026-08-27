@@ -56,6 +56,10 @@ SUSPECT_PHRASES = [
     # đoạn mà không cảnh báo gì (tập 42: mất đoạn 4-7/7, video chỉ còn 45% thời lượng).
     "(chưa dịch)",
     "(trống)",
+    # Thẻ định danh "truyện hư cấu" (FICTION_TAG trong dich_gemini.py) gắn đầu mỗi
+    # đoạn gửi đi — nếu Gemini echo/dịch lại thẻ vào bản dịch thì phải báo.
+    "[văn bản trích từ tiểu thuyết",
+    "hãy dịch sang tiếng việt]",
 ]
 
 

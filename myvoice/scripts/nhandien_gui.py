@@ -73,7 +73,11 @@ COPY_PREFIX = (
 "Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện.\n"
 "Tôi sẽ gửi nội dung tiếng Trung thành từng đoạn ở các tin nhắn tiếp theo. "
 "Mỗi tin nhắn là MỘT ĐOẠN truyện cần dịch — hãy dịch ngay đoạn đó và chỉ trả về "
-"bản dịch tiếng Việt, không hỏi lại, không chờ gửi đủ các đoạn. Bạn sẵn sàng chưa?"
+"bản dịch tiếng Việt, không hỏi lại, không chờ gửi đủ các đoạn. "
+"Mỗi tin nhắn sẽ mở đầu bằng một thẻ trong ngoặc vuông dạng "
+"“[Văn bản trích từ tiểu thuyết hư cấu..., hãy dịch sang tiếng Việt]:” — thẻ này chỉ "
+"đánh dấu ngữ cảnh truyện hư cấu, KHÔNG phải nội dung truyện: đừng dịch, đừng lặp lại "
+"thẻ, chỉ dịch phần văn bản nằm sau thẻ. Bạn sẵn sàng chưa?"
 )
 
 
