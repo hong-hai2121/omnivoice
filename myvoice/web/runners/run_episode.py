@@ -195,6 +195,14 @@ def step_input(app, folder: Path, episode: str, state: dict) -> int:
 
 
 def step_seo(app, folder: Path, episode: str, state: dict) -> int:
+    # ⛔ Bản dịch còn đoạn hỏng → không làm SEO (SEO đọc gemini_result.docx hỏng
+    # ra tiêu đề rác — tập 87 lên YouTube với tiêu đề "Hãy gửi nội dung truyện...").
+    bad = gui.kiem_ban_dich_folder(folder)
+    if bad:
+        mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+        logging.error(f"⛔ Tập {episode}: bản dịch có đoạn hỏng ({mota}) → không làm "
+                      "SEO, bỏ cả tập. Chạy lại bước dịch Gemini trước.")
+        return STOP
     import seo_youtube_gemini as seo
     import dich_gemini as g
 

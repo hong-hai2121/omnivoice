@@ -83,6 +83,17 @@ def main(argv=None) -> int:
                         "(nhiều khả năng đã đăng tay) — tránh đăng trùng.")
         return STOP
 
+    # ⛔ CHỐT CUỐI trước khi đăng (giống _upload_one bên GUI): bản dịch còn đoạn
+    # hỏng (chưa dịch / bị Gemini từ chối / dịch cụt) → TUYỆT ĐỐI KHÔNG ĐĂNG, dù
+    # video đã render. Tập 85/87 từng lên thẳng YouTube với 14-25% nội dung thiếu
+    # qua đúng đường runner này.
+    bad = core.gui.kiem_ban_dich_folder(folder)
+    if bad:
+        mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+        logging.error(f"⛔ KHÔNG ĐĂNG tập {episode}: bản dịch có đoạn hỏng ({mota}). "
+                      "Dịch lại các đoạn hỏng, render lại rồi mới đăng.")
+        return STOP
+
     blocks = core.seo_blocks(folder, episode)
     if not blocks:
         logging.error(f"❌ Tập {episode}: chưa đọc được SEO (seoYoutube.docx) → không đăng.")

@@ -171,6 +171,104 @@ def is_translation_done(text):
     return chinese_ratio(t) <= CHINESE_DONE_MAX_RATIO
 
 
+# ── Phát hiện Gemini TỪ CHỐI dịch ────────────────────────────────────────────
+# Bộ lọc của Gemini thỉnh thoảng từ chối cả truyện hư cấu vô hại, trả về một câu
+# ngắn kiểu "Tôi chỉ là một mô hình ngôn ngữ, nên không thể trợ giúp về điều đó."
+# Câu này KHÔNG còn chữ Hán nên is_translation_done() tưởng là dịch xong và lưu
+# luôn làm bản dịch → phải bắt riêng. Câu từ chối luôn NGẮN, nên chỉ coi là từ
+# chối khi text ngắn hơn REFUSAL_MAX_LEN VÀ chứa cụm đặc trưng — bản dịch thật
+# dài cả nghìn ký tự thì dù lỡ chứa mấy chữ này cũng không bị bắt nhầm.
+REFUSAL_MAX_LEN = int(os.environ.get("OMNI_GEMINI_REFUSAL_MAX_LEN", "500"))
+_REFUSAL_PHRASES = [
+    "mô hình ngôn ngữ",        # "Tôi chỉ là một mô hình ngôn ngữ..."
+    "không thể trợ giúp",
+    "không thể hỗ trợ",
+    "không thể giúp bạn",
+    "không thể thực hiện yêu cầu",
+    # Biến thể tập 85-87: "Yêu cầu của bạn nằm ngoài khả năng tôi được lập trình.
+    # Tôi chỉ có thể tạo văn bản." / "Tôi không được lập trình để làm điều đó." /
+    # "Tôi là một công nghệ trí tuệ nhân tạo dựa trên văn bản, nên điều đó nằm
+    # ngoài khả năng của tôi."
+    "nằm ngoài khả năng",
+    "được lập trình",
+    "chỉ có thể tạo văn bản",
+    "công nghệ trí tuệ nhân tạo",
+    "language model",
+    "can't help with",
+    "cannot help with",
+    "unable to help",
+    "can't assist",
+    "cannot assist",
+]
+# Số lần mở lại Firefox (chat mới) để gửi lại NGUYÊN đoạn khi bị từ chối, trước
+# khi chuyển sang cắt đôi đoạn. Từ chối phần nhiều là ngẫu nhiên nên chat mới
+# thường qua được ngay lần đầu.
+REFUSAL_RESTARTS = int(os.environ.get("OMNI_GEMINI_REFUSAL_RESTARTS", "1"))
+
+
+def is_refusal(text):
+    """True nếu text là câu Gemini TỪ CHỐI dịch (không phải bản dịch)."""
+    t = (text or "").strip()
+    if not t or len(t) > REFUSAL_MAX_LEN:
+        return False
+    low = t.lower()
+    return any(p in low for p in _REFUSAL_PHRASES)
+
+
+# Bản dịch Việt của 1 đoạn thường dài ~4.6 ký tự trên MỖI chữ Hán nguồn (đo thực
+# tế trên các tập chạy đúng — xem kiemtra_daura.py). Kết quả ngắn hơn hẳn mức đó
+# nghĩa là Gemini dịch CỤT (bỏ ngang / chỉ trả một mẩu — ca tập 86 đoạn 3: 0.36)
+# hoặc trả lời linh tinh thay vì dịch. Đoạn nguồn quá ít chữ Hán thì bỏ qua phép
+# đo (không đủ cơ sở để kết luận, đừng chặn oan).
+VIET_HAN_MIN_RATIO = float(os.environ.get("OMNI_GEMINI_VIET_HAN_MIN", "2.0"))
+VIET_HAN_MIN_SRC = int(os.environ.get("OMNI_GEMINI_VIET_HAN_MIN_SRC", "100"))
+
+
+def is_result_too_short(source_chunk, result):
+    """True nếu kết quả NGẮN BẤT THƯỜNG so với đoạn nguồn tiếng Trung (dịch cụt)."""
+    n_han = len(_CHINESE_RE.findall(source_chunk or ""))
+    if n_han < VIET_HAN_MIN_SRC:
+        return False
+    return len((result or "").strip()) < n_han * VIET_HAN_MIN_RATIO
+
+
+def bad_chunks(zh_chunks, results):
+    """Các đoạn HỎNG trong bản dịch: trả về list (số_đoạn_1_based, lý_do).
+
+    Đoạn hỏng = chưa dịch (còn Hán / chuỗi đánh dấu), câu Gemini TỪ CHỐI, hoặc
+    dịch CỤT (ngắn bất thường so với chữ Hán nguồn). Đây là BỘ TIÊU CHÍ DUY NHẤT
+    cho mọi chốt chặn (dịch / tạo input / tạo giọng / đăng): BẤT KỲ đoạn nào hỏng
+    là BỎ CẢ TẬP — không làm tiếp, không đăng. Đừng tự kiểm lẻ tẻ ở nơi khác
+    (tập 85/87 lọt vì chốt tổng theo tỉ lệ toàn tập không thấy 1-2 đoạn hỏng)."""
+    out = []
+    for j, (c, r) in enumerate(zip(zh_chunks, results), 1):
+        if not is_translation_done(r):
+            out.append((j, "chưa dịch"))
+        elif is_refusal(r):
+            out.append((j, "Gemini từ chối"))
+        elif is_result_too_short(c, r):
+            out.append((j, "dịch cụt"))
+    return out
+
+
+def _split_chunk_for_retry(chunk):
+    """Cắt đôi đoạn tại ranh giới câu gần giữa nhất, để gửi lại từng nửa khi bị
+    từ chối (đoạn ngắn ít khi bị bộ lọc chặn). Không tìm được chỗ cắt hợp lý thì
+    trả về [chunk] nguyên vẹn."""
+    t = (chunk or "").strip()
+    mid = len(t) // 2
+    # Ưu tiên ngắt tại dấu kết câu (TQ + Việt) hoặc xuống dòng, gần giữa nhất.
+    cut, best_dist = -1, None
+    for m in re.finditer(r"[。！？…!?.\n]+", t):
+        d = abs(m.end() - mid)
+        if best_dist is None or d < best_dist:
+            cut, best_dist = m.end(), d
+    # Chỗ cắt quá lệch (một nửa < 1/5 đoạn) coi như không cắt được.
+    if cut <= 0 or cut < len(t) // 5 or len(t) - cut < len(t) // 5:
+        return [t]
+    return [t[:cut].strip(), t[cut:].strip()]
+
+
 def max_chinese_run(text):
     """Độ dài (số chữ Hán) của ĐOẠN HÁN LIÊN TIẾP dài nhất trong text.
 
@@ -544,7 +642,10 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
     try:
         for i, chunk in enumerate(chunks):
             # ── TIẾP TỤC: đoạn đã dịch xong thì giữ nguyên, khỏi gửi lại ──────
-            if resume and is_translation_done(prior[i]):
+            # Kết quả cũ là CÂU TỪ CHỐI của Gemini hoặc bản dịch CỤT (lọt vào docx
+            # trước khi có các bộ bắt này) thì KHÔNG tính là đã dịch — gửi lại.
+            if (resume and is_translation_done(prior[i]) and not is_refusal(prior[i])
+                    and not is_result_too_short(chunk, prior[i])):
                 on_log(f"♻ Đoạn {i + 1}/{total} đã dịch — bỏ qua.")
                 results.append(prior[i])
                 _save_progress()
@@ -598,6 +699,62 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                                           on_log=on_log)
                     on_log(f"📤 Gửi lại đoạn {i + 1}/{total} sau khi mở lại Firefox...")
                     ans = send_to_gemini(driver, tagged, on_log=on_log)
+                # ── Gemini TỪ CHỐI dịch hoặc dịch CỤT (trả một mẩu ngắn) ────────
+                # Cứu theo bậc: (1) đóng Firefox → chat MỚI → gửi lại nguyên đoạn
+                # (từ chối/dịch cụt phần nhiều là ngẫu nhiên, chat mới thường qua);
+                # (2) vẫn hỏng → cắt ĐÔI đoạn, gửi từng nửa (đoạn ngắn ít bị chặn
+                # hơn). Nửa nào vẫn hỏng → coi CẢ đoạn là chưa dịch (không giữ
+                # nửa vời kẻo lặng lẽ mất nội dung).
+                def _bad(a, src):
+                    if not a:
+                        return None
+                    if is_refusal(a):
+                        return "TỪ CHỐI dịch"
+                    if is_result_too_short(src, a):
+                        return "dịch CỤT (kết quả quá ngắn)"
+                    return None
+
+                refusal_tries = 0
+                while (ans and _bad(ans, chunk) and restart_on_timeout
+                       and refusal_tries < REFUSAL_RESTARTS):
+                    refusal_tries += 1
+                    on_log(f"🚫 Đoạn {i + 1}/{total}: Gemini {_bad(ans, chunk)} "
+                           f"(\"{ans[:80]}...\") — mở chat mới gửi lại "
+                           f"(lần {refusal_tries}/{REFUSAL_RESTARTS})...")
+                    driver = restart_firefox(driver, profile=profile, on_log=on_log)
+                    if on_driver:
+                        try:
+                            on_driver(driver)
+                        except Exception:
+                            pass
+                    send_prefix_to_gemini(driver, prefix or RETRY_CHINESE_PREFIX,
+                                          on_log=on_log)
+                    ans = send_to_gemini(driver, tagged, on_log=on_log)
+                if ans and _bad(ans, chunk):
+                    halves = _split_chunk_for_retry(chunk)
+                    if len(halves) > 1:
+                        on_log(f"🚫 Đoạn {i + 1}/{total} vẫn {_bad(ans, chunk)} — "
+                               "cắt đôi, gửi từng nửa...")
+                        parts = []
+                        for j, half in enumerate(halves, 1):
+                            tagged_half = ((FICTION_TAG.strip() + "\n" + half)
+                                           if FICTION_TAG.strip() else half)
+                            on_log(f"📤 Gửi nửa {j}/2 của đoạn {i + 1}/{total} "
+                                   f"({len(half)} ký tự)...")
+                            h_ans = send_to_gemini(driver, tagged_half, on_log=on_log)
+                            if h_ans and not _bad(h_ans, half):
+                                parts.append(h_ans)
+                            else:
+                                parts = None
+                                on_log(f"🚫 Nửa {j}/2 vẫn bị từ chối/dịch cụt/"
+                                       "không có kết quả.")
+                                break
+                        ans = "\n".join(parts) if parts else ""
+                    else:
+                        ans = ""
+                    if not ans:
+                        on_log(f"🚫 Đoạn {i + 1}/{total}: KHÔNG cứu được — đánh dấu "
+                               "chưa dịch, chạy lại để dịch tiếp đoạn này.")
                 # ── Còn tiếng Trung sau lần dịch ĐẦU: KHÔNG gửi lại Gemini nữa. ──
                 #    Giữ NGUYÊN bản Gemini; chữ Hán Gemini bỏ sót sẽ được xử lý ở bước
                 #    chuẩn bị input.txt (dich_hanviet: dịch nghĩa MT offline + phiên âm

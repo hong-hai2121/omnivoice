@@ -66,6 +66,17 @@ def main(argv=None) -> int:
     input_txt = Path(args.input or (gui.SCRIPT_DIR / "input.txt"))
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    # ⛔ CHỐT ĐOẠN HỎNG (giống _batch_run_tts bên GUI): bản dịch của thư mục tập
+    # còn đoạn chưa dịch / bị Gemini từ chối / dịch cụt → KHÔNG tạo giọng, KHÔNG
+    # dựng video (kể cả --rebuild) — input/audio hiện có sinh từ bản dịch hỏng.
+    # Thư mục không phải tập (không có tiengTrung/gemini docx) → không chặn.
+    bad = gui.kiem_ban_dich_folder(output.parent)
+    if bad:
+        mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+        logging.error(f"⛔ {output.parent.name}: bản dịch có đoạn hỏng ({mota}) → "
+                      "KHÔNG tạo giọng/dựng video. Chạy lại bước dịch Gemini trước.")
+        return ERROR
+
     app = HeadlessApp()
     progress, status = _Var(0), _Var("")
     stub = gui._NullWidget()

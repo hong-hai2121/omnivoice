@@ -441,6 +441,30 @@ def find_zh_docx(folder):
     return next(iter(sorted(folder.glob("*_zh.docx"))), None)
 
 
+def kiem_ban_dich_folder(folder):
+    """Đoạn HỎNG trong bản dịch của 1 thư mục tập — chốt dùng chung cho MỌI cửa
+    (tạo input / tạo giọng+video / đăng YouTube): BẤT KỲ đoạn nào hỏng là BỎ CẢ
+    TẬP, không làm tiếp, không đăng (tập 85/87 từng lọt tới tận YouTube).
+
+    Trả về list (số_đoạn, lý_do) theo dich_gemini.bad_chunks — [] là đủ và lành.
+    Thiếu dữ kiện (chưa có bản nhận diện / bản dịch, đọc lỗi) → None: không đủ cơ
+    sở kết luận, bên gọi cho qua để không chặn oan tập cũ thiếu file trung gian."""
+    folder = Path(folder)
+    zh = find_zh_docx(folder)
+    gem = folder / "gemini_result.docx"
+    if not zh or not gem.exists():
+        return None
+    try:
+        import dich_gemini as g
+        chunks = read_zh_docx_chunks(zh)
+        if not chunks:
+            return None
+        return g.bad_chunks(chunks, g.read_results_docx(gem, len(chunks)))
+    except Exception as e:
+        logging.warning(f"⚠️ {folder.name}: không kiểm được bản dịch ({e}) — cho qua.")
+        return None
+
+
 def download_audio_mp3(url: str, out_dir: Path):
     """Tải audio từ link video (yt-dlp) → trả về đường dẫn .mp3 (None nếu lỗi).
 
@@ -6280,6 +6304,16 @@ class App(tk.Tk):
     def _batch_prepare_input(self, gemini_docx, out_txt) -> bool:
         """Tạo input.txt cho 1 link: bỏ cấu trúc + thay câu quảng bá kênh + bỏ chú
         thích () []. (Bản batch không hỏi/không dừng như bước ③ thủ công.)"""
+        # ⛔ CHỐT ĐOẠN HỎNG: BẤT KỲ đoạn nào chưa dịch / bị Gemini từ chối / dịch
+        # cụt → KHÔNG ghi input.txt, bỏ cả tập. Kiểm ở đây (ngoài chốt dịch) vì
+        # bước tạo input còn được gọi thẳng không qua _translation_complete.
+        bad = kiem_ban_dich_folder(Path(gemini_docx).parent)
+        if bad:
+            mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+            logging.error(f"⛔ {Path(gemini_docx).parent.name}: bản dịch có đoạn hỏng "
+                          f"({mota}) → KHÔNG ghi input.txt, BỎ CẢ TẬP. Chạy lại bước "
+                          "dịch Gemini để dịch lại các đoạn đó.")
+            return False
         try:
             import dich_kiemtra as cg
             findings = cg.check_docx(gemini_docx, on_log=logging.info)
@@ -6346,6 +6380,17 @@ class App(tk.Tk):
 
         episode: số tập (để ghi chữ 'Mimi audio Số <episode>' lên video TikTok, khớp
                  số trên thumbnail). None → không ghi chữ."""
+        # ⛔ CHỐT ĐOẠN HỎNG: bản dịch còn đoạn chưa dịch / bị từ chối / dịch cụt →
+        # KHÔNG tạo giọng, KHÔNG dựng video. Phải kiểm lại ở đây dù input.txt đã
+        # tồn tại: input cũ có thể được tạo TRƯỚC khi có chốt (ca tập 85/87 —
+        # render + đăng video thiếu 14-25% nội dung).
+        bad = kiem_ban_dich_folder(folder)
+        if bad:
+            mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+            logging.error(f"⛔ {folder.name}: bản dịch có đoạn hỏng ({mota}) → KHÔNG "
+                          "tạo giọng/video, BỎ CẢ TẬP. Chạy lại bước dịch Gemini "
+                          "trước (input.txt hiện có được tạo từ bản dịch hỏng).")
+            return False
         input_txt = folder / "input.txt"
         if not input_txt.exists():
             logging.warning(f"⚠️ {folder.name}: chưa có input.txt → bỏ qua tạo giọng.")
@@ -6746,6 +6791,18 @@ class App(tk.Tk):
                             f"'Số {int(episode)}' (nhiều khả năng đã đăng tay) — "
                             "tránh đăng trùng. Muốn đăng lại thì xoá video cũ trên kênh.")
             return False
+        # ⛔ CHỐT CUỐI trước khi đăng: bản dịch còn đoạn hỏng (chưa dịch / bị Gemini
+        # từ chối / dịch cụt) → TUYỆT ĐỐI KHÔNG ĐĂNG, dù video đã render xong.
+        # Đây là lưới cuối cùng: tập 85/87 từng render từ bản dịch thiếu 14-25%
+        # nội dung rồi lên thẳng YouTube vì không cửa nào kiểm lại.
+        bad = kiem_ban_dich_folder(folder)
+        if bad:
+            mota = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad)
+            logging.error(f"⛔ KHÔNG ĐĂNG tập {episode}: bản dịch có đoạn hỏng "
+                          f"({mota}). Video hiện có được dựng từ bản dịch thiếu — "
+                          "dịch lại các đoạn hỏng, render lại rồi mới đăng.")
+            self.upload_status.set(f"⛔ Tập {episode}: bản dịch hỏng — KHÔNG đăng.")
+            return False
         blocks = self._seo_copy_blocks(folder / "seoYoutube.docx", str(episode))
         if not blocks:
             logging.error(f"❌ Tập {episode}: không đọc được SEO → không đăng.")
@@ -6885,19 +6942,24 @@ class App(tk.Tk):
         def _on_driver(d):
             state["driver"] = d
 
-        if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists():
-            # Đã có gemini_result.docx → KHÔNG gửi lại Gemini (tránh dịch lại đoạn đã
-            # xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
+        prior = (g.read_results_docx(gemini_docx, len(chunks))
+                 if gemini_docx.exists() else [None] * len(chunks))
+        # Đoạn HỎNG phải gửi lại (bộ tiêu chí chung g.bad_chunks: chưa dịch / câu
+        # TỪ CHỐI của Gemini / dịch CỤT — ca tập 85-87).
+        todo = [j for j, _ly_do in g.bad_chunks(chunks, prior)]
+        if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists() and not todo:
+            # Đã có gemini_result.docx đủ đoạn lành → KHÔNG gửi lại Gemini (tránh
+            # dịch lại đoạn đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
             translated_now = False
             logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
         else:
-            prior = (g.read_results_docx(gemini_docx, len(chunks))
-                     if gemini_docx.exists() else [None] * len(chunks))
-            n_todo = sum(1 for r in prior if not g.is_translation_done(r))
-            translated_now = n_todo > 0
-            if n_todo == 0:
+            translated_now = bool(todo)
+            if not todo:
                 logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
             else:
+                if gemini_docx.exists():
+                    logging.info(f"⚠️ {gemini_docx.name} có đoạn hỏng {todo} (từ chối/"
+                                 "dịch cụt/chưa dịch) → gửi lại các đoạn đó.")
                 if state["driver"] is None:
                     logging.info("🌐 Mở Firefox + Gemini...")
                     state["driver"] = g.init_firefox()
@@ -6927,12 +6989,15 @@ class App(tk.Tk):
         import dich_gemini as g
         n = len(chunks)
         check = g.read_results_docx(gemini_docx, n) if Path(gemini_docx).exists() else [None] * n
-        missing = [j + 1 for j, r in enumerate(check) if not g.is_translation_done(r)]
-        if missing:
-            head = ", ".join(map(str, missing[:10])) + ("..." if len(missing) > 10 else "")
+        # Bộ tiêu chí chung g.bad_chunks: chưa dịch / câu TỪ CHỐI của Gemini /
+        # bản dịch CỤT — cùng bộ với _dich_gemini_cho_tap và các chốt input/tts/đăng.
+        bad = g.bad_chunks(chunks, check)
+        if bad:
+            head = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad[:10]) \
+                   + ("..." if len(bad) > 10 else "")
             logging.error(
-                f"⛔ Tập {episode}: CHƯA dịch xong {len(missing)}/{n} đoạn (đoạn {head}) → "
-                "DỪNG, KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
+                f"⛔ Tập {episode}: bản dịch HỎNG {len(bad)}/{n} đoạn ({head}) → DỪNG, "
+                "KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
                 "đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
             return False
 
@@ -6966,7 +7031,9 @@ class App(tk.Tk):
                 chunks = read_zh_docx_chunks(zh) if zh else []
                 if chunks:
                     prior = g.read_results_docx(gem, len(chunks))
-                    translate_done = all(g.is_translation_done(r) for r in prior)
+                    # Cùng bộ tiêu chí đoạn hỏng với _translation_complete (từ chối/
+                    # dịch cụt cũng tính là CHƯA xong).
+                    translate_done = not g.bad_chunks(chunks, prior)
                 else:
                     translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
             except Exception:

@@ -60,6 +60,15 @@ SUSPECT_PHRASES = [
     # đoạn gửi đi — nếu Gemini echo/dịch lại thẻ vào bản dịch thì phải báo.
     "[văn bản trích từ tiểu thuyết",
     "hãy dịch sang tiếng việt]",
+    # Câu Gemini TỪ CHỐI dịch bị lưu nhầm làm bản dịch (docx tạo trước khi
+    # dich_gemini có bộ bắt từ chối is_refusal). Ví dụ:
+    # "Tôi chỉ là một mô hình ngôn ngữ, nên không thể trợ giúp về điều đó."
+    "mô hình ngôn ngữ",
+    "không thể trợ giúp",
+    "không thể hỗ trợ",
+    # Biến thể tập 86: "Yêu cầu của bạn nằm ngoài khả năng tôi được lập trình."
+    "ngoài khả năng tôi được lập trình",
+    "chỉ có thể tạo văn bản",
 ]
 
 
