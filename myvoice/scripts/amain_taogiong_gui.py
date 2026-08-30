@@ -1163,6 +1163,7 @@ def split_chunks(text: str, max_len: int):
 # rồi chèn lại 3 câu dưới đây ở đúng vị trí: mở đầu / thân bài / kết bài.
 # SỬA 3 CÂU NÀY nếu muốn đổi lời.
 PROMO_OPENING = "Lại là Mimi Audio đây, mời bạn nghe câu chuyện hôm nay."
+PROMO_OPENING_ENABLED = False
 PROMO_BODY    = "Nếu thấy hay, bạn thả tim ủng hộ mình nhé."
 # KHÔNG dùng "..." ở đây: clean_text đổi "..." → "." nên "không có thật,..." biến
 # thành "không có thật,." (phẩy dính chấm) → TTS đọc cụt và tách chunk sai chỗ.
@@ -1262,8 +1263,12 @@ def replace_channel_promo(text: str) -> tuple[str, int, int]:
             inserted += 1
 
     out = re.sub(r'\n{3,}', '\n\n', "".join(kept).strip())
-    out = PROMO_OPENING + "\n" + out + "\n" + PROMO_ENDING
-    inserted += 2
+    if PROMO_OPENING_ENABLED and PROMO_OPENING.strip():
+        out = PROMO_OPENING + "\n" + out
+        inserted += 1
+    if PROMO_ENDING.strip():
+        out = out + "\n" + PROMO_ENDING
+        inserted += 1
 
     if removed:
         forms = {}
