@@ -650,6 +650,9 @@
          cùng lượt đăng YouTube, hẹn sau bản chính 1 giờ — xem upload_short. #}
       {{ chk('make_short', '📱 Tạo + đăng YouTube Short (≤2:50, sau bản chính 1 giờ)', opts) }}
       {{ chk('tiktok_music', '🎼 Chèn nhạc nền (Music/)', opts) }}
+      {# Mặc định TẮT = nhạc chỉ phát 1 lần từ đầu bài rồi thôi; tick vào mới
+         lặp lại cho phủ hết video như trước. #}
+      {{ chk('tiktok_music_loop', '🔁 Lặp lại nhạc nền tới hết video (tắt = chỉ phát 1 lần)', opts) }}
       {{ chk('tiktok_no_effect', '🚫 Không áp hiệu ứng cho TikTok', opts) }}
     </div>
     <div class="actions"><button name="action" value="tiktok">▶ Dựng lại video TikTok</button></div>

@@ -104,6 +104,7 @@ def main(argv=None) -> int:
         tiktok_caption=caption, tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
         tiktok_music=ts.get("tiktok_music", False),
         tiktok_music_db=ts.get("tiktok_music_db", -12),
+        tiktok_music_loop=ts.get("tiktok_music_loop", False),
         sub_mode=ts.get("sub_mode", gui.SUB_MODE_SRT),
         sub_model=ts.get("sub_model", "large-v3-turbo"),
         sub_max_chars=ts.get("sub_max_chars", 50),

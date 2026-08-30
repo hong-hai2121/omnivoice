@@ -175,7 +175,11 @@ OPTS_DEFAULTS = dict(
     # 1 giờ. Bật sẵn — cắt bằng `-c copy` nên gần như không tốn thêm thời gian dựng.
     make_short=True,
     tiktok_no_effect=False, tiktok_caption_pos=40,
-    tiktok_music=False, tiktok_music_db=-12, bring_front=True,
+    tiktok_music=False, tiktok_music_db=-12,
+    # Nhạc nền mặc định chỉ phát MỘT LẦN từ đầu bài (hết bài là thôi); bật ô
+    # này (checkbox bên web) mới lặp lại cho phủ hết video như trước.
+    tiktok_music_loop=False,
+    bring_front=True,
     make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="large-v3-turbo", sub_max_chars=50,
     # Kiểu phụ đề khi vẽ cứng — kho scripts/kieusub_mau/*.json (dùng chung với
     # myvideo): hopbo = hộp bo góc cũ, ngoài ra karaoke/hormozi/anton/neon…
@@ -379,9 +383,17 @@ def load_opt_settings() -> dict:
 
 
 def save_opt_settings(data: dict):
+    """Ghi các khoá trong `data` lên file cài đặt, GIỮ NGUYÊN các khoá không nêu.
+
+    GUI và web dùng chung file này; có khoá chỉ web có ô chỉnh (vd
+    tiktok_music_loop) — bên này lưu mà ghi đè cả file thì xoá mất lựa chọn
+    của bên kia.
+    """
     import json
     try:
-        OPTS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+        merged = load_opt_settings()
+        merged.update(data)
+        OPTS_FILE.write_text(json.dumps(merged, ensure_ascii=False, indent=2),
                              encoding="utf-8")
     except Exception as e:
         logging.warning(f"Không lưu được cài đặt: {e}")
@@ -1681,12 +1693,14 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
 
 
 def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
-                  out_wav: Path) -> Path:
+                  out_wav: Path, loop: bool = False) -> Path:
     """Trộn NHẠC NỀN vào giọng rồi CHUẨN HOÁ cả bản trộn về mức phát hành.
 
     Nhạc được hạ xuống thấp hơn GIỌNG đúng |below_db| LUFS (vd giọng -16 LUFS,
-    below=-12 → nhạc ≈ -28 LUFS). Nhạc LẶP cho đủ dài, fade-in 1s + fade-out cuối
-    bài, cắt bằng độ dài giọng. Trả về out_wav (giữ nguyên độ dài giọng).
+    below=-12 → nhạc ≈ -28 LUFS). Mặc định nhạc chỉ phát MỘT LẦN từ đầu bài
+    (hết bài là thôi, phần còn lại chỉ có giọng); `loop=True` mới lặp cho phủ
+    hết video. Fade-in 1s + fade-out ở chỗ nhạc kết thúc, cắt bằng độ dài
+    giọng. Trả về out_wav (giữ nguyên độ dài giọng).
 
     Cân theo LUFS chứ không theo đỉnh: nhạc có đỉnh cao mà nghe rất nhỏ là chuyện
     thường (trống, tiếng gảy dây), lấy đỉnh làm mốc thì bài nào cũng ra một mức
@@ -1725,9 +1739,16 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
 
     # Độ dài giọng = độ dài bản trộn (amix duration=first) → biết mốc bắt đầu fade.
     voice_sec = _probe_duration(voice_wav)
+    end_sec = voice_sec
+    if not loop and voice_sec:
+        # Không lặp: nhạc ngắn hơn giọng thì hết sớm — fade phải đặt ở chỗ nhạc
+        # thực sự kết thúc, đặt cuối giọng là fade vào khoảng trống không nhạc.
+        music_sec = _probe_duration(music_file)
+        if music_sec:
+            end_sec = min(voice_sec, music_sec)
     fade_out = ""
-    if voice_sec and voice_sec > BGM_FADE_OUT_SEC * 2:
-        st = voice_sec - BGM_FADE_OUT_SEC
+    if end_sec and end_sec > BGM_FADE_OUT_SEC * 2:
+        st = end_sec - BGM_FADE_OUT_SEC
         fade_out = f"afade=t=out:st={st:.3f}:d={BGM_FADE_OUT_SEC:g},"
     else:
         logging.warning("⚠️ Không đo được độ dài giọng → bỏ fade-out nhạc nền.")
@@ -1736,10 +1757,12 @@ def _mix_bg_music(voice_wav: Path, music_file: Path, below_db: float,
             f"aresample=44100[bg];"
             f"[0:a][bg]amix=inputs=2:duration=first:normalize=0[a]")
     raw_mix = out_wav.with_name(out_wav.stem + "_tronthô.tmp.wav")
-    cmd = [ffmpeg, "-y", "-i", str(voice_wav),
-           "-stream_loop", "-1", "-i", str(music_file),   # lặp nhạc cho đủ dài
-           "-filter_complex", filt, "-map", "[a]",
-           "-c:a", "pcm_f32le", str(raw_mix)]
+    cmd = [ffmpeg, "-y", "-i", str(voice_wav)]
+    if loop:
+        cmd += ["-stream_loop", "-1"]        # lặp nhạc cho đủ dài (phải đứng trước -i)
+    cmd += ["-i", str(music_file),
+            "-filter_complex", filt, "-map", "[a]",
+            "-c:a", "pcm_f32le", str(raw_mix)]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", creationflags=CREATE_NO_WINDOW)
     if r.returncode != 0 or not raw_mix.exists():
@@ -1856,7 +1879,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2371,9 +2394,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         status_var.set("Đang chèn nhạc nền cho TikTok...")
                         try:
                             tk_audio = _mix_bg_music(tk_audio, music_file,
-                                                     float(tiktok_music_db), mix_out)
+                                                     float(tiktok_music_db), mix_out,
+                                                     loop=tiktok_music_loop)
+                            _lap = "lặp tới hết video" if tiktok_music_loop else "phát 1 lần"
                             logging.info(f"🎼 Nhạc nền: {music_file.name} (≈{tiktok_music_db:.0f}dB "
-                                         f"dưới giọng) → {mix_out.name}")
+                                         f"dưới giọng, {_lap}) → {mix_out.name}")
                         except Exception as e:
                             logging.warning(f"Không chèn được nhạc nền (giữ giọng gốc): {e}")
 
@@ -6190,6 +6215,9 @@ class App(tk.Tk):
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
             tiktok_caption_pos=tiktok_caption_pos,
             tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
+            # Lặp nhạc nền: GUI không có ô tick — đọc thẳng từ file cài đặt
+            # (ô tick nằm bên trang web, hai bên dùng chung taogiong_options.json).
+            tiktok_music_loop=load_opt_settings().get("tiktok_music_loop", False),
             bring_front=self.var_bring_front.get(),
             make_sub=self.var_make_sub.get(), sub_mode=self.var_sub_mode.get(),
             sub_model=self.var_sub_model.get(),
@@ -6448,6 +6476,7 @@ class App(tk.Tk):
             tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
             tiktok_music=ts.get("tiktok_music", False),
             tiktok_music_db=ts.get("tiktok_music_db", -12),
+            tiktok_music_loop=ts.get("tiktok_music_loop", False),
             # Phụ đề cho YOUTUBE.mp4 (tắt mặc định — xem hàng "📝 Phụ đề" ở Cài đặt).
             make_sub=ts.get("make_sub", False),
             sub_mode=ts.get("sub_mode", SUB_MODE_SRT),
@@ -7657,6 +7686,8 @@ class App(tk.Tk):
                     "tiktok_caption_pos": tiktok_caption_pos,
                     "tiktok_music": tiktok_music,
                     "tiktok_music_db": tiktok_music_db,
+                    # Ô tick lặp nhạc chỉ có bên web — đọc từ file cài đặt chung.
+                    "tiktok_music_loop": load_opt_settings().get("tiktok_music_loop", False),
                     "doc_from_subfolder": doc_from_subfolder,   # ghép video dọc từ thư mục con videodoc
                     "ngang_source": ngang_source,               # nguồn clip video ngang theo chủ đề
                     # Quy tắc đặt tên 3 video (giống bản tự động).
@@ -7969,6 +8000,7 @@ class App(tk.Tk):
                 tiktok_no_effect=self.var_tiktok_no_effect.get(),
                 tiktok_caption=tiktok_caption, tiktok_caption_pos=tiktok_caption_pos,
                 tiktok_music=self.var_tiktok_music.get(), tiktok_music_db=tiktok_music_db,
+                tiktok_music_loop=load_opt_settings().get("tiktok_music_loop", False),
                 # Chỉ nút "Dựng lại" của video NGANG mới làm phụ đề (2 video kia không có).
                 make_sub=(kind == "ngang" and self.var_make_sub.get()),
                 # Nút "Dựng lại" video DỌC thì làm phụ đề khung dọc cho chính nó.

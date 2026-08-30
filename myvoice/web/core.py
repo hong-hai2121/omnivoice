@@ -48,9 +48,9 @@ OPTS_DEFAULTS = gui.OPTS_DEFAULTS
 PIPE_DEFAULTS = gui.PIPE_DEFAULTS
 PREFIX_FILE   = gui.PREFIX_FILE
 
-# Cài đặt CHỈ bản web dùng (chế độ giọng + giọng mẫu đang chọn). Để riêng file vì
-# _save_opt_settings của GUI ghi đè taogiong_options.json bằng một dict cố định →
-# khoá lạ thêm vào đó sẽ bị xoá mất ở lần GUI lưu kế tiếp.
+# Cài đặt CHỈ bản web dùng (chế độ giọng + giọng mẫu đang chọn) — để riêng file
+# cho gọn. (save_opt_settings của GUI nay GIỮ lại khoá không nêu khi lưu, nên
+# khoá chỉ-web như tiktok_music_loop vẫn nằm chung taogiong_options.json được.)
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
 WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
@@ -779,6 +779,8 @@ def tts_settings() -> tuple[dict | None, str]:
         tiktok_caption_pos=_i(opts.get("tiktok_caption_pos"), 40, 0, 100),
         tiktok_music=bool(opts.get("tiktok_music")),
         tiktok_music_db=_i(opts.get("tiktok_music_db"), -12, -40, 0),
+        # Mặc định tắt = nhạc chỉ phát 1 lần từ đầu bài; tick mới lặp phủ hết video.
+        tiktok_music_loop=bool(opts.get("tiktok_music_loop")),
         make_sub=bool(opts.get("make_sub")),
         # Phụ đề video DỌC (facebook.mp4) — cùng kiểu/model/số ký tự với video
         # ngang, khung 1080x1920 tự rút dòng ngắn lại (xem make_youtube_sub).
