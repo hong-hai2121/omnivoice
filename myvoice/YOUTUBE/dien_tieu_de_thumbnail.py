@@ -87,8 +87,8 @@ NUMBER_TEXT_BOX = (1318, 100, 1658, 310)
 NUMBER_ANGLE = -13.0
 
 # ── Thumbnail DỌC (1080×1920, chuẩn YouTube Shorts) ─────────────────────────────
-# Ảnh trong thư mục Anh được phủ kín toàn khung làm nền; logo ở trên-trái, huy hiệu
-# số tập ở trên-phải, tiêu đề nằm trên panel giấy kem ở phần dưới.
+# Ảnh trong thư mục Anh được phủ kín toàn khung làm nền; logo (trái) và huy hiệu
+# số tập (phải) nằm NGAY TRÊN panel giấy kem chứa tiêu đề ở giữa khung.
 VERTICAL_CANVAS = (1080, 1920)
 V_MARGIN = 46                       # lề ngoài panel giấy
 V_PANEL_CENTER_RATIO = 0.5          # tâm panel tiêu đề theo chiều dọc (0.5 = chính giữa khung)
@@ -96,6 +96,7 @@ V_PANEL_HEIGHT = 700                # chiều cao panel giấy kem
 V_PANEL_PAD = 50                    # đệm trong panel quanh chữ
 V_LOGO_WIDTH = 360                  # bề ngang logo
 V_BADGE_DIAMETER = 250             # đường kính huy hiệu số tập
+V_HEADER_GAP = 40                   # khoảng hở giữa đáy logo/huy hiệu và mép trên panel tiêu đề
 V_TITLE_STROKE_RATIO = 0.032        # viền trắng MỎNG theo cỡ chữ (tách chữ mà không thành mảng nền)
 
 
@@ -468,12 +469,12 @@ def _draw_vertical_title(
                         stroke_width=stroke, stroke_fill=(*TITLE_WHITE, 255), **common)
 
 
-def _add_vertical_episode_badge(base: Image.Image, number: str) -> Image.Image:
-    """Vẽ huy hiệu tròn trắng 'SỐ <n>' ở góc trên-phải (tông đỏ thương hiệu)."""
+def _add_vertical_episode_badge(base: Image.Image, number: str, panel_top: int) -> Image.Image:
+    """Vẽ huy hiệu tròn trắng 'SỐ <n>' mé phải, ngay trên panel tiêu đề."""
     width = base.size[0]
     diameter = V_BADGE_DIAMETER
     x0 = width - V_MARGIN - diameter
-    y0 = 52
+    y0 = panel_top - V_HEADER_GAP - diameter
     layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
     draw.ellipse((x0, y0, x0 + diameter, y0 + diameter), fill=(255, 255, 255, 252),
@@ -517,14 +518,19 @@ def add_title_vertical(
     background = ImageOps.fit(background, VERTICAL_CANVAS,
                              method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
 
-    # 2) Scrim tối nhẹ ở trên (cho logo/số) và dưới (cho tiêu đề) để tăng độ đọc.
+    # Hình học panel tiêu đề tính TRƯỚC vì logo/huy hiệu/scrim đều neo theo mép trên panel.
+    panel_cy = round(height * V_PANEL_CENTER_RATIO)
+    panel_top = panel_cy - V_PANEL_HEIGHT // 2
+    panel_bottom = panel_cy + V_PANEL_HEIGHT // 2
+
+    # 2) Scrim tối nhẹ ở trên (cho logo/số, kéo dài tới panel) và dưới (cho tiêu đề).
     scrim = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
     scrim_draw = ImageDraw.Draw(scrim)
     bottom_start = height * 0.52
     for y in range(height):
         alpha = 0
-        if y < 360:
-            alpha = round(120 * (1 - y / 360))
+        if y < panel_top:
+            alpha = round(120 * (1 - y / panel_top))
         if y > bottom_start:
             t = (y - bottom_start) / (height - bottom_start)
             alpha = max(alpha, round(150 * min(1.0, t)))
@@ -532,9 +538,6 @@ def add_title_vertical(
     base = Image.alpha_composite(background, scrim)
 
     # 3) Panel giấy kem cho tiêu đề — căn GIỮA theo chiều dọc + bóng đổ mềm.
-    panel_cy = round(height * V_PANEL_CENTER_RATIO)
-    panel_top = panel_cy - V_PANEL_HEIGHT // 2
-    panel_bottom = panel_cy + V_PANEL_HEIGHT // 2
     panel_rect = (V_MARGIN, panel_top, width - V_MARGIN, panel_bottom)
     shadow = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle(
@@ -558,16 +561,16 @@ def add_title_vertical(
     _draw_vertical_title(title_layer, content, font, center, spacing, stroke)
     base = Image.alpha_composite(base, title_layer)
 
-    # 5) Logo Mimi audio ở góc trên-trái.
+    # 5) Logo Mimi audio mé trái, ngay trên panel tiêu đề (đáy logo cách panel V_HEADER_GAP).
     if logo_path.is_file():
         logo = Image.open(logo_path).convert("RGBA")
         logo = ImageOps.contain(logo, (V_LOGO_WIDTH, V_LOGO_WIDTH),
                                method=Image.Resampling.LANCZOS)
-        base.alpha_composite(logo, (44, 40))
+        base.alpha_composite(logo, (44, panel_top - V_HEADER_GAP - logo.height))
 
-    # 6) Số tập: huy hiệu tròn ở góc trên-phải.
+    # 6) Số tập: huy hiệu tròn mé phải, cùng hàng với logo.
     if number:
-        base = _add_vertical_episode_badge(base, number)
+        base = _add_vertical_episode_badge(base, number, panel_top)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output = unique_path(output)

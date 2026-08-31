@@ -7000,7 +7000,7 @@ class App(tk.Tk):
                 else:
                     state["driver"].get(g.GEMINI_URL)   # chat mới cho tập này
                     time.sleep(8)
-                logging.info(f"🌐 Tập {episode}: dịch {n_todo}/{len(chunks)} đoạn còn thiếu...")
+                logging.info(f"🌐 Tập {episode}: dịch {len(todo)}/{len(chunks)} đoạn còn thiếu...")
                 results = g.send_chunks_to_gemini(
                     chunks, prefix=prefix, on_log=logging.info, out_path=gemini_docx,
                     driver=state["driver"], keep_open=True, on_driver=_on_driver,
