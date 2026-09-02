@@ -30,11 +30,22 @@ SOURCE_IMAGE = THUMBNAIL_DIR / "tiêu đề.png"
 # file "khung nen *.png" trong thư mục thumbnail, không phải sửa code. Ảnh nền tự
 # co giãn về đúng canvas nên không bắt buộc cùng kích thước.
 BACKGROUND_PATTERN = "khung nen*.png"
+# Khung trang trí trên cùng (banner "Mimi Audio"), KHÔNG in sẵn logo. Có nhiều màu đi
+# kèm logo cùng màu: "khung trên.png" (vàng) ↔ "logo.png" (hồng), "khung trên xanh.png"
+# ↔ "logo xanh.png", ... (xem frame_for_logo). Logo được dán lại vào H_LOGO_BOX.
 FOREGROUND_FRAME_IMAGE = THUMBNAIL_DIR / "khung trên.png"
 FRAME_IMAGE = THUMBNAIL_DIR / "ảnh.png"              # khung ảnh NGANG (mèo nằm ngang)
+# Khung ảnh DỌC: có nhiều màu đi theo logo (anhdoc.png hồng ↔ logo.png, anhdoc tím.png ↔
+# logo tím.png, anhdoc đỏ.png ↔ logo đỏ.png ...; xem photo_frame_for_logo). Thiếu màu nào
+# thì dùng anhdoc.png. Mỗi khung vẽ chữ nhật viền hơi khác nhau nên hộp ghép ảnh được DÒ
+# theo từng khung (frame_inner_box_vertical) chứ không dùng chung một hộp cố định.
 FRAME_IMAGE_VERTICAL = THUMBNAIL_DIR / "anhdoc.png"  # khung ảnh DỌC (mèo dọc/đứng)
 NUMBER_FRAME_IMAGE = THUMBNAIL_DIR / "Số.png"
-LOGO_IMAGE = THUMBNAIL_DIR / "logo.png"  # logo Mimi audio (tách từ khung trên.png) cho bản DỌC
+# Logo Mimi audio cho bản DỌC: có NHIỀU màu (logo.png hồng, logo xanh.png, logo tím.png,
+# logo đỏ.png ...) và mỗi lần tạo thumbnail dọc sẽ chọn NGẪU NHIÊN một logo, giống cách
+# chọn nền hoa. Thêm/bớt màu chỉ cần thêm/xoá file "logo*.png" trong thư mục thumbnail.
+LOGO_PATTERN = "logo*.png"
+LOGO_IMAGE = THUMBNAIL_DIR / "logo.png"  # logo hồng gốc (tách từ khung trên.png) — dự phòng khi không có logo khác
 CAT_IMAGE_DIR = HERE.parent / "Anh"
 OUTPUT_DIR = HERE.parent / "kịch_bản" / "output"
 DEFAULT_TITLE = "Bữa Tiệc Toàn Ngỗng 388 Tệ Và Sự Thật Đau Đớn Sau Nhiều Năm."
@@ -75,7 +86,19 @@ TITLE_CREAM_STROKE = 2                # bề dày bản sao kem (cho bóng lộ 
 FRAME_INNER_BOX = (1225, 452, 1880, 855)
 # Lỗ của khung DỌC (anhdoc.png) — dò từ vùng trong suốt bên trong + nới nhẹ để ảnh
 # phủ kín dưới viền khung (không hở mép trong suốt).
-FRAME_INNER_BOX_VERTICAL = (1285, 159, 1898, 1078)
+FRAME_INNER_BOX_VERTICAL = (1285, 159, 1898, 1078)   # hộp của anhdoc.png; DỰ PHÒNG khi dò viền thất bại
+# Ảnh mèo phủ RỘNG hơn mép ngoài đường viền khung dọc bấy nhiêu px (trái, trên, phải, dưới)
+# để viền nằm đè lên ảnh, không hở mép trong suốt. Đo từ anhdoc.png gốc: viền chữ nhật
+# (1321, 190, 1866, 1047) so với hộp FRAME_INNER_BOX_VERTICAL ở trên.
+PHOTO_FRAME_OVERLAP = (36, 31, 32, 31)
+# Dải dùng để dò đường viền (hệ 1920×1080): đường DỌC đếm trong dải hàng y 350..850, đường
+# NGANG đếm trong dải cột x 1400..1750 — vùng giữa cạnh, tránh nơ/tim/sao trang trí ở góc.
+FRAME_DETECT_BAND_Y = (350, 850)
+FRAME_DETECT_BAND_X = (1400, 1750)
+FRAME_DETECT_MIN_FILL = 0.25          # cột/hàng có ≥25% pixel đục trong dải = đường viền (nét đứt vẫn đạt)
+# Vị trí logo Mimi audio trên thumbnail NGANG (hệ 1920×1080): đúng hộp mà logo từng
+# chiếm trong "khung trên.png" cũ (đo bằng cách so khung cũ với khung đã bỏ logo).
+H_LOGO_BOX = (1, 3, 364, 347)
 # Bán kính bo góc ảnh khi dùng khung DỌC (theo hệ 1920x1080).
 PHOTO_CORNER_RADIUS = 45
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -264,6 +287,99 @@ def random_background(thumbnail_dir: Path = THUMBNAIL_DIR) -> Path:
             f"Không tìm thấy ảnh nền '{BACKGROUND_PATTERN}' trong {thumbnail_dir}"
         )
     return random.choice(backgrounds)
+
+
+def list_logo_images(thumbnail_dir: Path = THUMBNAIL_DIR) -> list[Path]:
+    """Liệt kê các logo (logo.png, logo xanh.png, logo tím.png, ...) theo thứ tự."""
+    return sorted(thumbnail_dir.glob(LOGO_PATTERN), key=natural_sort_key)
+
+
+def random_logo(thumbnail_dir: Path = THUMBNAIL_DIR) -> Path:
+    """Chọn ngẫu nhiên một logo cho thumbnail DỌC; không có logo nào thì về LOGO_IMAGE."""
+    logos = list_logo_images(thumbnail_dir)
+    return random.choice(logos) if logos else LOGO_IMAGE
+
+
+def colour_variant(base: Path, logo_path: Path) -> Path:
+    """File cùng hậu tố màu với logo: base "khung trên.png" + "logo xanh.png" → "khung trên xanh.png".
+
+    Ghép theo hậu tố sau chữ "logo"; không có file màu đó thì trả về base.
+    """
+    stem = logo_path.stem
+    suffix = stem[len("logo"):] if stem.casefold().startswith("logo") else ""
+    candidate = logo_path.parent / f"{base.stem}{suffix}{base.suffix}"
+    return candidate if candidate.is_file() else base
+
+
+def frame_for_logo(logo_path: Path) -> Path:
+    """Khung trên CÙNG MÀU với logo: "logo xanh.png" → "khung trên xanh.png"."""
+    return colour_variant(FOREGROUND_FRAME_IMAGE, logo_path)
+
+
+def photo_frame_for_logo(logo_path: Path) -> Path:
+    """Khung ảnh dọc CÙNG MÀU với logo: "logo tím.png" → "anhdoc tím.png"."""
+    return colour_variant(FRAME_IMAGE_VERTICAL, logo_path)
+
+
+@lru_cache(maxsize=None)
+def detect_vertical_frame_border(frame_path: Path) -> tuple[int, int, int, int] | None:
+    """Dò chữ nhật viền (mép ngoài, hệ 1920×1080) của khung ảnh dọc từ kênh alpha.
+
+    Chiếu alpha lên trục: cột nào có nhiều pixel đục trong dải FRAME_DETECT_BAND_Y là đường
+    viền dọc, hàng nào có nhiều pixel đục trong dải FRAME_DETECT_BAND_X là đường viền ngang.
+    Trả về None nếu không thấy đủ 2 đường dọc + 2 đường ngang (khung lạ) → dùng hộp dự phòng.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    frame = Image.open(frame_path).convert("RGBA")
+    if frame.size != (1920, 1080):
+        frame = frame.resize((1920, 1080), Image.Resampling.LANCZOS)
+    opaque = np.array(frame.getchannel("A")) > 32
+    y0, y1 = FRAME_DETECT_BAND_Y
+    x0, x1 = FRAME_DETECT_BAND_X
+    cols = np.where(opaque[y0:y1, :].sum(axis=0) >= FRAME_DETECT_MIN_FILL * (y1 - y0))[0]
+    rows = np.where(opaque[:, x0:x1].sum(axis=1) >= FRAME_DETECT_MIN_FILL * (x1 - x0))[0]
+    # Cần 2 đường dọc (trái/phải) và 2 đường ngang (trên/dưới) tách xa nhau.
+    if len(cols) < 2 or len(rows) < 2 or cols[-1] - cols[0] < 200 or rows[-1] - rows[0] < 200:
+        return None
+    return int(cols[0]), int(rows[0]), int(cols[-1]), int(rows[-1])
+
+
+def frame_inner_box_vertical(frame_path: Path) -> tuple[int, int, int, int]:
+    """Hộp ghép ảnh (hệ 1920×1080) cho một khung dọc: viền dò được + nới PHOTO_FRAME_OVERLAP."""
+    border = detect_vertical_frame_border(frame_path)
+    if border is None:
+        return FRAME_INNER_BOX_VERTICAL
+    left, top, right, bottom = PHOTO_FRAME_OVERLAP
+    return (max(0, border[0] - left), max(0, border[1] - top),
+            min(1920, border[2] + right), min(1080, border[3] + bottom))
+
+
+def load_logo_cropped(logo_path: Path) -> Image.Image:
+    """Nạp logo RGBA và cắt sát phần có hình (bỏ lề trong suốt của file 1920×1080)."""
+    logo = Image.open(logo_path).convert("RGBA")
+    bbox = logo.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox()
+    return logo.crop(bbox) if bbox else logo
+
+
+def add_logo_to_frame(base: Image.Image, logo_path: Path) -> Image.Image:
+    """Dán logo vào góc trái trên (H_LOGO_BOX) — chỗ logo từng nằm trong khung trên cũ."""
+    if not logo_path.is_file():
+        return base
+    width, height = base.size
+    scale_x, scale_y = width / 1920, height / 1080
+    x0, y0, x1, y1 = H_LOGO_BOX
+    box_w = round(x1 * scale_x) - round(x0 * scale_x)
+    box_h = round(y1 * scale_y) - round(y0 * scale_y)
+    logo = ImageOps.contain(load_logo_cropped(logo_path), (box_w, box_h),
+                            method=Image.Resampling.LANCZOS)
+    pos = (round(x0 * scale_x) + (box_w - logo.width) // 2,
+           round(y0 * scale_y) + (box_h - logo.height) // 2)
+    result = base.copy()
+    result.alpha_composite(logo, pos)
+    return result
 
 
 def list_photo_files(photo_dir: Path) -> list[Path]:
@@ -500,13 +616,14 @@ def add_title_vertical(
     title: str,
     photo_path: Path,
     number: str,
-    logo_path: Path = LOGO_IMAGE,
+    logo_path: Path | None = None,
     max_lines: int = 4,
 ) -> Path:
     """Tạo thumbnail DỌC 1080×1920: ảnh Anh làm nền + logo + tiêu đề + số tập.
 
     Dùng chung ảnh/tiêu đề/số tập với bản ngang. File lưu cùng thư mục output,
-    không ghi đè bản cũ (unique_path).
+    không ghi đè bản cũ (unique_path). Không truyền logo_path → chọn NGẪU NHIÊN
+    một logo "logo*.png" (hồng/xanh/tím/đỏ) cho mỗi thumbnail.
     """
     if not photo_path.is_file():
         raise FileNotFoundError(f"Không tìm thấy ảnh nền: {photo_path}")
@@ -562,6 +679,9 @@ def add_title_vertical(
     base = Image.alpha_composite(base, title_layer)
 
     # 5) Logo Mimi audio mé trái, ngay trên panel tiêu đề (đáy logo cách panel V_HEADER_GAP).
+    #    Không chỉ định logo → random một màu trong các "logo*.png" cho mỗi thumbnail.
+    if logo_path is None:
+        logo_path = random_logo()
     if logo_path.is_file():
         logo = Image.open(logo_path).convert("RGBA")
         logo = ImageOps.contain(logo, (V_LOGO_WIDTH, V_LOGO_WIDTH),
@@ -588,6 +708,7 @@ def add_title(
     number_frame_path: Path,
     max_lines: int = 4,
     background: Path | None = None,
+    logo: Path | None = None,
 ) -> Path:
     title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
     paper = Image.open(source).convert("RGBA")
@@ -619,18 +740,26 @@ def add_title(
     # Xoay nhẹ theo góc của tờ giấy trong ảnh mẫu (góc ≈ 0 với ảnh phẳng hiện tại).
     text_layer = text_layer.rotate(TEXT_ANGLE, resample=Image.Resampling.BICUBIC, center=center)
     result = Image.alpha_composite(base, text_layer)
-    # LUÔN dùng khung ảnh DỌC (anhdoc.png) cho mọi thumbnail — KHÔNG dùng khung
-    # NGANG (ảnh.png) nữa. Ảnh mèo (ngang hay dọc) đều được crop cover vào khung dọc
-    # và bo góc cho đẹp. Chỉ lùi về khung ngang nếu THIẾU file anhdoc.png.
-    if FRAME_IMAGE_VERTICAL.is_file():
-        chosen_frame, chosen_box, round_corners = FRAME_IMAGE_VERTICAL, FRAME_INNER_BOX_VERTICAL, True
+    # Chọn logo TRƯỚC vì khung ảnh dọc và khung trên đều đi theo màu logo.
+    if logo is None:
+        logo = random_logo()
+    # LUÔN dùng khung ảnh DỌC (anhdoc*.png, cùng màu logo) cho mọi thumbnail — KHÔNG dùng
+    # khung NGANG (ảnh.png) nữa. Ảnh mèo (ngang hay dọc) đều được crop cover vào khung dọc
+    # và bo góc cho đẹp; hộp ghép ảnh dò theo từng khung màu để không lệch viền.
+    # Chỉ lùi về khung ngang nếu THIẾU file anhdoc.png.
+    photo_frame = photo_frame_for_logo(logo)
+    if photo_frame.is_file():
+        chosen_frame, chosen_box, round_corners = photo_frame, frame_inner_box_vertical(photo_frame), True
     else:
         chosen_frame, chosen_box, round_corners = frame_path, FRAME_INNER_BOX, False
     result = add_photo_to_frame(result, photo_path, chosen_frame, chosen_box,
                                 round_corners=round_corners)
     if number:
         result = add_number_to_tag(result, number, number_frame_path)
-    result = Image.alpha_composite(result, load_canvas_layer(FOREGROUND_FRAME_IMAGE, result.size))
+    # Khung trang trí trên cùng CÙNG MÀU logo (frame_for_logo). Khung trên không còn in sẵn
+    # logo nên logo được dán lại đúng vị trí gốc (H_LOGO_BOX), lớp trên cùng.
+    result = Image.alpha_composite(result, load_canvas_layer(frame_for_logo(logo), result.size))
+    result = add_logo_to_frame(result, logo)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output = unique_path(output)
@@ -655,6 +784,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-lines", type=int, default=4, help="Số dòng tối đa (mặc định: 4).")
     parser.add_argument("--background", type=Path,
                         help="Ảnh nền hoa cụ thể. Bỏ trống để chọn ngẫu nhiên trong các 'khung nen *.png'.")
+    parser.add_argument("--logo", type=Path,
+                        help="Logo cụ thể (logo.png, logo xanh.png ...). Bỏ trống để chọn ngẫu nhiên; "
+                             "khung trên tự đi theo màu logo.")
     return parser.parse_args()
 
 
@@ -670,6 +802,7 @@ def main() -> int:
     output_path = args.output.expanduser() if args.output else next_thumbnail_path()
     # Chọn nền tại đây để in ra đúng mẫu đã dùng (không truyền → add_title tự random).
     background = args.background.expanduser().resolve() if args.background else random_background()
+    logo = args.logo.expanduser().resolve() if args.logo else random_logo()
     output = add_title(
         source,
         output_path,
@@ -680,9 +813,11 @@ def main() -> int:
         args.number_frame.expanduser().resolve(),
         args.max_lines,
         background,
+        logo=logo,
     )
     print(f"Ảnh trong khung: {photo}")
     print(f"Nền hoa: {background.name}")
+    print(f"Logo: {logo.name} — khung trên: {frame_for_logo(logo).name} — khung ảnh: {photo_frame_for_logo(logo).name}")
     print(f"Số trên thẻ: {args.number.strip() or '(không hiển thị)'}")
     print(f"Đã tạo thumbnail: {output}")
     return 0
