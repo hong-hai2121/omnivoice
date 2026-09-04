@@ -1344,7 +1344,7 @@ class App:
             raise RuntimeError(f"Không có ảnh nền trong: {tr.CAT_IMAGE_DIR}")
         photo = random.choice(photos)
         return tr.add_title(
-            tr.SOURCE_IMAGE, tr.next_thumbnail_path(), title, photo,
+            tr.random_title_template(), tr.next_thumbnail_path(), title, photo,
             tr.FRAME_IMAGE, (number or tr.DEFAULT_NUMBER), tr.NUMBER_FRAME_IMAGE,
         )
 

@@ -6580,7 +6580,7 @@ class App(tk.Tk):
             made = False
             if need_ngang:
                 renderer.add_title(
-                    renderer.SOURCE_IMAGE, out_png, title, photo,
+                    renderer.random_title_template(), out_png, title, photo,
                     renderer.FRAME_IMAGE, episode, renderer.NUMBER_FRAME_IMAGE)
                 logging.info(f"🖼  Đã tạo thumbnail ngang: {out_png.name}")
                 made = True

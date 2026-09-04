@@ -11,8 +11,9 @@ Thứ tự lớp (từ dưới lên trên):
   1. Khung0.png       -> nền dưới cùng
   2. video + hiệu ứng -> hiệu ứng phủ THẲNG vào video ghép, rồi cùng đưa vào
                          khung1 và cắt bo góc (dư ra ngoài khung1 bị cắt bỏ)
-  3. khung1.png       -> viền khung video (bo góc)
-  4. khung2.png       -> lớp trang trí trên cùng (chữ/hoa văn)
+  3. khung1*.png      -> viền khung video (bo góc); nhiều màu, chọn ngẫu nhiên mỗi lần dựng
+  4. khung2.png       -> lớp trang trí trên cùng (chữ/hoa văn), KHÔNG in sẵn logo;
+                         logo Mimi audio cùng màu viền được dán vào ô K2_LOGO_BOX
 
 MODE:
   - "fit"  : hiện trọn video (có thể có dải nền trên/dưới) — không mất hình.
@@ -33,7 +34,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from scipy import ndimage
 
 # Ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt). Dùng reconfigure() để đổi
@@ -50,8 +51,18 @@ for _stream in (sys.stdout, sys.stderr):
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 BG_DIR     = BASE_DIR / "Backbround"
 KHUNG0     = BG_DIR / "Khung0.png"     # nền dưới cùng
-KHUNG1     = BG_DIR / "khung1.png"     # viền khung video (bo góc)
-KHUNG2     = BG_DIR / "khung2.png"     # trang trí trên cùng
+KHUNG1     = BG_DIR / "khung1.png"     # viền khung video (bo góc) — bản hồng gốc, dự phòng
+# Viền khung có NHIỀU màu: khung1.png (hồng), khung1 xanh.png, khung1 tím.png, khung1 đỏ.png ...
+# Mỗi lần dựng video chọn NGẪU NHIÊN một viền (random_frame); thêm màu chỉ cần thả file
+# "khung1 <màu>.png" CÙNG HÌNH DẠNG (vùng trong dò theo kênh alpha, không theo màu).
+KHUNG1_PATTERN = "khung1*.png"
+KHUNG2     = BG_DIR / "khung2.png"     # trang trí trên cùng (KHÔNG còn in sẵn logo)
+# Logo Mimi audio: dùng chung kho logo của thumbnail (logo.png hồng, logo xanh.png, ...).
+# khung2.png đã bỏ logo in sẵn; mỗi lần dựng, logo CÙNG MÀU viền khung1 (logo_for_frame)
+# được dán vào K2_LOGO_BOX — đúng ô logo từng chiếm trong khung2 cũ (đo bằng cách so
+# khung2 cũ với khung2 đã bỏ logo). Logo nằm DƯỚI khung2 để nút Subscribe đè lên như gốc.
+LOGO_DIR   = BASE_DIR / "YOUTUBE" / "thumbnail"
+K2_LOGO_BOX = (0, 346, 348, 690)
 VIDEO_DIR  = BASE_DIR / "videongang"   # kho video ngang để ghép random
 SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
@@ -320,17 +331,57 @@ def build_playlist(videos, durations, target):
     return seq, total
 
 
-def pink_mask(png_path: Path):
-    """Trả về (ảnh RGBA, mảng bool pixel hồng)."""
+def list_frames() -> list[Path]:
+    """Liệt kê các viền khung video (khung1.png, khung1 xanh.png, ...) theo tên."""
+    return sorted(BG_DIR.glob(KHUNG1_PATTERN), key=lambda p: p.name.casefold())
+
+
+def random_frame() -> Path:
+    """Chọn ngẫu nhiên một viền khung; không có file nào thì về khung1.png."""
+    frames = list_frames()
+    return random.choice(frames) if frames else KHUNG1
+
+
+def logo_for_frame(frame: Path) -> Path:
+    """Logo cùng màu với viền khung1: "khung1 xanh.png" → "logo xanh.png"; thiếu thì logo.png."""
+    stem = frame.stem
+    suffix = stem[len("khung1"):] if stem.casefold().startswith("khung1") else ""
+    candidate = LOGO_DIR / f"logo{suffix}.png"
+    return candidate if candidate.exists() else LOGO_DIR / "logo.png"
+
+
+def paste_logo(layer: Image.Image, logo_path: Path) -> Image.Image:
+    """Dán logo (cắt sát phần có hình) vào K2_LOGO_BOX, tỉ lệ theo kích thước layer."""
+    if not logo_path.exists():
+        return layer
+    logo = Image.open(logo_path).convert("RGBA")
+    bbox = logo.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox()
+    if bbox:
+        logo = logo.crop(bbox)
+    cw, ch = layer.size
+    sx, sy = cw / 1920, ch / 1080
+    x0, y0, x1, y1 = K2_LOGO_BOX
+    bw = round(x1 * sx) - round(x0 * sx)
+    bh = round(y1 * sy) - round(y0 * sy)
+    logo = ImageOps.contain(logo, (bw, bh), method=Image.Resampling.LANCZOS)
+    pos = (round(x0 * sx) + (bw - logo.width) // 2, round(y0 * sy) + (bh - logo.height) // 2)
+    layer.alpha_composite(logo, pos)
+    return layer
+
+
+def frame_mask(png_path: Path):
+    """Trả về (ảnh RGBA, mảng bool pixel VIỀN = pixel không trong suốt).
+
+    Trước đây dò viền theo MÀU HỒNG nên viền màu khác (xanh/tím/đỏ) không dò được.
+    Với khung1.png gốc, pixel hồng trùng khít pixel đục (đã kiểm), nên dò theo alpha
+    cho kết quả y hệt mà dùng được mọi màu.
+    """
     im = Image.open(png_path).convert("RGBA")
     a  = np.array(im)
-    alpha = a[:, :, 3]
-    r, g, b = (a[:, :, 0].astype(int),
-               a[:, :, 1].astype(int),
-               a[:, :, 2].astype(int))
-    # Pixel "hồng": đỏ cao, xanh lá/lam vừa phải, không trong suốt
-    pink = (r > 200) & (g > 100) & (g < 200) & (b < 200) & (alpha > 50)
-    return im, pink
+    return im, a[:, :, 3] > 50
+
+
+pink_mask = frame_mask   # tên cũ, giữ cho tương thích
 
 
 def detect_inner_box(im, pink):
@@ -367,7 +418,8 @@ def detect_inner_box(im, pink):
     return x, y, w, h
 
 
-def prepare_static_layers(pink, target_size: tuple[int, int]):
+def prepare_static_layers(pink, target_size: tuple[int, int], frame: Path = KHUNG1,
+                          logo: Path | None = None):
     """Pre-scale các lớp khung tĩnh về đúng cw×ch MỘT LẦN bằng PIL.
 
     Trước đây ffmpeg phải scale (lanczos) khung0/khung1/khung2/mask trên TỪNG frame
@@ -377,7 +429,8 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
     nên filter graph chỉ còn overlay (không scale mỗi frame) và bớt 1 overlay.
 
     Mask trắng = vùng bên trong khung (kể cả góc bo tròn) nhờ binary_fill_holes lấp
-    kín phần trong vòng viền hồng. Trả về (bg_path, top_path, mask_path).
+    kín phần trong vòng viền. `frame` = file viền khung1 đang dùng (màu ngẫu nhiên),
+    `logo` = logo dán vào ô K2_LOGO_BOX (giữa khung1 và khung2). Trả về (bg_path, top_path, mask_path).
     """
     cw, ch = target_size
     resample = Image.Resampling.LANCZOS
@@ -387,10 +440,13 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
         src.convert("RGBA").resize((cw, ch), resample).save(tmp / "khung0_scaled.png")
     bg_path = tmp / "khung0_scaled.png"
 
-    # khung2 nằm trên khung1 -> gộp thành một lớp phủ trên cùng.
-    with Image.open(KHUNG1) as src1, Image.open(KHUNG2) as src2:
+    # khung1 -> logo -> khung2: gộp thành một lớp phủ trên cùng (logo dưới khung2 để nút
+    # Subscribe của khung2 đè lên mép logo như bản khung2 cũ có logo in sẵn).
+    with Image.open(frame) as src1, Image.open(KHUNG2) as src2:
         top = src1.convert("RGBA").resize((cw, ch), resample)
         k2 = src2.convert("RGBA").resize((cw, ch), resample)
+    if logo:
+        top = paste_logo(top, logo)
     top = Image.alpha_composite(top, k2)
     top_path = tmp / "khung_top.png"
     top.save(top_path)
@@ -405,7 +461,8 @@ def prepare_static_layers(pink, target_size: tuple[int, int]):
 
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 progress=None, skip_existing=False, output: Path | None = None,
-                source_dir: Path | None = None) -> Path:
+                source_dir: Path | None = None, frame: Path | None = None,
+                logo: Path | None = None) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
@@ -429,6 +486,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     source_dir: thư mục kho clip ngang để ghép random. None (mặc định) → dùng cả
                 videongang/. Truyền 1 thư mục con (vd videongang/thiennhien) để chỉ
                 ghép clip theo chủ đề đó.
+
+    frame: file viền khung (khung1*.png) cụ thể. None (mặc định) → chọn NGẪU NHIÊN
+           một màu trong Backbround/ (xem random_frame).
+
+    logo: file logo dán vào khung2. None (mặc định) → logo CÙNG MÀU với viền đã chọn
+          (xem logo_for_frame), lấy từ kho logo thumbnail.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -437,7 +500,9 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         log(f"♻ Video ngang đã có → bỏ qua dựng lại: {output.name}")
         return output
 
-    for f in (KHUNG0, KHUNG1, KHUNG2):
+    frame = Path(frame) if frame else random_frame()
+    logo = Path(logo) if logo else logo_for_frame(frame)
+    for f in (KHUNG0, frame, KHUNG2):
         if not f.exists():
             raise RuntimeError(f"Không tìm thấy khung: {f}")
 
@@ -466,15 +531,15 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     audio_dur  = get_duration(audio_file)
     # output đã được xác định ở trên (tôn trọng tham số output tùy chọn).
 
-    # Khung + vùng trong + mặt nạ bo góc (lấy từ khung1)
-    im, pink = pink_mask(KHUNG1)
+    # Khung + vùng trong + mặt nạ bo góc (lấy từ viền khung1 đã chọn)
+    im, pink = frame_mask(frame)
     source_w, source_h = im.size
     cw, ch = output_canvas_size(source_w, source_h)
     ix, iy, iw, ih = detect_inner_box(im, pink)
     ix, iy, iw, ih = scale_box(
         ix, iy, iw, ih, source_w, source_h, cw, ch
     )
-    bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch))
+    bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch), frame, logo)
 
     # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
     durations = probe_durations(videos, log)
@@ -490,6 +555,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             f.write(f"file '{v.as_posix()}'\n")
 
     log(f"Khung gốc  : {source_w}x{source_h}")
+    log(f"Viền khung : {frame.name}")
+    log(f"Logo       : {logo.name if logo.exists() else '(không thấy) ' + str(logo)}")
     log(f"Video xuất : {cw}x{ch} (tối thiểu {MIN_OUTPUT_HEIGHT}p)")
     log(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
     log(f"Chế độ     : {mode}  (zoom {ZOOM:g}x, nới {OVERSCAN}px)")

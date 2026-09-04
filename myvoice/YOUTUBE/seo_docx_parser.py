@@ -7,8 +7,9 @@ seo_docx_parser.py — Tách TIÊU ĐỀ / MÔ TẢ / THẺ TAG từ file SEO c�
 
     ... CHỌN TIÊU ĐỀ VIDEO
         (Độ dài ...)                    ← chú thích, bỏ qua
-        <các tiêu đề ứng viên> ...
-    🏆 TIÊU ĐỀ TỐT NHẤT ĐƯỢC CHỌN:
+        <tiêu đề ứng viên> (61 ký tự)   ← có đợt Gemini ghi kèm số ký tự sau mỗi tiêu đề
+        ...
+    🏆 TIÊU ĐỀ TỐT NHẤT ĐƯỢC CHỌN:      ← hoặc 'Tiêu đề QUÁN QUÂN', 'Tiêu đề ĐƯỢC CHỌN:'
         <tiêu đề>                       ← LẤY dòng ngay sau mốc này
     ... THẺ TAG ...
         (Độ dài ...)                    ← chú thích, bỏ qua
@@ -24,7 +25,26 @@ Dùng:
     seo["title"], seo["description"], seo["tags"]   # tags là list[str]
 """
 
+import re
 from pathlib import Path
+
+
+# Ghi chú số ký tự Gemini kẹp sau tiêu đề: '(61 ký tự)', '(Độ dài: 61 ký tự)', kể cả
+# khi đứng sau '| Mimi audio'. Tập 86 và 91 (08/2026) đã lọt nguyên đuôi này vào tiêu
+# đề đăng YouTube + tên file video dọc. Chỉ bỏ ghi chú CÓ SỐ + 'ký tự' để không đụng
+# ngoặc đơn thật trong tên truyện.
+_CHAR_NOTE = r"[(（][^()（）]*?\d+\s*k[ýí]\s*t[ựư][^()（）]*?[)）]"
+# Ghi chú ở CUỐI: bỏ luôn dấu câu Gemini thêm sau ngoặc ('(61 ký tự).').
+_CHAR_NOTE_TAIL_RE = re.compile(r"\s*" + _CHAR_NOTE + r"[\s.,;:!?…。\"'’”]*$", re.IGNORECASE)
+# Ghi chú ở GIỮA ('Tên truyện (61 ký tự) | Mimi audio'): thay bằng một khoảng trắng.
+_CHAR_NOTE_ANY_RE = re.compile(r"\s*" + _CHAR_NOTE + r"\s*", re.IGNORECASE)
+
+
+def strip_char_count_note(title):
+    """Bỏ ghi chú '(N ký tự)' Gemini kẹp vào tiêu đề (ở cuối hoặc ở giữa)."""
+    t = _CHAR_NOTE_TAIL_RE.sub("", (title or "").strip())
+    t = _CHAR_NOTE_ANY_RE.sub(" ", t)
+    return re.sub(r"\s{2,}", " ", t).strip()
 
 
 def _norm(s):
@@ -123,6 +143,10 @@ def parse_seo_docx(path):
         i_best = find("QUÁN QUÂN")
     if i_best < 0:
         i_best = find("TỐT NHẤT")
+    # Biến thể 'Tiêu đề được chọn:' (tập 86, 91): thiếu mốc này thì rơi xuống dự phòng
+    # và lấy nhầm ỨNG VIÊN SỐ 1 (luôn là mẫu 'Sự Thật Đằng Sau...') thay vì tiêu đề chọn.
+    if i_best < 0:
+        i_best = find("ĐƯỢC CHỌN")
     i_tag = find("THẺ TAG")
     i_desc = find("MÔ TẢ VIDEO")
     if i_desc < 0:
@@ -153,6 +177,7 @@ def parse_seo_docx(path):
                 if _looks_like_title(t):
                     title = t
                     break
+    title = strip_char_count_note(title)
 
     # ── THẺ TAG: dòng CSV (nhiều dấu phẩy nhất) trong khoảng [i_tag, i_desc) ──
     tags = []

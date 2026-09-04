@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Điền tiêu đề có đổ bóng vào mẫu thumbnail dạng tờ giấy.
+r"""Điền tiêu đề có đổ bóng vào mẫu thumbnail dạng tờ giấy.
 
 Chạy từ thư mục gốc OmniVoice:
     venv\Scripts\python myvoice\YOUTUBE\dien_tieu_de_thumbnail.py
 
 Ảnh gốc thumbnail/tiêu đề.png luôn được giữ nguyên. Mặc định file kết quả được
 lưu vào myvoice/kịch_bản/output theo tên thumbnail01.png, thumbnail02.png, ...
-và không ghi đè bản cũ.
+và không ghi đè bản cũ. Thêm --doc để tạo kèm bản DỌC 1080×1920 (add_title_vertical).
 """
 
 from __future__ import annotations
@@ -17,14 +17,19 @@ from itertools import combinations
 import random
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 
 HERE = Path(__file__).resolve().parent
 THUMBNAIL_DIR = HERE / "thumbnail"
-SOURCE_IMAGE = THUMBNAIL_DIR / "tiêu đề.png"
+# Khung tiêu đề (tờ giấy chứa chữ): có NHIỀU mẫu "tiêu đề.png", "tiêu đề 2.png", ... và mỗi
+# lần tạo thumbnail chọn NGẪU NHIÊN một mẫu (random_title_template), như nền hoa. Mỗi mẫu có
+# vùng đặt chữ khác nhau → khai báo trong TEXT_BOXES; mẫu không có trong bảng dùng TEXT_BOX.
+SOURCE_IMAGE = THUMBNAIL_DIR / "tiêu đề.png"   # mẫu gốc: giấy kẻ dòng + kẹp giấy
+TITLE_PATTERN = "tiêu đề*.png"
 # Nền hoa: có NHIỀU mẫu (khung nen 1.png, khung nen 2.png, ...) và mỗi lần tạo
 # thumbnail sẽ chọn NGẪU NHIÊN một mẫu cho mới mẻ. Thêm/bớt nền chỉ cần thêm/xoá
 # file "khung nen *.png" trong thư mục thumbnail, không phải sửa code. Ảnh nền tự
@@ -66,6 +71,15 @@ def strip_brand_suffix(title: str) -> str:
 # Đo lại khi đổi ảnh mẫu (bản 2026-07-09 giấy dời xuống/rộng hơn): vùng dòng kẻ
 # hiện x≈60→1270, y≈395(dòng đầu)→959(dòng cuối), giấy tới x1330/y1066.
 TEXT_BOX = (58, 366, 1258, 974)
+# Hộp chữ theo từng mẫu khung tiêu đề (hệ 1920×1080, key = tên file). Đo từ đường viền
+# trang trí của mẫu rồi lùi vào để né hoạ tiết góc; mép trên ≥ ~345 để không đè logo.
+TEXT_BOXES = {
+    "tiêu đề.png": TEXT_BOX,
+    "tiêu đề 2.png": (120, 350, 1235, 975),   # sổ pastel viền tím kép (54,289,1301,1033): né tim/sao 4 góc
+    "tiêu đề 3.png": (75, 372, 1295, 850),    # thẻ tím viền chấm hồng (62,207,1311,971): né góc gấp xanh (x≥1206, y≥856) + đáy thẻ số đầu mèo (y≤418)
+    "tiêu đề 4.png": (140, 365, 1245, 975),   # sổ xanh lá viền kép (74,243,1313,1007): né lá/hoa 4 góc (~130px)
+    "tiêu đề 5.png": (120, 395, 1190, 965),   # sổ xanh dương viền kép (56,254,1251,1004): né mặt trời phải trên, mây phải dưới
+}
 TEXT_ANGLE = 0.0
 TEXT_PADDING = 10
 
@@ -103,24 +117,55 @@ H_LOGO_BOX = (1, 3, 364, 347)
 PHOTO_CORNER_RADIUS = 45
 PHOTO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-# Vùng trắng bên trong thẻ Số.png (canvas 1920×1080). Góc âm làm số nghiêng
-# theo thẻ đang xuôi xuống về phía phải. Thẻ số đã được dời sang trái 132px,
-# xuống 15px so với bản cũ nên hộp chữ dời theo cùng độ lệch.
-NUMBER_TEXT_BOX = (1318, 100, 1658, 310)
-NUMBER_ANGLE = -13.0
+# Hộp đặt số trong thẻ Số.png (canvas 1920×1080). Thẻ hiện tại (2026-09-03) là hình ĐẦU MÈO
+# thẳng đứng: vòng tròn tím bên trong có tâm (1213, 228), đường kính 340, cung trên giữa
+# hai tai thấp nhất ở y≈102 → hộp 270×240 quanh tâm, góc 0. Đổi thẻ thì đo lại tâm/đường
+# kính vòng đặt số rồi sửa hộp này (thẻ cũ là tag nghiêng: hộp (1318,100,1658,310), góc -13).
+NUMBER_TEXT_BOX = (1078, 108, 1348, 348)
+NUMBER_ANGLE = 0.0
 
 # ── Thumbnail DỌC (1080×1920, chuẩn YouTube Shorts) ─────────────────────────────
-# Ảnh trong thư mục Anh được phủ kín toàn khung làm nền; logo (trái) và huy hiệu
-# số tập (phải) nằm NGAY TRÊN panel giấy kem chứa tiêu đề ở giữa khung.
+# Bố cục (2026-09-04): nền hoa (khung nen*.png, xoay dọc) → KHUNG TIÊU ĐỀ random
+# (tiêu đề*.png) được KÉO DÀI kín khung dọc → hàng đầu: logo (trái) + thẻ số đầu mèo
+# (phải) → tiêu đề to ở giữa → ảnh mèo trong khung anhdoc cùng màu logo ở nửa dưới.
+# KHÔNG còn dùng ảnh mèo làm nền.
+#
+# Kéo dài khung tiêu đề: mẫu gốc nằm NGANG (giấy ~1320×900 trên canvas 1920×1080) nên
+# co theo bề ngang rồi cắt 3 lát theo chiều dọc: NẮP TRÊN (lỗ gáy, băng dính, kẹp giấy,
+# hoạ tiết góc trên) giữ nguyên, DẢI GIỮA (chỉ có viền hai bên + nền giấy) được LẶP cho
+# đủ chiều cao, NẮP DƯỚI (hoạ tiết góc dưới, góc gấp) giữ nguyên → không méo hoạ tiết.
+# Mỗi mẫu khai báo trong V_TEMPLATES (hệ 1920×1080):
+#   paper = (x0, y0, x1, y1) mép tờ giấy (tính cả lỗ gáy; băng dính/kẹp lòi ra ngoài
+#           được phép tràn vào lề); band = (y0, y1) dải giữa sạch hoạ tiết để lặp (giấy
+#           kẻ dòng: chọn đúng bội số chu kỳ dòng, từ giữa 2 dòng tới giữa 2 dòng);
+#   inset = (trái, trên, phải, dưới) lùi từ mép giấy vào vùng đặt nội dung (né băng
+#           dính/kẹp ở trên, góc gấp ở dưới). Mẫu lạ dùng V_TEMPLATE_DEFAULT_INSET (dò bbox alpha).
 VERTICAL_CANVAS = (1080, 1920)
-V_MARGIN = 46                       # lề ngoài panel giấy
-V_PANEL_CENTER_RATIO = 0.5          # tâm panel tiêu đề theo chiều dọc (0.5 = chính giữa khung)
-V_PANEL_HEIGHT = 700                # chiều cao panel giấy kem
-V_PANEL_PAD = 50                    # đệm trong panel quanh chữ
-V_LOGO_WIDTH = 360                  # bề ngang logo
-V_BADGE_DIAMETER = 250             # đường kính huy hiệu số tập
-V_HEADER_GAP = 40                   # khoảng hở giữa đáy logo/huy hiệu và mép trên panel tiêu đề
+V_MARGIN = 56                        # lề nền hoa quanh tờ giấy
+V_TEMPLATES = {
+    "tiêu đề.png":   dict(paper=(10, 189, 1326, 1080), band=(436, 919), inset=(50, 141, 56, 40)),   # giấy kẻ dòng (chu kỳ ~80.6px, dải = 6 dòng), kẹp giấy 2 góc trên
+    "tiêu đề 2.png": dict(paper=(17, 192, 1337, 1069), band=(420, 880), inset=(58, 128, 47, 49)),   # sổ pastel viền tím kép, băng dính + tim/sao 4 góc
+    "tiêu đề 3.png": dict(paper=(19, 181, 1375, 1024), band=(430, 800), inset=(71, 119, 65, 175)),  # thẻ tím viền chấm hồng; inset dưới lớn né góc gấp xanh (x≥1200, y≥855)
+    "tiêu đề 4.png": dict(paper=(34, 145, 1353, 1046), band=(420, 840), inset=(46, 140, 53, 46)),   # sổ xanh lá viền kép, băng dính + lá/hoa 4 góc
+    "tiêu đề 5.png": dict(paper=(16, 157, 1291, 1044), band=(420, 820), inset=(54, 128, 56, 54)),   # sổ xanh dương viền kép, mặt trời/mây các góc
+}
+V_TEMPLATE_DEFAULT_INSET = (60, 150, 60, 50)
+V_HEADER_HEIGHT = 300               # hàng logo + thẻ số (px canvas)
+V_LOGO_SIZE = 300                   # logo tròn (cắt sát) co vừa hộp vuông này
+V_BADGE_WIDTH = 290                 # bề ngang thẻ số đầu mèo (Số.png cắt sát, nhuộm màu logo)
+V_ROW_GAP = 34                      # hở giữa hàng đầu / tiêu đề / ảnh
+V_TITLE_SHARE = 0.52                # phần chiều cao còn lại dành cho tiêu đề (còn lại là ảnh)
+V_TITLE_PAD_X = 10
 V_TITLE_STROKE_RATIO = 0.032        # viền trắng MỎNG theo cỡ chữ (tách chữ mà không thành mảng nền)
+V_PHOTO_CORNER_RADIUS = 30          # bo góc ảnh trong khung anhdoc (px canvas)
+V_FRAME_CAP_EXTRA = 60              # nắp trái/phải khung anhdoc lấn qua đường viền bấy nhiêu px (hệ 1920) để giữ góc/sao
+V_SHADOW = dict(offset=(0, 12), blur=16, colour=(45, 15, 35), opacity=0.42)   # bóng đổ chung cho giấy/logo/thẻ số
+# Nhuộm thẻ số theo màu logo: nền kem → pha PASTEL (tỷ lệ trắng), viền → màu logo (đường trong)
+# tới màu pha (đường ngoài, sáng hơn).
+V_BADGE_FILL_WHITE = 0.74
+V_BADGE_EDGE_WHITE = 0.40
+V_BADGE_NUMBER_COLOUR = (195, 28, 41)      # đỏ như thẻ số bản ngang
+V_BADGE_NUMBER_STROKE = (255, 247, 222)
 
 
 for stream in (sys.stdout, sys.stderr):
@@ -187,17 +232,37 @@ def balanced_wrap(
     if len(words) > 18:
         return None
 
+    # TĂNG TỐC: bề rộng mỗi cụm từ liên tiếp words[i:j] chỉ đo MỘT lần rồi dùng lại cho
+    # mọi tổ hợp ngắt dòng (trước đây đo lại từng dòng của từng tổ hợp → hàng nghìn lần
+    # textbbox mỗi cỡ chữ, bản dọc 5 dòng mất ~25 s/ảnh). Kết quả chọn ra KHÔNG đổi.
+    span_width: dict[tuple[int, int], int] = {}
+
+    def width_of(start: int, stop: int) -> int:
+        key = (start, stop)
+        width = span_width.get(key)
+        if width is None:
+            width = draw.textbbox((0, 0), " ".join(words[start:stop]), font=font, stroke_width=3)[2]
+            span_width[key] = width
+        return width
+
+    total_width = width_of(0, len(words))
+    if total_width <= max_width:
+        # Một dòng vừa chỗ luôn thắng điểm (imbalance 0, dòng rộng nhất) → trả ngay.
+        return [" ".join(words)]
+    space_width = draw.textbbox((0, 0), " ", font=font)[2]
+
     candidates: list[tuple[tuple[float, float, int], list[str]]] = []
-    for line_count in range(1, min(max_lines, len(words)) + 1):
+    for line_count in range(2, min(max_lines, len(words)) + 1):
+        # Cắt tỉa: tổng bề rộng các dòng ≈ total - (k-1) khoảng trắng, nên dòng rộng nhất
+        # ≥ trung bình; trung bình vượt max_width thì không tổ hợp k dòng nào vừa.
+        if (total_width - (line_count - 1) * space_width) / line_count > max_width + 4:
+            continue
         for breaks in combinations(range(1, len(words)), line_count - 1):
             points = (0, *breaks, len(words))
-            lines = [" ".join(words[points[index]:points[index + 1]]) for index in range(line_count)]
-            widths = [
-                draw.textbbox((0, 0), line, font=font, stroke_width=3)[2]
-                for line in lines
-            ]
+            widths = [width_of(points[index], points[index + 1]) for index in range(line_count)]
             if max(widths) > max_width:
                 continue
+            lines = [" ".join(words[points[index]:points[index + 1]]) for index in range(line_count)]
 
             # Ưu tiên các dòng có độ dài gần nhau và lấp đầy vùng chữ.
             average = sum(widths) / len(widths)
@@ -287,6 +352,26 @@ def random_background(thumbnail_dir: Path = THUMBNAIL_DIR) -> Path:
             f"Không tìm thấy ảnh nền '{BACKGROUND_PATTERN}' trong {thumbnail_dir}"
         )
     return random.choice(backgrounds)
+
+
+def list_title_templates(thumbnail_dir: Path = THUMBNAIL_DIR) -> list[Path]:
+    """Liệt kê các mẫu khung tiêu đề (tiêu đề.png, tiêu đề 2.png, ...) theo thứ tự."""
+    return sorted(thumbnail_dir.glob(TITLE_PATTERN), key=natural_sort_key)
+
+
+def random_title_template(thumbnail_dir: Path = THUMBNAIL_DIR) -> Path:
+    """Chọn ngẫu nhiên một mẫu khung tiêu đề; không có mẫu nào thì về SOURCE_IMAGE."""
+    templates = list_title_templates(thumbnail_dir)
+    return random.choice(templates) if templates else SOURCE_IMAGE
+
+
+def text_box_for(source: Path) -> tuple[int, int, int, int]:
+    """Hộp chữ (hệ 1920×1080) của một mẫu khung tiêu đề; mẫu lạ dùng TEXT_BOX."""
+    name = unicodedata.normalize("NFC", source.name).casefold()
+    for key, box in TEXT_BOXES.items():
+        if unicodedata.normalize("NFC", key).casefold() == name:
+            return box
+    return TEXT_BOX
 
 
 def list_logo_images(thumbnail_dir: Path = THUMBNAIL_DIR) -> list[Path]:
@@ -434,7 +519,8 @@ def add_photo_to_frame(base: Image.Image, photo_path: Path, frame_path: Path,
         mask = Image.new("L", inner_size, 0)
         ImageDraw.Draw(mask).rounded_rectangle(
             (0, 0, inner_size[0] - 1, inner_size[1] - 1), radius=radius, fill=255)
-        photo.putalpha(mask)
+        # Nhân với alpha có sẵn để ảnh cutout (nền trong suốt) không thành mảng đen.
+        photo.putalpha(ImageChops.multiply(photo.getchannel("A"), mask))
     clipped_photo = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     clipped_photo.alpha_composite(photo, dest=(inner_box[0], inner_box[1]))
 
@@ -538,12 +624,12 @@ def draw_title_text(
 
 
 def _fit_vertical_title(
-    title: str, box_width: int, box_height: int, max_lines: int = 4
+    title: str, box_width: int, box_height: int, max_lines: int = 5
 ) -> tuple[ImageFont.FreeTypeFont, str, int, int]:
-    """Tìm cỡ font + cách ngắt dòng lớn nhất vừa panel tiêu đề bản dọc.
+    """Tìm cỡ font + cách ngắt dòng lớn nhất vừa hộp tiêu đề bản dọc.
 
     Trả về (font, nội_dung_đã_ngắt_dòng, spacing, stroke) — stroke là độ dày viền
-    trắng; đo bằng viền ngoài cùng (dày hơn) để chữ chắc chắn không tràn panel.
+    trắng; đo bằng viền ngoài cùng (dày hơn) để chữ chắc chắn không tràn hộp.
     """
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     maximum_size = max(60, round(min(box_width * 0.26, box_height * 0.5)))
@@ -585,30 +671,255 @@ def _draw_vertical_title(
                         stroke_width=stroke, stroke_fill=(*TITLE_WHITE, 255), **common)
 
 
-def _add_vertical_episode_badge(base: Image.Image, number: str, panel_top: int) -> Image.Image:
-    """Vẽ huy hiệu tròn trắng 'SỐ <n>' mé phải, ngay trên panel tiêu đề."""
-    width = base.size[0]
-    diameter = V_BADGE_DIAMETER
-    x0 = width - V_MARGIN - diameter
-    y0 = panel_top - V_HEADER_GAP - diameter
-    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    draw.ellipse((x0, y0, x0 + diameter, y0 + diameter), fill=(255, 255, 255, 252),
-                 outline=(195, 28, 41, 255), width=10)
-    cx, cy = x0 + diameter // 2, y0 + diameter // 2
-    red, cream = (195, 28, 41, 255), (255, 247, 222, 255)
-    draw.text((cx, cy - round(diameter * 0.25)), "SỐ", font=find_font(round(diameter * 0.23)),
-              anchor="mm", fill=red, stroke_width=4, stroke_fill=cream)
-    # Tự co cỡ số để 1–3 chữ số luôn nằm gọn trong vòng tròn.
-    inner = round(diameter * 0.74)
-    for size in range(round(diameter * 0.55), 30, -4):
+# ── Bản dọc: kéo dài khung tiêu đề ───────────────────────────────────────────────
+def vertical_template_geometry(source: Path) -> tuple[tuple[int, int, int, int], tuple[int, int], tuple[int, int, int, int]]:
+    """(paper, band, inset) hệ 1920×1080 của một mẫu khung tiêu đề; mẫu lạ dò theo bbox alpha."""
+    name = unicodedata.normalize("NFC", source.name).casefold()
+    for key, geo in V_TEMPLATES.items():
+        if unicodedata.normalize("NFC", key).casefold() == name:
+            return geo["paper"], geo["band"], geo["inset"]
+    layer = Image.open(source).convert("RGBA")
+    if layer.size != (1920, 1080):
+        layer = layer.resize((1920, 1080), Image.Resampling.LANCZOS)
+    bbox = layer.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox() or (0, 0, 1920, 1080)
+    x0, y0, x1, y1 = bbox
+    # Dải giữa = 30% chiều cao ở chính giữa giấy: thường chỉ có viền hai bên.
+    band = (round(y0 + (y1 - y0) * 0.35), round(y0 + (y1 - y0) * 0.65))
+    return bbox, band, V_TEMPLATE_DEFAULT_INSET
+
+
+def expand_layer(layer: Image.Image, cap_end: int, cap_start: int, target: int, axis: str = "y") -> Image.Image:
+    """Kéo dài một lớp RGBA theo trục axis bằng cách LẶP dải giữa, giữ nguyên 2 nắp.
+
+    axis="y": nắp trên = hàng 0..cap_end, dải giữa = cap_end..cap_start, nắp dưới = cap_start..hết;
+    kết quả cao đúng `target`. axis="x" tương tự theo cột. Dải giữa được co nhẹ để lặp
+    đúng số nguyên lần (mối nối rơi vào đúng cuối dải, không cắt dở chu kỳ hoạ tiết).
+    Nếu target ngắn hơn 2 nắp thì cắt bớt nắp trên (không lặp).
+    """
+    if axis == "x":
+        # Xoay 90° để dùng lại đường đi theo trục y: cột x → hàng (width - x).
+        rotated = expand_layer(layer.transpose(Image.Transpose.ROTATE_90),
+                               layer.width - cap_start, layer.width - cap_end, target, "y")
+        return rotated.transpose(Image.Transpose.ROTATE_270)
+    width, height = layer.size
+    cap_end = max(0, min(cap_end, height))
+    cap_start = max(cap_end, min(cap_start, height))
+    top = layer.crop((0, 0, width, cap_end))
+    bottom = layer.crop((0, cap_start, width, height))
+    mid = layer.crop((0, cap_end, width, cap_start))
+    need = target - top.height - bottom.height
+    out = Image.new("RGBA", (width, target), (0, 0, 0, 0))
+    if need < 0:
+        # Không đủ chỗ cho cả 2 nắp: cắt bớt phần dưới của nắp trên.
+        top = top.crop((0, 0, width, max(0, top.height + need)))
+    out.paste(top, (0, 0))
+    if need > 0 and mid.height > 0:
+        repeats = max(1, round(need / mid.height))
+        tile_h = max(1, -(-need // repeats))
+        tile = mid.resize((width, tile_h), Image.Resampling.LANCZOS)
+        y = top.height
+        while y < top.height + need:
+            piece = min(tile_h, top.height + need - y)
+            out.paste(tile.crop((0, 0, width, piece)), (0, y))
+            y += piece
+    out.paste(bottom, (0, target - bottom.height))
+    return out
+
+
+def _composite_clipped(base: Image.Image, layer: Image.Image, pos: tuple[int, int]) -> None:
+    """alpha_composite cho phép toạ độ âm / tràn mép (tự cắt phần ngoài canvas)."""
+    x, y = pos
+    left, top = max(0, -x), max(0, -y)
+    right = min(layer.width, base.width - x)
+    bottom = min(layer.height, base.height - y)
+    if right <= left or bottom <= top:
+        return
+    base.alpha_composite(layer.crop((left, top, right, bottom)), (x + left, y + top))
+
+
+def paste_with_shadow(base: Image.Image, sprite: Image.Image, pos: tuple[int, int]) -> None:
+    """Dán sprite RGBA lên base (tại chỗ) kèm bóng đổ mềm phía dưới (V_SHADOW)."""
+    ox, oy = V_SHADOW["offset"]
+    blur = V_SHADOW["blur"]
+    pad = blur * 3
+    shadow = Image.new("RGBA", (sprite.width + 2 * pad, sprite.height + 2 * pad), (0, 0, 0, 0))
+    alpha = sprite.getchannel("A").point(lambda a: round(a * V_SHADOW["opacity"]))
+    tint = Image.new("RGBA", sprite.size, (*V_SHADOW["colour"], 255))
+    tint.putalpha(alpha)
+    shadow.paste(tint, (pad, pad))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(blur))
+    _composite_clipped(base, shadow, (pos[0] - pad + ox, pos[1] - pad + oy))
+    _composite_clipped(base, sprite, pos)
+
+
+def build_vertical_paper(source: Path) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """Khung tiêu đề kéo dài kín canvas dọc (kèm bóng) + hộp nội dung (px canvas)."""
+    paper, band, inset = vertical_template_geometry(source)
+    canvas_w, canvas_h = VERTICAL_CANVAS
+    px0, py0, px1, py1 = paper
+    scale = (canvas_w - 2 * V_MARGIN) / (px1 - px0)
+    layer = Image.open(source).convert("RGBA")
+    if layer.size != (1920, 1080):
+        layer = layer.resize((1920, 1080), Image.Resampling.LANCZOS)
+    layer = layer.resize((round(1920 * scale), round(1080 * scale)), Image.Resampling.LANCZOS)
+    paper_h_target = canvas_h - 2 * V_MARGIN
+    expanded_h = layer.height + paper_h_target - round((py1 - py0) * scale)
+    layer = expand_layer(layer, round(band[0] * scale), round(band[1] * scale), expanded_h, "y")
+    out = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    paste_with_shadow(out, layer, (V_MARGIN - round(px0 * scale), V_MARGIN - round(py0 * scale)))
+    il, it, ir, ib = inset
+    content = (V_MARGIN + round(il * scale), V_MARGIN + round(it * scale),
+               canvas_w - V_MARGIN - round(ir * scale), canvas_h - V_MARGIN - round(ib * scale))
+    return out, content
+
+
+def vertical_background(path: Path) -> Image.Image:
+    """Nền hoa cho bản dọc: ảnh ngang thì XOAY 90° (nét hơn crop dải hẹp) rồi phủ kín canvas."""
+    background = Image.open(path).convert("RGBA")
+    if background.width > background.height:
+        background = background.rotate(90, expand=True)
+    return ImageOps.fit(background, VERTICAL_CANVAS, method=Image.Resampling.LANCZOS)
+
+
+# ── Bản dọc: logo, thẻ số, khung ảnh ─────────────────────────────────────────────
+@lru_cache(maxsize=None)
+def logo_accent_colour(logo_path: Path) -> tuple[int, int, int]:
+    """Màu chủ đạo (đậm, bão hoà) của logo — trung vị các pixel bão hoà; dùng nhuộm thẻ số."""
+    fallback = (170, 90, 210)
+    try:
+        import numpy as np
+    except ImportError:
+        return fallback
+    logo = load_logo_cropped(logo_path)
+    if logo.width > 400:
+        logo = logo.resize((400, round(logo.height * 400 / logo.width)))
+    px = np.asarray(logo).astype(int)
+    rgb, alpha = px[..., :3], px[..., 3]
+    sat = rgb.max(axis=2) - rgb.min(axis=2)
+    mask = (alpha > 200) & (sat > 90) & (rgb.max(axis=2) > 90)
+    if mask.sum() < 50:
+        return fallback
+    return tuple(int(v) for v in np.median(rgb[mask], axis=0))
+
+
+def _mix_white(colour: tuple[int, int, int], white: float) -> tuple[int, int, int]:
+    return tuple(round(c + (255 - c) * white) for c in colour)
+
+
+def tinted_number_tag(tag_path: Path, accent: tuple[int, int, int]) -> Image.Image:
+    """Thẻ Số.png (đầu mèo) cắt sát và nhuộm theo màu logo: nền kem → pastel, viền → màu logo.
+
+    Nền kem gần trùng màu giấy nên thẻ nguyên bản đặt lên giấy sẽ chìm; nhuộm để nổi.
+    Không có numpy thì trả thẻ nguyên bản (chỉ cắt sát).
+    """
+    tag = Image.open(tag_path).convert("RGBA")
+    bbox = tag.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox()
+    tag = tag.crop(bbox) if bbox else tag
+    try:
+        import numpy as np
+    except ImportError:
+        return tag
+    px = np.asarray(tag).astype(float)
+    rgb, alpha = px[..., :3], px[..., 3]
+    fill = np.array(_mix_white(accent, V_BADGE_FILL_WHITE), dtype=float)
+    edge_dark = np.array(accent, dtype=float)
+    edge_light = np.array(_mix_white(accent, V_BADGE_EDGE_WHITE), dtype=float)
+    is_fill = rgb.min(axis=2) >= 225
+    lum = rgb.mean(axis=2)
+    opaque = alpha > 32
+    edge_lum = lum[opaque & ~is_fill]
+    lo, hi = (np.percentile(edge_lum, 5), np.percentile(edge_lum, 95)) if edge_lum.size else (0.0, 255.0)
+    t = np.clip((lum - lo) / max(hi - lo, 1.0), 0.0, 1.0)[..., None]
+    edge = edge_dark * (1 - t) + edge_light * t
+    out = np.where(is_fill[..., None], fill, edge)
+    px[..., :3] = np.where(opaque[..., None], out, rgb)
+    return Image.fromarray(px.clip(0, 255).astype("uint8"))   # 4 kênh uint8 → RGBA
+
+
+def _vertical_badge_sprite(number: str, accent: tuple[int, int, int]) -> Image.Image:
+    """Sprite thẻ số bản dọc: đầu mèo nhuộm màu + chữ 'SỐ' nhỏ + số tập to (cỡ V_BADGE_WIDTH)."""
+    if not NUMBER_FRAME_IMAGE.is_file():
+        raise FileNotFoundError(f"Không tìm thấy khung số: {NUMBER_FRAME_IMAGE}")
+    tag = tinted_number_tag(NUMBER_FRAME_IMAGE, accent)
+    scale = V_BADGE_WIDTH / tag.width
+    tag = tag.resize((V_BADGE_WIDTH, round(tag.height * scale)), Image.Resampling.LANCZOS)
+    # Tâm/bán kính vòng tròn trong thẻ (đo từ Số.png: tâm (1213,228), đường kính 340 trên
+    # canvas 1920×1080; bbox thẻ bắt đầu (1016,31)) → đổi sang toạ độ sprite.
+    src_bbox = Image.open(NUMBER_FRAME_IMAGE).convert("RGBA").getchannel("A").point(
+        lambda a: 255 if a > 32 else 0).getbbox() or (1016, 31, 1408, 419)
+    cx = round((1213 - src_bbox[0]) * scale)
+    cy = round((228 - src_bbox[1]) * scale)
+    radius = round(170 * scale)
+    draw = ImageDraw.Draw(tag)
+    red, cream = (*V_BADGE_NUMBER_COLOUR, 255), (*V_BADGE_NUMBER_STROKE, 255)
+    label_font = find_font(max(20, round(radius * 0.30)))
+    draw.text((cx, cy - round(radius * 0.56)), "SỐ", font=label_font, anchor="mm",
+              fill=red, stroke_width=3, stroke_fill=cream)
+    # Số tập: co cỡ để 1–3 chữ số nằm gọn trong vòng tròn (dưới chữ SỐ).
+    max_w, max_h = round(radius * 1.45), round(radius * 1.0)
+    number_font = find_font(30)
+    for size in range(round(radius * 1.15), 30, -3):
         font = find_font(size)
         left, top, right, bottom = draw.textbbox((0, 0), number, font=font, stroke_width=6)
-        if right - left <= inner:
+        if right - left <= max_w and bottom - top <= max_h:
+            number_font = font
             break
-    draw.text((cx, cy + round(diameter * 0.11)), number, font=font, anchor="mm",
+    draw.text((cx, cy + round(radius * 0.22)), number, font=number_font, anchor="mm",
               fill=red, stroke_width=6, stroke_fill=cream)
-    return Image.alpha_composite(base, layer)
+    return tag
+
+
+def _vertical_photo_frame(frame_path: Path, box: tuple[int, int, int, int]) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    """Khung anhdoc (dọc) kéo NGANG cho vừa hộp box (px canvas): (sprite khung, hộp ảnh trong sprite).
+
+    Co khung theo chiều cao hộp rồi lặp dải giữa (viền trên/dưới) theo trục x cho đủ bề
+    ngang; nắp trái/phải giữ viền đứng + sao/tim ở góc. Hộp ảnh = đường viền dò được ±
+    PHOTO_FRAME_OVERLAP, đổi sang toạ độ sprite sau khi kéo.
+    """
+    frame = Image.open(frame_path).convert("RGBA")
+    if frame.size != (1920, 1080):
+        frame = frame.resize((1920, 1080), Image.Resampling.LANCZOS)
+    bbox = frame.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox() or (0, 0, 1920, 1080)
+    border = detect_vertical_frame_border(frame_path) or (
+        FRAME_INNER_BOX_VERTICAL[0] + PHOTO_FRAME_OVERLAP[0], FRAME_INNER_BOX_VERTICAL[1] + PHOTO_FRAME_OVERLAP[1],
+        FRAME_INNER_BOX_VERTICAL[2] - PHOTO_FRAME_OVERLAP[2], FRAME_INNER_BOX_VERTICAL[3] - PHOTO_FRAME_OVERLAP[3])
+    target_w, target_h = box[2] - box[0], box[3] - box[1]
+    scale = target_h / (bbox[3] - bbox[1])
+    sprite = frame.crop(bbox).resize((round((bbox[2] - bbox[0]) * scale), target_h), Image.Resampling.LANCZOS)
+    cap_l = round((border[0] - bbox[0] + V_FRAME_CAP_EXTRA) * scale)
+    cap_r = round((border[2] - bbox[0] - V_FRAME_CAP_EXTRA) * scale)
+    if sprite.width < target_w:
+        sprite = expand_layer(sprite, cap_l, cap_r, target_w, "x")
+    ol, ot, orr, ob = PHOTO_FRAME_OVERLAP
+    inner = (round((border[0] - ol - bbox[0]) * scale),
+             round((border[1] - ot - bbox[1]) * scale),
+             sprite.width - round((bbox[2] - border[2] - orr) * scale),
+             sprite.height - round((bbox[3] - border[3] - ob) * scale))
+    return sprite, inner
+
+
+def add_vertical_photo(base: Image.Image, photo_path: Path, frame_path: Path,
+                       box: tuple[int, int, int, int]) -> None:
+    """Ghép ảnh mèo (cover, bo góc) vào khung anhdoc kéo ngang đặt tại box; sửa base tại chỗ."""
+    if not photo_path.is_file():
+        raise FileNotFoundError(f"Không tìm thấy ảnh mèo: {photo_path}")
+    if not frame_path.is_file():
+        raise FileNotFoundError(f"Không tìm thấy ảnh khung: {frame_path}")
+    sprite, inner = _vertical_photo_frame(frame_path, box)
+    inner_size = (max(1, inner[2] - inner[0]), max(1, inner[3] - inner[1]))
+    photo = Image.open(photo_path).convert("RGBA")
+    photo = ImageOps.fit(photo, inner_size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+    mask = Image.new("L", inner_size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, inner_size[0] - 1, inner_size[1] - 1),
+                                           radius=V_PHOTO_CORNER_RADIUS, fill=255)
+    # NHÂN với alpha có sẵn: ảnh mèo cutout (nền trong suốt) giữ trong suốt → lộ nền giấy,
+    # không thành mảng ĐEN như khi putalpha thay hẳn alpha.
+    photo.putalpha(ImageChops.multiply(photo.getchannel("A"), mask))
+    # Căn giữa sprite trong box theo bề ngang (khung có thể hẹp hơn box nếu không kéo được).
+    x = box[0] + (box[2] - box[0] - sprite.width) // 2
+    y = box[1]
+    _composite_clipped(base, photo, (x + inner[0], y + inner[1]))
+    _composite_clipped(base, sprite, (x, y))
 
 
 def add_title_vertical(
@@ -617,80 +928,64 @@ def add_title_vertical(
     photo_path: Path,
     number: str,
     logo_path: Path | None = None,
-    max_lines: int = 4,
+    max_lines: int = 5,
+    source: Path | None = None,
+    background: Path | None = None,
 ) -> Path:
-    """Tạo thumbnail DỌC 1080×1920: ảnh Anh làm nền + logo + tiêu đề + số tập.
+    """Tạo thumbnail DỌC 1080×1920: nền hoa + khung tiêu đề kéo dài kín khung + logo +
+    thẻ số đầu mèo + tiêu đề + ảnh mèo trong khung anhdoc.
 
-    Dùng chung ảnh/tiêu đề/số tập với bản ngang. File lưu cùng thư mục output,
-    không ghi đè bản cũ (unique_path). Không truyền logo_path → chọn NGẪU NHIÊN
-    một logo "logo*.png" (hồng/xanh/tím/đỏ) cho mỗi thumbnail.
+    Dùng chung ảnh/tiêu đề/số tập với bản ngang; ảnh mèo nằm trong khung (KHÔNG làm nền).
+    File lưu cùng thư mục output, không ghi đè bản cũ (unique_path). Không truyền
+    logo_path/source/background → chọn NGẪU NHIÊN logo "logo*.png" (khung ảnh + màu thẻ số
+    đi theo), mẫu khung tiêu đề "tiêu đề*.png" và nền hoa "khung nen*.png".
     """
     if not photo_path.is_file():
-        raise FileNotFoundError(f"Không tìm thấy ảnh nền: {photo_path}")
+        raise FileNotFoundError(f"Không tìm thấy ảnh mèo: {photo_path}")
     title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
-    width, height = VERTICAL_CANVAS
-
-    # 1) Nền: ảnh Anh phủ kín khung dọc (cover, lệch lên trên một chút cho thấy mặt).
-    background = Image.open(photo_path).convert("RGBA")
-    background = ImageOps.fit(background, VERTICAL_CANVAS,
-                             method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
-
-    # Hình học panel tiêu đề tính TRƯỚC vì logo/huy hiệu/scrim đều neo theo mép trên panel.
-    panel_cy = round(height * V_PANEL_CENTER_RATIO)
-    panel_top = panel_cy - V_PANEL_HEIGHT // 2
-    panel_bottom = panel_cy + V_PANEL_HEIGHT // 2
-
-    # 2) Scrim tối nhẹ ở trên (cho logo/số, kéo dài tới panel) và dưới (cho tiêu đề).
-    scrim = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
-    scrim_draw = ImageDraw.Draw(scrim)
-    bottom_start = height * 0.52
-    for y in range(height):
-        alpha = 0
-        if y < panel_top:
-            alpha = round(120 * (1 - y / panel_top))
-        if y > bottom_start:
-            t = (y - bottom_start) / (height - bottom_start)
-            alpha = max(alpha, round(150 * min(1.0, t)))
-        scrim_draw.line([(0, y), (width, y)], fill=(20, 8, 30, alpha))
-    base = Image.alpha_composite(background, scrim)
-
-    # 3) Panel giấy kem cho tiêu đề — căn GIỮA theo chiều dọc + bóng đổ mềm.
-    panel_rect = (V_MARGIN, panel_top, width - V_MARGIN, panel_bottom)
-    shadow = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle(
-        (panel_rect[0], panel_rect[1] + 14, panel_rect[2], panel_rect[3] + 14),
-        radius=58, fill=(0, 0, 0, 120))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
-    panel = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
-    ImageDraw.Draw(panel).rounded_rectangle(
-        panel_rect, radius=58, fill=(255, 250, 240, 248),
-        outline=(255, 173, 64, 255), width=8)
-    base = Image.alpha_composite(base, shadow)
-    base = Image.alpha_composite(base, panel)
-
-    # 4) Tiêu đề trong panel.
-    box = (panel_rect[0] + V_PANEL_PAD, panel_rect[1] + V_PANEL_PAD,
-           panel_rect[2] - V_PANEL_PAD, panel_rect[3] - V_PANEL_PAD)
-    box_width, box_height = box[2] - box[0], box[3] - box[1]
-    center = ((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
-    font, content, spacing, stroke = _fit_vertical_title(title, box_width, box_height, max_lines)
-    title_layer = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
-    _draw_vertical_title(title_layer, content, font, center, spacing, stroke)
-    base = Image.alpha_composite(base, title_layer)
-
-    # 5) Logo Mimi audio mé trái, ngay trên panel tiêu đề (đáy logo cách panel V_HEADER_GAP).
-    #    Không chỉ định logo → random một màu trong các "logo*.png" cho mỗi thumbnail.
     if logo_path is None:
         logo_path = random_logo()
-    if logo_path.is_file():
-        logo = Image.open(logo_path).convert("RGBA")
-        logo = ImageOps.contain(logo, (V_LOGO_WIDTH, V_LOGO_WIDTH),
-                               method=Image.Resampling.LANCZOS)
-        base.alpha_composite(logo, (44, panel_top - V_HEADER_GAP - logo.height))
+    if source is None:
+        source = random_title_template()
+    if background is None:
+        background = random_background()
 
-    # 6) Số tập: huy hiệu tròn mé phải, cùng hàng với logo.
+    # 1) Nền hoa xoay dọc + 2) khung tiêu đề kéo dài kín canvas (kèm bóng).
+    base = vertical_background(background)
+    paper, content = build_vertical_paper(source)
+    base.alpha_composite(paper)
+    cx0, cy0, cx1, cy1 = content
+
+    # 3) Hàng đầu: logo tròn (trái) + thẻ số đầu mèo nhuộm màu logo (phải).
+    accent = logo_accent_colour(logo_path) if logo_path.is_file() else (170, 90, 210)
+    if logo_path.is_file():
+        logo = ImageOps.contain(load_logo_cropped(logo_path), (V_LOGO_SIZE, V_HEADER_HEIGHT),
+                                method=Image.Resampling.LANCZOS)
+        paste_with_shadow(base, logo, (cx0, cy0 + (V_HEADER_HEIGHT - logo.height) // 2))
     if number:
-        base = _add_vertical_episode_badge(base, number, panel_top)
+        badge = _vertical_badge_sprite(number, accent)
+        paste_with_shadow(base, badge, (cx1 - badge.width, cy0 + (V_HEADER_HEIGHT - badge.height) // 2))
+
+    # 4) Chia phần còn lại cho tiêu đề (trên) và ảnh (dưới).
+    body_top = cy0 + V_HEADER_HEIGHT + V_ROW_GAP
+    remaining = cy1 - body_top - V_ROW_GAP
+    title_h = round(remaining * V_TITLE_SHARE)
+    photo_box = (cx0, cy1 - (remaining - title_h), cx1, cy1)
+    title_box = (cx0 + V_TITLE_PAD_X, body_top, cx1 - V_TITLE_PAD_X, body_top + title_h)
+
+    # 5) Tiêu đề.
+    box_width, box_height = title_box[2] - title_box[0], title_box[3] - title_box[1]
+    center = ((title_box[0] + title_box[2]) // 2, (title_box[1] + title_box[3]) // 2)
+    font, content_text, spacing, stroke = _fit_vertical_title(title, box_width, box_height, max_lines)
+    title_layer = Image.new("RGBA", VERTICAL_CANVAS, (0, 0, 0, 0))
+    _draw_vertical_title(title_layer, content_text, font, center, spacing, stroke)
+    base.alpha_composite(title_layer)
+
+    # 6) Ảnh mèo trong khung anhdoc cùng màu logo (kéo ngang vừa bề rộng nội dung).
+    frame_path = photo_frame_for_logo(logo_path)
+    if not frame_path.is_file():
+        frame_path = FRAME_IMAGE_VERTICAL
+    add_vertical_photo(base, photo_path, frame_path, photo_box)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output = unique_path(output)
@@ -699,7 +994,7 @@ def add_title_vertical(
 
 
 def add_title(
-    source: Path,
+    source: Path | None,
     output: Path,
     title: str,
     photo_path: Path,
@@ -711,6 +1006,9 @@ def add_title(
     logo: Path | None = None,
 ) -> Path:
     title = strip_brand_suffix(title)   # bỏ '| Mimi audio' khỏi chữ trên thumbnail
+    # Không truyền mẫu khung tiêu đề → chọn NGẪU NHIÊN một mẫu "tiêu đề*.png".
+    if source is None:
+        source = random_title_template()
     paper = Image.open(source).convert("RGBA")
     # Thứ tự lớp: nền hoa → tờ giấy/ảnh/nội dung → khung trang trí trên cùng.
     # Không truyền nền cụ thể → chọn NGẪU NHIÊN một mẫu "khung nen *.png".
@@ -723,7 +1021,7 @@ def add_title(
     # Tỷ lệ này được thiết kế cho ảnh 1920x1080; vẫn co giãn nếu ảnh mẫu thay đổi kích thước.
     scale_x = width / 1920
     scale_y = height / 1080
-    x0, y0, x1, y1 = TEXT_BOX
+    x0, y0, x1, y1 = text_box_for(source)   # mỗi mẫu khung tiêu đề có vùng đặt chữ riêng
     box = (
         round(x0 * scale_x), round(y0 * scale_y),
         round(x1 * scale_x), round(y1 * scale_y),
@@ -770,7 +1068,8 @@ def add_title(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Điền tiêu đề có đổ bóng vào ảnh mẫu thumbnail.")
     parser.add_argument("--title", default=DEFAULT_TITLE, help="Tiêu đề cần đặt lên ảnh.")
-    parser.add_argument("--input", type=Path, default=SOURCE_IMAGE, help="Ảnh PNG mẫu.")
+    parser.add_argument("--input", type=Path,
+                        help="Mẫu khung tiêu đề cụ thể. Bỏ trống để chọn ngẫu nhiên trong các 'tiêu đề*.png'.")
     parser.add_argument(
         "--output",
         type=Path,
@@ -787,12 +1086,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logo", type=Path,
                         help="Logo cụ thể (logo.png, logo xanh.png ...). Bỏ trống để chọn ngẫu nhiên; "
                              "khung trên tự đi theo màu logo.")
+    parser.add_argument("--doc", action="store_true",
+                        help="Tạo thêm bản DỌC 1080×1920 (cùng ảnh/tiêu đề/số/logo/khung tiêu đề/nền), tên thêm hậu tố _doc.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    source = args.input.expanduser().resolve()
+    source = args.input.expanduser().resolve() if args.input else random_title_template()
     if not source.is_file():
         raise FileNotFoundError(f"Không tìm thấy ảnh mẫu: {source}")
 
@@ -816,10 +1117,16 @@ def main() -> int:
         logo=logo,
     )
     print(f"Ảnh trong khung: {photo}")
+    print(f"Khung tiêu đề: {source.name}")
     print(f"Nền hoa: {background.name}")
     print(f"Logo: {logo.name} — khung trên: {frame_for_logo(logo).name} — khung ảnh: {photo_frame_for_logo(logo).name}")
     print(f"Số trên thẻ: {args.number.strip() or '(không hiển thị)'}")
     print(f"Đã tạo thumbnail: {output}")
+    if args.doc:
+        output_doc = add_title_vertical(
+            output.with_name(f"{output.stem}_doc{output.suffix}"), args.title.strip(), photo,
+            args.number.strip(), logo_path=logo, source=source, background=background)
+        print(f"Đã tạo thumbnail dọc: {output_doc}")
     return 0
 
 

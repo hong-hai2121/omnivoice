@@ -20,6 +20,7 @@ from tkinter import messagebox, ttk
 from PIL import Image, ImageOps, ImageTk
 
 import dien_tieu_de_thumbnail as renderer
+from seo_docx_parser import strip_char_count_note
 
 
 STATE_FILE = Path(__file__).resolve().with_name("thumbnail_gui_state.json")
@@ -170,8 +171,10 @@ _TITLE_HEAD_RE = re.compile(r"^\s*(\[full\]|full\s+ở)\s*", re.IGNORECASE)
 def strip_title_decorations(title: str) -> str:
     """Bỏ mọi phần trang trí ('[FULL]' / 'Full ở', 'Mimi audio', 'Số <n>', dấu '|')
     → còn lại TÊN TRUYỆN gốc. Nhờ vậy dựng lại tiêu đề nhiều lần vẫn ra một kết quả,
-    dù SEO ghi kiểu cũ ('... | Mimi audio') hay kiểu mới."""
-    t = _TITLE_HEAD_RE.sub("", (title or "").strip())
+    dù SEO ghi kiểu cũ ('... | Mimi audio') hay kiểu mới. Ghi chú '(61 ký tự)' của
+    Gemini cũng bỏ ở đây (parser đã bỏ; giữ thêm cho tiêu đề gõ tay / SEO cũ)."""
+    t = strip_char_count_note(title)
+    t = _TITLE_HEAD_RE.sub("", t)
     t = _BRAND_CHUNK_RE.sub(" ", t)
     t = t.strip().strip("|").strip()
     return re.sub(r"\s{2,}", " ", t)
@@ -727,7 +730,7 @@ class ThumbnailGUI:
     def _render_worker(self, title: str, number: str, photo_path: Path) -> None:
         try:
             output = renderer.add_title(
-                renderer.SOURCE_IMAGE,
+                renderer.random_title_template(),
                 renderer.next_thumbnail_path(),
                 title,
                 photo_path,

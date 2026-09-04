@@ -68,7 +68,7 @@ def main(argv=None) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         out_png = out_dir / (f"thumbnail{ep}.png" if ep else "thumbnail.png")
-        renderer.add_title(renderer.SOURCE_IMAGE, out_png, title, photo,
+        renderer.add_title(renderer.random_title_template(), out_png, title, photo,
                            renderer.FRAME_IMAGE, ep, renderer.NUMBER_FRAME_IMAGE)
         logging.info(f"🖼  Đã tạo thumbnail ngang: {out_png}")
 
