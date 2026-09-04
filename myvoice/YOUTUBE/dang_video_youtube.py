@@ -583,6 +583,7 @@ def _http_reason(err):
 
 
 THUMB_MAX_BYTES = 2 * 1024 * 1024   # YouTube (và googleapiclient) chặn thumbnail > 2 MiB
+UPLOAD_CHUNK_BYTES = 128 * 1024 * 1024   # khúc tải resumable (bội số 256 KB theo yêu cầu Google)
 
 
 def thumbnail_under_limit(path, log):
@@ -706,10 +707,16 @@ def upload_video(opts, log, progress_cb):
         "status": status,
     }
 
-    media = MediaFileUpload(opts["video_path"], chunksize=4 * 1024 * 1024, resumable=True)
+    # Khúc resumable 128 MB (trước là 4 MB): mỗi khúc là MỘT request HTTPS tới Google
+    # kèm chờ máy chủ xử lý, nên khúc nhỏ là hàng nghìn lượt chờ — tập 85 (4,5 GB,
+    # ~1.100 khúc) chỉ đạt ~18 Mbps trong khi đường truyền đo được ~275 Mbps. Khúc to
+    # thì đứt mạng phải gửi lại tối đa 128 MB, chấp nhận được; tiến độ nhảy ~3%/khúc.
+    media = MediaFileUpload(opts["video_path"], chunksize=UPLOAD_CHUNK_BYTES, resumable=True)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
-    log("Bắt đầu tải video lên YouTube...", "info")
+    size_mb = os.path.getsize(opts["video_path"]) / 1048576
+    log(f"Bắt đầu tải video lên YouTube... ({size_mb:.0f} MB, khúc {UPLOAD_CHUNK_BYTES // 1048576} MB)", "info")
+    t_start = time.time()
     # Upload resumable: lỗi 5xx / lỗi mạng chỉ là TẠM THỜI — thử lại đúng chunk đó
     # với thời gian chờ tăng dần (cách Google khuyến nghị), khỏi mất cả phiên tải
     # vì một cú chập mạng ở phút chót. Lỗi 4xx (sai quyền, video quá dài...) là
@@ -740,6 +747,10 @@ def upload_video(opts, log, progress_cb):
         log(f"  {reason} — thử lại lần {retries}/{MAX_RETRIES} sau {wait:.0f}s...", "warn")
         time.sleep(wait)
     progress_cb(100)
+    # Tốc độ thực — số đo để biết còn nghẽn ở đâu (khúc, máy chủ YouTube, hay mạng).
+    elapsed = max(time.time() - t_start, 0.001)
+    log(f"Tải xong {size_mb:.0f} MB trong {elapsed / 60:.1f} phút "
+        f"({size_mb * 8 / elapsed:.0f} Mbps).", "info")
 
     video_id = response["id"]
     log(f"Đăng video thành công! ID = {video_id}", "ok")

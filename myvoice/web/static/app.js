@@ -241,3 +241,34 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 })();
+
+
+// ── Khối tự làm mới (hàng đợi 2 s/lần, bảng tập 15 s/lần) ─────────────────
+// htmx thay TOÀN BỘ DOM của khối mỗi lượt poll kể cả khi HTML y hệt → màn hình
+// nhấp nháy theo nhịp poll, bảng tập thì mất ô tick sau mỗi 15 s (04/09/2026).
+// Sửa ở đây: HTML trả về giống lần trước thì bỏ lượt thay; riêng bảng tập nhớ
+// các ô đang tick trước khi thay và tick lại sau khi thay.
+(function () {
+  const KHOI = new Set(['queue', 'recogtable']);
+
+  document.addEventListener('htmx:beforeSwap', (evt) => {
+    const t = evt.detail.target;
+    if (!t || !KHOI.has(t.id)) return;
+    if (evt.detail.isError) { evt.detail.shouldSwap = false; return; }   // 401/500 không đè vào khối
+    const moi = evt.detail.serverResponse;
+    if (typeof moi !== 'string') return;
+    if (t.dataset.htmlCu === moi) { evt.detail.shouldSwap = false; return; }   // y hệt → không đụng DOM
+    t.dataset.htmlCu = moi;
+    if (t.id === 'recogtable') {
+      t.dataset.ticked = JSON.stringify(
+        [...t.querySelectorAll('input[name="tap"]:checked')].map((i) => i.value));
+    }
+  });
+
+  document.addEventListener('htmx:afterSwap', (evt) => {
+    const t = evt.detail.target;
+    if (!t || t.id !== 'recogtable' || !t.dataset.ticked) return;
+    const ticked = new Set(JSON.parse(t.dataset.ticked));
+    t.querySelectorAll('input[name="tap"]').forEach((i) => { if (ticked.has(i.value)) i.checked = true; });
+  });
+})();
