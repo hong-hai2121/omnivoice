@@ -121,8 +121,9 @@
     <div class="phead"><span class="num">3</span><h2>Cài đặt tạo giọng</h2></div>
     <div class="grid">
       <label class="field">
-        <span>Độ dài đoạn (ký tự)</span>
-        <input name="chunk" value="{{ opts.chunk }}" inputmode="numeric">
+        <span>Câu dài quá (ký tự) → cắt ở dấu ; : ,</span>
+        <input name="chunk" value="{{ opts.chunk }}" inputmode="numeric"
+               title="Mỗi đoạn giọng = 1 câu, nghỉ giữa các câu theo dấu. Câu dài hơn số này cắt thêm ở dấu ; : , gần giữa. Đặt rất lớn (1000) nếu không muốn cắt câu.">
       </label>
       <label class="field">
         <span>Nguồn clip ngang</span>

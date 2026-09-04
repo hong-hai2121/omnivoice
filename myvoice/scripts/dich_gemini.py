@@ -232,6 +232,71 @@ def is_result_too_short(source_chunk, result):
     return len((result or "").strip()) < n_han * VIET_HAN_MIN_RATIO
 
 
+# ── Phát hiện bản dịch LẶP (Gemini trả HAI bản dịch của cùng một đoạn) ──────────
+# Tập 85 (04/09/2026), đoạn 1: Gemini dịch dở 994 ký tự rồi dịch lại từ đầu bằng
+# lời khác, hai bản nối liền nhau → audio đọc phần mở đầu hai lần, còn dính chữ
+# ở chỗ nối. Bản lặp không bị is_refusal/is_result_too_short bắt (nội dung đủ,
+# chỉ thừa). Dấu hiệu: một trong vài câu ĐẦU của kết quả xuất hiện lại gần như
+# nguyên văn ở phía sau (Jaccard theo từ ≥ DUP_JACCARD). Chỉ dùng để GỬI LẠI
+# (dich_gemini), không đưa vào bad_chunks: truyện có điệp khúc thì kết quả thật
+# vẫn có thể trùng câu, không được vì thế mà chặn cả tập.
+# Tập 92 đoạn 1: nguồn tiếng Trung TỰ lặp (thiên thư chiếu lại cảnh mở đầu) nên bản
+# dịch lặp là ĐÚNG → có nguồn thì kiểm nguồn trước, nguồn lặp thì không bắt.
+# Tập 95 đoạn 1: Gemini dịch 1.617 ký tự rồi chèn "Dưới đây là bản dịch mượt mà…"
+# và dịch lại từ đầu → câu dẫn kiểu đó nằm GIỮA kết quả là dấu hiệu chắc chắn.
+DUP_HEAD_SENTENCES = 3       # số câu đầu đem so
+DUP_MIN_SENT_CHARS = 25      # câu ngắn hơn bỏ qua (dễ trùng ngẫu nhiên: "Tôi gật đầu.")
+DUP_JACCARD = 0.6
+DUP_SRC_WINDOW = 12          # cửa sổ chữ Hán để dò nguồn tự lặp
+_DUP_SENT_SPLIT = re.compile(r"(?<=[.!?…])\s+")
+_DUP_WORD = re.compile(r"[0-9a-zà-ỹ]+")
+_DUP_META_RE = re.compile(r"(?:dưới đây|sau đây)\s+là\s+(?:bản|phần)\s+dịch", re.IGNORECASE)
+
+
+def _dup_words(s):
+    return set(_DUP_WORD.findall((s or "").lower()))
+
+
+def source_repeats_itself(source_chunk):
+    """Nguồn tiếng Trung có đoạn mở đầu xuất hiện lại phía sau không (điệp khúc,
+    chiếu lại cảnh…). Có thì bản dịch lặp là chuyện bình thường."""
+    s = "".join(_CHINESE_RE.findall(source_chunk or ""))
+    n = DUP_SRC_WINDOW
+    for i in range(0, min(300, len(s) - n), 6):
+        w = s[i:i + n]
+        if s.find(w, i + n) != -1:
+            return True
+    return False
+
+
+def is_result_duplicated(text, source_chunk=None):
+    """True nếu bản dịch có dấu hiệu chứa HAI bản dịch nối nhau (xem chú thích trên).
+    source_chunk (nếu có): nguồn tự lặp → trả False, không bắt oan."""
+    text = (text or "").strip()
+    m = _DUP_META_RE.search(text)
+    if m and m.start() > 200:
+        return True                      # câu dẫn "dưới đây là bản dịch" nằm giữa kết quả
+    if source_chunk and source_repeats_itself(source_chunk):
+        return False
+    sents = [x.strip() for x in _DUP_SENT_SPLIT.split(text)
+             if len(x.strip()) >= DUP_MIN_SENT_CHARS]
+    if len(sents) < DUP_HEAD_SENTENCES * 2 + 2:
+        return False
+    head = sents[:DUP_HEAD_SENTENCES]
+    tail = sents[DUP_HEAD_SENTENCES + 1:]
+    for h in head:
+        hw = _dup_words(h)
+        if len(hw) < 5:
+            continue
+        for t in tail:
+            tw = _dup_words(t)
+            if len(tw) < 5:
+                continue
+            if len(hw & tw) / len(hw | tw) >= DUP_JACCARD:
+                return True
+    return False
+
+
 def bad_chunks(zh_chunks, results):
     """Các đoạn HỎNG trong bản dịch: trả về list (số_đoạn_1_based, lý_do).
 
@@ -248,6 +313,11 @@ def bad_chunks(zh_chunks, results):
             out.append((j, "Gemini từ chối"))
         elif is_result_too_short(c, r):
             out.append((j, "dịch cụt"))
+        elif is_result_duplicated(r, c):
+            # Hai bản dịch nối nhau (tập 85/95/96 đoạn 1, 9/2026): nội dung đủ
+            # nhưng audio đọc mở đầu hai lần → coi là hỏng để gửi dịch lại; có
+            # nguồn nên đoạn nguồn tự lặp (92) không bị bắt oan.
+            out.append((j, "dịch lặp (hai bản dịch nối nhau)"))
     return out
 
 
@@ -644,8 +714,10 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             # ── TIẾP TỤC: đoạn đã dịch xong thì giữ nguyên, khỏi gửi lại ──────
             # Kết quả cũ là CÂU TỪ CHỐI của Gemini hoặc bản dịch CỤT (lọt vào docx
             # trước khi có các bộ bắt này) thì KHÔNG tính là đã dịch — gửi lại.
-            if (resume and is_translation_done(prior[i]) and not is_refusal(prior[i])
-                    and not is_result_too_short(chunk, prior[i])):
+            # Dùng CHUNG bộ tiêu chí bad_chunks (chưa dịch / từ chối / cụt / LẶP) —
+            # trước đây liệt kê riêng ở đây nên đoạn "dịch lặp" bị coi là xong và
+            # không bao giờ được gửi lại (tập 85, 05/09/2026).
+            if resume and prior[i] and not bad_chunks([chunk], [prior[i]]):
                 on_log(f"♻ Đoạn {i + 1}/{total} đã dịch — bỏ qua.")
                 results.append(prior[i])
                 _save_progress()
@@ -712,6 +784,12 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                         return "TỪ CHỐI dịch"
                     if is_result_too_short(src, a):
                         return "dịch CỤT (kết quả quá ngắn)"
+                    # Nghiêm (không đưa nguồn): nguồn có tự nhắc lại mở đầu thì người
+                    # dùng vẫn muốn bản dịch chỉ đọc một lần (đã dặn trong prefix) →
+                    # gửi lại cho Gemini thêm cơ hội bỏ phần lặp. Chốt chặn chung
+                    # (bad_chunks) thì nương tay với nguồn lặp để không chặn oan.
+                    if is_result_duplicated(a):
+                        return "dịch LẶP (mở đầu bị dịch/nhắc lại hai lần)"
                     return None
 
                 refusal_tries = 0
@@ -730,7 +808,13 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     send_prefix_to_gemini(driver, prefix or RETRY_CHINESE_PREFIX,
                                           on_log=on_log)
                     ans = send_to_gemini(driver, tagged, on_log=on_log)
-                if ans and _bad(ans, chunk):
+                if ans and _bad(ans, chunk) and _bad(ans, chunk).startswith("dịch LẶP"):
+                    # Bản LẶP vẫn có đủ nội dung (chỉ thừa) → giữ lại chứ không cắt
+                    # đôi/bỏ trắng như từ chối/dịch cụt; báo to để sửa tay nếu cần.
+                    on_log(f"⚠️ Đoạn {i + 1}/{total}: vẫn có dấu hiệu dịch LẶP sau "
+                           f"{REFUSAL_RESTARTS} lần gửi lại — GIỮ bản này, hãy mở "
+                           "gemini_result.docx kiểm tra đoạn này có bị dịch hai lần không.")
+                elif ans and _bad(ans, chunk):
                     halves = _split_chunk_for_retry(chunk)
                     if len(halves) > 1:
                         on_log(f"🚫 Đoạn {i + 1}/{total} vẫn {_bad(ans, chunk)} — "

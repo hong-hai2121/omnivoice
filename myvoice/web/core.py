@@ -385,7 +385,9 @@ def folder_steps(folder, episode: str) -> dict:
             chunks = gui.read_zh_docx_chunks(zh) if zh else []
             if chunks:
                 prior = g.read_results_docx(gem, len(chunks))
-                translate_done = all(g.is_translation_done(r) for r in prior)
+                # Cùng bộ chốt với GUI (bad_chunks): đoạn từ chối / dịch cụt /
+                # dịch lặp cũng là chưa xong → ⏩ Chạy tiếp tự gửi dịch lại đoạn đó.
+                translate_done = not g.bad_chunks(chunks, prior)
             else:
                 translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
         except Exception:
@@ -805,7 +807,7 @@ def tts_settings() -> tuple[dict | None, str]:
 
     return dict(
         mode=mode, voice_param=voice_param,
-        chunk=_i(opts.get("chunk"), 300, 50, 2000),
+        chunk=_i(opts.get("chunk"), 160, 40, 2000),
         make_video=bool(opts.get("make_video")), effect=effect_path,
         make_video_doc=bool(opts.get("make_video_doc")),
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),

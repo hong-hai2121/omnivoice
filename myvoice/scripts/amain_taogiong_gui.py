@@ -164,7 +164,7 @@ def video_gansub_max_chars_doc(default: int = 27) -> int:
 # Mặc định mục "Cài đặt" (dùng khi chưa có taogiong_options.json) — sau đó được
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
-    from_gemini=True, chunk=300,
+    from_gemini=True, chunk=160,
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
@@ -1119,6 +1119,7 @@ def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0):
     # phát âm chuẩn hơn là để chế độ đoán ngôn ngữ.
     # dur_scale: nới khung thời lượng (render lại đoạn bị nuốt chữ lần 2 dùng
     # 1.06 — thêm ~6% chỗ để model nhét lại câu đã nuốt; lần đầu chỉ re-roll).
+    chunk = " ".join(chunk.split())   # bỏ dấu "\n" hết đoạn văn (xem split_chunks)
     dur = vn_duration(chunk)
     if dur is not None:
         dur *= dur_scale
@@ -1152,22 +1153,133 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
+# ── CHIA ĐOẠN THEO CÂU ───────────────────────────────────────────────────────
+# Từ 05/09/2026 mỗi đoạn = MỘT CÂU (kết thúc bằng . ! ? hoặc xuống dòng), không
+# gộp nhiều câu thành đoạn 300 ký tự nữa. Lý do: model đọc cả đoạn dài thì chỗ
+# nghỉ hết câu chỉ ngang dấu phẩy (đo tập 85: 1.803 khoảng lặng, gần hết 200–400
+# ms, không phân biệt phẩy/chấm), còn cắt theo câu thì chỗ nghỉ giữa các câu do
+# ta chèn lúc ghép (_join_with_pauses) nên đúng loại dấu. Giá: sinh ~1,75× lâu
+# hơn (đo 12 câu vs 4 đoạn 300: 0,47 vs 0,27 s mỗi giây audio; tập 58 phút ≈ 27
+# phút thay vì 15).
+#   • `max_len` (ô "chunk", mặc định 160 ≈ 8 s) KHÔNG còn là cỡ gộp: câu dài hơn
+#     số này thì cắt thêm ở dấu ; : , gần giữa câu nhất (đệ quy) — vẫn theo dấu
+#     câu, không cắt giữa cụm từ. Đặt số rất lớn (vd 1000) nếu không muốn cắt câu.
+#   • Mẩu ngắn hơn MIN_CHUNK_CHARS gộp với mẩu SAU (chỉ mẩu tí hon; câu ngắn bình
+#     thường đứng riêng lại AN TOÀN hơn gộp), kể cả qua ranh giới đoạn văn — dấu "\n" khi đó nằm GIỮA
+#     đoạn, chỗ nghỉ ấy do model quyết; mẩu cuối cùng thì gộp ngược về trước.
+#   • Đoạn kết thúc ĐOẠN VĂN giữ ký tự "\n" ở cuối làm dấu để lúc ghép chèn nghỉ
+#     dài; _generate_chunk strip() trước khi đưa vào model, ASR so chữ không bị
+#     ảnh hưởng (chỉ là khoảng trắng).
+# 12 chứ không phải 30: thử 05/09/2026 với "tôi lắc đầu: không quen." (24 ký tự) —
+# đứng riêng 3/3 lần ASR đạt, gộp vào câu trước hay câu sau đều nuốt cụm 1/2 lần.
+# Chỉ gộp mẩu tí hon ("ừ.", "không!") vốn không đủ để model dựng một hơi.
+MIN_CHUNK_CHARS = 12
+_SENT_SPLIT = re.compile(r'(?<=[.!?。！？])\s+')
+_CLAUSE_CUT = re.compile(r'[;:,]\s+')
+
+
+def _split_long_sentence(sent: str, max_len: int) -> list[str]:
+    """Câu dài hơn max_len → cắt ở dấu ; : , gần giữa nhất, lặp tới khi vừa.
+    Không có chỗ cắt hợp lệ (hai nửa đều ≥ MIN_CHUNK_CHARS) thì giữ nguyên câu."""
+    if len(sent) <= max_len:
+        return [sent]
+    cuts = [m.end() for m in _CLAUSE_CUT.finditer(sent)
+            if m.end() >= MIN_CHUNK_CHARS and len(sent) - m.end() >= MIN_CHUNK_CHARS]
+    if not cuts:
+        return [sent]
+    mid = len(sent) / 2
+    c = min(cuts, key=lambda x: abs(x - mid))
+    return (_split_long_sentence(sent[:c].rstrip(), max_len)
+            + _split_long_sentence(sent[c:].lstrip(), max_len))
+
+
 def split_chunks(text: str, max_len: int):
-    parts = SPLIT_CHARS.split(text)
-    chunks, current = [], ""
-    for part in parts:
-        part = part.strip()
-        if not part:
+    """Văn bản → danh sách đoạn, mỗi đoạn một câu (xem chú thích trên).
+    Đoạn cuối mỗi đoạn văn mang "\n" ở cuối; các đoạn khác kết thúc bằng dấu câu."""
+    max_len = max(int(max_len or 0), MIN_CHUNK_CHARS)
+    chunks: list[str] = []
+    for para in text.split("\n"):
+        pieces: list[str] = []
+        for sent in _SENT_SPLIT.split(para):
+            sent = sent.strip()
+            if sent:
+                pieces.extend(_split_long_sentence(sent, max_len))
+        merged, buf = [], ""
+        for piece in pieces:
+            buf = f"{buf} {piece}".strip() if buf else piece
+            if len(buf) >= MIN_CHUNK_CHARS:
+                merged.append(buf)
+                buf = ""
+        if buf:                                   # mẩu ngắn cuối đoạn văn → gộp ngược
+            if merged:
+                merged[-1] = f"{merged[-1]} {buf}"
+            else:
+                merged.append(buf)
+        if merged:
+            merged[-1] += "\n"
+            chunks.extend(merged)
+    # Đoạn văn chỉ có một câu tí hon ("ừ.", "không quen.") → gộp sang đoạn kế
+    # (hoặc ngược về trước nếu là đoạn cuối) để model không phải sinh mẩu 1–3 chữ.
+    out: list[str] = []
+    carry = ""
+    for c in chunks:
+        c = f"{carry} {c}" if carry else c
+        carry = ""
+        if len(c.strip()) < MIN_CHUNK_CHARS:
+            carry = c
             continue
-        if len(current) + len(part) + 1 <= max_len:
-            current = (current + " " + part).strip()
+        out.append(c)
+    if carry:
+        if out:
+            out[-1] = f"{out[-1].rstrip()} {carry}" if not out[-1].endswith("\n") else f"{out[-1]}{carry}"
         else:
-            if current:
-                chunks.append(current)
-            current = part
-    if current:
-        chunks.append(current)
-    return chunks
+            out.append(carry)
+    return out
+
+
+# ── GHÉP ĐOẠN CÓ KHOẢNG NGHỈ THEO DẤU CÂU ───────────────────────────────────
+# Model tự để ~0,2 s im lặng ở mỗi mép đoạn nhưng không đều (đo: 0,10–0,24 s), nên
+# cắt về EDGE_KEEP_SEC mỗi mép rồi chèn đúng độ dài nghỉ cho loại dấu kết thúc
+# đoạn. Mức tham khảo giọng đọc truyện: hết câu ~0,4–0,5 s, hết đoạn văn ~0,8 s,
+# hết vế câu (; : ,) ~0,2 s. Muốn thở chậm hơn thì tăng PAUSE_*.
+PAUSE_PARA    = 0.80    # sau đoạn kết thúc đoạn văn (chunk mang "\n")
+PAUSE_SENT    = 0.45    # sau đoạn kết thúc bằng . ! ?
+PAUSE_CLAUSE  = 0.22    # sau đoạn bị cắt ở ; : , (câu dài)
+EDGE_KEEP_SEC = 0.05    # im lặng giữ lại ở mỗi mép đoạn sau khi cắt
+EDGE_DB       = -40.0   # dưới mức này coi là im lặng
+
+
+def _pause_after(chunk_text: str) -> float:
+    t = (chunk_text or "").rstrip(" \t")
+    if t.endswith("\n"):
+        return PAUSE_PARA
+    if t.rstrip().endswith((".", "!", "?", "。", "！", "？")):
+        return PAUSE_SENT
+    return PAUSE_CLAUSE
+
+
+def _trim_edges(x: np.ndarray, sr: int) -> np.ndarray:
+    """Cắt im lặng đầu/đuôi về EDGE_KEEP_SEC, vát 5 ms hai mép cho khỏi click."""
+    thr = 10 ** (EDGE_DB / 20)
+    keep = int(EDGE_KEEP_SEC * sr)
+    idx = np.where(np.abs(x) > thr)[0]
+    if not len(idx):
+        return x
+    y = x[max(0, idx[0] - keep): min(len(x), idx[-1] + keep + 1)].copy()
+    f = min(int(0.005 * sr), len(y) // 2)
+    if f > 0:
+        y[:f] *= np.linspace(0, 1, f, dtype="float32")
+        y[-f:] *= np.linspace(1, 0, f, dtype="float32")
+    return y
+
+
+def _join_with_pauses(parts: list, chunks: list, sr: int) -> np.ndarray:
+    out = []
+    for i, p in enumerate(parts):
+        out.append(_trim_edges(p, sr))
+        if i < len(parts) - 1:
+            out.append(np.zeros(int(_pause_after(chunks[i]) * sr), dtype="float32"))
+    return np.concatenate(out)
 
 
 # ── DỌN & CHÈN LẠI CÂU QUẢNG BÁ KÊNH ──────────────────────────────────────────
@@ -2126,17 +2238,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("Đang cân âm lượng các đoạn...")
             parts = _balance_chunk_levels(parts, sr)
 
-            # Crossfade ngắn giữa các chunk để tránh click/vấp tại ranh giới
-            fade = min(256, min(len(p) for p in parts) // 2)
-            fade_in  = np.linspace(0, 1, fade, dtype="float32")
-            fade_out = np.linspace(1, 0, fade, dtype="float32")
-            merged = parts[0].copy()
-            merged[-fade:] *= fade_out
-            for p in parts[1:]:
-                p = p.copy()
-                p[:fade] *= fade_in
-                merged[-fade:] += p[:fade]
-                merged = np.concatenate([merged, p[fade:]])
+            # Ghép với khoảng NGHỈ THEO DẤU CÂU (xem _join_with_pauses): cắt bớt im
+            # lặng model tự để ở mép mỗi đoạn rồi chèn đúng độ dài nghỉ cho loại
+            # dấu kết thúc đoạn (hết câu / hết đoạn văn / hết vế). Thay cho crossfade
+            # 11 ms cũ vốn làm mọi ranh giới câu chỉ nghỉ ngang dấu phẩy.
+            merged = _join_with_pauses(parts, chunks, sr)
 
             # OmniVoice kết thúc chunk cuối chỉ ~0.13s sau từ cuối cùng → audio
             # (và video) dừng phựt. Đệm thêm im lặng cho có chỗ thở.
@@ -2913,9 +3019,9 @@ class App(tk.Tk):
         chunk_row.pack(anchor="w", fill="x")
         ttk.Label(chunk_row, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
         self.var_chunk = tk.IntVar(value=self._opt_settings["chunk"])
-        ttk.Spinbox(chunk_row, from_=100, to=1000, increment=50,
+        ttk.Spinbox(chunk_row, from_=40, to=2000, increment=10,
                     textvariable=self.var_chunk, width=7).pack(side="left")
-        ttk.Label(chunk_row, text="(nhỏ = nhẹ GPU)",
+        ttk.Label(chunk_row, text="(mỗi đoạn = 1 câu; câu dài hơn số này thì cắt thêm ở dấu ; : ,)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         # Nguồn clip VIDEO NGANG theo chủ đề = 1 thư mục con của videongang/
