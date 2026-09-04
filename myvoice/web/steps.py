@@ -40,6 +40,8 @@ SINGLE_STEPS = {
     "thumbnail": "Thumbnail",
     "tts":       "Tạo giọng + video",
     "upload":    "Đăng YouTube",
+    "short":     "Đăng Short",
+    "facebook":  "Lên lịch Facebook",
 }
 
 
@@ -81,6 +83,21 @@ def queue_upload(episode: str) -> None:
     """Xếp việc đăng 1 tập vào hàng đợi RIÊNG — trả về ngay, không chờ tải xong."""
     episode = str(episode).strip().zfill(2)
     upload_runner.enqueue(f"⬆ Đăng YouTube tập {episode}", upload_steps(episode))
+
+
+def short_steps(episode: str) -> list[Step]:
+    """Bước đăng RIÊNG Short (short.mp4) cho tập ĐÃ có video chính trên kênh mà bản
+    ghi còn thiếu Short — run_upload.py --short tự kiểm bản ghi/kênh để không trùng."""
+    argv = [core.python_exe(), "-u", str(RUNNER_UPLOAD), "--episode", str(episode), "--short"]
+    return [Step(label=f"Đăng Short tập {episode}", argv=argv,
+                 cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
+                 soft_fail_codes=(STOP_CODE,))]
+
+
+def queue_short(episode: str) -> None:
+    """Xếp việc đăng Short của 1 tập vào hàng đợi đăng (cùng hàng với YouTube)."""
+    episode = str(episode).strip().zfill(2)
+    upload_runner.enqueue(f"⬆ Đăng Short tập {episode}", short_steps(episode))
 
 
 # Kịch bản lên lịch Facebook — file độc lập, tự đọc token từ .env gốc repo.
@@ -209,6 +226,9 @@ def resume_steps(missing: list[str], source: str, episode: str,
     tiến trình: dịch → SEO dùng chung một phiên Firefox (mở hai lần thì phiên sau
     vấp profile đang khoá), và tập chạy trọn vẹn không bị việc khác chen ngang.
     """
+    # Bước đăng lẻ (Short / Facebook) không phải việc của run_episode.py — bên gọi
+    # (_run_resume) xếp chúng vào hàng đợi đăng; lọc ở đây để không tạo lệnh sai.
+    missing = [k for k in missing if k not in core.POST_STEPS]
     if not missing:
         return [], f"Tập {episode}: không còn bước nào thiếu."
     argv = _base_argv(",".join(missing), source, episode, force=False)

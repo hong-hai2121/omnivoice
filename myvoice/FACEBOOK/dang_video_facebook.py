@@ -1073,6 +1073,22 @@ def main() -> int:
     if args.tap:        # nút "đăng các tập đã tick" trên web gửi danh sách xuống
         want = {t.strip().lstrip("0") or "0" for t in args.tap.split(",") if t.strip()}
         queue = [it for it in queue if str(it["n"]) in want]
+        # Tập được chỉ định mà KHÔNG nằm trong hàng chờ: nói rõ vì sao, kẻo bên gọi
+        # (⏩ Chạy tiếp trên web) thấy "xong" mà tưởng đã xếp lịch. Tập 85 (04/09/2026):
+        # dựng lại + đăng lại YouTube, còn Page vẫn có bài của bản cũ → sổ ghi đã
+        # đăng → im lặng bỏ qua.
+        for t in sorted(want - {str(it["n"]) for it in queue}, key=int):
+            info = (led.get("eps") or {}).get(t)
+            if isinstance(info, dict):
+                khi = str(info.get("scheduled") or info.get("uploaded_at") or "")[:16]
+                nguon = (f"lịch {khi.replace('T', ' ')}" if khi
+                         else "thấy khi quét Page")
+                print(f"ℹ️ Tập {t}: sổ ghi ĐÃ đăng Page ({nguon}) → không xếp lại. "
+                      "Muốn đăng bản mới: xoá bài cũ trên Page, bấm 🔄 Cập nhật lịch "
+                      "Page rồi đăng lại.")
+            else:
+                print(f"ℹ️ Tập {t}: không trong hàng chờ (đã có biên nhận "
+                      "facebook_upload.json hoặc chưa có video dọc).")
     if args.liet_ke:
         print(f"📋 Chưa đăng: {', '.join(it['ep'] for it in queue) or '(không có tập nào)'}")
         return 0

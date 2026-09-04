@@ -88,11 +88,18 @@ STEP_LABELS = [
     ("video_ngang", "Video ngang"),
     ("video_doc",   "Video dọc"),
     ("upload",      "Đăng"),
+    ("short",       "Short"),
+    ("facebook",    "Facebook"),
 ]
 
-# Bước KHÔNG tính vào "tập đã xong": đăng YouTube là tuỳ chọn (mặc định tắt), tính
-# vào sẽ làm mọi tập đã dựng xong từ trước hoá "còn việc".
-DONE_EXCLUDE = {"upload"}
+# Bước KHÔNG tính vào "tập đã xong": đăng YouTube / Short / Facebook là tuỳ chọn
+# (mặc định tắt), tính vào sẽ làm mọi tập đã dựng xong từ trước hoá "còn việc".
+# Vẫn hiện thành cột riêng trong bảng để nhìn ra tập nào chưa lên Short/Facebook
+# (tập 85, 04/09/2026: bảng tick đủ mà Short chưa đăng vì lượt đăng đổ giữa chừng).
+DONE_EXCLUDE = {"upload", "short", "facebook"}
+# Bước ĐĂNG LẺ có thể chạy riêng sau khi tập đã dựng + đăng xong (nút ⏩ Chạy tiếp
+# xếp vào hàng đợi đăng, không đi qua run_episode.py như các bước dựng).
+POST_STEPS = ("short", "facebook")
 
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
@@ -400,7 +407,35 @@ def folder_steps(folder, episode: str) -> dict:
                       or bool(list(folder.glob("*_doc.mp4"))),
         # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
         "upload": (folder / "youtube_upload.json").exists(),
+        # Short: cùng bản ghi đó, chỉ khi có short_video_id (upload_short thành công;
+        # lượt đăng đổ sau video chính thì bản ghi có mà Short trống).
+        "short": _short_posted(folder),
+        # Facebook: CÙNG nguồn sự thật với script FB (pending_episodes): sổ local
+        # da_dang.json (kể cả mục ghi khi quét Page) HOẶC biên nhận facebook_upload.json
+        # còn hiệu lực. Chỉ nhìn biên nhận thì tập đăng trước khi có biên nhận / tập
+        # đăng lại sau khi dựng lại (85, 04/09/2026) hiện "—" trong khi script bảo
+        # "đã đăng, không xếp" — hai nơi nói hai đằng.
+        "facebook": _facebook_posted(folder, episode),
     }
+
+
+def _short_posted(folder: Path) -> bool:
+    try:
+        rec = json.loads((folder / "youtube_upload.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return bool(isinstance(rec, dict) and rec.get("short_video_id"))
+
+
+def _facebook_posted(folder: Path, episode: str) -> bool:
+    try:
+        fb = facebook_module()
+        if fb.marker_alive(folder):
+            return True
+        key = str(int(str(episode).strip() or "0"))
+        return key in (fb.load_ledger().get("eps") or {})
+    except Exception:
+        return (folder / "facebook_upload.json").exists()
 
 
 def missing_steps(steps: dict) -> list[str]:
@@ -414,6 +449,17 @@ def missing_steps(steps: dict) -> list[str]:
            if not steps.get(k)]
     if not (steps.get("audio") and steps.get("video_ngang")):
         out.append("tts")
+    # Chỉ khi KHÔNG còn bước dựng nào: việc đăng lẻ còn thiếu. Còn bước dựng thì
+    # chuỗi dựng tự nối việc đăng (queue_after_build) nên không liệt vào đây.
+    #   short    — video chính đã lên YouTube mà bản ghi chưa có Short (lượt đăng
+    #              đổ giữa chừng như tập 85, hoặc Short rớt vì quota như tập 94);
+    #   facebook — có video dọc mà chưa có biên nhận Page.
+    # Tập chưa đăng video chính thì Short đi kèm lượt đăng chính, không tách.
+    if not out:
+        if steps.get("upload") and not steps.get("short"):
+            out.append("short")
+        if steps.get("video_doc") and not steps.get("facebook"):
+            out.append("facebook")
     return out
 
 

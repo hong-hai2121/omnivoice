@@ -636,6 +636,21 @@ def _run_resume(request: Request, form) -> RedirectResponse:
         missing = core.missing_steps(r["steps"])
         if not missing:
             continue
+        post = [k for k in missing if k in core.POST_STEPS]
+        if post and len(post) == len(missing):
+            # Chỉ còn việc ĐĂNG LẺ (Short / Facebook). Chỉ làm cho tập được TICK rõ
+            # ràng: "chạy tiếp tất cả" mà tự đăng Short cho mọi tập cũ thì vừa đốt
+            # quota vừa rải Short cũ lên kênh. Hai việc đi hai hàng đợi riêng như
+            # sau khi dựng video (queue_after_build).
+            if not picked:
+                continue
+            if "short" in post:
+                steps_mod.queue_short(r["episode"])
+                queued += 1
+            if "facebook" in post:
+                steps_mod.queue_facebook(r["episode"])
+                queued += 1
+            continue
         if "recognize" in missing and not r["source"]:
             log(f"⚠️ Tập {r['episode']}: chưa có bản nhận diện mà không rõ link gốc "
                 "→ dán lại link vào ô nhận diện để chạy tập này.")

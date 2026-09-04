@@ -582,6 +582,92 @@ def _http_reason(err):
         return ""
 
 
+THUMB_MAX_BYTES = 2 * 1024 * 1024   # YouTube (và googleapiclient) chặn thumbnail > 2 MiB
+
+
+def thumbnail_under_limit(path, log):
+    """Đường dẫn ảnh thumbnail chắc chắn ≤ 2 MiB để gửi lên YouTube → (đường dẫn, là_file_tạm).
+
+    Ảnh vừa cỡ → trả nguyên đường dẫn. Ảnh quá cỡ (PNG 1920×1080 nhiều hoạ tiết dễ
+    vượt 2 MB — thumbnail85.png là 2,2 MB) → nén sang JPEG chất lượng giảm dần vào
+    file tạm; bên gọi xoá file tạm sau khi dùng. Không đụng file gốc trong thư mục tập.
+    """
+    import os
+    import tempfile
+    path = str(path)
+    size = os.path.getsize(path)
+    if size <= THUMB_MAX_BYTES:
+        return path, False
+    from PIL import Image
+    img = Image.open(path).convert("RGB")
+    fd, tmp = tempfile.mkstemp(prefix="thumb_yt_", suffix=".jpg")
+    os.close(fd)
+    quality = 92
+    for quality in (92, 88, 84, 80, 75, 70, 60):
+        img.save(tmp, "JPEG", quality=quality, optimize=True)
+        if os.path.getsize(tmp) <= THUMB_MAX_BYTES:
+            break
+    log(f"Thumbnail {size / 1048576:.2f} MB > 2 MB → nén JPEG (q={quality}) còn "
+        f"{os.path.getsize(tmp) / 1048576:.2f} MB để YouTube nhận.", "info")
+    return tmp, True
+
+
+def _set_thumbnail(youtube, video_id, thumb_path, log):
+    """Đặt thumbnail cho video ĐÃ đăng; thử lại vài lần khi YouTube còn đang xử lý video.
+
+    Lỗi quyền / ảnh sai là vĩnh viễn → dừng sớm + báo rõ. Chỉ ghi cảnh báo, không
+    ném lỗi. Trả về True nếu đặt được.
+    """
+    import io
+    import mimetypes
+    import os
+    from googleapiclient.http import MediaIoBaseUpload
+    from googleapiclient.errors import HttpError
+
+    log("Đang đặt ảnh thumbnail...", "info")
+    path, is_tmp = thumbnail_under_limit(thumb_path, log)
+    # Đọc ảnh vào bộ nhớ rồi gửi bằng MediaIoBaseUpload: MediaFileUpload giữ handle
+    # file tới khi bị thu dọn, trên Windows là không xoá được file tạm (WinError 32).
+    data = Path(path).read_bytes()
+    mimetype = mimetypes.guess_type(path)[0] or "image/jpeg"
+    if is_tmp:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    FATAL = {"forbidden", "thumbnailSizeTooLarge", "invalidImage",
+             "invalidImageFormat", "mediaBodyRequired"}
+    delays = [0, 3, 6, 10, 15, 20]   # thử ngay, rồi chờ dần (tổng ~54s nếu cứ lỗi)
+    last_err = None
+    for i, wait in enumerate(delays):
+        if wait:
+            time.sleep(wait)
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaIoBaseUpload(io.BytesIO(data), mimetype=mimetype),
+            ).execute()
+            log("Đã đặt thumbnail. Hoàn tất.", "ok")
+            return True
+        except HttpError as e:
+            last_err = e
+            reason = _http_reason(e)
+            if reason in FATAL:
+                break   # thử lại cũng vô ích
+            log(f"  Thumbnail chưa nhận (lần {i + 1}/{len(delays)}: "
+                f"{reason or 'video đang xử lý'}) — chờ rồi thử lại...", "warn")
+    reason = _http_reason(last_err) if last_err is not None else ""
+    log(f"Không đặt được thumbnail (video vẫn đã đăng): {last_err}", "warn")
+    if reason == "forbidden":
+        log("→ Kênh CHƯA XÁC MINH nên YouTube không cho đặt thumbnail tùy chỉnh. "
+            "Hãy xác minh tại https://www.youtube.com/verify rồi đặt thumbnail thủ công.", "warn")
+    elif reason == "thumbnailSizeTooLarge":
+        log("→ Ảnh thumbnail vượt 2MB. Hãy giảm dung lượng ảnh.", "warn")
+    elif reason in ("invalidImage", "invalidImageFormat"):
+        log("→ Ảnh không hợp lệ (chỉ JPG/PNG/GIF/BMP).", "warn")
+    return False
+
+
 def upload_video(opts, log, progress_cb):
     """
     Thực hiện upload. `opts` là dict gồm:
@@ -664,44 +750,18 @@ def upload_video(opts, log, progress_cb):
     except Exception:
         pass   # cache hỏng không được cản trở việc đăng
 
-    # Đặt thumbnail (nếu có) — KHÔNG đợi YouTube xử lý xong video.
-    # Ngay sau khi tải lên, video còn "đang xử lý" nên YouTube đôi khi từ chối
-    # thumbnail tạm thời → thử lại vài lần có chờ tăng dần. Lỗi quyền/ảnh sai
-    # (chưa xác minh kênh, ảnh > 2MB...) là vĩnh viễn → dừng sớm + báo rõ.
+    # Đặt thumbnail (nếu có) — KHÔNG đợi YouTube xử lý xong video. Từ đây video ĐÃ
+    # LÊN KÊNH nên mọi sự cố (ảnh > 2 MB, lỗi đọc ảnh, lỗi API) chỉ được phép là
+    # CẢNH BÁO: ném lỗi ra là bên gọi (dang_tap_youtube.upload_episode) mất luôn bản
+    # ghi youtube_upload.json + đổi tên TikTok/Facebook + Short, lần chạy sau còn
+    # có nguy cơ đăng trùng. Tập 85 (04/09/2026): PNG 2,2 MB → googleapiclient văng
+    # MediaUploadSizeError TRƯỚC khi gửi (không phải HttpError) nên lọt qua vòng thử
+    # lại cũ và đổ cả runner.
     if opts.get("thumbnail_path"):
-        log("Đang đặt ảnh thumbnail...", "info")
-        FATAL = {"forbidden", "thumbnailSizeTooLarge", "invalidImage",
-                 "invalidImageFormat", "mediaBodyRequired"}
-        delays = [0, 3, 6, 10, 15, 20]   # thử ngay, rồi chờ dần (tổng ~54s nếu cứ lỗi)
-        last_err = None
-        for i, wait in enumerate(delays):
-            if wait:
-                time.sleep(wait)
-            try:
-                youtube.thumbnails().set(
-                    videoId=video_id,
-                    media_body=MediaFileUpload(opts["thumbnail_path"]),
-                ).execute()
-                log("Đã đặt thumbnail. Hoàn tất.", "ok")
-                last_err = None
-                break
-            except HttpError as e:
-                last_err = e
-                reason = _http_reason(e)
-                if reason in FATAL:
-                    break   # thử lại cũng vô ích
-                log(f"  Thumbnail chưa nhận (lần {i + 1}/{len(delays)}: "
-                    f"{reason or 'video đang xử lý'}) — chờ rồi thử lại...", "warn")
-        if last_err is not None:
-            reason = _http_reason(last_err)
-            log(f"Không đặt được thumbnail (video vẫn đã đăng): {last_err}", "warn")
-            if reason == "forbidden":
-                log("→ Kênh CHƯA XÁC MINH nên YouTube không cho đặt thumbnail tùy chỉnh. "
-                    "Hãy xác minh tại https://www.youtube.com/verify rồi đặt thumbnail thủ công.", "warn")
-            elif reason == "thumbnailSizeTooLarge":
-                log("→ Ảnh thumbnail vượt 2MB. Hãy giảm dung lượng ảnh.", "warn")
-            elif reason in ("invalidImage", "invalidImageFormat"):
-                log("→ Ảnh không hợp lệ (chỉ JPG/PNG/GIF/BMP).", "warn")
+        try:
+            _set_thumbnail(youtube, video_id, opts["thumbnail_path"], log)
+        except Exception as e:
+            log(f"Không đặt được thumbnail (video vẫn đã đăng): {e}", "warn")
 
     return video_id
 
