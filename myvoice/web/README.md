@@ -258,7 +258,7 @@ web/
 gọi thẳng các method thuần logic của `amain_taogiong_gui`: `_allocate_episode`,
 `_dich_gemini_cho_tap`, `_batch_prepare_input`, `_make_thumbnail_for_folder`,
 `_batch_run_tts`, `_manifest_update`. Nhờ vậy các chốt an toàn (dịch thiếu đoạn thì
-KHÔNG ghi input.txt, không tạo audio/video) chỉ tồn tại ở MỘT nơi.
+KHÔNG ghi input.docx, không tạo audio/video) chỉ tồn tại ở MỘT nơi.
 
 Hệ quả: method nào bên GUI đổi sang đọc `tk.Var` thì web sẽ **nổ ngay** chứ không
 âm thầm chạy sai. Đó là chủ ý.

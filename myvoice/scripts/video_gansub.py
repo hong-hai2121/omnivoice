@@ -53,8 +53,8 @@ from nhandien_giongnoi import (  # noqa: E402
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-# input.txt nằm ở myvoice/kịch_bản/
-DEFAULT_SCRIPT = SCRIPT_DIR.parent / "kịch_bản" / "input.txt"
+# Kịch bản dùng chung ở myvoice/kịch_bản/ (input.docx từ 05/09/2026; input.txt cũ vẫn đọc được)
+DEFAULT_SCRIPT = SCRIPT_DIR.parent / "kịch_bản" / "input.docx"
 
 
 def guess_script(video_path: Path) -> Path:
@@ -64,10 +64,11 @@ def guess_script(video_path: Path) -> Path:
     lẫn input.txt của chính nó, nên ưu tiên input.txt NẰM CẠNH video; chỉ khi
     không có (hoặc rỗng) mới lùi về input.txt dùng chung ở kịch_bản/.
     """
-    sibling = video_path.resolve().parent / "input.txt"
-    if sibling.is_file() and sibling.stat().st_size > 0:
+    import dich_input_docx as inputdocx
+    sibling = inputdocx.find_input(video_path.resolve().parent)
+    if sibling is not None:
         return sibling
-    return DEFAULT_SCRIPT
+    return inputdocx.resolve_input(DEFAULT_SCRIPT)
 
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 
@@ -658,7 +659,8 @@ def main():
         max_chars = kieusub.chon_max_chars(
             kieusub.ap_cochu(kieusub.ap_font(kieusub.lay(args.kieu), args.font),
                              args.cochu), max_chars)
-    text = script_path.read_text(encoding="utf-8")
+    import dich_input_docx as inputdocx
+    text = inputdocx.read_input_text(script_path)
     cues = build_cues(text, max_chars, args.dong)
     if not cues:
         print("❌ Kịch bản rỗng, không có gì để làm phụ đề.")

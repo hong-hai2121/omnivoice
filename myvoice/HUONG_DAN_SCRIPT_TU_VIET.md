@@ -21,7 +21,7 @@ OmniVoice/                 ← repo gốc GitHub (omnivoice/, docs/, venv/, pypr
     │   └── video_khung.py
     ├── HUONG_DAN_SCRIPT_TU_VIET.md   (file này)
     ├── voice/             ← file giọng mẫu
-    ├── kịch_bản/          ← input.txt, output.wav, output_chunks/, final_video.mp4
+    ├── kịch_bản/          ← input.docx, output.wav, output_chunks/, final_video.mp4
     ├── Backbround/        ← khung trang trí (Khung0/khung1/khung3.png)
     ├── mp4/               ← video nguồn (có tiếng) cho video_xoatieng.py
     ├── mp4_no_audio/      ← video đã xóa tiếng (video_xoatieng.py tạo ra)
@@ -45,7 +45,7 @@ venv\Scripts\python myvoice\scripts\video_khung.py
 ## Quy trình tổng quát
 
 ```
-input.txt  ──(taogiong_gui.py / taogiong.py)──►  output.wav + output_chunks/*.wav
+input.docx  ──(taogiong_gui.py / taogiong.py)──►  output.wav + output_chunks/*.wav
                                               │
                             taogiong_kiemtra_audio.py  (kiểm tra chunk lỗi)
                                               │
@@ -81,7 +81,7 @@ App desktop (Tkinter) để chuyển văn bản → giọng nói bằng model **
 
 Bản script đơn giản của `taogiong_gui.py`, chỉ chế độ **clone**:
 
-- Cấu hình ở đầu file: `REF_AUDIO` (giọng mẫu trong `voice/`), `TEXT_FILE` (`kịch_bản/input.txt`), `OUTPUT`, `CHUNK_SIZE` — nay tính theo `myvoice/` nên không cần sửa khi đổi máy.
+- Cấu hình ở đầu file: `REF_AUDIO` (giọng mẫu trong `voice/`), `TEXT_FILE` (`kịch_bản/input.docx`, đọc được cả `input.txt` cũ), `OUTPUT`, `CHUNK_SIZE` — nay tính theo `myvoice/` nên không cần sửa khi đổi máy.
 - `preprocess_text()` xử lý mạnh hơn GUI: gộp dòng vụn, xóa URL / ghi chú nguồn / markdown, đổi số mục đứng riêng (`1`, `2`...) thành "Phần một", "Phần hai"..., cảnh báo nếu còn ký tự tiếng Trung.
 - Tách chunk, generate từng đoạn (resume qua `output_chunks/`), rồi ghép thẳng (nối đơn giản, không crossfade) → `OUTPUT`.
 
@@ -123,6 +123,6 @@ Quét toàn bộ `kịch_bản/output_chunks/*.wav`, phát hiện file lỗi:
 
 ## Ghi chú
 
-- **Thứ tự dùng điển hình:** soạn `kịch_bản/input.txt` → chạy `taogiong_gui.py` tạo `output.wav` → (tùy chọn) `taogiong_kiemtra_audio.py` → bỏ video nguồn vào `mp4/` → `video_xoatieng.py` → `video_ghepcuoi.py`.
+- **Thứ tự dùng điển hình:** soạn `kịch_bản/input.docx` → chạy `taogiong_gui.py` tạo `output.wav` → (tùy chọn) `taogiong_kiemtra_audio.py` → bỏ video nguồn vào `mp4/` → `video_xoatieng.py` → `video_ghepcuoi.py`.
 - **Phụ thuộc:** package `omnivoice` (model `k2-fsa/OmniVoice` tải qua HuggingFace, chạy `torch.float16` trên GPU nếu có), `soundfile`, `numpy`, `scipy`, `Pillow`, `ffmpeg`.
 - **Đường dẫn:** mọi script tính theo vị trí file (`Path(__file__).resolve().parent.parent` = `myvoice/`) nên không cần sửa khi đổi máy, miễn giữ nguyên cấu trúc `myvoice/scripts/`.

@@ -27,7 +27,10 @@ _MAP_PATH = Path(__file__).resolve().parent / "hanviet_map.tsv"
 
 # Dải chữ Hán (CJK Unified: cơ bản + Ext A + Compatibility). Chữ hiếm ngoài dải
 # này sẽ bị bỏ qua (rất hiếm gặp trong nội dung truyện).
-_HAN = re.compile(r'[㐀-䶿一-鿿豈-﫿]+')
+# Dải Hán viết bằng mã \uXXXX (không dán chữ): bản cũ dán chữ 豈 (U+8C48) thay cho
+# U+F900 nên dải thứ ba phủ luôn Hangul + vùng riêng U+E000 → nuốt dấu tô đỏ của
+# dich_input_docx (05/09/2026). Cùng dải với dich_gemini._CHINESE_RE.
+_HAN = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+')
 
 _MAP: dict | None = None
 
@@ -90,8 +93,8 @@ def transliterate(text: str) -> tuple[str, int]:
 # trắng (kể cả dấu phẩy ASCII của bản gốc) được GỘP làm một câu để MT đủ ngữ cảnh.
 MT_MIN_HAN = 6
 
-_HAN_ONE = re.compile(r'[㐀-䶿一-鿿豈-﫿]')
-_HAN_RUN = re.compile(r'[㐀-䶿一-鿿豈-﫿]+')
+_HAN_ONE = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]')
+_HAN_RUN = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+')
 # Khe được phép GỘP giữa 2 cụm Hán: chỉ khoảng trắng + dấu câu (KHÔNG chữ/số) nên
 # không bao giờ nuốt sang chữ tiếng Việt (chữ Việt luôn có ký tự chữ cái).
 _GAP_OK = re.compile(r'^[\s.,;:!?…—–\-()\[\]"\'“”‘’、，。！？；：（）《》「」『』]{0,4}$')

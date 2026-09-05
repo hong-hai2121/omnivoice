@@ -50,7 +50,7 @@ WHISPER_CACHE = SCRIPT_DIR / "whisper_cache"
 KICHBAN_DIR = MYVOICE_DIR / "kịch_bản"
 
 VIDEO_EXTS = [("Video", "*.mp4 *.mkv *.mov *.avi *.webm"), ("Tất cả", "*.*")]
-TEXT_EXTS = [("Văn bản", "*.txt"), ("Tất cả", "*.*")]
+TEXT_EXTS = [("Kịch bản", "*.docx *.txt"), ("Tất cả", "*.*")]
 
 # Model nhỏ → nhanh nhưng mốc giờ thô hơn. large-v3-turbo là điểm cân bằng tốt cho
 # tiếng Việt: nặng ngang medium (1.5GB) nhưng nghe chuẩn hơn và nhanh hơn.
@@ -77,11 +77,9 @@ def cached_models() -> set[str]:
 
 
 def guess_script(video: Path) -> Path | None:
-    """input.txt nằm CẠNH video (mỗi dự án một thư mục) — không có thì trả None."""
-    sibling = video.resolve().parent / "input.txt"
-    if sibling.is_file() and sibling.stat().st_size > 0:
-        return sibling
-    return None
+    """Kịch bản nằm CẠNH video (input.docx, hoặc input.txt tập cũ) — không có thì None."""
+    import dich_input_docx as inputdocx
+    return inputdocx.find_input(video.resolve().parent)
 
 
 class GanSubGUI:
@@ -295,12 +293,12 @@ class GanSubGUI:
         else:
             self.script_var.set("")
             self.script_hint_var.set(
-                "Không thấy input.txt cạnh video — hãy chọn file kịch bản bằng tay.")
+                "Không thấy input.docx cạnh video — hãy chọn file kịch bản bằng tay.")
 
     def _pick_script(self) -> None:
         video = self.video_var.get().strip()
         start = Path(video).parent if video else KICHBAN_DIR
-        path = filedialog.askopenfilename(title="Chọn file kịch bản (input.txt)",
+        path = filedialog.askopenfilename(title="Chọn file kịch bản (input.docx)",
                                           initialdir=str(start), filetypes=TEXT_EXTS)
         if path:
             self.script_var.set(path)
@@ -317,7 +315,7 @@ class GanSubGUI:
 
         script_text = self.script_var.get().strip()
         if not script_text:
-            raise ValueError("Chưa có file kịch bản. Chọn file input.txt của video này.")
+            raise ValueError("Chưa có file kịch bản. Chọn file input.docx của video này.")
         script = Path(script_text).expanduser()
         if not script.is_file():
             raise ValueError("File kịch bản không tồn tại.")

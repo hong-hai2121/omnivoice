@@ -81,7 +81,7 @@ MEDIA_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma",
 STEP_LABELS = [
     ("recognize",   "Nhận diện"),
     ("translate",   "Dịch"),
-    ("input",       "input.txt"),
+    ("input",       "input.docx"),
     ("seo",         "SEO"),
     ("thumbnail",   "Thumbnail"),
     ("audio",       "Giọng"),
@@ -370,6 +370,20 @@ def seo_docx_valid(seo_docx) -> bool:
         return False
 
 
+def default_input_path(saved: str = "") -> str:
+    """Ô 'Văn bản nguồn' trang Giọng nói: đường dẫn đã lưu (file .txt cũ không còn mà
+    .docx có → đổi sang .docx), mặc định kịch_bản/input.docx."""
+    import dich_input_docx as inputdocx
+    if saved:
+        p = Path(saved)
+        # Đường dẫn mặc định cũ (…/input.txt) mà đã có input.docx cạnh đó → sang docx;
+        # tên khác do người dùng tự đặt thì giữ nguyên.
+        if p.name == inputdocx.LEGACY_INPUT_NAME and p.with_name(inputdocx.INPUT_NAME).is_file():
+            return str(p.with_name(inputdocx.INPUT_NAME))
+        return str(inputdocx.resolve_input(saved))
+    return str(inputdocx.input_for(SCRIPT_DIR))
+
+
 def translation_pairs(folder) -> tuple[list, list]:
     """(đoạn tiếng Trung, bản dịch hiện có) của 1 tập — đọc MỘT lần rồi dùng cho
     cả trạng thái bước "Dịch" (folder_steps) lẫn danh sách đoạn trống (blank_chunks).
@@ -414,7 +428,9 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -
     folder = Path(folder)
     zh = gui.find_zh_docx(folder)
     gem = folder / "gemini_result.docx"
-    inp = folder / "input.txt"
+    # input.docx (05/09/2026), hoặc input.txt của tập cũ — cùng quy ước với GUI.
+    import dich_input_docx as inputdocx
+    inp = inputdocx.find_input(folder)
 
     translate_done = False
     if gem.exists():
@@ -434,7 +450,7 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -
     return {
         "recognize": bool(zh),
         "translate": translate_done,
-        "input": inp.exists() and inp.stat().st_size > 0,
+        "input": inp is not None,
         "seo": seo_docx_valid(folder / "seoYoutube.docx"),
         "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
         "audio": (folder / "output.wav").exists(),

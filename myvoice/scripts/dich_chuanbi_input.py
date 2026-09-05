@@ -43,7 +43,7 @@ import dich_kiemtra as checker
 
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
 DEFAULT_DOCX = KICHBAN_DIR / "gemini_result.docx"
-DEFAULT_INPUT = KICHBAN_DIR / "input.txt"
+DEFAULT_INPUT = KICHBAN_DIR / "input.docx"     # 05/09/2026: kịch bản TTS ở dạng Word
 
 # Dòng cấu trúc cần bỏ (kể cả khi không phải Heading): tiêu đề tổng + "Đoạn k ..."
 _SKIP_RE = re.compile(r"^(kết quả dịch từ gemini.*|đoạn\s*\d+.*|doan\s*\d+.*)$", re.IGNORECASE)
@@ -152,7 +152,7 @@ def main(argv=None):
     parser.add_argument("docx", nargs="?", default=str(DEFAULT_DOCX),
                         help="File .docx kết quả Gemini.")
     parser.add_argument("-o", "--output", default=str(DEFAULT_INPUT),
-                        help="File input.txt cho TTS.")
+                        help="File input.docx cho TTS (đuôi .txt → ghi txt thuần).")
     parser.add_argument("--force", action="store_true",
                         help="Vẫn ghi input.txt dù check thấy câu dẫn nhập/thừa.")
     args = parser.parse_args(argv)
@@ -175,7 +175,10 @@ def main(argv=None):
 
     # ── Bước 2+3: bỏ cấu trúc, ghép nội dung, ghi input.txt ───────────────────
     print("\n🧹 BƯỚC 2 — Bỏ cấu trúc 'Kết quả dịch từ Gemini' / 'Đoạn k', ghép nội dung...")
-    content = extract_content(docx_path)
+    import dich_input_docx as inputdocx
+    content, red_idx = inputdocx.gemini_content_marked(docx_path)   # giữ tô đỏ
+    if red_idx:
+        print(f"🟥 Đoạn tô đỏ trong docx (dịch nhờ câu nhắc) sẽ tô đỏ theo: {red_idx}")
     if not content:
         print(f"❌ Không lấy được nội dung nào từ: {docx_path}")
         sys.exit(2)
@@ -203,8 +206,7 @@ def main(argv=None):
           "(giết→giớt, chết→chớt, tỳ→tì, ...)...")
     content = apply_word_fixes(content)
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
+    inputdocx.write_input(out_path, content)
     print(f"💾 BƯỚC 3 — Đã ghi {len(content)} ký tự → {out_path}")
     print("✅ SẴN SÀNG TẠO AUDIO: mở taogiong_gui.py và bấm '▶ Chạy'.")
     sys.exit(0)

@@ -104,7 +104,8 @@ def check_audio(audio_path, input_txt):
     → TTS hụt chunk hoặc file bị cắt cụt. Thiếu dữ kiện → (True, None).
     """
     try:
-        n = len(Path(input_txt).read_text(encoding="utf-8"))
+        import dich_input_docx as inputdocx      # input.docx hoặc input.txt tập cũ
+        n = len(inputdocx.read_input_text(Path(input_txt)))
     except Exception:
         return True, None
     if n < 1000:

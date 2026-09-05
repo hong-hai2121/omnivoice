@@ -20,7 +20,7 @@ from omnivoice.utils.common import get_best_device
 # ── CẤU HÌNH ────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 REF_AUDIO  = str(BASE_DIR / "voice" / "ngochuyen.mp3")
-TEXT_FILE  = str(BASE_DIR / "kịch_bản" / "input.txt")
+TEXT_FILE  = str(BASE_DIR / "kịch_bản" / "input.docx")   # tập cũ còn input.txt vẫn đọc được
 OUTPUT     = str(Path.home() / "Downloads" / "output.wav")
 
 # Số ký tự tối đa mỗi đoạn (tách tại dấu câu gần nhất)
@@ -116,7 +116,8 @@ tmp_dir = output_path.parent / (output_path.stem + "_chunks")
 tmp_dir.mkdir(exist_ok=True)
 
 # ── ĐỌC TEXT ────────────────────────────────────────────────────────────────
-raw_text  = Path(TEXT_FILE).read_text(encoding="utf-8").strip()
+import dich_input_docx as inputdocx
+raw_text  = inputdocx.read_input_text(inputdocx.resolve_input(TEXT_FILE)).strip()
 full_text = preprocess_text(raw_text).lower()
 chunks = split_chunks(full_text, CHUNK_SIZE)
 total = len(chunks)

@@ -178,17 +178,18 @@ def step_translate(app, folder: Path, episode: str, state: dict) -> int:
 
 def step_input(app, folder: Path, episode: str, state: dict) -> int:
     gemini_docx = folder / "gemini_result.docx"
-    input_txt = folder / "input.txt"
+    import dich_input_docx as inputdocx
+    input_txt = inputdocx.input_path(folder)          # input.docx (05/09/2026)
     if not gemini_docx.exists():
-        logging.error("❌ Chưa có gemini_result.docx → chưa tạo được input.txt.")
+        logging.error("❌ Chưa có gemini_result.docx → chưa tạo được input.docx.")
         return ERROR
     # Vừa dịch xong thì LUÔN ghi lại: bản input cũ có thể được tạo từ bản dịch dở.
-    if (not state.get("translated_now") and input_txt.exists()
-            and input_txt.stat().st_size > 0 and not state.get("force")):
-        logging.info("♻ Bỏ qua tạo input.txt (đã có).")
+    if (not state.get("translated_now") and inputdocx.has_content(input_txt)
+            and not state.get("force")):
+        logging.info("♻ Bỏ qua tạo input.docx (đã có).")
         return 0
     if not app._batch_prepare_input(gemini_docx, input_txt):
-        logging.error("⛔ Không ghi input.txt (xem lý do ở trên) → dừng tập này.")
+        logging.error("⛔ Không ghi input.docx (xem lý do ở trên) → dừng tập này.")
         return STOP
     logging.info(f"💾 Đã tạo: {input_txt}")
     return 0

@@ -44,7 +44,7 @@ def _effect_path(ts: dict):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Tạo giọng / dựng lại video (bản web).")
     parser.add_argument("--tts-json", required=True, help="File JSON cài đặt.")
-    parser.add_argument("--input", default="", help="File văn bản .txt.")
+    parser.add_argument("--input", default="", help="File văn bản .docx (hoặc .txt).")
     parser.add_argument("--output", default="", help="File kết quả .wav.")
     parser.add_argument("--from-gemini", action="store_true",
                         help="Lấy nội dung từ gemini_result.docx + kiểm tra trước.")
@@ -63,7 +63,10 @@ def main(argv=None) -> int:
         return ERROR
 
     output = Path(args.output or (gui.OUTPUT_DIR / "output.wav"))
-    input_txt = Path(args.input or (gui.SCRIPT_DIR / "input.txt"))
+    import dich_input_docx as inputdocx
+    # input.docx (05/09/2026); đường dẫn .txt cũ đã lưu mà file không còn → tự đổi sang .docx.
+    input_txt = (inputdocx.resolve_input(args.input) if args.input
+                 else inputdocx.input_for(gui.SCRIPT_DIR))
     output.parent.mkdir(parents=True, exist_ok=True)
 
     # ⛔ CHỐT ĐOẠN HỎNG (giống _batch_run_tts bên GUI): bản dịch của thư mục tập
@@ -78,6 +81,7 @@ def main(argv=None) -> int:
         return ERROR
 
     app = HeadlessApp()
+    app.var_txt = _Var(str(input_txt))     # --from-gemini: _prepare_input_from_gemini ghi vào đây
     progress, status = _Var(0), _Var("")
     stub = gui._NullWidget()
     pause = threading.Event()
@@ -146,11 +150,16 @@ def main(argv=None) -> int:
             if not input_txt.exists():
                 logging.error(f"❌ Không thấy file văn bản: {input_txt}")
                 return ERROR
-            text = gui.clean_text(input_txt.read_text(encoding="utf-8"))
+            text = gui.clean_text(inputdocx.read_input_text(input_txt))
             chunks = gui.split_chunks(text.lower(), int(ts.get("chunk", 300)))
             if not chunks:
                 logging.error(f"❌ File văn bản rỗng: {input_txt}")
                 return ERROR
+            try:   # file xem trước cách chia câu, cạnh file input (xem taogiong_chia_cau.py)
+                import taogiong_chia_cau as chia
+                chia.write_preview(input_txt.parent, chunks, int(ts.get("chunk", 300)), input_txt.name)
+            except Exception as e:
+                logging.warning(f"⚠️ Không ghi được input_chia_cau.docx: {e}")
             logging.info(f"🎧 Tạo giọng {len(chunks)} đoạn → {output}")
             gui.run_tts(
                 ts.get("mode", "clone"), ts.get("voice_param"), chunks, str(output),

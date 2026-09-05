@@ -286,7 +286,9 @@ def worker(source: str, model_name: str, speed: float, on_seg, on_prog, on_done)
 def _prepare_input_txt(gemini_docx, out_txt) -> bool:
     try:
         import dich_chuanbi_input as prep
-        content = prep.extract_content(gemini_docx)
+        import dich_input_docx as inputdocx
+        # Đoạn tô đỏ trong gemini_result.docx (dịch nhờ câu nhắc) → tô đỏ theo trong input.docx.
+        content, _red = inputdocx.gemini_content_marked(gemini_docx)
         # ⛔ CHẶN: còn đoạn "(chưa dịch)"/"(trống)" thì KHÔNG ghi input.txt. Phải kiểm
         # TRƯỚC remove_annotations — hàm đó xoá chúng như chú thích trong ngoặc, mất
         # nguyên đoạn mà không còn dấu vết (xem tập 42: mất 4/7 đoạn).
@@ -300,10 +302,10 @@ def _prepare_input_txt(gemini_docx, out_txt) -> bool:
         if not content:
             log("⚠️ Bản dịch rỗng sau khi xử lý — không tạo được input.txt.", "warn")
             return False
-        Path(out_txt).write_text(content, encoding="utf-8")
+        inputdocx.write_input(out_txt, content)
         return True
     except Exception as e:
-        log(f"⚠️ Lỗi tạo input.txt: {e}", "warn")
+        log(f"⚠️ Lỗi tạo input.docx: {e}", "warn")
         return False
 
 
@@ -383,8 +385,8 @@ def batch_worker(sources, model_name, speed, prefix, on_seg, on_prog, on_done):
                 log(f"💾 Đã lưu bản dịch: {gemini_docx}", "ok")
 
                 # 4) input.txt (bỏ cấu trúc + chú thích).
-                if _prepare_input_txt(gemini_docx, folder / "input.txt"):
-                    log(f"💾 Đã tạo: {folder / 'input.txt'}", "ok")
+                if _prepare_input_txt(gemini_docx, folder / "input.docx"):
+                    log(f"💾 Đã tạo: {folder / 'input.docx'}", "ok")
 
                 # 5) SEO YouTube (tái dùng Firefox; điều hướng sang chat SEO).
                 log("🔎 Tạo SEO YouTube...")

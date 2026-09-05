@@ -172,7 +172,7 @@ def _voice_ctx() -> dict:
         # chọn kiểu khi "vẽ cứng vào hình"; ảnh nằm ở static/kieusub.
         "kieusubs": _kieusubs(),
         "sub_fonts": _sub_fonts(),
-        "input_txt": web.get("input") or str(core.SCRIPT_DIR / "input.txt"),
+        "input_txt": core.default_input_path(web.get("input") or ""),
         "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
         "voice_dir": str(core.VOICE_DIR),
         "tiktok_episode": core.thumbnail_episode() + 1,
@@ -576,7 +576,7 @@ def clear_output(confirm: str = Form("")):
 # ── Trang Nhận diện (view "recog" bên GUI: bảng tập + 5 nút hàng loạt) ──────
 _BATCH_BUTTONS = {
     "recognize": ("① Nhận diện các link rồi ngưng", ["recognize"]),
-    "translate": ("② Dịch + tạo input.txt", ["translate", "input"]),
+    "translate": ("② Dịch + tạo input.docx", ["translate", "input"]),
     "seo":       ("③ Gửi SEO (Gemini)", ["seo"]),
     "thumbnail": ("④ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
     "tts":       ("⑤ Tạo giọng + video", ["tts"]),

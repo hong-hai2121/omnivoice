@@ -60,6 +60,10 @@ VIDEODOC_INPUT = VIDEODOC_DIR / "input.txt"           # ghi TÊN 1 thư mục co
 VIDEONGANG_DIR = BASE_DIR / "videongang"              # kho clip NGANG (có thể chia thư mục con theo chủ đề)
 NGANG_SOURCE_ALL = "(tất cả)"                         # nhãn combobox = dùng cả kho videongang/
 GEMINI_DOCX = SCRIPT_DIR / "gemini_result.docx"       # kết quả dịch Gemini → nguồn nội dung TTS
+# Kịch bản TTS ở dạng Word (input.docx) từ 05/09/2026 — mọi chỗ ĐỌC/GHI/TÌM đi qua
+# dich_input_docx (đọc được cả input.txt của tập cũ, giữ tô đỏ đoạn dịch nhờ câu nhắc).
+import dich_input_docx as inputdocx   # noqa: E402
+INPUT_DOCX = SCRIPT_DIR / inputdocx.INPUT_NAME      # bản "một link" ở kịch_bản/
 SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) — chạy sau bước dịch
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
@@ -1710,7 +1714,7 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
     if not video_path.exists():
         logging.warning(f"📝 Chưa có video để gắn phụ đề: {video_path.name}")
         return None
-    if not script_path.is_file() or script_path.stat().st_size == 0:
+    if not inputdocx.has_content(script_path):
         logging.warning(f"📝 Không có kịch bản ({script_path.name}) → bỏ qua phụ đề.")
         return None
 
@@ -1746,7 +1750,7 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
 
         # dong=2: mỗi lần hiện chữ gom TỚI 2 DÒNG (như ảnh mẫu kho kiểu) thay vì
         # 1 dòng — chữ ở lại lâu gấp đôi, đọc đỡ hụt.
-        cues = gs.build_cues(script_path.read_text(encoding="utf-8"),
+        cues = gs.build_cues(inputdocx.read_input_text(script_path),
                              max_chars, dong)
         if not cues:
             logging.warning("📝 Kịch bản trống → không có gì làm phụ đề.")
@@ -2316,7 +2320,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("📝 Đang tạo phụ đề cho video YouTube...")
             progress_var.set(0)
             make_youtube_sub(Path(ngang_video_path),
-                             Path(ngang_video_path).parent / "input.txt",
+                             inputdocx.input_for(Path(ngang_video_path).parent),
                              sub_mode, sub_model, sub_max_chars,
                              progress=_sub_progress, kieu=sub_kieu,
                              font=sub_font, mau=sub_mau, vitri=sub_vitri,
@@ -2594,7 +2598,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     status_var.set(f"📝 Nghe audio làm phụ đề video dọc... {pct}%")
                 status_var.set("📝 Đang tạo phụ đề cho video dọc...")
                 progress_var.set(0)
-                make_youtube_sub(doc_video, output_path.parent / "input.txt",
+                make_youtube_sub(doc_video, inputdocx.input_for(output_path.parent),
                                  sub_mode, sub_model, sub_max_chars,
                                  progress=_sub_doc_progress, doc=True,
                                  kieu=sub_kieu, font=sub_font, mau=sub_mau,
@@ -2987,7 +2991,7 @@ class App(tk.Tk):
         sec_file.columnconfigure(1, weight=1)
 
         for r, (lbl, attr, default, is_save) in enumerate([
-            ("Văn bản (.txt):", "var_txt", str(SCRIPT_DIR / "input.txt"),  False),
+            ("Văn bản (.docx):", "var_txt", str(INPUT_DOCX),  False),
             ("Kết quả (.wav):", "var_out", str(OUTPUT_DIR / "output.wav"), True),
         ]):
             ttk.Label(sec_file, text=lbl, width=14, anchor="w").grid(
@@ -3012,7 +3016,7 @@ class App(tk.Tk):
         ttk.Checkbutton(gem_row,
                         text="🌐  Lấy nội dung từ Gemini + kiểm tra trước khi tạo",
                         variable=self.var_from_gemini).pack(side="left")
-        ttk.Label(gem_row, text="(gemini_result.docx → input.txt)",
+        ttk.Label(gem_row, text="(gemini_result.docx → input.docx)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         chunk_row = ttk.Frame(sec_opt)
@@ -3623,7 +3627,7 @@ class App(tk.Tk):
                         if str(e.get("episode", "")).zfill(2) == episode), str(folder))
 
             gemini_docx = folder / "gemini_result.docx"
-            input_txt = folder / "input.txt"
+            input_txt = inputdocx.input_path(folder)
             seo_docx = folder / "seoYoutube.docx"
 
             # 1+2) Nhận diện: dùng lại bản đã có (tiengTrung.docx hoặc *_zh.docx cũ).
@@ -3645,7 +3649,7 @@ class App(tk.Tk):
                 return
 
             # 4) input.txt — tạo lại nếu vừa dịch (bản cũ có thể dở) hoặc chưa có.
-            if translated_now or not (input_txt.exists() and input_txt.stat().st_size > 0):
+            if translated_now or not (inputdocx.has_content(input_txt)):
                 self._batch_prepare_input(gemini_docx, input_txt)
 
             # 5) SEO
@@ -3949,7 +3953,7 @@ class App(tk.Tk):
         self._recog_tree = tree = ttk.Treeview(tbl, columns=cols, show="headings",
                                                height=8, selectmode="none")
         heads = {"sel": ("", 34), "ep": ("Tập", 54), "zh": ("Tiếng Trung", 100),
-                 "input": ("input.txt", 88), "seo": ("SEO", 62), "thumb": ("Thumbnail", 78),
+                 "input": ("input.docx", 88), "seo": ("SEO", 62), "thumb": ("Thumbnail", 78),
                  "audio": ("Giọng", 72), "video": ("Video", 72), "up": ("Đăng", 62)}
         for c, (txt, w) in heads.items():
             tree.heading(c, text=txt)
@@ -3975,7 +3979,7 @@ class App(tk.Tk):
         btnrow.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         btnrow.columnconfigure(0, weight=1)
         self.recog_translate_btn = ttk.Button(
-            btnrow, text="🌐  ②  Dịch + tạo input.txt",
+            btnrow, text="🌐  ②  Dịch + tạo input.docx",
             style="Accent.TButton", command=self._recog_translate_all)
         self.recog_translate_btn.grid(row=0, column=0, sticky="ew")
         # ③ SEO và ④ thumbnail đứng CÙNG 1 HÀNG, chia đôi bề ngang (uniform) — 2 bước
@@ -4096,11 +4100,7 @@ class App(tk.Tk):
             ep = folder.name
             epnum = episode_of(ep)
             has_zh = find_zh_docx(folder) is not None
-            inp = folder / "input.txt"
-            try:
-                has_inp = inp.is_file() and inp.stat().st_size > 0
-            except OSError:
-                has_inp = False
+            has_inp = inputdocx.find_input(folder) is not None   # input.docx / input.txt cũ
             gem = folder / "gemini_result.docx"
             try:
                 has_gem = gem.is_file() and gem.stat().st_size > 0
@@ -4313,7 +4313,7 @@ class App(tk.Tk):
                 episode = episode_of(folder.name)   # SỐ TẬP (tên thư mục có thể kèm tên nguồn)
                 src = ep2src.get(episode)
                 gemini_docx = folder / "gemini_result.docx"
-                input_txt = folder / "input.txt"
+                input_txt = inputdocx.input_path(folder)
                 self.pipe_link_status.set(f"🌐 Dịch: Tập {episode} ({i}/{total})")
                 self.pipe_status.set(f"🌐 Tập {episode} ({i}/{total})")
 
@@ -4337,7 +4337,7 @@ class App(tk.Tk):
                         continue
 
                     # ── ③) input.txt — tạo lại nếu vừa dịch, hoặc chưa có (giống batch) ──
-                    if not translated_now and input_txt.exists() and input_txt.stat().st_size > 0:
+                    if not translated_now and inputdocx.has_content(input_txt):
                         logging.info(f"♻ Tập {episode}: đã có input.txt — bỏ qua.")
                     elif self._batch_prepare_input(gemini_docx, input_txt):
                         logging.info(f"💾 Đã tạo: {input_txt}")
@@ -4582,16 +4582,9 @@ class App(tk.Tk):
 
     # ── Bước ⑤: TẠO GIỌNG (clone) + VIDEO cho MỌI tập đã có input.txt ─────────────
     def _folders_with_input(self) -> list:
-        """Thư mục tập (kịch_bản/NN) đã có input.txt KHÔNG rỗng, theo số tập."""
-        out = []
-        for p in episode_dirs():
-            inp = p / "input.txt"
-            try:
-                if inp.is_file() and inp.stat().st_size > 0:
-                    out.append(p)
-            except OSError:
-                pass
-        return out
+        """Thư mục tập (kịch_bản/NN) đã có kịch bản KHÔNG rỗng (input.docx, hoặc
+        input.txt của tập cũ), theo số tập."""
+        return [p for p in episode_dirs() if inputdocx.find_input(p) is not None]
 
     def _recog_make_video_all(self):
         """Nút '🎬 Tạo giọng + video': với MỌI tập đã có input.txt, tạo giọng clone +
@@ -4737,16 +4730,8 @@ class App(tk.Tk):
     # Tiêu chí "còn thiếu" của từng bước Y HỆT cột "cần ..." trong bảng trạng thái
     # (_recog_refresh_table): dòng tô vàng cần gì thì nút ⚡ chạy đúng cái đó.
     def _recog_need_translate(self) -> list:
-        """Tập cần ②: đã nhận diện (có *_zh.docx) mà CHƯA có input.txt."""
-        out = []
-        for p in self._recognized_folders():
-            inp = p / "input.txt"
-            try:
-                if not (inp.is_file() and inp.stat().st_size > 0):
-                    out.append(p)
-            except OSError:
-                out.append(p)
-        return out
+        """Tập cần ②: đã nhận diện (có *_zh.docx) mà CHƯA có kịch bản input.docx/.txt."""
+        return [p for p in self._recognized_folders() if inputdocx.find_input(p) is None]
 
     def _recog_need_seo(self) -> list:
         """Tập cần ③: đã dịch (gemini_result.docx) mà SEO chưa có tiêu đề thật."""
@@ -4922,9 +4907,9 @@ class App(tk.Tk):
                       style="Sub.TLabel").grid(row=0, column=0, padx=24, pady=24)
 
     @staticmethod
-    def _drive_script_name(number: str) -> str:
+    def _drive_script_name(number: str, suffix: str = ".txt") -> str:
         number = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(number or "").strip())
-        return f"{number or 'input'}.txt"
+        return f"{number or 'input'}{suffix or '.txt'}"
 
     @staticmethod
     def _drive_log(msg, level="info"):
@@ -4969,12 +4954,12 @@ class App(tk.Tk):
 
         # 1) Nhiều link: thư mục con tập ("01" hoặc "01 - tên nguồn").
         for p in episode_dirs():
-            _add(p / "input.txt", episode_of(p.name))
+            _add(inputdocx.input_for(p), episode_of(p.name))
 
         # 2) Một link: kịch_bản/input.txt theo số tập ở tab Thumbnail.
         ep = self._current_episode_number()
         if ep > 0:
-            _add(SCRIPT_DIR / "input.txt", f"{ep:02d}")
+            _add(inputdocx.input_for(SCRIPT_DIR), f"{ep:02d}")
         return jobs
 
     def _set_upload_button_state(self, state: str) -> None:
@@ -5020,7 +5005,7 @@ class App(tk.Tk):
     def _upload_input_script_to_drive(self, input_path: Path, episode: str) -> bool:
         """Tải 1 file input.txt lên Drive/kịch bản với tên <số tập>.txt. Trả về True
         nếu tải thành công HOẶC Drive đã có (bỏ qua); False nếu lỗi/thiếu file."""
-        drive_name = self._drive_script_name(episode)
+        drive_name = self._drive_script_name(episode, Path(input_path).suffix)
         try:
             if not input_path.exists():
                 raise FileNotFoundError(f"Không tìm thấy {input_path}")
@@ -5589,8 +5574,8 @@ class App(tk.Tk):
         # Fallback dùng input soạn sẵn khi Gemini thiếu/rỗng.
         def _use_existing_input(reason: str) -> bool:
             try:
-                txt = Path(self.var_txt.get())
-                existing = (clean_text(txt.read_text(encoding="utf-8")).strip()
+                txt = inputdocx.resolve_input(self.var_txt.get())
+                existing = (clean_text(inputdocx.read_input_text(txt)).strip()
                             if txt.exists() else "")
             except Exception:
                 txt, existing = None, ""
@@ -5631,8 +5616,11 @@ class App(tk.Tk):
             return False
 
         # 2) BỎ CẤU TRÚC + GHÉP NỘI DUNG
-        chunks = cg.read_docx_chunks(GEMINI_DOCX)
-        content = "\n".join(t for _, t in chunks).strip()
+        # Đoạn TÔ ĐỎ trong gemini_result.docx (dịch nhờ câu nhắc) được bọc dấu để
+        # input.docx tô đỏ theo — xem dich_input_docx.
+        content, red_idx = inputdocx.gemini_content_marked(GEMINI_DOCX)
+        if red_idx:
+            logging.info(f"🟥 Đoạn tô đỏ sẽ tô đỏ theo trong input.docx: {red_idx}")
         if not content:
             if _use_existing_input("gemini_result.docx rỗng (0 đoạn)"):
                 return True
@@ -5666,13 +5654,11 @@ class App(tk.Tk):
         except Exception as e:
             logging.warning(f"⚠️ Bỏ qua sửa từ cố định (giết→giớt, tỳ→tì): {e}")
 
-        # 3) GHI VÀO input.txt (đường dẫn ở ô 'Văn bản')
+        # 3) GHI VÀO file 'Văn bản' (input.docx; đuôi .txt thì ghi txt thuần)
         try:
-            out = Path(self.var_txt.get())
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(content, encoding="utf-8")
+            out = inputdocx.write_input(self.var_txt.get(), content)
         except Exception as e:
-            messagebox.showerror("Lỗi ghi input.txt", str(e))
+            messagebox.showerror("Lỗi ghi input.docx", str(e))
             return False
         logging.info(f"✅ Đã lấy {len(content)} ký tự từ Gemini → {out.name} (đã qua kiểm tra)")
         return True
@@ -5689,7 +5675,7 @@ class App(tk.Tk):
         hdr.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self._pipe_hdr = hdr
         ttk.Label(hdr, text="🛠  Tạo kịch bản", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(hdr, text="Audio/Video → 中文 → Gemini → input.txt",
+        ttk.Label(hdr, text="Audio/Video → 中文 → Gemini → input.docx",
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 0))
 
         # ① Nhận diện giọng nói
@@ -5748,13 +5734,13 @@ class App(tk.Tk):
                         variable=self.var_auto3).grid(row=4, column=0, sticky="w", pady=(6, 0))
 
         # ③ Chuẩn bị input.txt
-        s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.txt  ")
+        s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.docx  ")
         s3.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         s3.columnconfigure(0, weight=1)
-        self.btn_prep = ttk.Button(s3, text="📝  Tạo input.txt",
+        self.btn_prep = ttk.Button(s3, text="📝  Tạo input.docx",
                                    style="Accent.TButton", command=self._pipe_prepare_input)
         self.btn_prep.grid(row=0, column=0, sticky="ew")
-        ttk.Label(s3, text="(kiểm tra + gemini_result.docx → input.txt)",
+        ttk.Label(s3, text="(kiểm tra + gemini_result.docx → input.docx)",
                   style="Hint.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.var_auto_tts = tk.BooleanVar(value=self._pipe_settings["auto_tts"])
         ttk.Checkbutton(s3, text="⛓  Chạy tiếp tạo giọng (OmniVoice) sau khi xong",
@@ -6459,8 +6445,11 @@ class App(tk.Tk):
             if findings:
                 logging.warning(f"⚠️ {gemini_docx.parent.name}: gemini_result.docx còn "
                                 f"{len(findings)} đoạn có câu dẫn nhập/thừa — vẫn ghi input.txt.")
-            chunks = cg.read_docx_chunks(gemini_docx)
-            content = "\n".join(t for _, t in chunks).strip()
+            # Đoạn TÔ ĐỎ trong gemini_result.docx (dịch nhờ câu nhắc sau khi Gemini
+            # từ chối) được bọc dấu để input.docx tô đỏ theo — xem dich_input_docx.
+            content, red_idx = inputdocx.gemini_content_marked(gemini_docx)
+            if red_idx:
+                logging.info(f"🟥 Đoạn tô đỏ sẽ tô đỏ theo trong input.docx: {red_idx}")
             if not content:
                 return False
             # ⛔ CHẶN: còn đoạn "(chưa dịch)"/"(trống)" thì KHÔNG ghi input.txt. Phải
@@ -6507,10 +6496,10 @@ class App(tk.Tk):
                     return False
             except Exception as e:
                 logging.warning(f"⚠️ Bỏ qua chốt kiểm độ dài bản dịch: {e}")
-            Path(out_txt).write_text(content, encoding="utf-8")
+            inputdocx.write_input(out_txt, content)
             return True
         except Exception as e:
-            logging.error(f"⚠️ Lỗi tạo input.txt: {e}")
+            logging.error(f"⚠️ Lỗi tạo {Path(out_txt).name}: {e}")
             return False
 
     def _batch_run_tts(self, folder, ts, episode=None) -> bool:
@@ -6530,19 +6519,24 @@ class App(tk.Tk):
                           "tạo giọng/video, BỎ CẢ TẬP. Chạy lại bước dịch Gemini "
                           "trước (input.txt hiện có được tạo từ bản dịch hỏng).")
             return False
-        input_txt = folder / "input.txt"
-        if not input_txt.exists():
-            logging.warning(f"⚠️ {folder.name}: chưa có input.txt → bỏ qua tạo giọng.")
+        input_txt = inputdocx.find_input(folder)      # input.docx, hoặc input.txt tập cũ
+        if input_txt is None:
+            logging.warning(f"⚠️ {folder.name}: chưa có input.docx → bỏ qua tạo giọng.")
             return False
         try:
-            full_text = clean_text(input_txt.read_text(encoding="utf-8"))
+            full_text = clean_text(inputdocx.read_input_text(input_txt))
         except Exception as e:
-            logging.error(f"⚠️ {folder.name}: không đọc được input.txt: {e}")
+            logging.error(f"⚠️ {folder.name}: không đọc được {input_txt.name}: {e}")
             return False
         chunks = split_chunks(full_text.lower(), ts["chunk"])
         if not chunks:
-            logging.warning(f"⚠️ {folder.name}: input.txt trống → bỏ qua tạo giọng.")
+            logging.warning(f"⚠️ {folder.name}: {input_txt.name} trống → bỏ qua tạo giọng.")
             return False
+        try:   # file xem trước cách chia câu (input_chia_cau.docx) — luôn khớp bản vừa đọc
+            import taogiong_chia_cau as chia
+            chia.write_preview(folder, chunks, ts["chunk"], input_txt.name)
+        except Exception as e:
+            logging.warning(f"⚠️ Không ghi được input_chia_cau.docx: {e}")
 
         # Whisper đã được giải phóng ở lượt gọi (sau khi đóng Firefox) nên ở đây
         # chỉ cần nạp OmniVoice để tạo giọng.
@@ -7176,7 +7170,7 @@ class App(tk.Tk):
         folder = Path(folder)
         zh = find_zh_docx(folder)
         gem = folder / "gemini_result.docx"
-        inp = folder / "input.txt"
+        inp = inputdocx.find_input(folder)          # input.docx / input.txt tập cũ
         translate_done = False
         if gem.exists():
             try:
@@ -7194,7 +7188,7 @@ class App(tk.Tk):
         return {
             "recognize": bool(zh),
             "translate": translate_done,
-            "input": inp.exists() and inp.stat().st_size > 0,
+            "input": inp is not None,
             "seo": self._seo_docx_valid(folder / "seoYoutube.docx"),
             "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
             "audio": (folder / "output.wav").exists(),
@@ -7326,7 +7320,7 @@ class App(tk.Tk):
                 try:
                     s = src.strip().strip('"').strip("'")
                     gemini_docx = folder / "gemini_result.docx"
-                    input_txt = folder / "input.txt"
+                    input_txt = inputdocx.input_path(folder)
                     seo_docx = folder / "seoYoutube.docx"
 
                     # ── 1+2) NHẬN DIỆN — bỏ qua nếu đã có *_zh.docx hợp lệ ──────
@@ -7382,7 +7376,7 @@ class App(tk.Tk):
 
                     # ── 4) input.txt — TẠO LẠI nếu vừa dịch (bản cũ có thể dở), hoặc
                     # chưa có. Tạo lại → chữ ký đổi → audio/video tự render lại đúng.
-                    if not translated_now and input_txt.exists() and input_txt.stat().st_size > 0:
+                    if not translated_now and inputdocx.has_content(input_txt):
                         logging.info("♻ Bỏ qua tạo input.txt (đã có).")
                     elif self._batch_prepare_input(gemini_docx, input_txt):
                         logging.info(f"💾 Đã tạo: {input_txt}")
@@ -7643,14 +7637,14 @@ class App(tk.Tk):
         if not auto:
             self._save_pipe_settings()   # ấn chạy → nhớ cài đặt
         if self._prepare_input_from_gemini():
-            self.pipe_status.set("✅ Đã tạo input.txt từ Gemini.")
+            self.pipe_status.set("✅ Đã tạo input.docx từ Gemini.")
             if self.var_auto_tts.get():   # ⛓ chạy tiếp tạo giọng (OmniVoice)
                 logging.info("⛓ Tự động: chạy tiếp tạo giọng (OmniVoice)...")
                 self.after(400, self._start)
             elif not auto:
                 messagebox.showinfo(
                     "Xong",
-                    "Đã tạo input.txt từ gemini_result.docx.\n"
+                    "Đã tạo input.docx từ gemini_result.docx.\n"
                     "Giờ có thể bấm '▶ Chạy' để tạo audio.")
 
     def _start(self):
@@ -7678,9 +7672,9 @@ class App(tk.Tk):
                 return
 
         # ── Chia text ngay tại đây, trước khi khởi động thread ──────────────
-        text_file = Path(self.var_txt.get())
+        text_file = inputdocx.resolve_input(self.var_txt.get())
         try:
-            full_text = clean_text(text_file.read_text(encoding="utf-8"))
+            full_text = clean_text(inputdocx.read_input_text(text_file))
         except Exception as e:
             messagebox.showerror("Lỗi đọc file", str(e))
             return

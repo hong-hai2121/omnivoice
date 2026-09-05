@@ -31,7 +31,7 @@ STOP_CODE = 77
 # Bước hiện trên giao diện → (nhãn, danh sách bước của runner)
 STEP_CHOICES = [
     ("recognize", "① Nhận diện tiếng Trung"),
-    ("script",    "② Dịch + input.txt + SEO + thumbnail"),
+    ("script",    "② Dịch + input.docx + SEO + thumbnail"),
     ("tts",       "③ Tạo giọng + video"),
 ]
 # Bước lẻ, dùng cho nút “chạy lại” của từng ô trong bảng tiến độ.
@@ -39,7 +39,7 @@ SINGLE_STEPS = {
     "recognize": "Nhận diện",
     "translate": "Dịch Gemini",
     "retranslate": "Dịch lại đoạn trống",
-    "input":     "Tạo input.txt",
+    "input":     "Tạo input.docx",
     "seo":       "SEO YouTube",
     "thumbnail": "Thumbnail",
     "tts":       "Tạo giọng + video",

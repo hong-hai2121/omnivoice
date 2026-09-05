@@ -60,7 +60,8 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/dich_tachdoan.py` | Tách nội dung DOCX thành các đoạn (~1000–1500 ký tự, cắt ở cuối câu). |
 | `scripts/dich_kiemtra.py` | Kiểm tra `gemini_result.docx` (bắt câu dẫn nhập/thừa) trước khi tạo audio. |
 | `scripts/dich_lai_trong.py` | Lấp các đoạn còn `(trống)` trong `gemini_result.docx` của từng tập: mỗi đoạn gửi Gemini đúng một lần, sao lưu bản cũ rồi ghi lại để kiểm (`--episode 98`, `--all`, `--dry-run`). Nút 🔁 trên trang Nhận diện gọi file này. |
-| `scripts/dich_chuanbi_input.py` | Kiểm tra + bỏ cấu trúc `gemini_result.docx`, ghép nội dung → `kịch_bản/input.txt` cho TTS. |
+| `scripts/dich_chuanbi_input.py` | Kiểm tra + bỏ cấu trúc `gemini_result.docx`, ghép nội dung → `kịch_bản/input.docx` cho TTS (Word; đoạn dịch nhờ câu nhắc được tô đỏ). |
+| `scripts/dich_input_docx.py` | Đọc/ghi/tìm file kịch bản TTS `input.docx` (từ 05/09/2026; đọc được cả `input.txt` cũ), tô đỏ đoạn dịch nhờ câu nhắc. Mọi script đều đi qua đây. |
 | `YOUTUBE/tao_thumbnail.py` | Tạo thumbnail 1280×720 từ tiêu đề SEO hoặc DOCX. |
 | `YOUTUBE/dien_tieu_de_thumbnail.py` | Ghép nền `thumbnail/khung nên.png`, tiêu đề/ảnh mèo/số tập và khung trên `thumbnail/khung trên.png` theo đúng thứ tự lớp; ảnh mèo từ `Anh/` được crop theo `thumbnail/ảnh.png`. Tạo PNG mới, không ghi đè ảnh gốc. |
 | `YOUTUBE/thumbnail_gui.py` | GUI nhập tiêu đề và số tập; tự chọn ảnh mèo ngẫu nhiên trong `Anh/`, có xem trước ảnh trước khi tạo thumbnail. Kết quả lưu trong `kịch_bản/output/` theo tên `thumbnail01.png`, `thumbnail02.png`, … |
@@ -91,7 +92,7 @@ Toàn bộ pipeline dùng thống nhất 3 file (không còn `noidungGemini.docx
 | --- | --- | --- |
 | `tiengTrung.docx` | Văn bản tiếng Trung (中文) — nguồn để dịch | Nhận diện giọng nói (`nhandien_giongnoi`) |
 | `gemini_result.docx` | Bản dịch tiếng Việt từ Gemini | Nút "Gửi Gemini" / `dich_docx.py` |
-| `input.txt` | Văn bản cuối cho TTS | `dich_chuanbi_input.py` (kiểm tra + ghép) |
+| `input.docx` | Văn bản cuối cho TTS (Word, giữ tô đỏ; tập cũ còn `input.txt` vẫn đọc được) | `dich_chuanbi_input.py` (kiểm tra + ghép) |
 
 ## Quy trình cơ bản
 
@@ -99,14 +100,14 @@ Toàn bộ pipeline dùng thống nhất 3 file (không còn `noidungGemini.docx
 audio/video tiếng Trung
   → nhandien_giongnoi (nhận diện)        → kịch_bản/tiengTrung.docx
   → dịch Gemini (dich_docx / nút Gemini) → kịch_bản/gemini_result.docx
-  → dich_chuanbi_input (kiểm tra+ghép)   → kịch_bản/input.txt
+  → dich_chuanbi_input (kiểm tra+ghép)   → kịch_bản/input.docx
   → taogiong_gui.py / taogiong.py        → kịch_bản/output.wav
   → video_khung.py  (ngang, có khung)    → <audio>_videodone.mp4
   → video_doc.py    (dọc, không khung)   → <audio>_doc.mp4
   → (tùy chọn) video_gansub.py / video_bongbong.py
 ```
 
-Ba bước đầu (nhận diện → Gemini → input.txt) đã được tích hợp sẵn vào **cột trái** của `taogiong_gui.py`, nên thường chỉ cần mở một giao diện.
+Ba bước đầu (nhận diện → Gemini → input.docx) đã được tích hợp sẵn vào **cột trái** của `taogiong_gui.py`, nên thường chỉ cần mở một giao diện.
 
 ## Tạo giọng & video trong `taogiong_gui.py`
 
