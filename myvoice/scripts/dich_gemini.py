@@ -240,6 +240,15 @@ REFUSAL_RESTARTS = int(os.environ.get("OMNI_GEMINI_REFUSAL_RESTARTS", "0"))
 # Có cắt ĐÔI đoạn rồi gửi từng nửa khi đoạn vẫn bị từ chối/dịch cụt không (cơ chế cứu
 # cũ). Mặc định TẮT cùng lý do trên.
 SPLIT_RETRY = os.environ.get("OMNI_GEMINI_SPLIT_RETRY", "0") == "1"
+# Gemini trả câu TỪ CHỐI ("Tôi không thể trợ giúp về điều đó, vì tôi chỉ là một mô hình
+# ngôn ngữ.") → trước khi ghi "(trống)", gửi thêm ĐÚNG MỘT câu nhắc này trong CÙNG chat
+# (không mở lại Firefox). Gemini thường xin lỗi rồi dịch luôn. Dịch được thì lưu và TÔ ĐỎ
+# đoạn đó trong gemini_result.docx để người dùng kiểm (yêu cầu 05/09/2026). Đặt chuỗi
+# rỗng để tắt.
+REFUSAL_NUDGE = os.environ.get(
+    "OMNI_GEMINI_REFUSAL_NUDGE",
+    "Bị lỗi mô hình ngôn ngữ kìa. Dịch lại đoạn tiếng Trung vừa gửi sang tiếng Việt đi, "
+    "chỉ trả về bản dịch.")
 
 
 def is_refusal(text):
@@ -268,7 +277,11 @@ def is_result_too_short(source_chunk, result):
     return len((result or "").strip()) < n_han * VIET_HAN_MIN_RATIO
 
 
-# ── Phát hiện bản dịch LẶP (Gemini trả HAI bản dịch của cùng một đoạn) ──────────
+# ── Phát hiện bản dịch LẶP (câu mở đầu xuất hiện lại phía sau) ─────────────────
+# 05/09/2026 (chiều): người dùng xác nhận chỗ lặp là do NGUỒN tiếng Trung tự lặp (thiên
+# thư / đạn mạc chiếu lại cảnh) nên bản dịch lặp theo là ĐÚNG → is_result_duplicated
+# CHỈ CÒN để ghi chú ℹ️ trong nhật ký, KHÔNG nằm trong bad_chunks (không chặn ✅ / input /
+# giọng / đăng) và KHÔNG làm gửi lại. Đừng đưa lại vào chốt nếu người dùng chưa đổi ý.
 # Tập 85 (04/09/2026), đoạn 1: Gemini dịch dở 994 ký tự rồi dịch lại từ đầu bằng
 # lời khác, hai bản nối liền nhau → audio đọc phần mở đầu hai lần, còn dính chữ
 # ở chỗ nối. Bản lặp không bị is_refusal/is_result_too_short bắt (nội dung đủ,
@@ -337,7 +350,8 @@ def bad_chunks(zh_chunks, results):
     """Các đoạn HỎNG trong bản dịch: trả về list (số_đoạn_1_based, lý_do).
 
     Đoạn hỏng = chưa dịch (còn Hán / chuỗi đánh dấu), câu Gemini TỪ CHỐI, hoặc
-    dịch CỤT (ngắn bất thường so với chữ Hán nguồn). Đây là BỘ TIÊU CHÍ DUY NHẤT
+    dịch CỤT (ngắn bất thường so với chữ Hán nguồn). "Dịch lặp" KHÔNG tính (xem chú
+    thích ở is_result_duplicated — nguồn tự lặp). Đây là BỘ TIÊU CHÍ DUY NHẤT
     cho mọi chốt chặn (dịch / tạo input / tạo giọng / đăng): BẤT KỲ đoạn nào hỏng
     là BỎ CẢ TẬP — không làm tiếp, không đăng. Đừng tự kiểm lẻ tẻ ở nơi khác
     (tập 85/87 lọt vì chốt tổng theo tỉ lệ toàn tập không thấy 1-2 đoạn hỏng)."""
@@ -349,11 +363,6 @@ def bad_chunks(zh_chunks, results):
             out.append((j, "Gemini từ chối"))
         elif is_result_too_short(c, r):
             out.append((j, "dịch cụt"))
-        elif is_result_duplicated(r, c):
-            # Hai bản dịch nối nhau (tập 85/95/96 đoạn 1, 9/2026): nội dung đủ
-            # nhưng audio đọc mở đầu hai lần → coi là hỏng để gửi dịch lại; có
-            # nguồn nên đoạn nguồn tự lặp (92) không bị bắt oan.
-            out.append((j, "dịch lặp (hai bản dịch nối nhau)"))
     return out
 
 
@@ -430,6 +439,59 @@ def read_results_docx(path, total):
             continue   # tiêu đề cấp 1 "Kết quả dịch từ Gemini"
         elif cur is not None and txt.strip():
             buf.append(txt)
+    _flush()
+    return out
+
+
+# Màu TÔ ĐỎ cho đoạn dịch được nhờ câu nhắc sau khi Gemini từ chối (xem REFUSAL_NUDGE).
+RED_RGB = (0xC0, 0x00, 0x00)
+
+
+def _is_red(rgb):
+    """Đỏ theo nghĩa rộng (kể cả người dùng tô FF0000 tay trong Word)."""
+    try:
+        r, g_, b = rgb[0], rgb[1], rgb[2]
+    except Exception:
+        return False
+    return r >= 0xB0 and g_ <= 0x40 and b <= 0x40
+
+
+def read_red_marks(path, total):
+    """Các đoạn đang TÔ ĐỎ trong gemini_result.docx → dict {số_đoạn_1_based: nội_dung}.
+
+    Dùng để GIỮ màu đỏ qua các lần save_results_docx ghi lại cả file (tiến độ, resume,
+    🔁): đoạn còn đúng nội dung cũ thì vẫn đỏ, đoạn đã thay nội dung thì hết đỏ."""
+    out = {}
+    try:
+        from docx import Document
+        doc = Document(str(path))
+    except Exception:
+        return out
+    cur, buf, red = None, [], False
+
+    def _flush():
+        if cur is not None and 1 <= cur <= total and red:
+            out[cur] = "\n".join(buf).strip()
+
+    for p in doc.paragraphs:
+        style = (p.style.name or "")
+        txt = p.text or ""
+        m = re.match(r"\s*Đoạn\s+(\d+)\s*$", txt.strip())
+        if style.startswith("Heading") and m:
+            _flush()
+            cur, buf, red = int(m.group(1)), [], False
+        elif style.startswith(("Heading", "Title")):
+            continue
+        elif cur is not None and txt.strip():
+            buf.append(txt)
+            for run in p.runs:
+                try:
+                    if run.font.color is not None and run.font.color.rgb is not None \
+                            and _is_red(run.font.color.rgb):
+                        red = True
+                        break
+                except Exception:
+                    continue
     _flush()
     return out
 
@@ -696,6 +758,32 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     return last_text or None
 
 
+def nudge_after_refusal(driver, chunk, on_log=print):
+    """Gemini vừa TỪ CHỐI dịch → gửi thêm ĐÚNG MỘT câu nhắc (REFUSAL_NUDGE) trong cùng
+    chat rồi lấy trả lời. → bản dịch dùng được, hoặc None nếu vẫn từ chối / rỗng / cụt.
+    Bên gọi lưu kết quả này và TÔ ĐỎ đoạn (save_results_docx(..., red={j}))."""
+    if not REFUSAL_NUDGE.strip():
+        return None
+    on_log(f"💬 Gemini từ chối → gửi thêm một câu nhắc trong cùng chat: \"{REFUSAL_NUDGE}\"")
+    try:
+        ans = send_to_gemini(driver, REFUSAL_NUDGE, on_log=on_log)
+    except Exception as e:
+        on_log(f"⚠️ Gửi câu nhắc lỗi: {e}")
+        return None
+    ans = (ans or "").strip()
+    if not ans:
+        on_log("⚠️ Sau câu nhắc vẫn không có nội dung.")
+        return None
+    if is_refusal(ans):
+        on_log(f"🚫 Sau câu nhắc vẫn từ chối: \"{ans[:120]}\"")
+        return None
+    if is_result_too_short(chunk, ans):
+        on_log(f"🚫 Sau câu nhắc trả về quá ngắn ({len(ans)} ký tự) — coi như không dịch.")
+        return None
+    on_log("✅ Sau câu nhắc Gemini đã dịch — LƯU và TÔ ĐỎ đoạn này để kiểm lại.")
+    return ans
+
+
 def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
     """Gửi CÂU HƯỚNG DẪN DỊCH thành MỘT TIN NHẮN RIÊNG, trước khi gửi đoạn 1.
 
@@ -716,7 +804,8 @@ def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
 def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                           driver=None, profile=None, keep_open=True, out_path=None,
                           on_driver=None, restart_on_timeout=True,
-                          max_restarts=MAX_TIMEOUT_RESTARTS, resume=False):
+                          max_restarts=MAX_TIMEOUT_RESTARTS, resume=False,
+                          red_marks=None):
     """Gửi lần lượt các đoạn tới Gemini, trả về list kết quả (cùng thứ tự).
 
     - prefix được gửi thành MỘT TIN NHẮN RIÊNG ngay trước đoạn ĐẦU TIÊN được gửi
@@ -732,6 +821,9 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
       mới) rồi GỬI LẠI đoạn đó, tối đa `max_restarts` lần. MẶC ĐỊNH 0 từ 05/09/2026:
       mỗi đoạn gửi ĐÚNG MỘT LẦN, trống thì ghi "(trống)" và sang đoạn kế (lấp sau
       bằng 🔁 Dịch lại đoạn (Trống)); resume cũng KHÔNG gửi lại đoạn "(trống)".
+    - red_marks: set do bên gọi đưa vào để nhận SỐ ĐOẠN (1-based) dịch được nhờ câu
+      nhắc sau khi Gemini từ chối (nudge_after_refusal) — các đoạn này được TÔ ĐỎ khi
+      lưu; bên gọi tự lưu thì truyền lại vào save_results_docx(red=...).
     - on_driver(driver): gọi mỗi khi PHẢI thay driver (sau khi mở lại Firefox) để
       bên gọi cập nhật tham chiếu của họ — nhờ vậy bước SEO sau đó dùng đúng
       Firefox đang mở, không phải driver đã đóng.
@@ -747,6 +839,7 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
              if resume and out_path is not None and Path(out_path).exists()
              else [None] * total)
     results = []
+    red = red_marks if red_marks is not None else set()   # đoạn dịch được nhờ câu nhắc
     sent_any = False   # đoạn đầu tiên THỰC SỰ gửi mới gắn prefix (chỉ dẫn dịch)
 
     def _save_progress():
@@ -755,7 +848,7 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             return
         try:
             padded = results + [BLANK_UNSENT] * (total - len(results))
-            save_results_docx(chunks, padded, out_path)
+            save_results_docx(chunks, padded, out_path, red=red)
         except Exception as e:
             on_log(f"⚠️ Không lưu được tiến độ: {e}")
 
@@ -764,9 +857,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             # ── TIẾP TỤC: đoạn đã dịch xong thì giữ nguyên, khỏi gửi lại ──────
             # Kết quả cũ là CÂU TỪ CHỐI của Gemini hoặc bản dịch CỤT (lọt vào docx
             # trước khi có các bộ bắt này) thì KHÔNG tính là đã dịch — gửi lại.
-            # Dùng CHUNG bộ tiêu chí bad_chunks (chưa dịch / từ chối / cụt / LẶP) —
-            # trước đây liệt kê riêng ở đây nên đoạn "dịch lặp" bị coi là xong và
-            # không bao giờ được gửi lại (tập 85, 05/09/2026).
+            # Dùng CHUNG bộ tiêu chí bad_chunks (chưa dịch / từ chối / cụt) — không
+            # liệt kê riêng ở đây kẻo hai nơi lệch nhau.
             if resume and prior[i] and not bad_chunks([chunk], [prior[i]]):
                 on_log(f"♻ Đoạn {i + 1}/{total} đã dịch — bỏ qua.")
                 results.append(prior[i])
@@ -846,12 +938,6 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                         return "TỪ CHỐI dịch"
                     if is_result_too_short(src, a):
                         return "dịch CỤT (kết quả quá ngắn)"
-                    # Nghiêm (không đưa nguồn): nguồn có tự nhắc lại mở đầu thì người
-                    # dùng vẫn muốn bản dịch chỉ đọc một lần (đã dặn trong prefix) →
-                    # gửi lại cho Gemini thêm cơ hội bỏ phần lặp. Chốt chặn chung
-                    # (bad_chunks) thì nương tay với nguồn lặp để không chặn oan.
-                    if is_result_duplicated(a):
-                        return "dịch LẶP (mở đầu bị dịch/nhắc lại hai lần)"
                     return None
 
                 refusal_tries = 0
@@ -870,13 +956,20 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     send_prefix_to_gemini(driver, prefix or RETRY_CHINESE_PREFIX,
                                           on_log=on_log)
                     ans = send_to_gemini(driver, tagged, on_log=on_log)
-                if ans and _bad(ans, chunk) and _bad(ans, chunk).startswith("dịch LẶP"):
-                    # Bản LẶP vẫn có đủ nội dung (chỉ thừa) → giữ lại chứ không cắt
-                    # đôi/bỏ trắng như từ chối/dịch cụt; báo to để sửa tay nếu cần.
-                    on_log(f"⚠️ Đoạn {i + 1}/{total}: vẫn có dấu hiệu dịch LẶP sau "
-                           f"{REFUSAL_RESTARTS} lần gửi lại — GIỮ bản này, hãy mở "
-                           "gemini_result.docx kiểm tra đoạn này có bị dịch hai lần không.")
-                elif ans and _bad(ans, chunk) and not SPLIT_RETRY:
+                # ── Gemini TỪ CHỐI → thử thêm ĐÚNG MỘT câu nhắc trong cùng chat trước
+                #    khi ghi "(trống)" (05/09/2026). Dịch được thì lưu + TÔ ĐỎ để kiểm.
+                if ans and is_refusal(ans):
+                    on_log(f"🚫 Đoạn {i + 1}/{total}: Gemini TỪ CHỐI dịch: \"{ans[:120]}\"")
+                    nudged = nudge_after_refusal(driver, chunk, on_log=on_log)
+                    if nudged:
+                        ans = nudged
+                        red.add(i + 1)
+                if ans and is_result_duplicated(ans, chunk):
+                    # Chỉ ghi chú: người dùng xác nhận lặp là do nguồn (xem chú thích
+                    # ở is_result_duplicated) → giữ nguyên, không gửi lại, không chặn.
+                    on_log(f"ℹ️ Đoạn {i + 1}/{total}: câu mở đầu xuất hiện lại phía sau "
+                           "(nguồn tự lặp) — giữ nguyên bản dịch.")
+                if ans and _bad(ans, chunk) and not SPLIT_RETRY:
                     # 05/09/2026: KHÔNG cứu bằng cách gửi lại nữa — ghi "(trống)" rồi
                     # sang đoạn kế; người dùng lấp sau bằng 🔁 Dịch lại đoạn (Trống).
                     on_log(f"🚫 Đoạn {i + 1}/{total}: Gemini {_bad(ans, chunk)} "
@@ -947,14 +1040,37 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
 
 
 # ── Lưu kết quả ──────────────────────────────────────────────────────────────
-def save_results_docx(chunks, results, out_path):
-    """Lưu kết quả Gemini ra file Word: mỗi đoạn 1 mục."""
+def _norm_ws(s):
+    return " ".join((s or "").split())
+
+
+def save_results_docx(chunks, results, out_path, red=None):
+    """Lưu kết quả Gemini ra file Word: mỗi đoạn 1 mục.
+
+    red: set số đoạn (1-based) cần TÔ ĐỎ (dịch được nhờ câu nhắc sau khi Gemini từ
+    chối). Ngoài ra LUÔN giữ màu đỏ đang có trong file cũ cho đoạn nào nội dung không
+    đổi — vì hàm này ghi lại cả file ở mọi lần lưu tiến độ / resume / 🔁, không giữ thì
+    màu mất ngay ở lần lưu kế tiếp. Đoạn đã thay nội dung mới thì hết đỏ."""
     from docx import Document
+    from docx.shared import RGBColor
+
+    keep = set(red or ())
+    try:
+        old = read_red_marks(out_path, len(results)) if Path(out_path).exists() else {}
+    except Exception:
+        old = {}
+    for j, old_text in old.items():
+        if j <= len(results) and _norm_ws(results[j - 1]) == _norm_ws(old_text):
+            keep.add(j)
+
     doc = Document()
     doc.add_heading("Kết quả dịch từ Gemini", level=1)
     for i, ans in enumerate(results):
         doc.add_heading(f"Đoạn {i + 1}", level=2)
-        doc.add_paragraph(ans or BLANK_SENT)
+        para = doc.add_paragraph()
+        run = para.add_run(ans or BLANK_SENT)
+        if (i + 1) in keep and ans:
+            run.font.color.rgb = RGBColor(*RED_RGB)
     doc.save(str(out_path))
     return out_path
 
@@ -993,10 +1109,12 @@ def main(argv=None):
         chunks = [text]
 
     print(f"📚 Đã tách {len(chunks)} đoạn. Bắt đầu gửi Gemini...")
-    results = send_chunks_to_gemini(chunks, prefix=prefix, profile=args.profile, keep_open=True)
+    red = set()
+    results = send_chunks_to_gemini(chunks, prefix=prefix, profile=args.profile, keep_open=True,
+                                    red_marks=red)
 
     out = Path(args.source).with_name(Path(args.source).stem + "_gemini.docx")
-    save_results_docx(chunks, results, out)
+    save_results_docx(chunks, results, out, red=red)
     print(f"💾 Đã lưu kết quả: {out}")
 
 

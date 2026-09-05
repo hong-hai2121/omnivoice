@@ -81,20 +81,22 @@ def run(input_path, output_path, limit=0, keep_open=True, log=print):
 
     # Lưu DẦN sau mỗi đoạn: dừng giữa chừng vẫn giữ phần đã dịch.
     acc = []
+    red = set()     # đoạn dịch được nhờ câu nhắc sau khi Gemini từ chối → tô đỏ
 
     def on_result(i, total, ans):
         acc.append(ans)
         # Lưu DẦN ngay sau khi nhận xong đoạn này (trước khi gửi đoạn kế tiếp)
-        g.save_results_docx(chunks[:len(acc)], acc, output_path)
+        g.save_results_docx(chunks[:len(acc)], acc, output_path, red=red)
         # In nguyên văn kết quả đoạn để theo dõi
         log(f"\n========== KẾT QUẢ ĐOẠN {i + 1}/{total} ==========\n{ans or '(trống)'}\n")
         log(f"💾 Đã lưu {len(acc)}/{total} đoạn → {output_path}")
 
     results = g.send_chunks_to_gemini(
-        chunks, prefix=prefix, on_log=log, on_result=on_result, keep_open=keep_open
+        chunks, prefix=prefix, on_log=log, on_result=on_result, keep_open=keep_open,
+        red_marks=red,
     )
     # Lưu lần cuối cho chắc (đủ tiêu đề/đoạn)
-    g.save_results_docx(chunks, results, output_path)
+    g.save_results_docx(chunks, results, output_path, red=red)
     ok = sum(1 for r in results if r and r.strip())
     log(f"✅ XONG: {ok}/{len(results)} đoạn có kết quả → {output_path}")
     return results

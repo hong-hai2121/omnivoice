@@ -5,13 +5,15 @@ từng thư mục tập (kịch_bản/<số tập> - <tên>/).
 
 Đoạn TRỐNG = đoạn mà bản dịch chỉ là "(trống)" / "(chưa dịch)" / rỗng / thiếu hẳn
 tiêu đề "Đoạn k" (theo dich_gemini.blank_chunks). Đoạn đã có chữ — kể cả đoạn bị
-chốt là "dịch lặp" / "dịch cụt" — KHÔNG đụng tới: việc đó là của bước dịch chính
+chốt là "dịch cụt" / "từ chối" — KHÔNG đụng tới: việc đó là của bước dịch chính
 (⏩ Chạy tiếp / ② Dịch), còn ở đây chỉ lấp chỗ trống.
 
 Cách gửi: MỖI ĐOẠN TRỐNG GỬI LÊN GEMINI ĐÚNG MỘT LẦN — không mở lại Firefox,
 không cắt đôi, không gửi lại khi kết quả xấu. Kết quả nhận về in nguyên văn ra
-nhật ký và ghi ngay vào gemini_result.docx để người dùng tự kiểm; đoạn nào Gemini
-vẫn không trả lời (hoặc trả câu TỪ CHỐI) thì để nguyên "(trống)" và báo rõ.
+nhật ký và ghi ngay vào gemini_result.docx để người dùng tự kiểm. Gemini trả câu TỪ
+CHỐI ("...chỉ là một mô hình ngôn ngữ") thì gửi thêm ĐÚNG MỘT câu nhắc trong cùng chat
+(dich_gemini.REFUSAL_NUDGE); dịch được thì lưu và TÔ ĐỎ đoạn đó trong docx để kiểm;
+vẫn không được (hoặc Gemini không trả lời) thì để nguyên "(trống)" và báo rõ.
 Trước khi ghi đè, bản gemini_result.docx cũ được sao lưu cạnh đó
 (gemini_result.saoluu_<ngày-giờ>.docx) để lùi lại được.
 
@@ -115,8 +117,6 @@ def _ket_qua_xau(chunk, ans):
     notes = []
     if g.is_result_too_short(chunk, ans):
         notes.append("ngắn bất thường so với nguồn (dịch cụt?)")
-    if g.is_result_duplicated(ans, chunk):
-        notes.append("có dấu hiệu dịch hai lần nối nhau")
     if not g.is_translation_done(ans):
         notes.append("còn nhiều chữ Hán")
     return notes
@@ -168,6 +168,7 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
     g.send_prefix_to_gemini(driver, gui.load_prefix(), on_log=log)
 
     results = list(prior)
+    red = set()          # đoạn dịch được nhờ câu nhắc sau khi bị từ chối → tô đỏ
     backed_up = False
     sent = 0
     for n, j in enumerate(todo, 1):
@@ -187,22 +188,29 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
             log(f"⚠️ Đoạn {j}: Gemini không trả về nội dung → giữ nguyên (trống).")
             continue
         if g.is_refusal(ans):
-            log(f"🚫 Đoạn {j}: Gemini TỪ CHỐI dịch → giữ nguyên (trống). Câu trả về:\n"
-                f"    {ans[:300]}")
-            continue
+            log(f"🚫 Đoạn {j}: Gemini TỪ CHỐI dịch: \"{ans[:200]}\"")
+            nudged = g.nudge_after_refusal(driver, chunk, on_log=log)
+            if not nudged:
+                log(f"   → giữ nguyên (trống) đoạn {j}.")
+                continue
+            ans = nudged
+            red.add(j)
 
         log(f"\n========== KẾT QUẢ ĐOẠN {j}/{len(chunks)} ==========\n{ans}\n"
             "==========================================")
         for note in _ket_qua_xau(chunk, ans):
             log(f"⚠️ Đoạn {j}: {note} — vẫn ghi, hãy kiểm lại.")
+        if g.is_result_duplicated(ans, chunk):
+            # Chỉ ghi chú (không phải lỗi): người dùng xác nhận lặp là do nguồn tự lặp.
+            log(f"ℹ️ Đoạn {j}: câu mở đầu xuất hiện lại phía sau (nguồn tự lặp) — giữ nguyên.")
         results[j - 1] = ans
         if not backed_up:
             dst = _backup(gem)
             if dst:
                 log(f"🗂 Đã sao lưu bản cũ → {dst.name}")
             backed_up = True
-        g.save_results_docx(chunks, results, gem)
-        log(f"💾 Đã ghi đoạn {j} vào {gem.name}")
+        g.save_results_docx(chunks, results, gem, red=red)
+        log(f"💾 Đã ghi đoạn {j} vào {gem.name}" + (" (TÔ ĐỎ — kiểm lại)" if j in red else ""))
 
     remaining = g.blank_chunks(results)
     if remaining:

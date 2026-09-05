@@ -422,8 +422,9 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -
             import dich_gemini as g
             chunks, prior = pairs if pairs is not None else translation_pairs(folder)
             if chunks:
-                # Cùng bộ chốt với GUI (bad_chunks): đoạn từ chối / dịch cụt /
-                # dịch lặp cũng là chưa xong → ⏩ Chạy tiếp tự gửi dịch lại đoạn đó.
+                # Cùng bộ chốt với GUI (bad_chunks): đoạn từ chối / dịch cụt cũng
+                # là chưa xong → ⏩ Chạy tiếp gửi lại đoạn đó (một lần); đoạn
+                # "(trống)" đã gửi thì để nút 🔁 lấp. "Dịch lặp" không tính.
                 translate_done = not g.bad_chunks(chunks, prior)
             else:
                 translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
