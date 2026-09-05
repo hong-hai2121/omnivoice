@@ -59,6 +59,7 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/dich_docx.py` | Dịch `tiengTrung.docx` qua Gemini → `gemini_result.docx`. |
 | `scripts/dich_tachdoan.py` | Tách nội dung DOCX thành các đoạn (~1000–1500 ký tự, cắt ở cuối câu). |
 | `scripts/dich_kiemtra.py` | Kiểm tra `gemini_result.docx` (bắt câu dẫn nhập/thừa) trước khi tạo audio. |
+| `scripts/dich_lai_trong.py` | Lấp các đoạn còn `(trống)` trong `gemini_result.docx` của từng tập: mỗi đoạn gửi Gemini đúng một lần, sao lưu bản cũ rồi ghi lại để kiểm (`--episode 98`, `--all`, `--dry-run`). Nút 🔁 trên trang Nhận diện gọi file này. |
 | `scripts/dich_chuanbi_input.py` | Kiểm tra + bỏ cấu trúc `gemini_result.docx`, ghép nội dung → `kịch_bản/input.txt` cho TTS. |
 | `YOUTUBE/tao_thumbnail.py` | Tạo thumbnail 1280×720 từ tiêu đề SEO hoặc DOCX. |
 | `YOUTUBE/dien_tieu_de_thumbnail.py` | Ghép nền `thumbnail/khung nên.png`, tiêu đề/ảnh mèo/số tập và khung trên `thumbnail/khung trên.png` theo đúng thứ tự lớp; ảnh mèo từ `Anh/` được crop theo `thumbnail/ảnh.png`. Tạo PNG mới, không ghi đè ảnh gốc. |

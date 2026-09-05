@@ -78,7 +78,12 @@ RESPONSE_SETTLE = float(os.environ.get("OMNI_GEMINI_SETTLE", "6"))
 PREFIX_TIMEOUT = int(os.environ.get("OMNI_GEMINI_PREFIX_TIMEOUT", "120"))
 # Số lần ĐÓNG HẲN Firefox → mở lại (chat mới) → gửi lại đoạn khi Gemini treo/không
 # trả lời gì sau RESPONSE_TIMEOUT giây (mặc định 5 phút). 0 = không tự mở lại.
-MAX_TIMEOUT_RESTARTS = int(os.environ.get("OMNI_GEMINI_RESTART", "2"))
+# 05/09/2026: MẶC ĐỊNH 0 theo yêu cầu — luồng tự động gửi MỖI ĐOẠN ĐÚNG MỘT LẦN: đoạn
+# trống thì ghi "(trống)" rồi sang đoạn kế, không gửi lặp đi lặp lại nữa; lấp chỗ trống
+# bằng nút 🔁 Dịch lại đoạn (Trống) (dich_lai_trong.py) để người dùng kiểm từng đoạn.
+# Muốn bật lại cơ chế cứu cũ: OMNI_GEMINI_RESTART=2 · OMNI_GEMINI_REFUSAL_RESTARTS=1 ·
+# OMNI_GEMINI_SPLIT_RETRY=1 · OMNI_GEMINI_RESEND_BLANK=1.
+MAX_TIMEOUT_RESTARTS = int(os.environ.get("OMNI_GEMINI_RESTART", "0"))
 
 # ── Selector cho Gemini (đã dò trên Gemini thật 2026-06; chỉnh nếu DOM đổi) ───
 # Ô nhập lệnh: Gemini dùng trình soạn thảo Quill (div.ql-editor contenteditable,
@@ -158,7 +163,16 @@ def chinese_ratio(text):
 
 
 # Chuỗi đánh dấu đoạn CHƯA dịch xong trong gemini_result.docx (để TIẾP TỤC dịch).
-_NOT_TRANSLATED = {"", "(chưa dịch)", "(trống)"}
+# Hai chuỗi này KHÁC NGHĨA: "(trống)" do save_results_docx ghi khi đoạn ĐÃ GỬI Gemini
+# một lần mà không có nội dung (hoặc trả câu từ chối/dịch cụt bị loại); "(chưa dịch)"
+# do _save_progress đệm cho các đoạn CHƯA GỬI khi dừng giữa chừng. Luồng tự động dựa
+# vào đó để không gửi lại đoạn đã trống (chunks_to_resend) mà vẫn gửi đoạn chưa gửi.
+BLANK_SENT = "(trống)"
+BLANK_UNSENT = "(chưa dịch)"
+_NOT_TRANSLATED = {"", BLANK_UNSENT, BLANK_SENT}
+# OMNI_GEMINI_RESEND_BLANK=1 → luồng tự động lại gửi cả đoạn "(trống)" mỗi lần chạy
+# tiếp (cách cũ trước 05/09/2026).
+RESEND_BLANK = os.environ.get("OMNI_GEMINI_RESEND_BLANK", "0") == "1"
 
 
 def is_translation_done(text):
@@ -169,6 +183,24 @@ def is_translation_done(text):
     if t.lower() in _NOT_TRANSLATED:
         return False
     return chinese_ratio(t) <= CHINESE_DONE_MAX_RATIO
+
+
+def is_blank_result(text):
+    """True nếu đoạn trong gemini_result.docx còn TRỐNG: thiếu hẳn (None), rỗng,
+    hoặc chỉ là chuỗi đánh dấu "(trống)" / "(chưa dịch)". Khác is_translation_done:
+    đoạn còn nhiều chữ Hán vẫn là ĐÃ có nội dung, không tính trống."""
+    return (text or "").strip().lower() in _NOT_TRANSLATED
+
+
+def blank_chunks(results):
+    """Số thứ tự (1-based) các đoạn còn TRỐNG trong list kết quả — dùng cho
+    dich_lai_trong.py và cột "Dịch" của bảng web."""
+    return [j for j, r in enumerate(results or [], 1) if is_blank_result(r)]
+
+
+def is_sent_blank(text):
+    """True nếu đoạn là "(trống)": đã gửi Gemini một lần mà không có nội dung dùng được."""
+    return (text or "").strip().lower() == BLANK_SENT
 
 
 # ── Phát hiện Gemini TỪ CHỐI dịch ────────────────────────────────────────────
@@ -202,8 +234,12 @@ _REFUSAL_PHRASES = [
 ]
 # Số lần mở lại Firefox (chat mới) để gửi lại NGUYÊN đoạn khi bị từ chối, trước
 # khi chuyển sang cắt đôi đoạn. Từ chối phần nhiều là ngẫu nhiên nên chat mới
-# thường qua được ngay lần đầu.
-REFUSAL_RESTARTS = int(os.environ.get("OMNI_GEMINI_REFUSAL_RESTARTS", "1"))
+# thường qua được ngay lần đầu. Mặc định 0 từ 05/09/2026 (xem MAX_TIMEOUT_RESTARTS):
+# đoạn bị từ chối / dịch cụt → ghi "(trống)", sang đoạn kế, lấp sau bằng 🔁.
+REFUSAL_RESTARTS = int(os.environ.get("OMNI_GEMINI_REFUSAL_RESTARTS", "0"))
+# Có cắt ĐÔI đoạn rồi gửi từng nửa khi đoạn vẫn bị từ chối/dịch cụt không (cơ chế cứu
+# cũ). Mặc định TẮT cùng lý do trên.
+SPLIT_RETRY = os.environ.get("OMNI_GEMINI_SPLIT_RETRY", "0") == "1"
 
 
 def is_refusal(text):
@@ -319,6 +355,18 @@ def bad_chunks(zh_chunks, results):
             # nguồn nên đoạn nguồn tự lặp (92) không bị bắt oan.
             out.append((j, "dịch lặp (hai bản dịch nối nhau)"))
     return out
+
+
+def chunks_to_resend(zh_chunks, results):
+    """Đoạn mà LUỒNG TỰ ĐỘNG phải gửi (lại) Gemini: bad_chunks TRỪ các đoạn "(trống)"
+    đã gửi một lần — 05/09/2026: không gửi lặp đi lặp lại nữa, đoạn đó để nút 🔁 Dịch
+    lại đoạn (Trống) lấp sau khi người dùng kiểm. Đoạn "(chưa dịch)" / thiếu hẳn (chưa
+    gửi lần nào) vẫn gửi. OMNI_GEMINI_RESEND_BLANK=1 → trả nguyên bad_chunks (cách cũ).
+    → list (số_đoạn_1_based, lý_do). Chốt chặn (input/tts/đăng) vẫn dùng bad_chunks."""
+    bad = bad_chunks(zh_chunks, results)
+    if RESEND_BLANK:
+        return bad
+    return [(j, r) for j, r in bad if not is_sent_blank(results[j - 1])]
 
 
 def _split_chunk_for_retry(chunk):
@@ -681,7 +729,9 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
       vẫn được giữ lại — chạy lại để dịch tiếp phần còn thiếu.
     - restart_on_timeout / max_restarts: nếu Gemini KHÔNG trả về nội dung sau
       RESPONSE_TIMEOUT giây (mặc định 5 phút) thì ĐÓNG HẲN Firefox, mở lại (chat
-      mới) rồi GỬI LẠI đoạn đó, tối đa `max_restarts` lần.
+      mới) rồi GỬI LẠI đoạn đó, tối đa `max_restarts` lần. MẶC ĐỊNH 0 từ 05/09/2026:
+      mỗi đoạn gửi ĐÚNG MỘT LẦN, trống thì ghi "(trống)" và sang đoạn kế (lấp sau
+      bằng 🔁 Dịch lại đoạn (Trống)); resume cũng KHÔNG gửi lại đoạn "(trống)".
     - on_driver(driver): gọi mỗi khi PHẢI thay driver (sau khi mở lại Firefox) để
       bên gọi cập nhật tham chiếu của họ — nhờ vậy bước SEO sau đó dùng đúng
       Firefox đang mở, không phải driver đã đóng.
@@ -704,7 +754,7 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
         if out_path is None:
             return
         try:
-            padded = results + ["(chưa dịch)"] * (total - len(results))
+            padded = results + [BLANK_UNSENT] * (total - len(results))
             save_results_docx(chunks, padded, out_path)
         except Exception as e:
             on_log(f"⚠️ Không lưu được tiến độ: {e}")
@@ -723,6 +773,18 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                 _save_progress()
                 if on_result:
                     on_result(i, total, prior[i])
+                continue
+            # ── TIẾP TỤC: đoạn "(trống)" = đã gửi một lần mà Gemini không trả nội dung
+            # → KHÔNG gửi lại nữa (05/09/2026), giữ trống cho nút 🔁 Dịch lại đoạn
+            # (Trống) lấp sau khi người dùng kiểm. Đoạn "(chưa dịch)" (chưa gửi lần
+            # nào vì dừng giữa chừng) vẫn gửi bình thường.
+            if resume and is_sent_blank(prior[i]) and not RESEND_BLANK:
+                on_log(f"⏭ Đoạn {i + 1}/{total} đã gửi một lần mà trống — không gửi "
+                       "lại; lấp bằng 🔁 Dịch lại đoạn (Trống).")
+                results.append("")
+                _save_progress()
+                if on_result:
+                    on_result(i, total, "")
                 continue
 
             # Cần gửi đoạn này → đảm bảo có Firefox (mở muộn: nếu mọi đoạn đã xong
@@ -814,6 +876,13 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     on_log(f"⚠️ Đoạn {i + 1}/{total}: vẫn có dấu hiệu dịch LẶP sau "
                            f"{REFUSAL_RESTARTS} lần gửi lại — GIỮ bản này, hãy mở "
                            "gemini_result.docx kiểm tra đoạn này có bị dịch hai lần không.")
+                elif ans and _bad(ans, chunk) and not SPLIT_RETRY:
+                    # 05/09/2026: KHÔNG cứu bằng cách gửi lại nữa — ghi "(trống)" rồi
+                    # sang đoạn kế; người dùng lấp sau bằng 🔁 Dịch lại đoạn (Trống).
+                    on_log(f"🚫 Đoạn {i + 1}/{total}: Gemini {_bad(ans, chunk)} "
+                           f"(\"{ans[:80]}...\") — KHÔNG gửi lại (mỗi đoạn gửi một "
+                           "lần), ghi (trống) và sang đoạn kế.")
+                    ans = ""
                 elif ans and _bad(ans, chunk):
                     halves = _split_chunk_for_retry(chunk)
                     if len(halves) > 1:
@@ -837,8 +906,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     else:
                         ans = ""
                     if not ans:
-                        on_log(f"🚫 Đoạn {i + 1}/{total}: KHÔNG cứu được — đánh dấu "
-                               "chưa dịch, chạy lại để dịch tiếp đoạn này.")
+                        on_log(f"🚫 Đoạn {i + 1}/{total}: KHÔNG cứu được — ghi (trống); "
+                               "lấp sau bằng 🔁 Dịch lại đoạn (Trống).")
                 # ── Còn tiếng Trung sau lần dịch ĐẦU: KHÔNG gửi lại Gemini nữa. ──
                 #    Giữ NGUYÊN bản Gemini; chữ Hán Gemini bỏ sót sẽ được xử lý ở bước
                 #    chuẩn bị input.txt (dich_hanviet: dịch nghĩa MT offline + phiên âm
@@ -860,7 +929,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             if ans:
                 on_log(f"✅ Đã nhận kết quả đoạn {i + 1}/{total}.")
             else:
-                on_log(f"⚠️ Đoạn {i + 1}/{total} không có kết quả.")
+                on_log(f"⚠️ Đoạn {i + 1}/{total} không có kết quả — ghi (trống), sang "
+                       "đoạn kế (không gửi lại); lấp sau bằng 🔁 Dịch lại đoạn (Trống).")
                 ans = ""
             results.append(ans)
             _save_progress()          # ← LƯU NGAY sau mỗi đoạn nhận được kết quả
@@ -884,7 +954,7 @@ def save_results_docx(chunks, results, out_path):
     doc.add_heading("Kết quả dịch từ Gemini", level=1)
     for i, ans in enumerate(results):
         doc.add_heading(f"Đoạn {i + 1}", level=2)
-        doc.add_paragraph(ans or "(trống)")
+        doc.add_paragraph(ans or BLANK_SENT)
     doc.save(str(out_path))
     return out_path
 

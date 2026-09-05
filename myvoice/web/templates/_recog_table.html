@@ -15,7 +15,12 @@
           <td><input type="checkbox" name="tap" value="{{ r.episode }}"></td>
           <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
           {% for key, label in step_labels %}
-            <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
+            {% if key == 'translate' and r.trong %}
+              <td class="no" title="Đoạn còn (trống) trong gemini_result.docx: {{ r.trong|join(', ') }}">—
+                <span class="badge stopped">{{ r.trong|length }} trống</span></td>
+            {% else %}
+              <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
+            {% endif %}
           {% endfor %}
         </tr>
       {% endfor %}

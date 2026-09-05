@@ -469,6 +469,8 @@ table.grid tbody tr:hover { background: var(--sunken); }
 table.grid tbody tr.done { background: var(--ok-bg); }
 table.grid td.epcell { font-weight: 700; color: var(--accent); }
 table.grid td.no { color: var(--muted); }
+/* Nhãn "n trống" ở cột Dịch (đoạn còn "(trống)" trong gemini_result.docx). */
+table.grid td .badge { padding: 1px 7px; margin-left: 4px; font-size: 11px; }
 table.grid input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 
 /* ── Xem trước thumbnail ─────────────────────────────────────────────────── */

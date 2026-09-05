@@ -370,9 +370,47 @@ def seo_docx_valid(seo_docx) -> bool:
         return False
 
 
-def folder_steps(folder, episode: str) -> dict:
+def translation_pairs(folder) -> tuple[list, list]:
+    """(đoạn tiếng Trung, bản dịch hiện có) của 1 tập — đọc MỘT lần rồi dùng cho
+    cả trạng thái bước "Dịch" (folder_steps) lẫn danh sách đoạn trống (blank_chunks).
+
+    Chưa có bản nhận diện → ([], []); có nhận diện mà chưa có gemini_result.docx →
+    (chunks, [None]*n). Đọc lỗi → ([], []) để bên gọi coi như không rõ."""
+    folder = Path(folder)
+    zh = gui.find_zh_docx(folder)
+    gem = folder / "gemini_result.docx"
+    try:
+        chunks = gui.read_zh_docx_chunks(zh) if zh else []
+        if not chunks:
+            return [], []
+        if not gem.exists():
+            return chunks, [None] * len(chunks)
+        import dich_gemini as g
+        return chunks, g.read_results_docx(gem, len(chunks))
+    except Exception:
+        return [], []
+
+
+def blank_chunks(folder, pairs: tuple[list, list] | None = None) -> list[int]:
+    """Số thứ tự các đoạn còn TRỐNG ("(trống)"/"(chưa dịch)"/thiếu) trong
+    gemini_result.docx của 1 tập — nguồn cho nút 🔁 Dịch lại đoạn (Trống) và nhãn
+    "n trống" ở cột Dịch. Chưa dịch lần nào (không có docx) → [] (việc của bước ②)."""
+    folder = Path(folder)
+    if not (folder / "gemini_result.docx").exists():
+        return []
+    chunks, prior = pairs if pairs is not None else translation_pairs(folder)
+    if not chunks:
+        return []
+    import dich_gemini as g
+    return g.blank_chunks(prior)
+
+
+def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -> dict:
     """Các bước ĐÃ XONG của 1 tập, suy từ file thực tế — bản port của
-    App._folder_steps (cùng quy ước tên file, để web và GUI báo giống nhau)."""
+    App._folder_steps (cùng quy ước tên file, để web và GUI báo giống nhau).
+
+    pairs: kết quả translation_pairs(folder) nếu bên gọi đã đọc rồi (episode_rows
+    đọc một lần cho cả cột Dịch và nhãn đoạn trống)."""
     folder = Path(folder)
     zh = gui.find_zh_docx(folder)
     gem = folder / "gemini_result.docx"
@@ -382,9 +420,8 @@ def folder_steps(folder, episode: str) -> dict:
     if gem.exists():
         try:
             import dich_gemini as g
-            chunks = gui.read_zh_docx_chunks(zh) if zh else []
+            chunks, prior = pairs if pairs is not None else translation_pairs(folder)
             if chunks:
-                prior = g.read_results_docx(gem, len(chunks))
                 # Cùng bộ chốt với GUI (bad_chunks): đoạn từ chối / dịch cụt /
                 # dịch lặp cũng là chưa xong → ⏩ Chạy tiếp tự gửi dịch lại đoạn đó.
                 translate_done = not g.bad_chunks(chunks, prior)
@@ -479,7 +516,8 @@ def episode_rows() -> list[dict]:
     for folder in gui.episode_dirs():
         ep = gui.episode_of(folder.name)
         info = by_episode.get(ep, {})
-        steps = folder_steps(folder, ep)
+        pairs = translation_pairs(folder)
+        steps = folder_steps(folder, ep, pairs)
         core_steps = {k: v for k, v in steps.items() if k not in DONE_EXCLUDE}
         rows.append({
             "episode": ep,
@@ -489,6 +527,9 @@ def episode_rows() -> list[dict]:
             "source": info.get("source", ""),
             "updated": info.get("updated", ""),
             "steps": steps,
+            # Đoạn còn "(trống)" trong gemini_result.docx → nhãn "n trống" ở cột Dịch
+            # và danh sách tập cho nút 🔁 Dịch lại đoạn (Trống).
+            "trong": blank_chunks(folder, pairs),
             "done_count": sum(1 for v in core_steps.values() if v),
             "total_steps": len(core_steps),
         })

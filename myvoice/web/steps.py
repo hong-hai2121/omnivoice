@@ -18,6 +18,9 @@ RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
 RUNNER_UPLOAD = core.WEB_DIR / "runners" / "run_upload.py"
+# Lấp đoạn "(trống)" trong gemini_result.docx — script CLI có sẵn, không đi qua
+# run_episode.py (nó không phải một bước của quy trình, chỉ là việc sửa tay có trợ giúp).
+RETRANS_SCRIPT = core.SCRIPTS_DIR / "dich_lai_trong.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
 # Mã "dừng có chủ ý" của runner — phải khớp STOP trong runners/run_episode.py.
@@ -35,6 +38,7 @@ STEP_CHOICES = [
 SINGLE_STEPS = {
     "recognize": "Nhận diện",
     "translate": "Dịch Gemini",
+    "retranslate": "Dịch lại đoạn trống",
     "input":     "Tạo input.txt",
     "seo":       "SEO YouTube",
     "thumbnail": "Thumbnail",
@@ -76,6 +80,21 @@ def upload_steps(episode: str) -> list[Step]:
     return [Step(label=f"Đăng YouTube tập {episode}", argv=argv,
                  cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
                  # STOP_CODE = bỏ qua có chủ ý (đã đăng rồi, kênh đã có tập này…).
+                 soft_fail_codes=(STOP_CODE,))]
+
+
+def retranslate_steps(episode: str, blanks: list[int] | None = None) -> list[Step]:
+    """Bước 🔁 Dịch lại đoạn (Trống) cho 1 tập — chạy ở hàng đợi CHÍNH vì điều khiển
+    Firefox (profile Gemini chỉ mở được một phiên, như bước dịch/SEO).
+
+    Script gửi mỗi đoạn trống lên Gemini ĐÚNG MỘT LẦN rồi ghi vào gemini_result.docx
+    để người dùng kiểm; còn đoạn trống thì trả STOP_CODE (dừng có chủ ý, không phải lỗi).
+    """
+    episode = str(episode).strip().zfill(2)
+    argv = [core.python_exe(), "-u", str(RETRANS_SCRIPT), "--episode", episode]
+    n = f" ({len(blanks)} đoạn: {', '.join(map(str, blanks))})" if blanks else ""
+    return [Step(label=f"Dịch lại đoạn trống tập {episode}{n}", argv=argv,
+                 cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
                  soft_fail_codes=(STOP_CODE,))]
 
 

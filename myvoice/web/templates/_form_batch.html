@@ -41,6 +41,7 @@
       <div class="actions col">
         <button class="primary" name="action" value="resume">⏩ Chạy tiếp các bước còn thiếu</button>
         <button name="action" value="translate">🌐 ② Dịch + tạo input.txt</button>
+        <button name="action" value="retranslate" title="Gửi từng đoạn (trống) của gemini_result.docx lên Gemini đúng một lần, ghi lại để kiểm">🔁 Dịch lại đoạn (Trống)</button>
         <button name="action" value="seo">🔎 ③ Gửi SEO (Gemini)</button>
         <button name="action" value="thumbnail">🖼 ④ Tạo thumbnail (ngang + dọc)</button>
         <button name="action" value="tts">🎬 ⑤ Tạo giọng + video</button>
@@ -52,7 +53,11 @@
       <p class="hint">⏩ tự dò tập đang dở (vd đã dịch xong) rồi chạy nốt các bước
          còn thiếu theo đúng thứ tự, mỗi tập một việc — không tick thì chạy mọi tập
          còn việc. Các nút ②–⑥ chạy đúng một bước; không tick = chạy hết tập đủ
-         điều kiện. Bước dịch/SEO điều khiển Firefox — đóng Firefox trước khi chạy.</p>
+         điều kiện. Bước dịch gửi mỗi đoạn Gemini đúng một lần: đoạn trống thì ghi
+         “(trống)” rồi sang đoạn kế, và các lần ⏩ sau KHÔNG gửi lại đoạn đó. 🔁 là
+         cách lấp các đoạn “(trống)” (bảng ghi “n trống” ở cột Dịch): cũng gửi một
+         lần, kết quả in ra nhật ký để kiểm — không tick = mọi tập đang có đoạn trống.
+         Bước dịch/SEO/🔁 điều khiển Firefox — đóng Firefox trước khi chạy.</p>
     </div>
   </div>
 

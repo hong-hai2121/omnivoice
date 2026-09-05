@@ -7085,17 +7085,26 @@ class App(tk.Tk):
         prior = (g.read_results_docx(gemini_docx, len(chunks))
                  if gemini_docx.exists() else [None] * len(chunks))
         # Đoạn HỎNG phải gửi lại (bộ tiêu chí chung g.bad_chunks: chưa dịch / câu
-        # TỪ CHỐI của Gemini / dịch CỤT — ca tập 85-87).
-        todo = [j for j, _ly_do in g.bad_chunks(chunks, prior)]
+        # TỪ CHỐI của Gemini / dịch CỤT — ca tập 85-87), TRỪ đoạn "(trống)" đã gửi
+        # một lần: 05/09/2026 người dùng yêu cầu luồng tự động không gửi lặp đi lặp
+        # lại nữa — đoạn đó để nút 🔁 Dịch lại đoạn (Trống) lấp sau khi kiểm.
+        todo = [j for j, _ly_do in g.chunks_to_resend(chunks, prior)]
+        da_trong = [j for j, _ly_do in g.bad_chunks(chunks, prior) if j not in todo]
+        if da_trong:
+            logging.info(f"⏭ Tập {episode}: đoạn {da_trong} đã gửi Gemini một lần mà "
+                         "trống → KHÔNG gửi lại; lấp bằng 🔁 Dịch lại đoạn (Trống) "
+                         "trên trang Nhận diện.")
         if SKIP_TRANSLATE_DETAIL_CHECK and gemini_docx.exists() and not todo:
-            # Đã có gemini_result.docx đủ đoạn lành → KHÔNG gửi lại Gemini (tránh
-            # dịch lại đoạn đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
+            # Đã có gemini_result.docx, không còn đoạn nào PHẢI gửi → KHÔNG mở Gemini
+            # (tránh dịch lại đoạn đã xong). Xem cờ SKIP_TRANSLATE_DETAIL_CHECK ở đầu file.
             translated_now = False
-            logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}.")
+            logging.info(f"♻ Bỏ qua gửi Gemini — đã có {gemini_docx.name}"
+                         + (" (còn đoạn trống, xem dòng trên)." if da_trong else "."))
         else:
             translated_now = bool(todo)
             if not todo:
-                logging.info(f"♻ Bỏ qua dịch Gemini (đã đủ {len(chunks)} đoạn).")
+                logging.info(f"♻ Bỏ qua dịch Gemini (không còn đoạn nào phải gửi trong "
+                             f"{len(chunks)} đoạn).")
             else:
                 if gemini_docx.exists():
                     logging.info(f"⚠️ {gemini_docx.name} có đoạn hỏng {todo} (từ chối/"
@@ -7135,10 +7144,14 @@ class App(tk.Tk):
         if bad:
             head = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad[:10]) \
                    + ("..." if len(bad) > 10 else "")
+            trong = [j for j, _ in bad if g.is_sent_blank(check[j - 1])]
+            goi_y = ("Đoạn (trống) đã gửi một lần sẽ KHÔNG được gửi lại tự động — bấm "
+                     "🔁 Dịch lại đoạn (Trống) trên trang Nhận diện để lấp, kiểm rồi ⏩ "
+                     "chạy tiếp; " if trong else "Chạy lại để dịch tiếp; ")
             logging.error(
                 f"⛔ Tập {episode}: bản dịch HỎNG {len(bad)}/{n} đoạn ({head}) → DỪNG, "
-                "KHÔNG tạo audio/video. Chạy lại để dịch tiếp; nếu Gemini cứ lỗi 1 "
-                "đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
+                f"KHÔNG tạo audio/video. {goi_y}nếu Gemini cứ lỗi 1 đoạn, sửa tay đoạn "
+                "đó trong gemini_result.docx rồi chạy lại.")
             return False
 
         # Còn MỘT ĐOẠN HÁN LIÊN TIẾP đủ dài (>= MAX_CHINESE_RUN chữ) → Gemini bỏ sót

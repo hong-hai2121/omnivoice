@@ -668,6 +668,31 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     return _back(request, "/nhandien")
 
 
+def _run_retranslate(request: Request, form) -> RedirectResponse:
+    """Nút 🔁 Dịch lại đoạn (Trống): mỗi tập MỘT việc chạy scripts/dich_lai_trong.py —
+    gửi từng đoạn "(trống)" của gemini_result.docx lên Gemini đúng một lần rồi ghi
+    lại để người dùng kiểm. Không tick tập nào → mọi tập đang có đoạn trống."""
+    picked = [str(e) for e in form.getlist("tap")]
+    rows = core.episode_rows()
+    if picked:
+        targets = [r for r in rows if r["episode"] in picked]
+    else:
+        targets = [r for r in rows if r["trong"]]
+        log(f"ℹ️ Không tick tập nào → dịch lại đoạn trống của {len(targets)} tập.")
+
+    queued = 0
+    for r in sorted(targets, key=lambda r: int(r["episode"])):
+        if not r["trong"]:
+            log(f"✅ Tập {r['episode']}: không có đoạn trống — bỏ qua.")
+            continue
+        runner.enqueue(f"Tập {r['episode']} — 🔁 dịch lại {len(r['trong'])} đoạn trống",
+                       steps_mod.retranslate_steps(r["episode"], r["trong"]))
+        queued += 1
+    if not queued:
+        log("✅ Không tập nào còn đoạn (trống) trong gemini_result.docx.")
+    return _back(request, "/nhandien")
+
+
 @app.post("/nhandien")
 async def run_recog(request: Request):
     form = await request.form()
@@ -675,6 +700,10 @@ async def run_recog(request: Request):
     if action == "resume":
         _save_model_speed(form)      # nhớ model + tốc độ như các nút khác
         return _run_resume(request, form)
+    if action == "retranslate":
+        _save_model_speed(form)
+        steps_mod.cleanup_tmp()
+        return _run_retranslate(request, form)
     if action not in _BATCH_BUTTONS:
         return _back(request, "/nhandien")
 
