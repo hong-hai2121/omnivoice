@@ -16,8 +16,11 @@
           <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
           {% for key, label in step_labels %}
             {% if key == 'translate' and r.trong %}
+              {# Nhãn "n trống" là NÚT: bấm mở popup ✍️ dịch tay (app.js) — trái là
+                 nguồn tiếng Trung (📋 Copy), phải là ô dán bản dịch (📥 Dán · 💾 Lưu). #}
               <td class="no" title="Đoạn còn (trống) trong gemini_result.docx: {{ r.trong|join(', ') }}">—
-                <span class="badge stopped">{{ r.trong|length }} trống</span></td>
+                <button type="button" class="badge stopped badge-trong" data-tap="{{ r.episode }}"
+                        title="Bấm để dịch tay đoạn {{ r.trong|join(', ') }} — copy tiếng Trung, dán bản dịch, lưu vào gemini_result.docx">{{ r.trong|length }} trống ✍️</button></td>
             {% else %}
               <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
             {% endif %}

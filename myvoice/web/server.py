@@ -406,6 +406,53 @@ def api_source_files():
     return JSONResponse({"groups": core.list_download_files()})
 
 
+# ── Popup ✍️ dịch tay đoạn (trống): bấm nhãn "n trống" ở cột Dịch (app.js) ────
+def _episode_folder_or_none(tap: str):
+    tap = str(tap or "").strip()
+    return core.episode_folder(tap) if tap.isdecimal() else None
+
+
+@app.get("/api/doan-trong")
+def api_blank_paragraphs(tap: str = ""):
+    """Các đoạn còn (trống) của 1 tập kèm nguồn tiếng Trung — nội dung popup."""
+    folder = _episode_folder_or_none(tap)
+    if folder is None:
+        return JSONResponse({"loi": f"Không tìm thấy thư mục tập {tap} trong kịch_bản/."},
+                            status_code=404)
+    out = core.blank_detail(folder)
+    out.update({"tap": str(tap).strip().zfill(2), "ten": folder.name})
+    return JSONResponse(out)
+
+
+@app.post("/api/doan-trong/luu")
+async def api_save_manual_translation(request: Request):
+    """💾 Lưu trong popup: ghi bản dịch tay của MỘT đoạn vào gemini_result.docx
+    (server sao lưu file cũ cạnh đó). JSON vào: {tap, doan, text}; JSON ra: xem
+    core.save_manual_translation. Trả JSON chứ không redirect vì gọi bằng fetch."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict) or not data:
+        return JSONResponse({"ok": False, "loi": "Dữ liệu gửi lên không hợp lệ (cần JSON "
+                                                 "{tap, doan, text})."}, status_code=400)
+    tap = str(data.get("tap", "")).strip()
+    folder = _episode_folder_or_none(tap)
+    if folder is None:
+        return JSONResponse({"ok": False, "loi": f"Không tìm thấy thư mục tập {tap}."},
+                            status_code=404)
+    r = core.save_manual_translation(folder, data.get("doan", 0), str(data.get("text") or ""))
+    if r.get("ok"):
+        con = (f" — còn trống {r['trong']}" if r["trong"] else " — tập này hết đoạn trống.")
+        log(f"✍️ Tập {tap.zfill(2)}: đoạn {r['doan']} dịch TAY ({r['ky_tu']} ký tự) → "
+            f"gemini_result.docx{con}")
+        for note in r.get("canh_bao") or ():
+            log(f"⚠️ Tập {tap.zfill(2)}: đoạn {r['doan']} {note} — đã ghi, hãy kiểm lại.")
+    else:
+        log(f"⛔ Tập {tap.zfill(2)}: không lưu được bản dịch tay — {r.get('loi', '')}")
+    return JSONResponse(r, status_code=200 if r.get("ok") else 400)
+
+
 @app.post("/kichban/xoalichsu")
 def clear_source_history():
     """Nút 🗑 ở hàng “Gần đây”: quên các nguồn đã chạy, KHÔNG đụng ô đang nhập.

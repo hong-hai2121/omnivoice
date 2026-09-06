@@ -170,9 +170,28 @@ def chinese_ratio(text):
 BLANK_SENT = "(trống)"
 BLANK_UNSENT = "(chưa dịch)"
 _NOT_TRANSLATED = {"", BLANK_UNSENT, BLANK_SENT}
+# 06/09/2026 (tập 102): người dùng mở Word gõ tay "Trống" (không ngoặc, viết hoa) để
+# đánh dấu đoạn cần dịch lại → bộ dò chỉ so đúng chuỗi "(trống)" nên 🔁 báo "không có
+# đoạn trống". Nay coi là CÙNG một dấu khi CẢ ĐOẠN chỉ là chữ đó: hoa/thường, có dấu
+# hay không dấu, có/không ngoặc ( ) [ ]（ ）, được thêm một dấu chấm cuối.
+#   trống / Trống / trong / [trống] / (Trống).  → như "(trống)"   (đã gửi → 🔁 lấp)
+#   chưa dịch / Chua dich / (chưa dịch)          → như "(chưa dịch)" (⏩ vẫn gửi)
+_BLANK_MARK_RE = re.compile(
+    r"^[\(\[（]?\s*(?P<kind>trống|trong|chưa dịch|chua dich)\s*[\)\]）]?\s*[.。!]?$",
+    re.IGNORECASE)
 # OMNI_GEMINI_RESEND_BLANK=1 → luồng tự động lại gửi cả đoạn "(trống)" mỗi lần chạy
 # tiếp (cách cũ trước 05/09/2026).
 RESEND_BLANK = os.environ.get("OMNI_GEMINI_RESEND_BLANK", "0") == "1"
+
+
+def blank_kind(text):
+    """Loại dấu "chưa dịch" của một đoạn: "sent" = "(trống)" (đã gửi Gemini một lần),
+    "unsent" = "(chưa dịch)" (chưa gửi), None = đoạn có nội dung hoặc rỗng hẳn.
+    Nhận cả bản gõ tay trong Word (xem _BLANK_MARK_RE)."""
+    m = _BLANK_MARK_RE.match((text or "").strip())
+    if not m:
+        return None
+    return "unsent" if m.group("kind").lower().startswith("ch") else "sent"
 
 
 def is_translation_done(text):
@@ -180,16 +199,18 @@ def is_translation_done(text):
     Hán còn sót KHÔNG vượt ngưỡng (cho phép vài chữ Hán như tên riêng). Chỉ coi là
     CHƯA dịch khi đoạn còn nguyên/đa phần tiếng Trung (xem CHINESE_DONE_MAX_RATIO)."""
     t = (text or "").strip()
-    if t.lower() in _NOT_TRANSLATED:
+    if is_blank_result(t):
         return False
     return chinese_ratio(t) <= CHINESE_DONE_MAX_RATIO
 
 
 def is_blank_result(text):
     """True nếu đoạn trong gemini_result.docx còn TRỐNG: thiếu hẳn (None), rỗng,
-    hoặc chỉ là chuỗi đánh dấu "(trống)" / "(chưa dịch)". Khác is_translation_done:
-    đoạn còn nhiều chữ Hán vẫn là ĐÃ có nội dung, không tính trống."""
-    return (text or "").strip().lower() in _NOT_TRANSLATED
+    hoặc chỉ là chuỗi đánh dấu "(trống)" / "(chưa dịch)" (kể cả gõ tay: "Trống",
+    "trống.", "[chưa dịch]"…). Khác is_translation_done: đoạn còn nhiều chữ Hán vẫn
+    là ĐÃ có nội dung, không tính trống."""
+    t = (text or "").strip()
+    return not t or blank_kind(t) is not None
 
 
 def blank_chunks(results):
@@ -199,8 +220,9 @@ def blank_chunks(results):
 
 
 def is_sent_blank(text):
-    """True nếu đoạn là "(trống)": đã gửi Gemini một lần mà không có nội dung dùng được."""
-    return (text or "").strip().lower() == BLANK_SENT
+    """True nếu đoạn là "(trống)" (hoặc gõ tay "Trống"…): đã gửi Gemini một lần mà
+    không có nội dung dùng được — luồng tự động KHÔNG gửi lại, để 🔁 lấp."""
+    return blank_kind(text) == "sent"
 
 
 # ── Phát hiện Gemini TỪ CHỐI dịch ────────────────────────────────────────────
