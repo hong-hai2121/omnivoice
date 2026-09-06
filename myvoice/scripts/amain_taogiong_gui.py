@@ -1,5 +1,8 @@
 """
-Giao diện desktop cho Voice Cloning — chạy: python taogiong_gui.py
+myvoice — logic tạo kịch bản / tạo giọng / dựng video, dùng chung cho bản WEB và GUI Tkinter cũ.
+
+Chạy thẳng file này (▶ Run trong VS Code, shortcut cũ) → MỞ BẢN WEB (giao cho myvoice/chay.py).
+Muốn GUI Tkinter cũ:  python amain_taogiong_gui.py --gui   (hoặc chay_gui.bat).
 """
 
 import sys, os
@@ -17,6 +20,19 @@ if __name__ == "__main__" and (os.path.exists(_VENV_PYTHON) or os.path.exists(_V
     import subprocess
     _launcher = _VENV_PYTHONW if os.path.exists(_VENV_PYTHONW) else _VENV_PYTHON
     subprocess.Popen([_launcher] + sys.argv)
+    sys.exit()
+
+# ── 05/09/2026: chạy THẲNG file này = mở BẢN WEB, không mở GUI Tkinter nữa ─────
+# Bấm ▶ Run file này trong VS Code (hay shortcut cũ trỏ vào đây) → giao cho
+# myvoice/chay.py: server chạy nền + cửa sổ nhỏ + tự mở trình duyệt. GUI Tk cũ vẫn
+# giữ nguyên bên dưới để đối chiếu khi cần:  python amain_taogiong_gui.py --gui
+# (chay_gui.bat và chay.py --gui gọi đúng cờ này). Đặt ở đây, trước các import
+# nặng, để chuyển sang web ngay mà không phải nạp numpy/tkinter vô ích.
+if __name__ == "__main__" and "--gui" not in sys.argv[1:]:
+    import subprocess
+    _chay = os.path.join(_REPO_ROOT, "myvoice", "chay.py")
+    subprocess.Popen([sys.executable, _chay] + [a for a in sys.argv[1:] if a != "--web"],
+                     cwd=_REPO_ROOT)
     sys.exit()
 # Để import được package omnivoice ở gốc repo dù chạy từ thư mục con
 if _REPO_ROOT not in sys.path:
@@ -8201,4 +8217,5 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
+    # Tới được đây nghĩa là có cờ --gui (không cờ thì đã chuyển sang bản web ở đầu file).
     App().mainloop()

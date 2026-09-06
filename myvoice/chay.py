@@ -607,7 +607,8 @@ def main(argv: list[str]) -> int:
     sys.path.insert(0, str(ROOT))
     if "--gui" in argv:
         print("🖥  Mở GUI Tkinter (bản cũ)…")
-        return subprocess.call([sys.executable, str(GUI)], cwd=str(ROOT))
+        # PHẢI truyền --gui: chạy amain_taogiong_gui.py không cờ là nó chuyển ngược về web.
+        return subprocess.call([sys.executable, str(GUI), "--gui"], cwd=str(ROOT))
 
     if "--console" not in argv:
         try:

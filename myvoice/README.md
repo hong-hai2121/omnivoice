@@ -40,7 +40,7 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 
 | Script | Mục đích |
 | --- | --- |
-| `scripts/amain_taogiong_gui.py` | **GUI Tkinter (bản cũ, vẫn dùng được — `chay_gui.bat`).** Cột trái: quy trình tạo kịch bản (① nhận diện giọng nói → ② dịch Gemini → ③ tạo `input.txt`). Cột giữa: tạo/clone giọng. Có tùy chọn **cắt bản 10–15 phút**, dựng **video ngang** và **video dọc**. |
+| `scripts/amain_taogiong_gui.py` | **Kho logic dùng chung; chạy thẳng file này là mở bản WEB (từ 05/09/2026). GUI Tkinter cũ vẫn mở được bằng `--gui` hoặc `chay_gui.bat`.** Cột trái: quy trình tạo kịch bản (① nhận diện giọng nói → ② dịch Gemini → ③ tạo `input.txt`). Cột giữa: tạo/clone giọng. Có tùy chọn **cắt bản 10–15 phút**, dựng **video ngang** và **video dọc**. |
 | `scripts/taogiong.py` | Bản chạy dòng lệnh của quy trình clone giọng. |
 | `scripts/taogiong_kiemtra_audio.py` | Rà các đoạn WAV lỗi/spike sau khi tạo audio. |
 | `scripts/video_khung.py` | Dựng **video NGANG**: ghép random clip trong `videongang/` rồi lồng vào khung PNG (`Backbround/`). Đầu ra `<audio>_videodone.mp4`. |
