@@ -469,10 +469,11 @@ def bad_chunks(zh_chunks, results):
 
     Đoạn hỏng = chưa dịch (còn Hán / chuỗi đánh dấu), câu Gemini TỪ CHỐI, hoặc
     dịch CỤT (ngắn bất thường so với chữ Hán nguồn). "Dịch lặp" KHÔNG tính (xem chú
-    thích ở is_result_duplicated — nguồn tự lặp). Đây là BỘ TIÊU CHÍ DUY NHẤT
-    cho mọi chốt chặn (dịch / tạo input / tạo giọng / đăng): BẤT KỲ đoạn nào hỏng
-    là BỎ CẢ TẬP — không làm tiếp, không đăng. Đừng tự kiểm lẻ tẻ ở nơi khác
-    (tập 85/87 lọt vì chốt tổng theo tỉ lệ toàn tập không thấy 1-2 đoạn hỏng)."""
+    thích ở is_result_duplicated — nguồn tự lặp). Đây là BỘ TIÊU CHÍ DUY NHẤT về
+    đoạn HỎNG; mọi chốt chặn sau dịch (tạo input / SEO / tạo giọng / đăng) dùng
+    blocking_chunks() = bad_chunks + đoạn TÔ ĐỎ chưa kiểm: BẤT KỲ đoạn nào là BỎ CẢ
+    TẬP — không làm tiếp, không đăng. Đừng tự kiểm lẻ tẻ ở nơi khác (tập 85/87 lọt
+    vì chốt tổng theo tỉ lệ toàn tập không thấy 1-2 đoạn hỏng)."""
     out = []
     for j, (c, r) in enumerate(zip(zh_chunks, results), 1):
         if not is_translation_done(r):
@@ -482,6 +483,35 @@ def bad_chunks(zh_chunks, results):
         elif is_result_too_short(c, r):
             out.append((j, "dịch cụt"))
     return out
+
+
+RED_REASON = "tô đỏ chưa kiểm"
+
+
+def blocking_chunks(zh_chunks, results, red=None):
+    """Đoạn CHẶN quy trình sau bước dịch → list (số_đoạn_1_based, lý_do) đã sắp xếp.
+
+    = bad_chunks (chưa dịch / Gemini từ chối / dịch cụt — gồm cả "(trống)") + đoạn
+    đang TÔ ĐỎ chưa người kiểm (08/09/2026: người dùng yêu cầu tập còn đoạn trống
+    HOẶC đoạn đỏ đều BỎ QUA sau khi dịch xong — không tạo input / SEO / giọng /
+    video / đăng — cho tới khi lấp trống bằng 🔁 / ✍️ và bấm nhãn "n đỏ" ✔ Đã kiểm
+    để bỏ đỏ, rồi ⏩ chạy tiếp). Là bộ tiêu chí cho MỌI chốt sau dịch
+    (kiem_ban_dich_folder, _translation_complete, cột Dịch của bảng web/GUI).
+    Riêng việc GỬI LẠI Gemini vẫn theo chunks_to_resend: đoạn đỏ có nội dung, không
+    gửi lại. red: các số đoạn đang đỏ (vd read_red_marks(...) — dict, lấy khoá)."""
+    out = bad_chunks(zh_chunks, results)
+    seen = {j for j, _ in out}
+    n = len(zh_chunks)
+    for j in sorted(set(red or ())):
+        if j not in seen and 1 <= j <= n:
+            out.append((j, RED_REASON))
+    return sorted(out)
+
+
+def blocking_chunks_docx(path, zh_chunks):
+    """blocking_chunks() đọc thẳng từ gemini_result.docx (cả kết quả lẫn dấu đỏ)."""
+    n = len(zh_chunks)
+    return blocking_chunks(zh_chunks, read_results_docx(path, n), read_red_marks(path, n))
 
 
 def chunks_to_resend(zh_chunks, results):

@@ -626,10 +626,13 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -
             import dich_gemini as g
             chunks, prior = pairs if pairs is not None else translation_pairs(folder)
             if chunks:
-                # Cùng bộ chốt với GUI (bad_chunks): đoạn từ chối / dịch cụt cũng
+                # Cùng bộ chốt với GUI (blocking_chunks): đoạn từ chối / dịch cụt cũng
                 # là chưa xong → ⏩ Chạy tiếp gửi lại đoạn đó (một lần); đoạn
-                # "(trống)" đã gửi thì để nút 🔁 lấp. "Dịch lặp" không tính.
-                translate_done = not g.bad_chunks(chunks, prior)
+                # "(trống)" đã gửi thì để nút 🔁 lấp; đoạn TÔ ĐỎ chưa kiểm (08/09/2026)
+                # cũng là chưa xong → ⏩ dừng ở bước dịch cho tới khi ✔ bỏ đỏ.
+                # "Dịch lặp" không tính.
+                translate_done = not g.blocking_chunks(
+                    chunks, prior, g.read_red_marks(gem, len(chunks)))
             else:
                 translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
         except Exception:

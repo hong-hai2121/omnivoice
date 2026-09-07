@@ -470,11 +470,12 @@ def find_zh_docx(folder):
 
 
 def kiem_ban_dich_folder(folder):
-    """Đoạn HỎNG trong bản dịch của 1 thư mục tập — chốt dùng chung cho MỌI cửa
-    (tạo input / tạo giọng+video / đăng YouTube): BẤT KỲ đoạn nào hỏng là BỎ CẢ
-    TẬP, không làm tiếp, không đăng (tập 85/87 từng lọt tới tận YouTube).
+    """Đoạn CHẶN trong bản dịch của 1 thư mục tập — chốt dùng chung cho MỌI cửa
+    (tạo input / SEO / tạo giọng+video / đăng YouTube): BẤT KỲ đoạn nào hỏng
+    (chưa dịch, "(trống)", từ chối, dịch cụt) HOẶC đang TÔ ĐỎ chưa kiểm (08/09/2026)
+    là BỎ CẢ TẬP, không làm tiếp, không đăng (tập 85/87 từng lọt tới tận YouTube).
 
-    Trả về list (số_đoạn, lý_do) theo dich_gemini.bad_chunks — [] là đủ và lành.
+    Trả về list (số_đoạn, lý_do) theo dich_gemini.blocking_chunks — [] là đủ và lành.
     Thiếu dữ kiện (chưa có bản nhận diện / bản dịch, đọc lỗi) → None: không đủ cơ
     sở kết luận, bên gọi cho qua để không chặn oan tập cũ thiếu file trung gian."""
     folder = Path(folder)
@@ -487,7 +488,7 @@ def kiem_ban_dich_folder(folder):
         chunks = read_zh_docx_chunks(zh)
         if not chunks:
             return None
-        return g.bad_chunks(chunks, g.read_results_docx(gem, len(chunks)))
+        return g.blocking_chunks_docx(gem, chunks)
     except Exception as e:
         logging.warning(f"⚠️ {folder.name}: không kiểm được bản dịch ({e}) — cho qua.")
         return None
@@ -645,12 +646,21 @@ def norm_source(src: str) -> str:
         return s
 
 
-# ── THƯ MỤC TẬP: "01" (kiểu cũ) hoặc "01 - <tên nguồn>" (kiểu mới) ───────────
+# ── THƯ MỤC TẬP: "A01 - <tên nguồn>" (mới), "01 - <tên nguồn>" hoặc "01" (cũ) ────
 # Thư mục tập mang thêm TÊN NGUỒN để nhìn là biết tập đó làm từ link/file nào:
-# "01 - 95", "07 - 陈家有女初长成". SỐ TẬP luôn là phần ĐẦU tên thư mục nên thư
-# mục cũ (tên thuần số) vẫn chạy bình thường — mọi nơi tra tập đều đi qua các hàm
-# dưới đây THAY CHO việc so tên thư mục bằng .isdecimal().
-_EP_DIR_RE = re.compile(r'^(\d+)\s*(?:-\s*(.*))?$')
+# "01 - 95", "07 - 陈家有女初长成". SỐ TẬP luôn nằm ở ĐẦU tên thư mục (sau chữ cái
+# thứ tự nếu có) nên thư mục cũ (tên thuần số) vẫn chạy bình thường — mọi nơi tra
+# tập đều đi qua các hàm dưới đây THAY CHO việc so tên thư mục bằng .isdecimal().
+#
+# 07/09/2026: thêm CHỮ CÁI ĐẦU ("A87 - …", "B98 - …", …, "K104 - …") đánh dấu THỨ TỰ
+# TẠO thư mục. Số tập được cấp không theo thời gian (số nhỏ còn trống được cấp lại
+# sau — 95/96/97 tạo sau 100-104), nên Explorer xếp theo số thì tập làm sau lại nằm
+# trên. Chữ cái tăng dần theo lần tạo → nhìn tên là biết tập nào làm trước/sau.
+# Thư mục mới lấy chữ KẾ TIẾP chữ lớn nhất đang có trong kịch_bản/ (không còn thư
+# mục nào, vd vừa 🗑 xoá output → "A"); hết Z thì nối thêm: "Z" → "ZA" → … → "ZZ"
+# → "ZZA" (Explorer vẫn xếp "Z104" trước "ZA105" vì chữ số đứng trước chữ cái).
+# Chữ cái CHỈ để nhìn; SỐ TẬP vẫn là khoá duy nhất — episode_of() bỏ qua chữ.
+_EP_DIR_RE = re.compile(r'^(?P<pre>[A-Z]*)\s*(?P<num>\d+)\s*(?:-\s*(?P<label>.*))?$')
 # Ký tự Windows cấm đặt trong tên thư mục (+ ký tự điều khiển).
 _BAD_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 MAX_SOURCE_LABEL = 60      # cắt bớt tên nguồn quá dài cho tên thư mục gọn
@@ -659,14 +669,40 @@ MAX_SOURCE_LABEL = 60      # cắt bớt tên nguồn quá dài cho tên thư m�
 def episode_of(name: str):
     """Số tập (chuỗi 2 chữ số) lấy từ TÊN thư mục tập; không phải thư mục tập → None.
 
-    "1" → "01" · "01" → "01" · "01 - 95" → "01" · "output"/"downloads_zh" → None.
+    "1" → "01" · "01" → "01" · "01 - 95" → "01" · "G95 - …" → "95" ·
+    "output"/"downloads_zh" → None.
     """
     m = _EP_DIR_RE.match((name or "").strip())
-    return m.group(1).zfill(2) if m else None
+    return m.group("num").zfill(2) if m else None
+
+
+def folder_prefix(name: str) -> str:
+    """CHỮ CÁI ĐẦU (thứ tự tạo) trong tên thư mục tập: "G95 - …" → "G",
+    "ZA105 - …" → "ZA"; tên kiểu cũ "01 - 95" hay không phải thư mục tập → ""."""
+    m = _EP_DIR_RE.match((name or "").strip())
+    return m.group("pre") if m else ""
+
+
+def _next_prefix(prefix: str) -> str:
+    """Chữ kế tiếp: "" → "A", "A" → "B", …, "Y" → "Z", "Z" → "ZA", "ZA" → "ZB",
+    "ZZ" → "ZZA". Chuỗi mới luôn XẾP SAU chuỗi cũ (cả so sánh Python lẫn Explorer)."""
+    if not prefix:
+        return "A"
+    if prefix[-1] < "Z":
+        return prefix[:-1] + chr(ord(prefix[-1]) + 1)
+    return prefix + "A"
+
+
+def next_folder_prefix() -> str:
+    """Chữ cái đầu cho THƯ MỤC TẬP MỚI: kế tiếp chữ lớn nhất đang có trong kịch_bản/.
+    Chưa thư mục nào có chữ (hoặc kịch_bản/ trống) → "A"."""
+    have = [h for h in (folder_prefix(p.name) for p in episode_dirs()) if h]
+    return _next_prefix(max(have)) if have else "A"
 
 
 def episode_dirs() -> list:
-    """Mọi thư mục tập trong kịch_bản/ (cả tên cũ "01" lẫn mới "01 - 95"), theo SỐ TẬP."""
+    """Mọi thư mục tập trong kịch_bản/ (tên cũ "01", "01 - 95" hay mới "G95 - …"),
+    theo SỐ TẬP (chữ cái đầu chỉ để Explorer xếp theo thứ tự tạo)."""
     if not SCRIPT_DIR.exists():
         return []
     out = [p for p in SCRIPT_DIR.iterdir() if p.is_dir() and episode_of(p.name)]
@@ -720,11 +756,12 @@ def source_label(source: str) -> str:
 
 def episode_dir_for(episode, source=None) -> Path:
     """Đường dẫn thư mục của tập: DÙNG LẠI thư mục đã có (không đổi tên thư mục cũ);
-    chưa có thì đặt tên mới "<số tập> - <tên nguồn>" (thiếu tên nguồn → "<số tập>")."""
+    chưa có thì đặt tên mới "<chữ thứ tự><số tập> - <tên nguồn>" (thiếu tên nguồn →
+    "<chữ><số tập>"), vd "L105 - 陈家有女初长成"; chữ thứ tự xem next_folder_prefix()."""
     existing = find_episode_dir(episode)
     if existing is not None:
         return existing
-    ep = str(episode).strip().zfill(2)
+    ep = next_folder_prefix() + str(episode).strip().zfill(2)
     label = source_label(source) if source else ""
     return SCRIPT_DIR / (f"{ep} - {label}" if label else ep)
 
@@ -7174,22 +7211,34 @@ class App(tk.Tk):
         cũng trả False → BỎ QUA cả tập, sang tập khác (dù tỉ lệ chữ Hán toàn đoạn thấp)."""
         import dich_gemini as g
         n = len(chunks)
-        check = g.read_results_docx(gemini_docx, n) if Path(gemini_docx).exists() else [None] * n
-        # Bộ tiêu chí chung g.bad_chunks: chưa dịch / câu TỪ CHỐI của Gemini /
-        # bản dịch CỤT — cùng bộ với _dich_gemini_cho_tap và các chốt input/tts/đăng.
-        bad = g.bad_chunks(chunks, check)
+        exists = Path(gemini_docx).exists()
+        check = g.read_results_docx(gemini_docx, n) if exists else [None] * n
+        red = g.read_red_marks(gemini_docx, n) if exists else {}
+        # Bộ tiêu chí chung g.blocking_chunks: chưa dịch / "(trống)" / câu TỪ CHỐI /
+        # dịch CỤT + đoạn TÔ ĐỎ chưa kiểm (08/09/2026: trống hay đỏ đều bỏ qua tập,
+        # không dựng tiếp) — cùng bộ với kiem_ban_dich_folder và cột Dịch của bảng.
+        bad = g.blocking_chunks(chunks, check, red)
         if bad:
             head = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad[:10]) \
                    + ("..." if len(bad) > 10 else "")
-            trong = [j for j, _ in bad if g.is_sent_blank(check[j - 1])]
-            goi_y = ("Đoạn (trống) đã gửi (kể cả lượt 2 chat mới) sẽ KHÔNG được gửi lại "
-                     "tự động — bấm 🔁 Dịch lại đoạn (Trống) hoặc nhãn \"n trống\" ✍️ dịch "
-                     "tay trên trang Nhận diện để lấp, kiểm rồi ⏩ chạy tiếp; "
-                     if trong else "Chạy lại để dịch tiếp; ")
+            trong = [j for j, ly_do in bad if ly_do != g.RED_REASON
+                     and g.is_sent_blank(check[j - 1])]
+            do = [j for j, ly_do in bad if ly_do == g.RED_REASON]
+            goi_y = ""
+            if trong:
+                goi_y += ("Đoạn (trống) đã gửi (kể cả lượt 2 chat mới) sẽ KHÔNG được gửi "
+                          "lại tự động — bấm 🔁 Dịch lại đoạn (Trống) hoặc nhãn \"n trống\" "
+                          "✍️ dịch tay trên trang Nhận diện để lấp; ")
+            if do:
+                goi_y += (f"đoạn TÔ ĐỎ {do} (dịch nhờ câu nhắc / chat mới) phải có người "
+                          "kiểm — bấm nhãn \"n đỏ\" ở cột Dịch xem Trung/Việt cạnh nhau, "
+                          "✔ Đã kiểm để bỏ đỏ; ")
+            if not goi_y:
+                goi_y = "Chạy lại để dịch tiếp; "
             logging.error(
-                f"⛔ Tập {episode}: bản dịch HỎNG {len(bad)}/{n} đoạn ({head}) → DỪNG, "
-                f"KHÔNG tạo audio/video. {goi_y}nếu Gemini cứ lỗi 1 đoạn, sửa tay đoạn "
-                "đó trong gemini_result.docx rồi chạy lại.")
+                f"⛔ Tập {episode}: bản dịch còn {len(bad)}/{n} đoạn hỏng/chờ kiểm ({head}) "
+                f"→ DỪNG, KHÔNG tạo input/audio/video. {goi_y}xong thì ⏩ chạy tiếp. Nếu "
+                "Gemini cứ lỗi 1 đoạn, sửa tay đoạn đó trong gemini_result.docx rồi chạy lại.")
             return False
 
         # Còn MỘT ĐOẠN HÁN LIÊN TIẾP đủ dài (>= MAX_CHINESE_RUN chữ) → Gemini bỏ sót
@@ -7221,10 +7270,9 @@ class App(tk.Tk):
                 import dich_gemini as g
                 chunks = read_zh_docx_chunks(zh) if zh else []
                 if chunks:
-                    prior = g.read_results_docx(gem, len(chunks))
-                    # Cùng bộ tiêu chí đoạn hỏng với _translation_complete (từ chối/
-                    # dịch cụt cũng tính là CHƯA xong).
-                    translate_done = not g.bad_chunks(chunks, prior)
+                    # Cùng bộ tiêu chí với _translation_complete: từ chối / dịch cụt /
+                    # "(trống)" và cả đoạn TÔ ĐỎ chưa kiểm đều là CHƯA xong.
+                    translate_done = not g.blocking_chunks_docx(gem, chunks)
                 else:
                     translate_done = True   # không rõ số đoạn → coi gem tồn tại là xong
             except Exception:
