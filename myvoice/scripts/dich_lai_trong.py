@@ -165,7 +165,7 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
     else:
         driver.get(g.GEMINI_URL)
         time.sleep(8)
-    g.send_prefix_to_gemini(driver, gui.load_prefix(), on_log=log)
+    g.send_prefix_to_gemini(driver, g.load_prefix(), on_log=log)
 
     results = list(prior)
     red = set()          # đoạn dịch được nhờ câu nhắc sau khi bị từ chối → tô đỏ

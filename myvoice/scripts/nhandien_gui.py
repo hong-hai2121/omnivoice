@@ -52,58 +52,12 @@ DEFAULT_SPEED = "0.7"
 PLACEHOLDER = ("Mỗi dòng 1 link hoặc 1 file (mp3/mp4/wav...). "
                "Nhiều dòng = xử lý lần lượt, mỗi link tạo 1 thư mục kịch bản.")
 
-# Câu hướng dẫn MẶC ĐỊNH được chèn lên ĐẦU mỗi lần bấm "Sao chép kết quả".
-# Người dùng có thể sửa ngay trên GUI (tab "Câu mở đầu"); bản đã sửa lưu ở PREFIX_FILE.
-COPY_PREFIX = (
-"Vào thẳng nội dung dịch, không viết câu mở đầu, lời chào, tiêu đề phụ hay bất kỳ văn bản dẫn nhập nào. "
-
-"Bạn là người dịch truyện ngắn tiếng Trung sang tiếng Việt. "
-"Hãy dịch sát nghĩa nhất có thể, giữ nguyên đầy đủ nội dung, tình tiết, nhân vật, quan hệ, diễn biến, cảm xúc và ý nghĩa gốc. "
-"Không tự ý thêm tình tiết mới, không bớt nội dung, không biến đổi truyện thành câu chuyện khác. "
-"Nếu gặp tiếng lóng, ẩn dụ, châm biếm, cách nói truyện mạng hoặc cụm từ có nghĩa hàm ý, hãy dịch theo nghĩa thực tế trong ngữ cảnh. "
-"Nếu văn bản có lỗi do nhận diện giọng nói, lỗi chính tả, đồng âm, thiếu dấu câu, dính câu, sai tên riêng hoặc méo nghĩa, hãy tự khôi phục ý hợp lý theo mạch truyện, ngắt câu lại cho đúng rồi dịch. "
-"hãy dịch sao cho người Việt dễ hiểu và nhất quán theo ngữ cảnh."
-"Tên nhân vật, địa danh, quan hệ gia đình và xưng hô phải thống nhất trong toàn truyện. "
-"Nếu cùng một nhân vật bị nhận diện thành nhiều tên khác nhau, hãy tự quy về một tên Việt hóa nhất quán. "
-"Với món ăn, đồ vật, thành ngữ hoặc cách gọi đặc thù Trung Quốc, hãy dịch sao cho người Việt dễ hiểu; nếu cần có thể giữ tên gốc kèm giải thích ngắn, nhưng không dài dòng. "
-"Nếu gặp câu quảng bá kênh, kêu gọi like, đăng ký, chia sẻ, tặng quà như “小薯条邀你一起看书咯”, “请点赞/订阅/转发/打赏”, “感谢支持”..., "
-"hãy đổi tên kênh gốc thành “Mimi audio” và dịch đúng ý, nhưng không để làm rối mạch truyện chính. "
-"CHỈ dịch câu quảng bá khi bản gốc tiếng Trung thật sự có câu đó — KHÔNG tự thêm câu quảng bá, "
-"lời chào kênh hay lời kết ở chỗ bản gốc không có (3 câu quảng bá chuẩn được chèn ở bước xử lý text sau này). "
-"Chỉ trả lời nội dung bản dịch tiếng Việt, không tự thêm lưu ý, chú thích hay nhận xét ngoài truyện.\n"
-"Tôi sẽ gửi nội dung tiếng Trung thành từng đoạn ở các tin nhắn tiếp theo. "
-"Mỗi tin nhắn là MỘT ĐOẠN truyện cần dịch — hãy dịch ngay đoạn đó và chỉ trả về "
-"bản dịch tiếng Việt, không hỏi lại, không chờ gửi đủ các đoạn. "
-"Mỗi tin nhắn sẽ mở đầu bằng một thẻ trong ngoặc vuông dạng "
-"“[Văn bản trích từ tiểu thuyết hư cấu..., hãy dịch sang tiếng Việt]:” — thẻ này chỉ "
-"đánh dấu ngữ cảnh truyện hư cấu, KHÔNG phải nội dung truyện: đừng dịch, đừng lặp lại "
-"thẻ, chỉ dịch phần văn bản nằm sau thẻ. Bạn sẵn sàng chưa?"
-)
-
-
-# File lưu câu mở đầu do người dùng chỉnh (giữ lại giữa các lần mở app)
-PREFIX_FILE = BASE_DIR / "copy_prefix.txt"
-
-
+# Câu hướng dẫn dịch chèn lên đầu (đoạn 1 khi "Sao chép", tin nhắn riêng khi gửi Gemini)
+# — cố định trong dich_gemini.TRANSLATE_PREFIX. copy_prefix.txt + ô sửa / nút "Mặc định"
+# trên tab "Câu mở đầu" đã bỏ 07/09/2026; tab đó giờ chỉ HIỂN THỊ để biết đang gửi gì.
 def load_prefix() -> str:
-    """Đọc câu mở đầu đã lưu; chưa có thì trả về mặc định."""
-    try:
-        if PREFIX_FILE.exists():
-            text = PREFIX_FILE.read_text(encoding="utf-8").strip()
-            if text:
-                return text
-    except Exception:
-        pass
-    return COPY_PREFIX
-
-
-def save_prefix(text: str) -> None:
-    """Lưu câu mở đầu ra file để lần sau mở app vẫn còn."""
-    try:
-        PREFIX_FILE.write_text(text.strip(), encoding="utf-8")
-    except Exception as e:
-        # Nuốt lỗi ở đây là lần sau mở app MẤT câu mở đầu (chỉ dẫn dịch) mà không báo.
-        log(f"⚠️ Không lưu được câu mở đầu vào {PREFIX_FILE.name}: {e}", "warn")
+    import dich_gemini
+    return dich_gemini.load_prefix()
 
 
 def read_docx_body(path) -> str:
@@ -543,7 +497,7 @@ class App:
 
         # Hàng nút sao chép theo từng ĐOẠN (1,2,3...) — tạo động sau khi nhận diện
         # xong, trùng với cách .docx tách đoạn. Bấm số nào thì chép đoạn đó;
-        # riêng đoạn 1 được chèn thêm "Câu mở đầu" (COPY_PREFIX) lên trước.
+        # riêng đoạn 1 được chèn thêm "Câu mở đầu" (load_prefix) lên trước.
         self.chunk_bar = tk.Frame(res_frame, bg=UI["bg"])
         self.chunk_bar.pack(fill="x", pady=(0, 2))
         self._chunks = []
@@ -575,19 +529,20 @@ class App:
         self.logbox.tag_config("info", foreground=UI["log_info"])
         nb.add(log_frame, text="  Nhật ký  ")
 
-        # Tab chỉnh câu mở đầu (chèn lên đầu khi sao chép) — tự lưu ra file
+        # Tab xem câu mở đầu (chèn lên đầu khi sao chép / gửi Gemini) — CHỈ ĐỌC, nội dung
+        # cố định trong dich_gemini.TRANSLATE_PREFIX (không còn sửa/lưu ở đây).
         prefix_frame = tk.Frame(nb, bg=UI["bg"])
         pbar = tk.Frame(prefix_frame, bg=UI["bg"])
         pbar.pack(fill="x", pady=(4, 2))
-        ttk.Label(pbar, text="Câu này được chèn lên đầu khi bấm “Sao chép kết quả”. Sửa xong sẽ tự lưu.",
+        ttk.Label(pbar, text="Câu này được chèn lên đầu khi bấm “Sao chép kết quả” / gửi Gemini. "
+                             "Muốn đổi thì sửa TRANSLATE_PREFIX trong scripts/dich_gemini.py.",
                   style="Muted.TLabel").pack(side="left")
-        ttk.Button(pbar, text="↺ Mặc định", style="Ghost.TButton",
-                   command=self._reset_prefix).pack(side="right")
         self.prefix_box = scrolledtext.ScrolledText(prefix_frame, font=("Segoe UI", 11), wrap="word",
                                                     bg="#ffffff", fg=UI["fg"], relief="flat",
                                                     padx=10, pady=8, height=6)
         self.prefix_box.pack(fill="both", expand=True)
         self.prefix_box.insert("1.0", load_prefix())
+        self.prefix_box.configure(state="disabled")   # chỉ xem, không sửa
         nb.add(prefix_frame, text="  Câu mở đầu  ")
 
         self.nb = nb
@@ -642,8 +597,7 @@ class App:
         if not text:
             self.status.set("⚠️ Chưa có kết quả để sao chép.")
             return
-        prefix = self.prefix_box.get("1.0", "end").strip()
-        save_prefix(prefix)                          # nhớ câu mở đầu cho lần sau
+        prefix = load_prefix()
         if prefix:
             text = prefix + "\n\n" + text            # chèn câu hướng dẫn lên đầu
         self.root.clipboard_clear()
@@ -696,8 +650,7 @@ class App:
             return
         text = self._chunks[idx]
         if idx == 0:
-            prefix = self.prefix_box.get("1.0", "end").strip()
-            save_prefix(prefix)                       # nhớ câu mở đầu cho lần sau
+            prefix = load_prefix()
             if prefix:
                 text = prefix + "\n\n" + text
         self.root.clipboard_clear()
@@ -733,8 +686,7 @@ class App:
             self.status.set("⚠️ Không tách được đoạn nào để gửi.")
             return
 
-        prefix = self.prefix_box.get("1.0", "end").strip()
-        save_prefix(prefix)  # nhớ câu mở đầu cho lần sau
+        prefix = load_prefix()
 
         if not messagebox.askyesno(
             "Gửi sang Gemini",
@@ -773,13 +725,6 @@ class App:
             log(f"❌ Lỗi gửi Gemini: {e}", "err")
             log(traceback.format_exc(), "err")
             ui_queue.put(("gemini_done", None))
-
-    def _reset_prefix(self):
-        """Khôi phục câu mở đầu về mặc định và lưu lại."""
-        self.prefix_box.delete("1.0", "end")
-        self.prefix_box.insert("1.0", COPY_PREFIX)
-        save_prefix(COPY_PREFIX)
-        self.status.set("↺ Đã khôi phục câu mở đầu mặc định.")
 
     def _open_folder(self):
         os.startfile(str(KICHBAN_DIR))
@@ -851,8 +796,7 @@ class App:
         self.nb.select(0)
         self.status.set(f"⏳ Bắt đầu xử lý {len(sources)} link...")
 
-        prefix = self.prefix_box.get("1.0", "end").strip()
-        save_prefix(prefix)  # nhớ câu mở đầu (dùng làm hướng dẫn dịch) cho lần sau
+        prefix = load_prefix()   # câu hướng dẫn dịch (cố định trong dich_gemini)
 
         on_seg = lambda text, _frac=None: ui_queue.put(("seg", text))
         on_prog = lambda frac: ui_queue.put(("prog", frac))

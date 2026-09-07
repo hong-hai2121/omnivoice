@@ -466,3 +466,186 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 })();
+
+
+// ── Popup 🔴 xem đoạn TÔ ĐỎ — bấm nhãn "n đỏ" ở cột Dịch ──────────────────────
+// Yêu cầu 07/09/2026: đoạn dịch được nhờ câu nhắc sau khi Gemini từ chối, hoặc nhờ
+// lượt 2 chat mới, được TÔ ĐỎ trong gemini_result.docx để người dùng kiểm. Bấm nhãn
+// mở popup: TRÁI là tiếng Trung (📋 Copy), PHẢI là tiếng Việt (sửa được tại chỗ).
+// ✔ Đã kiểm → gọi /api/doan-do/luu: bỏ màu đỏ đoạn đó, có sửa chữ thì ghi bản sửa
+// (server sao lưu file cũ cạnh đó). Dùng chung khung CSS với popup "n trống".
+(function () {
+  let dlg = null;       // phần tử .modal đang mở
+  let data = null;      // JSON từ /api/doan-do: {tap, ten, total, doan: [{j, zh, vi}]}
+  let cur = 0;          // chỉ số đoạn đang xem trong data.doan
+  let tap = '';
+  let notice = null;    // {kind, text} hiện dưới ô tiếng Việt sau khi render lại
+
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('.badge-do');
+    if (!b) return;
+    e.preventDefault();
+    open(b.dataset.tap || '');
+  });
+
+  function body() { return dlg ? dlg.querySelector('.modal-body') : null; }
+  function taValue() { const ta = dlg && dlg.querySelector('.trong-vi'); return ta ? ta.value : ''; }
+  function same(a, b) { return String(a || '').trim() === String(b || '').trim(); }
+
+  /** Đoạn nào có sửa chữ mà chưa ✔ → hỏi trước khi đóng. */
+  function hasUnsaved() {
+    if (!data) return false;
+    const d = data.doan[cur];
+    if (d && !d.xong) d.draft = taValue();
+    return data.doan.some((x) => !x.xong && x.draft != null && !same(x.draft, x.vi));
+  }
+
+  function close(force) {
+    if (!dlg) return;
+    if (!force && hasUnsaved() &&
+        !confirm('Có đoạn đã sửa chữ mà chưa ✔ Đã kiểm — đóng và bỏ phần sửa?')) return;
+    dlg.remove(); dlg = null; data = null; notice = null;
+    document.removeEventListener('keydown', onEsc);
+  }
+  function onEsc(e) { if (e.key === 'Escape') close(); }
+
+  async function open(t) {
+    close(true);
+    tap = t;
+    dlg = document.createElement('div');
+    dlg.className = 'modal';
+    dlg.innerHTML = `
+      <div class="modal-card trongmodal">
+        <div class="modal-head">
+          <b>🔴 Đoạn tô đỏ cần kiểm — tập ${esc(t)}</b>
+          <span class="spacer"></span>
+          <button type="button" class="small modal-x">✕</button>
+        </div>
+        <div class="modal-body"><p class="hint">Đang đọc gemini_result.docx…</p></div>
+        <div class="modal-foot">
+          <span class="hint">Đoạn này Gemini dịch được nhờ câu nhắc sau khi từ chối, hoặc nhờ chat mới (lượt 2)
+            — đối chiếu tiếng Trung bên trái, sửa chữ bên phải nếu cần, rồi ✔ Đã kiểm để bỏ màu đỏ
+            trong gemini_result.docx (file cũ được sao lưu cạnh đó).</span>
+          <button type="button" class="small modal-x">Đóng</button>
+        </div>
+      </div>`;
+    document.body.appendChild(dlg);
+    document.addEventListener('keydown', onEsc);
+    dlg.addEventListener('click', (e) => {
+      if (e.target === dlg || e.target.closest('.modal-x')) { close(); return; }
+      const tab = e.target.closest('.trong-tab');
+      if (tab) { show(+tab.dataset.i); return; }
+      if (e.target.closest('.do-ok')) { review(); }
+    });
+
+    let j;
+    try {
+      const resp = await fetch(`/api/doan-do?tap=${encodeURIComponent(t)}`, { credentials: 'same-origin' });
+      j = await resp.json();
+    } catch (_) {
+      if (body()) body().innerHTML = '<p class="warn">Không đọc được dữ liệu — server còn chạy không?</p>';
+      return;
+    }
+    if (!dlg) return;                                   // đã đóng trong lúc chờ
+    if (j.loi) { body().innerHTML = `<p class="warn">${esc(j.loi)}</p>`; return; }
+    if (!j.doan || !j.doan.length) {
+      body().innerHTML = `<p class="empty">Tập ${esc(t)} không còn đoạn tô đỏ nào trong gemini_result.docx.</p>`;
+      return;
+    }
+    data = j;
+    cur = 0;
+    render();
+  }
+
+  function show(i) {
+    if (!data || i === cur || !data.doan[i]) return;
+    if (!data.doan[cur].xong) data.doan[cur].draft = taValue();   // giữ chữ đang sửa dở
+    cur = i;
+    notice = null;
+    render();
+  }
+
+  function render() {
+    const d = data.doan[cur];
+    const tabs = data.doan.map((x, i) =>
+      `<button type="button" class="trong-tab${x.xong ? ' xong' : ' do'}${i === cur ? ' dang' : ''}"
+               data-i="${i}">Đoạn ${x.j}${x.xong ? ' ✓' : ''}</button>`).join('');
+    const conLai = data.doan.filter((x) => !x.xong).length;
+    const trangThai = d.xong ? 'đã kiểm ✓' : 'đang TÔ ĐỎ — cần kiểm';
+    const vi = d.draft != null ? d.draft : (d.vi || '');
+    body().innerHTML = `
+      <div class="trong-tabs">${tabs}
+        <span class="hint">${conLai} đoạn còn đỏ / ${data.total} đoạn của tập</span></div>
+      <div class="trong-grid">
+        <div class="trong-pane">
+          <div class="trong-pane-head">🇨🇳 Tiếng Trung — đoạn ${d.j}
+            <span class="hint">${d.zh.length} chữ</span>
+            <span class="spacer"></span>
+            <button type="button" class="small" data-copy="do-zh-text">📋 Copy</button></div>
+          <div class="trong-zh" id="do-zh-text">${esc(d.zh)}</div>
+        </div>
+        <div class="trong-pane">
+          <div class="trong-pane-head">🇻🇳 Tiếng Việt — ${trangThai}
+            <span class="hint">${vi.length} ký tự</span>
+            <span class="spacer"></span>
+            ${d.xong ? '' : '<button type="button" class="primary small do-ok">✔ Đã kiểm — bỏ đỏ (lưu sửa nếu có)</button>'}</div>
+          <textarea class="trong-vi${d.xong ? '' : ' do'}" spellcheck="false"${d.xong ? ' readonly' : ''}>${esc(vi)}</textarea>
+          <div class="trong-note"></div>
+        </div>
+      </div>`;
+    if (notice) setNote(notice.kind, notice.text);
+  }
+
+  function setNote(kind, text) {
+    const n = dlg && dlg.querySelector('.trong-note');
+    if (!n) return;
+    n.className = 'trong-note' + (kind ? ' ' + kind : '');
+    n.textContent = text;
+    notice = { kind, text };
+  }
+
+  async function review() {
+    const d = data.doan[cur];
+    const ta = dlg.querySelector('.trong-vi');
+    const btn = dlg.querySelector('.do-ok');
+    const text = ta.value.trim();
+    if (!text) { setNote('bad', 'Ô tiếng Việt đang trống — muốn bỏ nội dung thì dùng nhãn "n trống" ✍️, không xoá ở đây.'); ta.focus(); return; }
+    btn.disabled = true;
+    setNote('', 'Đang ghi vào gemini_result.docx…');
+    let r;
+    try {
+      const resp = await fetch('/api/doan-do/luu', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tap, doan: d.j, text }),
+      });
+      r = await resp.json();
+    } catch (_) {
+      btn.disabled = false;
+      setNote('bad', 'Không gọi được server — server còn chạy không?');
+      return;
+    }
+    if (!dlg) return;
+    if (!r.ok) { btn.disabled = false; setNote('bad', r.loi || 'Không ghi được.'); return; }
+
+    d.xong = true; d.vi = text; d.draft = null;
+    const canhBao = (r.canh_bao && r.canh_bao.length) ? ` ⚠️ ${r.canh_bao.join('; ')}.` : '';
+    const conLai = (r.do || []).length;
+    let text2 = r.sua
+      ? `✅ Đã lưu bản sửa đoạn ${d.j} (${r.ky_tu} ký tự) và bỏ màu đỏ.${canhBao}`
+      : `✅ Đoạn ${d.j} đã kiểm — bỏ màu đỏ, giữ nguyên nội dung.`;
+    text2 += conLai ? ` Còn đỏ: đoạn ${r.do.join(', ')}.` : ' Tập này hết đoạn đỏ.';
+    if (r.trong && r.trong.length) text2 += ` (Còn trống: đoạn ${r.trong.join(', ')} — nhãn "n trống".)`;
+    // Sang đoạn đỏ kế tiếp (nếu có) để kiểm tiếp luôn; hết thì ở lại đoạn vừa kiểm.
+    const next = data.doan.findIndex((x, i) => i !== cur && !x.xong);
+    if (next >= 0) cur = next;
+    notice = { kind: canhBao ? 'warn' : 'ok', text: text2 };
+    render();
+    if (window.htmx) htmx.trigger('#recogtable', 'refresh');   // nhãn "n đỏ" ở bảng đổi theo
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+})();

@@ -453,6 +453,49 @@ async def api_save_manual_translation(request: Request):
     return JSONResponse(r, status_code=200 if r.get("ok") else 400)
 
 
+# ── Popup 🔴 xem đoạn TÔ ĐỎ: bấm nhãn "n đỏ" ở cột Dịch (app.js) ───────────────
+@app.get("/api/doan-do")
+def api_red_paragraphs(tap: str = ""):
+    """Các đoạn đang TÔ ĐỎ (dịch được nhờ câu nhắc / chat mới, cần kiểm) của 1 tập kèm
+    tiếng Trung và tiếng Việt — nội dung popup."""
+    folder = _episode_folder_or_none(tap)
+    if folder is None:
+        return JSONResponse({"loi": f"Không tìm thấy thư mục tập {tap} trong kịch_bản/."},
+                            status_code=404)
+    out = core.red_detail(folder)
+    out.update({"tap": str(tap).strip().zfill(2), "ten": folder.name})
+    return JSONResponse(out)
+
+
+@app.post("/api/doan-do/luu")
+async def api_review_red_paragraph(request: Request):
+    """✔ Đã kiểm / 💾 Lưu bản sửa trong popup "n đỏ": bỏ màu đỏ đoạn đó, ghi bản sửa
+    nếu có (server sao lưu file cũ cạnh đó). JSON vào: {tap, doan, text?}; JSON ra:
+    xem core.review_red_segment."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    if not isinstance(data, dict) or not data:
+        return JSONResponse({"ok": False, "loi": "Dữ liệu gửi lên không hợp lệ (cần JSON "
+                                                 "{tap, doan, text})."}, status_code=400)
+    tap = str(data.get("tap", "")).strip()
+    folder = _episode_folder_or_none(tap)
+    if folder is None:
+        return JSONResponse({"ok": False, "loi": f"Không tìm thấy thư mục tập {tap}."},
+                            status_code=404)
+    r = core.review_red_segment(folder, data.get("doan", 0), str(data.get("text") or ""))
+    if r.get("ok"):
+        viec = (f"SỬA ({r['ky_tu']} ký tự) + bỏ đỏ" if r.get("sua") else "đã kiểm, bỏ đỏ")
+        con = (f" — còn đỏ {r['do']}" if r["do"] else " — tập này hết đoạn đỏ.")
+        log(f"🔴 Tập {tap.zfill(2)}: đoạn {r['doan']} {viec} → gemini_result.docx{con}")
+        for note in r.get("canh_bao") or ():
+            log(f"⚠️ Tập {tap.zfill(2)}: đoạn {r['doan']} {note} — đã ghi, hãy kiểm lại.")
+    else:
+        log(f"⛔ Tập {tap.zfill(2)}: không ghi được đoạn đỏ — {r.get('loi', '')}")
+    return JSONResponse(r, status_code=200 if r.get("ok") else 400)
+
+
 @app.post("/kichban/xoalichsu")
 def clear_source_history():
     """Nút 🗑 ở hàng “Gần đây”: quên các nguồn đã chạy, KHÔNG đụng ô đang nhập.
@@ -482,12 +525,6 @@ def save_skip(request: Request, skip: str = Form("")):
     # gõ (không tải lại trang) nên đây là chỗ cho thấy server hiểu thành gì.
     return _saved(request, "/kichban", f"✓ Đã lưu: {text}")
 
-
-@app.post("/kichban/mocau")
-def save_prefix(request: Request, prefix: str = Form("")):
-    core.save_prefix(prefix)
-    log("💾 Đã lưu câu mở đầu gửi Gemini.")
-    return _saved(request, "/kichban")
 
 
 # ── Trang Giọng nói (view "voice" bên GUI: TTS + video) ─────────────────────

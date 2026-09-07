@@ -11,8 +11,9 @@ Chạy:
     python dich_docx.py --no-keep-open          # đóng Firefox sau khi xong
 
 Đặc điểm:
-• Câu mở đầu (prefix dịch) lấy từ scripts/copy_prefix.txt, chỉ chèn vào ĐOẠN 1
-  (Gemini nhớ ngữ cảnh các đoạn sau) — giống hệt nút "Sao chép" trong GUI nhận diện.
+• Câu mở đầu (prefix dịch) lấy từ dich_gemini.TRANSLATE_PREFIX (load_prefix), gửi
+  thành tin nhắn riêng trước ĐOẠN 1 (Gemini nhớ ngữ cảnh các đoạn sau) — giống hệt
+  GUI nhận diện / web.
 • Lưu DẦN sau mỗi đoạn → dừng giữa chừng vẫn giữ được phần đã dịch.
 """
 
@@ -43,7 +44,6 @@ import dich_gemini as g
 KICHBAN_DIR = Path(_SCRIPTS_DIR).parent / "kịch_bản"
 DEFAULT_INPUT = KICHBAN_DIR / "tiengTrung.docx"
 DEFAULT_OUTPUT = KICHBAN_DIR / "gemini_result.docx"
-PREFIX_FILE = Path(_SCRIPTS_DIR) / "copy_prefix.txt"
 
 
 def read_chunks(path):
@@ -60,10 +60,8 @@ def read_chunks(path):
 
 
 def load_prefix():
-    """Câu mở đầu (prefix dịch) lưu ở copy_prefix.txt; chưa có thì trả về rỗng."""
-    if PREFIX_FILE.exists():
-        return PREFIX_FILE.read_text(encoding="utf-8").strip()
-    return ""
+    """Câu mở đầu (prefix dịch) — cố định trong dich_gemini.TRANSLATE_PREFIX."""
+    return g.load_prefix()
 
 
 def run(input_path, output_path, limit=0, keep_open=True, log=print):

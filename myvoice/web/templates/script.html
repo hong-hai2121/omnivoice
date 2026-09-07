@@ -25,16 +25,15 @@
     <span id="luunote-tapboqua" class="luunote"></span></div>
 </form>
 
-<form class="panel" method="post" action="/kichban/mocau"
-      hx-post="/kichban/mocau" hx-target="#luunote-mocau" hx-swap="innerHTML">
+{# Chỉ xem: câu này cố định trong scripts/dich_gemini.py (TRANSLATE_PREFIX), không còn
+   file copy_prefix.txt hay route lưu (07/09/2026). #}
+<div class="panel">
   <div class="phead"><h2>Câu mở đầu gửi Gemini</h2></div>
   <label class="field">
-    <span>Chèn vào đầu đoạn 1 của mỗi lần dịch</span>
-    <textarea name="prefix" rows="3">{{ prefix }}</textarea>
+    <span>Gửi thành tin nhắn riêng trước đoạn 1 mỗi lần dịch — muốn đổi thì sửa TRANSLATE_PREFIX trong scripts/dich_gemini.py</span>
+    <textarea rows="6" readonly>{{ prefix }}</textarea>
   </label>
-  <div class="actions"><button>💾 Lưu câu mở đầu</button>
-    <span id="luunote-mocau" class="luunote"></span></div>
-</form>
+</div>
 
 <form class="panel" method="post" action="/kichban/reset">
   <div class="phead"><h2>Đặt lại quy trình</h2></div>

@@ -15,12 +15,18 @@
           <td><input type="checkbox" name="tap" value="{{ r.episode }}"></td>
           <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
           {% for key, label in step_labels %}
-            {% if key == 'translate' and r.trong %}
+            {% if key == 'translate' and (r.trong or r.do) %}
               {# Nhãn "n trống" là NÚT: bấm mở popup ✍️ dịch tay (app.js) — trái là
-                 nguồn tiếng Trung (📋 Copy), phải là ô dán bản dịch (📥 Dán · 💾 Lưu). #}
-              <td class="no" title="Đoạn còn (trống) trong gemini_result.docx: {{ r.trong|join(', ') }}">—
-                <button type="button" class="badge stopped badge-trong" data-tap="{{ r.episode }}"
-                        title="Bấm để dịch tay đoạn {{ r.trong|join(', ') }} — copy tiếng Trung, dán bản dịch, lưu vào gemini_result.docx">{{ r.trong|length }} trống ✍️</button></td>
+                 nguồn tiếng Trung (📋 Copy), phải là ô dán bản dịch (📥 Dán · 💾 Lưu).
+                 Nhãn "n đỏ" cũng là NÚT: đoạn TÔ ĐỎ (dịch được nhờ câu nhắc / chat mới)
+                 → popup xem Trung/Việt cạnh nhau, ✔ Đã kiểm để bỏ đỏ. #}
+              {% set ok = r.steps[key] and not r.trong %}
+              <td class="{{ 'yes' if ok else 'no' }}"
+                  title="{% if r.trong %}Đoạn còn (trống) trong gemini_result.docx: {{ r.trong|join(', ') }}. {% endif %}{% if r.do %}Đoạn tô đỏ cần kiểm: {{ r.do|join(', ') }}.{% endif %}">{{ '✅' if ok else '—' }}
+                {% if r.trong %}<button type="button" class="badge stopped badge-trong" data-tap="{{ r.episode }}"
+                        title="Bấm để dịch tay đoạn {{ r.trong|join(', ') }} — copy tiếng Trung, dán bản dịch, lưu vào gemini_result.docx">{{ r.trong|length }} trống ✍️</button>{% endif %}
+                {% if r.do %}<button type="button" class="badge failed badge-do" data-tap="{{ r.episode }}"
+                        title="Đoạn {{ r.do|join(', ') }} dịch được nhờ câu nhắc / chat mới (TÔ ĐỎ trong gemini_result.docx) — bấm để xem tiếng Trung và tiếng Việt cạnh nhau, ✔ Đã kiểm để bỏ đỏ">{{ r.do|length }} đỏ 🔴</button>{% endif %}</td>
             {% else %}
               <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
             {% endif %}

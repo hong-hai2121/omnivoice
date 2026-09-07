@@ -85,7 +85,6 @@ CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
 DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải từ link
 DRIVE_SCRIPT_FOLDER_ID = "1cDUrHiQmzyIK7a8rqY3pFspHsizaceei"  # thư mục Drive "kịch bản"
-PREFIX_FILE = Path(__file__).resolve().parent / "copy_prefix.txt"  # câu mở đầu dịch (chèn đoạn 1)
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
 PIPE_FILE  = BASE_DIR / "taogiong_pipeline.json"      # cài đặt quy trình tạo kịch bản (auto + model/tốc độ)
@@ -420,13 +419,10 @@ def save_opt_settings(data: dict):
 
 
 def load_prefix() -> str:
-    """Câu mở đầu dịch (copy_prefix.txt, dùng chung với GUI nhận diện); chưa có thì rỗng."""
-    try:
-        if PREFIX_FILE.exists():
-            return PREFIX_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        pass
-    return ""
+    """Câu hướng dẫn dịch gửi Gemini — cố định trong dich_gemini.TRANSLATE_PREFIX
+    (scripts/copy_prefix.txt đã bỏ 07/09/2026). Giữ hàm này vì web/core.py gọi qua đây."""
+    import dich_gemini as g
+    return g.load_prefix()
 
 
 def read_chinese_docx_chunks(path) -> list[str]:
@@ -7134,6 +7130,37 @@ class App(tk.Tk):
                 g.save_results_docx(chunks, results, gemini_docx)
                 logging.info(f"💾 Đã lưu bản dịch: {gemini_docx}")
 
+                # ── LƯỢT 2 (07/09/2026): đoạn nào VỪA gửi trong lượt này mà trống (từ
+                #    chối cả sau câu nhắc / dịch cụt / không trả lời) → mở CHAT MỚI, gửi
+                #    lần lượt từng đoạn với đề bài ngắn "Dịch sang tiếng Việt:" + nội
+                #    dung. Được thì lưu + TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch); vẫn không
+                #    được mới bỏ qua, giữ "(trống)" cho 🔁 / ✍️. Chỉ xét đoạn trống phát
+                #    sinh TRONG LƯỢT NÀY (nằm trong todo) — đoạn "(trống)" của lần chạy
+                #    trước vẫn không gửi lại (quy ước 05/09/2026).
+                trong_moi = [j for j in g.blank_chunks(results) if j in todo]
+                if trong_moi and g.BLANK_RETRY:
+                    logging.info(f"🆕 Tập {episode}: {len(trong_moi)} đoạn vừa gửi mà trống "
+                                 f"{trong_moi} → mở chat mới gửi lại từng đoạn (lượt 2)...")
+                    if on_status:
+                        on_status(len(chunks) - 1, len(chunks))
+                    red = set()
+                    con_trong = g.retry_blanks_in_new_chat(
+                        state["driver"], chunks, results, trong_moi,
+                        on_log=logging.info, out_path=gemini_docx, red=red)
+                    g.save_results_docx(chunks, results, gemini_docx, red=red)
+                    lap = [j for j in trong_moi if j not in con_trong]
+                    if lap:
+                        logging.info(f"🔴 Tập {episode}: chat mới lấp được đoạn {lap} — đã TÔ "
+                                     "ĐỎ trong gemini_result.docx, bấm nhãn \"n đỏ\" ở cột "
+                                     "Dịch (trang Nhận diện) để xem Trung/Việt cạnh nhau.")
+                    if con_trong:
+                        logging.info(f"⏭ Tập {episode}: vẫn còn trống {con_trong} sau chat "
+                                     "mới → giữ (trống); lấp bằng 🔁 Dịch lại đoạn (Trống) "
+                                     "hoặc ✍️ dịch tay.")
+                elif trong_moi:
+                    logging.info(f"ℹ️ Tập {episode}: đoạn trống {trong_moi} — lượt 2 chat mới "
+                                 "đang TẮT (OMNI_GEMINI_BLANK_RETRY=0).")
+
         # ⛔ CHẶN: LUÔN kiểm đủ đoạn, kể cả khi đã bỏ qua bước gửi ở trên. Bỏ chốt này
         # là ra audio/video thiếu nội dung mà không ai biết (lỗi tập 42).
         translation_ok = self._translation_complete(gemini_docx, chunks, episode)
@@ -7155,9 +7182,10 @@ class App(tk.Tk):
             head = ", ".join(f"đoạn {j} {ly_do}" for j, ly_do in bad[:10]) \
                    + ("..." if len(bad) > 10 else "")
             trong = [j for j, _ in bad if g.is_sent_blank(check[j - 1])]
-            goi_y = ("Đoạn (trống) đã gửi một lần sẽ KHÔNG được gửi lại tự động — bấm "
-                     "🔁 Dịch lại đoạn (Trống) trên trang Nhận diện để lấp, kiểm rồi ⏩ "
-                     "chạy tiếp; " if trong else "Chạy lại để dịch tiếp; ")
+            goi_y = ("Đoạn (trống) đã gửi (kể cả lượt 2 chat mới) sẽ KHÔNG được gửi lại "
+                     "tự động — bấm 🔁 Dịch lại đoạn (Trống) hoặc nhãn \"n trống\" ✍️ dịch "
+                     "tay trên trang Nhận diện để lấp, kiểm rồi ⏩ chạy tiếp; "
+                     if trong else "Chạy lại để dịch tiếp; ")
             logging.error(
                 f"⛔ Tập {episode}: bản dịch HỎNG {len(bad)}/{n} đoạn ({head}) → DỪNG, "
                 f"KHÔNG tạo audio/video. {goi_y}nếu Gemini cứ lỗi 1 đoạn, sửa tay đoạn "

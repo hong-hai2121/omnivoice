@@ -46,7 +46,6 @@ SUB_MODE_SRT  = gui.SUB_MODE_SRT
 SUB_MODE_BURN = gui.SUB_MODE_BURN
 OPTS_DEFAULTS = gui.OPTS_DEFAULTS
 PIPE_DEFAULTS = gui.PIPE_DEFAULTS
-PREFIX_FILE   = gui.PREFIX_FILE
 
 # Cài đặt CHỈ bản web dùng (chế độ giọng + giọng mẫu đang chọn) — để riêng file
 # cho gọn. (save_opt_settings của GUI nay GIỮ lại khoá không nêu khi lưu, nên
@@ -325,11 +324,9 @@ def save_skip_episodes(text: str) -> list[int]:
 
 
 def load_prefix() -> str:
+    """Câu hướng dẫn dịch gửi Gemini — CHỈ ĐỌC (cố định trong dich_gemini.TRANSLATE_PREFIX,
+    copy_prefix.txt + route lưu đã bỏ 07/09/2026)."""
     return gui.load_prefix()
-
-
-def save_prefix(text: str) -> None:
-    gui.PREFIX_FILE.write_text((text or "").strip(), encoding="utf-8")
 
 
 def thumbnail_episode() -> int:
@@ -417,6 +414,24 @@ def blank_chunks(folder, pairs: tuple[list, list] | None = None) -> list[int]:
         return []
     import dich_gemini as g
     return g.blank_chunks(prior)
+
+
+def red_chunks(folder, pairs: tuple[list, list] | None = None) -> list[int]:
+    """Số thứ tự các đoạn đang TÔ ĐỎ trong gemini_result.docx của 1 tập (dịch được nhờ
+    câu nhắc sau khi Gemini từ chối, hoặc nhờ lượt 2 chat mới — cần người kiểm) →
+    nhãn "n đỏ" ở cột Dịch. Không có docx / không đọc được → []."""
+    folder = Path(folder)
+    gem = folder / "gemini_result.docx"
+    if not gem.exists():
+        return []
+    chunks, _prior = pairs if pairs is not None else translation_pairs(folder)
+    if not chunks:
+        return []
+    try:
+        import dich_gemini as g
+        return sorted(g.read_red_marks(gem, len(chunks)))
+    except Exception:
+        return []
 
 
 # ── Popup ✍️ dịch tay đoạn (trống) — bấm nhãn "n trống" ở cột Dịch ─────────────
@@ -509,6 +524,87 @@ def save_manual_translation(folder, j: int, text: str) -> dict:
                                     + (f" (đã sao lưu {backup.name})" if backup else "")}
     return {"ok": True, "doan": j, "ky_tu": len(text), "canh_bao": canh_bao,
             "trong": g.blank_chunks(after), "sao_luu": backup.name if backup else ""}
+
+
+# ── Popup 🔴 xem đoạn TÔ ĐỎ — bấm nhãn "n đỏ" ở cột Dịch ─────────────────────────
+# Yêu cầu 07/09/2026: đoạn dịch được nhờ câu nhắc sau khi Gemini từ chối, hoặc nhờ
+# lượt 2 chat mới, được TÔ ĐỎ trong gemini_result.docx để người dùng kiểm. Nhãn
+# "n đỏ" mở popup: trái tiếng Trung, phải tiếng Việt (sửa được). ✔ Đã kiểm → bỏ màu
+# đỏ (giữ nội dung); 💾 Lưu bản sửa → ghi nội dung mới + bỏ đỏ. Route: /api/doan-do.
+def red_detail(folder) -> dict:
+    """Các đoạn đang TÔ ĐỎ của 1 tập kèm nguồn tiếng Trung và bản dịch.
+    → {"total": số đoạn, "doan": [{"j", "zh", "vi"}], "loi": chuỗi nếu không làm được}"""
+    folder = Path(folder)
+    chunks, prior = translation_pairs(folder)
+    if not chunks:
+        return {"total": 0, "doan": [],
+                "loi": "Chưa có bản nhận diện tiếng Trung (tiengTrung.docx)."}
+    gem = folder / "gemini_result.docx"
+    if not gem.exists():
+        return {"total": len(chunks), "doan": [],
+                "loi": "Tập này chưa dịch lần nào (chưa có gemini_result.docx)."}
+    import dich_gemini as g
+    red = g.read_red_marks(gem, len(chunks))
+    doan = [{"j": j, "zh": chunks[j - 1], "vi": (prior[j - 1] or red[j] or "").strip()}
+            for j in sorted(red)]
+    return {"total": len(chunks), "doan": doan}
+
+
+def review_red_segment(folder, j: int, text: str | None = None) -> dict:
+    """Người dùng đã KIỂM đoạn j (1-based) đang tô đỏ: bỏ màu đỏ; nếu `text` khác bản
+    đang có thì ghi bản sửa thay vào (chỉ ghi đè đúng đoạn j, đoạn khác giữ nguyên kể
+    cả màu đỏ). File cũ được sao lưu cạnh đó trước khi ghi. Bản sửa dở (ngắn bất
+    thường / còn nhiều chữ Hán / giống câu từ chối) VẪN ghi nhưng trả "canh_bao".
+    → {"ok", "loi"?, "doan", "sua": có đổi nội dung không, "ky_tu", "canh_bao": [...],
+       "do": [đoạn còn đỏ], "trong": [đoạn còn trống], "sao_luu": tên file hoặc ""}"""
+    import dich_gemini as g
+    folder = Path(folder)
+    chunks, prior = translation_pairs(folder)
+    if not chunks:
+        return {"ok": False, "loi": "Chưa có bản nhận diện tiếng Trung (tiengTrung.docx)."}
+    gem = folder / "gemini_result.docx"
+    if not gem.exists():
+        return {"ok": False, "loi": "Chưa có gemini_result.docx — dùng bước ② Dịch trước."}
+    try:
+        j = int(j)
+    except (TypeError, ValueError):
+        j = 0
+    if not 1 <= j <= len(chunks):
+        return {"ok": False, "loi": f"Số đoạn {j} ngoài phạm vi 1..{len(chunks)}."}
+
+    cu = (prior[j - 1] or "").strip()
+    moi = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    moi = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", moi).strip()
+    sua = bool(moi) and " ".join(moi.split()) != " ".join(cu.split())
+    if sua and g.is_blank_result(moi):
+        return {"ok": False, "loi": "Ô bản dịch đang trống — muốn bỏ nội dung thì dùng "
+                                    "nhãn \"n trống\" ✍️ sau, không xoá ở đây."}
+    if sua and len(moi) > 200_000:
+        return {"ok": False, "loi": "Bản sửa dài bất thường (>200.000 ký tự) — dán nhầm cả file?"}
+
+    canh_bao = []
+    if sua:
+        if g.is_refusal(moi):
+            canh_bao.append("giống câu TỪ CHỐI của Gemini chứ không phải bản dịch")
+        if g.is_result_too_short(chunks[j - 1], moi):
+            canh_bao.append("ngắn bất thường so với nguồn (dịch cụt?)")
+        if not g.is_translation_done(moi):
+            canh_bao.append("còn nhiều chữ Hán")
+
+    results = list(prior)
+    if sua:
+        results[j - 1] = moi
+    backup = _backup_gemini_docx(gem)
+    g.save_results_docx(chunks, results, gem, unred={j})
+    after = g.read_results_docx(gem, len(chunks))
+    mong = moi if sua else cu
+    if " ".join((after[j - 1] or "").split()) != " ".join(mong.split()):
+        return {"ok": False, "loi": "Ghi xong đọc lại không khớp — kiểm gemini_result.docx"
+                                    + (f" (đã sao lưu {backup.name})" if backup else "")}
+    con_do = sorted(g.read_red_marks(gem, len(chunks)))
+    return {"ok": True, "doan": j, "sua": sua, "ky_tu": len(mong), "canh_bao": canh_bao,
+            "do": con_do, "trong": g.blank_chunks(after),
+            "sao_luu": backup.name if backup else ""}
 
 
 def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -> dict:
@@ -639,6 +735,9 @@ def episode_rows() -> list[dict]:
             # Đoạn còn "(trống)" trong gemini_result.docx → nhãn "n trống" ở cột Dịch
             # và danh sách tập cho nút 🔁 Dịch lại đoạn (Trống).
             "trong": blank_chunks(folder, pairs),
+            # Đoạn TÔ ĐỎ (dịch được nhờ câu nhắc / chat mới, cần kiểm) → nhãn "n đỏ"
+            # ở cột Dịch, bấm mở popup xem Trung/Việt cạnh nhau (app.js).
+            "do": red_chunks(folder, pairs),
             "done_count": sum(1 for v in core_steps.values() if v),
             "total_steps": len(core_steps),
         })

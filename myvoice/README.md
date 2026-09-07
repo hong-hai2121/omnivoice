@@ -55,7 +55,7 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/video_gansub.py` | Gắn phụ đề vào video. |
 | `scripts/nhandien_giongnoi.py` | Nhận diện audio/video tiếng Trung → văn bản (faster-whisper). |
 | `scripts/nhandien_gui.py` | Giao diện nhận diện giọng nói tiếng Trung; tự nạp sẵn `kịch_bản/tiengTrung.docx`, có nút gửi Gemini. |
-| `scripts/dich_gemini.py` | Lõi gửi nội dung sang Gemini qua Firefox/Selenium (mở trình duyệt, gõ từng đoạn, lấy kết quả). |
+| `scripts/dich_gemini.py` | Lõi gửi nội dung sang Gemini qua Firefox/Selenium (mở trình duyệt, gõ từng đoạn, lấy kết quả). Mỗi đoạn gửi một lần; gửi hết tập, đoạn vừa `(trống)` được gửi lại một lần trong **chat mới** với đề bài ngắn (`retry_blanks_in_new_chat`, tắt bằng `OMNI_GEMINI_BLANK_RETRY=0`) — dịch được thì TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch trang Nhận diện). |
 | `scripts/dich_docx.py` | Dịch `tiengTrung.docx` qua Gemini → `gemini_result.docx`. |
 | `scripts/dich_tachdoan.py` | Tách nội dung DOCX thành các đoạn (~1000–1500 ký tự, cắt ở cuối câu). |
 | `scripts/dich_kiemtra.py` | Kiểm tra `gemini_result.docx` (bắt câu dẫn nhập/thừa) trước khi tạo audio. |

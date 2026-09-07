@@ -763,6 +763,19 @@ button.badge-trong:hover {
   background: var(--warn-bg); color: var(--warn); border-color: var(--warn);
   box-shadow: 0 0 0 3px var(--warn-bg);
 }
+/* Nhãn "n đỏ" (đoạn TÔ ĐỎ cần kiểm) — cùng cỡ nhãn "n trống", màu đỏ; popup xem
+   Trung/Việt dùng chung khung .trongmodal / .trong-grid. */
+button.badge-do {
+  min-height: 0; padding: 2px 9px; border-radius: 999px; font-size: 11px;
+  line-height: 1.35; cursor: pointer; white-space: nowrap;
+}
+button.badge-do:hover {
+  background: var(--danger-soft); color: var(--danger); border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+.trong-tab.do { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.trong-tab.do.dang { border-color: var(--danger); }
+.trong-vi.do { border-color: var(--danger); }
 .trongmodal { width: min(1140px, 100%); max-height: 92vh; }
 .trong-tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
 .trong-tabs .hint { margin: 0 0 0 4px; }
