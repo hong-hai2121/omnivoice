@@ -38,6 +38,11 @@ DEFAULT_DOCX = KICHBAN_DIR / "gemini_result.docx"
 SUSPECT_PHRASES = [
     "dưới đây là bản dịch",
     "bản dịch truyện ngắn",
+    # 08/09/2026: "Bản dịch tiếng Việt mạch truyện:" — Gemini mở đầu đoạn bằng dòng
+    # này. Dòng đứng riêng / đầu dòng được bước tạo input tự cắt
+    # (dich_chuanbi_input.remove_lead_lines, find_suspects đã trừ ra); còn lại
+    # (nằm giữa câu) thì báo ở đây.
+    "bản dịch tiếng việt mạch truyện",
     "đây là bản dịch",
     "sau đây là bản dịch",
     "tiếp theo là bản dịch",
@@ -103,8 +108,17 @@ def read_docx_chunks(path):
 
 
 def find_suspects(text):
-    """Trả về list (câu_dính, đoạn_trích) cho mọi câu nghi vấn xuất hiện trong text."""
+    """Trả về list (câu_dính, đoạn_trích) cho mọi câu nghi vấn xuất hiện trong text.
+
+    Dòng dẫn nhập mà bước tạo input TỰ CẮT (dich_chuanbi_input.remove_lead_lines:
+    "Bản dịch tiếng Việt mạch truyện:", "Dưới đây là bản dịch…:") được trừ ra trước
+    khi so — khỏi chặn oan bước tạo giọng từ gemini_result.docx (08/09/2026)."""
     hits = []
+    try:
+        import dich_chuanbi_input as prep      # import muộn: prep cũng import file này
+        text, _bo = prep.remove_lead_lines(text or "")
+    except Exception:
+        pass
     low = text.lower()
     for phrase in SUSPECT_PHRASES:
         idx = low.find(phrase)

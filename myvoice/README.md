@@ -43,8 +43,10 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/amain_taogiong_gui.py` | **Kho logic dùng chung; chạy thẳng file này là mở bản WEB (từ 05/09/2026). GUI Tkinter cũ vẫn mở được bằng `--gui` hoặc `chay_gui.bat`.** Cột trái: quy trình tạo kịch bản (① nhận diện giọng nói → ② dịch Gemini → ③ tạo `input.txt`). Cột giữa: tạo/clone giọng. Có tùy chọn **cắt bản 10–15 phút**, dựng **video ngang** và **video dọc**. |
 | `scripts/taogiong.py` | Bản chạy dòng lệnh của quy trình clone giọng. |
 | `scripts/taogiong_kiemtra_audio.py` | Rà các đoạn WAV lỗi/spike sau khi tạo audio. |
-| `scripts/video_khung.py` | Dựng **video NGANG**: ghép random clip trong `videongang/` rồi lồng vào khung PNG (`Backbround/`). Đầu ra `<audio>_videodone.mp4`. |
-| `scripts/video_doc.py` | Dựng **video DỌC 1080×1920 (KHÔNG khung)**: ghép random clip trong `videodoc/`, mux audio. Đầu ra `<audio>_doc.mp4`. |
+| `scripts/video_khung.py` | Dựng **video NGANG**: ghép random clip trong `videongang/` rồi lồng vào khung PNG (`Backbround/`): nền `Khung0*.png` + viền `khung1*.png` đều chọn NGẪU NHIÊN mỗi lần dựng. Đầu ra `<audio>_videodone.mp4`. |
+| `scripts/video_khung0_tao.py` | Vẽ thêm các kiểu **nền Khung0** cho video ngang (mèo, tông hồng; 08/09/2026) bằng PIL: `Backbround/Khung0 <tên>.png` (chấm bi, ca rô, dâu tây, hoa anh đào, kẹo sọc) CÙNG BỐ CỤC với `Khung0.png` gốc — 5 cụm trang trí đúng chỗ bản gốc, vùng logo/Subscribe để trơn vì nền ghép với khung1/logo/khung2. `--force` vẽ lại, `--xem` xuất ảnh ghép thử vào `Backbround/khung0_xemtruoc/`. Thêm kiểu = thêm hàm vào `KIEU`. |
+| `scripts/video_doc.py` | Dựng **video DỌC 1080×1920 (KHÔNG khung)**: ghép random clip trong `videodoc/`, mux audio. Đầu ra `<audio>_doc.mp4`. (Đường cũ — chỉ chạy khi tắt ô 🖼 `doc_khung`.) |
+| `scripts/video_doc_khung.py` | **Video DỌC từ VIDEO GỐC của bản ngang** (08/09/2026, mặc định): `video_khung.build_video(goc_out=)` xuất thêm `YOUTUBE_goc.mp4` (đoạn video đã ghép, trước khi lồng khung) → đặt vào dải giữa khung dọc tạo sẵn `Backbround/khungdoc/khungdoc <màu>.png` (nền hoa + khung "anhdoc" xoay ngang + logo + thẻ Số + tiêu đề trên giấy + ảnh mèo + "Nghe trọn tập tại kênh Mimi audio" + nút Đăng ký), một lệnh ffmpeg, không ghép clip dọc. Màu theo viền khung ngang. Tập cũ không có file gốc thì cắt vùng trong của `YOUTUBE.mp4`. `--tao-khung --force` vẽ lại bộ khung; web xem trước ở khối 7 trang Giọng nói. |
 | `scripts/video_timclip.py` | Gợi ý đoạn clip ngắn từ kịch bản; cung cấp hàm cắt audio tại khoảng lặng cuối câu (dùng cho bước cắt % của video dọc/TikTok). |
 | `scripts/video_xoatieng.py` | **GUI (mặc định)**: chọn nhiều video (mặc định mở ở Downloads) → xóa tiếng + **cắt đầy khung** về khung hình đồng nhất (Ngang 1920×1080 / Dọc 1080×1920), tùy chọn **cắt bỏ số giây đầu/cuối** mỗi video → lưu vào thư mục đầu ra tùy chọn (mặc định `videongang/`) với tên tuần tự `<tiền tố><số>.mp4` (vd `nauan01.mp4`), tự nối tiếp số đang có, **giữ nguyên file gốc**. Cờ `--batch`: luồng cũ `mp4/` → `mp4_no_audio/` cho `video_ghepcuoi.py`. |
 | `scripts/video_ghepcuoi.py` | Ghép video đã tắt tiếng với `kịch_bản/output.wav`. |
@@ -55,12 +57,12 @@ Một số script gọi `ffmpeg`/`ffprobe`, vì vậy hai lệnh này phải có
 | `scripts/video_gansub.py` | Gắn phụ đề vào video. |
 | `scripts/nhandien_giongnoi.py` | Nhận diện audio/video tiếng Trung → văn bản (faster-whisper). |
 | `scripts/nhandien_gui.py` | Giao diện nhận diện giọng nói tiếng Trung; tự nạp sẵn `kịch_bản/tiengTrung.docx`, có nút gửi Gemini. |
-| `scripts/dich_gemini.py` | Lõi gửi nội dung sang Gemini qua Firefox/Selenium (mở trình duyệt, gõ từng đoạn, lấy kết quả). Mỗi đoạn gửi một lần; gửi hết tập, đoạn vừa `(trống)` được gửi lại một lần trong **chat mới** với đề bài ngắn (`retry_blanks_in_new_chat`, tắt bằng `OMNI_GEMINI_BLANK_RETRY=0`) — dịch được thì TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch trang Nhận diện). Tập còn đoạn `(trống)` **hoặc** đoạn đỏ chưa ✔ kiểm thì DỪNG sau bước dịch (`blocking_chunks`): không tạo input / SEO / giọng / video / đăng cho tới khi lấp trống và bỏ đỏ rồi ⏩ chạy tiếp. |
+| `scripts/dich_gemini.py` | Lõi gửi nội dung sang Gemini qua Firefox/Selenium (mở trình duyệt, gõ từng đoạn, lấy kết quả). Mỗi đoạn gửi một lần; gửi hết tập, đoạn vừa `(trống)` được gửi lại một lần trong **chat mới** với đề bài ngắn (`retry_blanks_in_new_chat`, tắt bằng `OMNI_GEMINI_BLANK_RETRY=0`) — dịch được thì TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch trang Nhận diện). Tập còn đoạn `(trống)` **hoặc** đoạn đỏ chưa ✔ kiểm thì DỪNG sau bước dịch (`blocking_chunks`): không tạo input / SEO / giọng / video / đăng cho tới khi lấp trống và bỏ đỏ rồi ⏩ chạy tiếp. Câu dẫn nhập Gemini hay chèn ("Bản dịch tiếng Việt mạch truyện:", "Dưới đây là bản dịch…:") được bỏ ngay khi nhận trả lời (`strip_lead_lines` trong `send_to_gemini`) và khi ghi docx (`save_results_docx`), nên `gemini_result.docx` sạch từ lúc lưu. |
 | `scripts/dich_docx.py` | Dịch `tiengTrung.docx` qua Gemini → `gemini_result.docx`. |
 | `scripts/dich_tachdoan.py` | Tách nội dung DOCX thành các đoạn (~1000–1500 ký tự, cắt ở cuối câu). |
 | `scripts/dich_kiemtra.py` | Kiểm tra `gemini_result.docx` (bắt câu dẫn nhập/thừa) trước khi tạo audio. |
 | `scripts/dich_lai_trong.py` | Lấp các đoạn còn `(trống)` trong `gemini_result.docx` của từng tập: mỗi đoạn gửi Gemini đúng một lần, sao lưu bản cũ rồi ghi lại để kiểm (`--episode 98`, `--all`, `--dry-run`). Nút 🔁 trên trang Nhận diện gọi file này. |
-| `scripts/dich_chuanbi_input.py` | Kiểm tra + bỏ cấu trúc `gemini_result.docx`, ghép nội dung → `kịch_bản/input.docx` cho TTS (Word; đoạn dịch nhờ câu nhắc được tô đỏ). |
+| `scripts/dich_chuanbi_input.py` | Kiểm tra + bỏ cấu trúc `gemini_result.docx`, ghép nội dung → `kịch_bản/input.docx` cho TTS (Word; đoạn dịch nhờ câu nhắc được tô đỏ). Tự bỏ câu dẫn nhập Gemini hay chèn ("Bản dịch tiếng Việt mạch truyện:", "Dưới đây là bản dịch…:", kể cả khi dính giữa dòng) — `remove_lead_lines`, dùng chung cho mọi đường tạo input; gặp mẫu mới thì thêm vào `_LEAD_STARTS` / `_LEAD_INLINE_RE`. |
 | `scripts/dich_input_docx.py` | Đọc/ghi/tìm file kịch bản TTS `input.docx` (từ 05/09/2026; đọc được cả `input.txt` cũ), tô đỏ đoạn dịch nhờ câu nhắc. Mọi script đều đi qua đây. |
 | `YOUTUBE/tao_thumbnail.py` | Tạo thumbnail 1280×720 từ tiêu đề SEO hoặc DOCX. |
 | `YOUTUBE/dien_tieu_de_thumbnail.py` | Ghép nền `thumbnail/khung nên.png`, tiêu đề/ảnh mèo/số tập và khung trên `thumbnail/khung trên.png` theo đúng thứ tự lớp; ảnh mèo từ `Anh/` được crop theo `thumbnail/ảnh.png`. Tạo PNG mới, không ghi đè ảnh gốc. |
@@ -102,8 +104,9 @@ audio/video tiếng Trung
   → dịch Gemini (dich_docx / nút Gemini) → kịch_bản/gemini_result.docx
   → dich_chuanbi_input (kiểm tra+ghép)   → kịch_bản/input.docx
   → taogiong_gui.py / taogiong.py        → kịch_bản/output.wav
-  → video_khung.py  (ngang, có khung)    → <audio>_videodone.mp4
-  → video_doc.py    (dọc, không khung)   → <audio>_doc.mp4
+  → video_khung.py  (ngang, có khung)    → <audio>_videodone.mp4  (+ YOUTUBE_goc.mp4: video gốc trước khi lồng khung)
+  → video_doc_khung.py (dọc = video gốc + khung dọc tạo sẵn, mặc định) → facebook.mp4
+  → video_doc.py    (dọc, không khung — đường cũ khi tắt 🖼 doc_khung)   → <audio>_doc.mp4
   → (tùy chọn) video_gansub.py / video_bongbong.py
 ```
 

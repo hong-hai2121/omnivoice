@@ -89,8 +89,10 @@ def main(argv=None) -> int:
 
     effect = _effect_path(ts)
     ep = str(args.episode).strip()
-    # Chữ TikTok luôn ghi, giống nút “Dựng lại” bên GUI (kể cả khi số tập trống).
-    caption = f"Mimi audio Số {ep.zfill(2)}" if ep else None
+    # Chữ TikTok 'Mimi audio Số N' chỉ ghi khi bật ô 🔤 tiktok_caption (mặc định TẮT từ
+    # 08/09/2026: bản dọc khung đã vẽ sẵn Mimi audio, TikTok lấy hình từ đó).
+    caption = (f"Mimi audio Số {ep.zfill(2)}"
+               if ep and ts.get("tiktok_caption", False) else None)
     out_dir = output.parent
     common = dict(
         effect=effect,
@@ -100,6 +102,7 @@ def main(argv=None) -> int:
         doc_from_ngang=ts.get("doc_from_ngang", False),
         doc_from_subfolder=ts.get("doc_from_subfolder", False),
         doc_no_effect=ts.get("doc_no_effect", False), doc_out=out_dir / "facebook.mp4",
+        doc_khung=ts.get("doc_khung", False),      # bản dọc từ video gốc + khung dọc tạo sẵn
         tiktok_out=out_dir / "tiktok.mp4",
         short_out=out_dir / "short.mp4",
         tiktok_speed=ts.get("tiktok_speed", 1.0),

@@ -188,12 +188,19 @@ OPTS_DEFAULTS = dict(
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
     doc_from_subfolder=False,
+    # 08/09/2026: bản dọc dựng từ VIDEO GỐC của bản ngang + khung dọc tạo sẵn
+    # (Backbround/khungdoc) — không ghép clip dọc. Bật sẵn; tắt → đường cũ.
+    doc_khung=True,
     doc_no_effect=False, make_tiktok=False, tiktok_speed="1.0",
     tiktok_percent=50,
     # YouTube Short: cắt ≤2:50 từ chính video TikTok rồi đăng tự động sau bản chính
     # 1 giờ. Bật sẵn — cắt bằng `-c copy` nên gần như không tốn thêm thời gian dựng.
     make_short=True,
-    tiktok_no_effect=False, tiktok_caption_pos=40,
+    tiktok_no_effect=False,
+    # 08/09/2026: bản dọc khung (doc_khung) đã vẽ sẵn thẻ "Mimi audio" + #MimiAudioSoN,
+    # TikTok lại lấy hình từ chính bản dọc đó → chữ 'Mimi audio Số N' nung thêm là thừa.
+    # Mặc định TẮT; tick ô 🔤 bên web mới ghi chữ như trước.
+    tiktok_caption=False, tiktok_caption_pos=40,
     tiktok_music=False, tiktok_music_db=-12,
     # Nhạc nền mặc định chỉ phát MỘT LẦN từ đầu bài (hết bài là thôi); bật ô
     # này (checkbox bên web) mới lặp lại cho phủ hết video như trước.
@@ -2044,7 +2051,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2345,10 +2352,16 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 from video_khung import build_video
                 progress_var.set(0)
                 ngang_src_dir = resolve_ngang_source(ngang_source, log=logging.info)
+                # 08/09/2026: bản dọc dựng từ VIDEO GỐC (trước khi lồng khung) → xuất
+                # thêm YOUTUBE_goc.mp4 ngay trong lượt dựng ngang (xem video_doc_khung).
+                goc_out = None
+                if doc_khung and ngang_out:
+                    from video_doc_khung import GOC_NAME
+                    goc_out = Path(ngang_out).with_name(GOC_NAME)
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
                                         skip_existing=skip_video, output=ngang_out,
-                                        source_dir=ngang_src_dir)
+                                        source_dir=ngang_src_dir, goc_out=goc_out)
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
@@ -2377,8 +2390,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                              mau_vien=sub_mau_vien, bengang=sub_bengang)
             progress_var.set(100)
 
-        # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920, KHÔNG khung) ─────────────
+        # ── (TÙY CHỌN) DỰNG VIDEO DỌC (1080x1920) ───────────────────────────
+        # doc_khung (08/09/2026, mặc định bản web): dựng từ VIDEO GỐC của bản ngang +
+        # khung dọc tạo sẵn (video_doc_khung) — không ghép clip dọc. Tắt thì đi
+        # đường cũ (video_doc: ghép videodoc/ hoặc dùng lại video ngang).
         # Lấy AUDIO FULL; muốn ngắn hơn thì đặt % bên dưới (doc_percent).
+        doc_sub_trong_hinh = False      # bản dọc cắt từ YOUTUBE.mp4 đã có phụ đề → khỏi làm lại
         if make_video_doc:
             doc_audio = output_path
             # (TÙY CHỌN) Cắt ~doc_percent% ĐẦU của audio video dọc (cắt ở CUỐI CÂU) —
@@ -2431,12 +2448,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # Ở mọi trường hợp, audio áp vào là doc_audio (audio video dọc/Facebook).
             ngang_src = None
             doc_source_dir = None
-            if doc_from_subfolder:
+            if doc_from_subfolder and not doc_khung:
                 doc_source_dir = resolve_videodoc_subfolder(log=logging.info)
                 if doc_source_dir is not None:
                     logging.info(f"📁 Video dọc ghép từ thư mục con: videodoc/{doc_source_dir.name}")
             # Chỉ dùng lại video ngang khi KHÔNG dùng (được) thư mục con.
-            if doc_from_ngang and doc_source_dir is None:
+            if doc_from_ngang and doc_source_dir is None and not doc_khung:
                 if ngang_video_path and ngang_video_path.exists():
                     ngang_src = ngang_video_path
                 elif ngang_out and Path(ngang_out).exists():
@@ -2455,19 +2472,30 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("Đang dựng video dọc...")
             logging.info(f"Bắt đầu dựng video dọc từ {doc_audio.name}...")
             try:
-                from video_doc import build_video_doc
                 progress_var.set(0)
-                # "Không áp hiệu ứng cho video dọc" → bỏ effect ở mọi trường hợp.
-                doc_effect = None if doc_no_effect else effect
                 # Ảnh bìa = thumbnail dọc của tập, đè lên ĐÚNG 1 frame đầu (xem
                 # find_cover_doc). Chưa có thumbnail → None → dựng như cũ.
-                vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
-                                           progress=_video_progress("📱 Dựng video dọc..."),
-                                           skip_existing=skip_video,
-                                           source_video=ngang_src, source_dir=doc_source_dir,
-                                           output=doc_out,
-                                           cover_png=find_cover_doc(output_path.parent,
-                                                                    log=logging.info))
+                cover_doc = find_cover_doc(output_path.parent, log=logging.info)
+                if doc_khung:
+                    # Video gốc (YOUTUBE_goc.mp4, hoặc cắt YOUTUBE.mp4 tập cũ) + khung
+                    # dọc tạo sẵn: một lệnh ffmpeg, không ghép clip, không hiệu ứng riêng.
+                    import video_doc_khung as vdk
+                    fb_out = (Path(doc_out) if doc_out
+                              else output_path.with_name(output_path.stem + "_doc.mp4"))
+                    vdoc_out, doc_sub_trong_hinh = vdk.dung_cho_tap(
+                        output_path.parent, audio=doc_audio, output=fb_out,
+                        cover_png=cover_doc, caption=tiktok_caption, log=logging.info,
+                        progress=_video_progress("📱 Dựng video dọc (khung)..."),
+                        skip_existing=skip_video)
+                else:
+                    from video_doc import build_video_doc
+                    # "Không áp hiệu ứng cho video dọc" → bỏ effect ở mọi trường hợp.
+                    doc_effect = None if doc_no_effect else effect
+                    vdoc_out = build_video_doc(doc_audio, log=logging.info, effect=doc_effect,
+                                               progress=_video_progress("📱 Dựng video dọc..."),
+                                               skip_existing=skip_video,
+                                               source_video=ngang_src, source_dir=doc_source_dir,
+                                               output=doc_out, cover_png=cover_doc)
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
@@ -2568,7 +2596,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             tk_video_out = (Path(tiktok_out) if tiktok_out
                             else output_path.with_name(output_path.stem + "_tiktok.mp4"))
             tk_source = None
-            if doc_from_subfolder:
+            # doc_khung: bản dọc đã dựng từ video gốc → TikTok lấy luôn hình của nó.
+            if doc_from_subfolder or doc_khung:
                 fb_video = (Path(doc_out) if doc_out
                             else output_path.with_name(output_path.stem + "_doc.mp4"))
                 if fb_video.exists() and fb_video.stat().st_size > 0:
@@ -2637,7 +2666,10 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # TikTok lấy HÌNH của chính facebook.mp4 nhưng dùng AUDIO ngắn hơn (~50%).
         # Burn sub vào facebook trước là TikTok thừa hưởng phụ đề lệch hẳn nhịp.
         # Làm ở đây thì facebook.mp4 có phụ đề, tiktok.mp4 giữ hình sạch.
-        if make_sub_doc:
+        if make_sub_doc and doc_sub_trong_hinh:
+            logging.info("📝 Video dọc cắt từ YOUTUBE.mp4 đã có phụ đề trong hình → không "
+                         "làm phụ đề dọc nữa (tập sau có YOUTUBE_goc.mp4 sẽ làm bình thường).")
+        elif make_sub_doc:
             doc_video = (Path(doc_out) if doc_out
                          else output_path.with_name(output_path.stem + "_doc.mp4"))
             if doc_video.exists():
@@ -2647,11 +2679,18 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     status_var.set(f"📝 Nghe audio làm phụ đề video dọc... {pct}%")
                 status_var.set("📝 Đang tạo phụ đề cho video dọc...")
                 progress_var.set(0)
+                # Khung dọc tạo sẵn: chữ phải nằm TRONG dải video (đáy dải ~y 1333)
+                # → vị trí cố định theo khung, không theo % của khung ngang.
+                if doc_khung:
+                    from video_doc_khung import SUB_VITRI as _vt
+                    doc_vitri = _vt
+                else:
+                    doc_vitri = sub_vitri
                 make_youtube_sub(doc_video, inputdocx.input_for(output_path.parent),
                                  sub_mode, sub_model, sub_max_chars,
                                  progress=_sub_doc_progress, doc=True,
                                  kieu=sub_kieu, font=sub_font, mau=sub_mau,
-                                 vitri=sub_vitri, cochu=sub_cochu,
+                                 vitri=doc_vitri, cochu=sub_cochu,
                                  dong=sub_dong, mau_vien=sub_mau_vien,
                                  bengang=sub_bengang)
                 progress_var.set(100)
@@ -5675,6 +5714,15 @@ class App(tk.Tk):
                 return True
             messagebox.showerror("Trống", f"Không lấy được nội dung từ:\n{GEMINI_DOCX}")
             return False
+        # Bỏ câu dẫn nhập Gemini tự thêm ("Bản dịch tiếng Việt mạch truyện:"…) — cùng
+        # bộ với _batch_prepare_input, xem dich_chuanbi_input.remove_lead_lines.
+        try:
+            import dich_chuanbi_input as prep
+            content, bo = prep.remove_lead_lines(content)
+            if bo:
+                logging.info(f"🧹 Bỏ {len(bo)} câu dẫn nhập của Gemini: {bo}")
+        except Exception as e:
+            logging.warning(f"⚠️ Không bỏ được câu dẫn nhập: {e}")
 
         # 2b) DỌN câu quảng bá kênh rải rác → CHÈN LẠI (mở đầu / thân bài / kết bài)
         content, n_promo, n_add = replace_channel_promo(content)
@@ -6501,6 +6549,16 @@ class App(tk.Tk):
                 logging.info(f"🟥 Đoạn tô đỏ sẽ tô đỏ theo trong input.docx: {red_idx}")
             if not content:
                 return False
+            # 08/09/2026: bỏ câu dẫn nhập Gemini tự thêm ("Bản dịch tiếng Việt mạch
+            # truyện:", "Dưới đây là bản dịch…") TRƯỚC khi ghi input — để lọt là TTS
+            # đọc câu đó lên video. Xem dich_chuanbi_input.remove_lead_lines.
+            try:
+                import dich_chuanbi_input as prep
+                content, bo = prep.remove_lead_lines(content)
+                if bo:
+                    logging.info(f"🧹 Bỏ {len(bo)} câu dẫn nhập của Gemini: {bo}")
+            except Exception as e:
+                logging.warning(f"⚠️ Không bỏ được câu dẫn nhập: {e}")
             # ⛔ CHẶN: còn đoạn "(chưa dịch)"/"(trống)" thì KHÔNG ghi input.txt. Phải
             # kiểm ở ĐÂY — sau đó remove_annotations sẽ xoá chúng như chú thích trong
             # ngoặc, mất nguyên đoạn mà không còn dấu vết (xem tập 42).
@@ -6620,8 +6678,10 @@ class App(tk.Tk):
             tiktok_speed=ts.get("tiktok_speed", 1.0),
             tiktok_percent=ts.get("tiktok_percent", 50),
             tiktok_no_effect=ts.get("tiktok_no_effect", False),
-            # Chữ trên TikTok = 'Mimi audio Số <số ở thumbnail>' (khớp số tập).
-            tiktok_caption=(f"Mimi audio Số {episode}" if episode else None),
+            # Chữ trên TikTok = 'Mimi audio Số <số ở thumbnail>' (khớp số tập); chỉ khi
+            # bật tiktok_caption (mặc định tắt vì bản dọc khung đã có sẵn chữ).
+            tiktok_caption=(f"Mimi audio Số {episode}"
+                            if episode and ts.get("tiktok_caption", False) else None),
             tiktok_caption_pos=ts.get("tiktok_caption_pos", 40),
             tiktok_music=ts.get("tiktok_music", False),
             tiktok_music_db=ts.get("tiktok_music_db", -12),
@@ -6641,6 +6701,8 @@ class App(tk.Tk):
             sub_dong=ts.get("sub_dong", 2),
             # Phụ đề cho facebook.mp4 (khung dọc) — chạy SAU TikTok, xem run_tts.
             make_sub_doc=ts.get("make_sub_doc", False),
+            # Bản dọc từ video gốc + khung dọc tạo sẵn (08/09/2026) — xem video_doc_khung.
+            doc_khung=ts.get("doc_khung", False),
         )                                          # render phần còn thiếu (vd video dọc).
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         # ⚠️ CHỐT ĐỘ DÀI AUDIO: so thời lượng output.wav với số ký tự input.txt. Bắt ca
@@ -7810,9 +7872,11 @@ class App(tk.Tk):
             tiktok_speed = 1.0
         tiktok_speed = max(0.5, min(tiktok_speed, 2.0))
         tiktok_no_effect = self.var_tiktok_no_effect.get()   # không phủ hiệu ứng lên TikTok
-        # Chữ TikTok = 'Mimi audio Số <số tập>' (ô 'Số tập' = thumbnail + 1); LUÔN ghi.
+        # Chữ TikTok = 'Mimi audio Số <số tập>' (ô 'Số tập' = thumbnail + 1); chỉ ghi khi
+        # bật tiktok_caption (mặc định tắt: bản dọc khung đã có sẵn chữ Mimi audio).
         _ep = self._tiktok_episode_number()
-        tiktok_caption = f"Mimi audio Số {_ep:02d}"   # LUÔN ghi chữ (kể cả số 00)
+        tiktok_caption = (f"Mimi audio Số {_ep:02d}"
+                          if self._opt_settings.get("tiktok_caption", False) else None)
         try:
             tiktok_caption_pos = int(self.var_tiktok_caption_pos.get())
         except Exception:
@@ -8160,9 +8224,11 @@ class App(tk.Tk):
             p = EFFECTS_DIR / effect_name
             effect_path = str(p) if p.exists() else None
 
-        # Chữ TikTok = 'Mimi audio Số <số tập>' (ô 'Số tập' = thumbnail + 1); LUÔN ghi.
+        # Chữ TikTok = 'Mimi audio Số <số tập>' (ô 'Số tập' = thumbnail + 1); chỉ ghi khi
+        # bật tiktok_caption (mặc định tắt: bản dọc khung đã có sẵn chữ Mimi audio).
         _ep = self._tiktok_episode_number()
-        tiktok_caption = f"Mimi audio Số {_ep:02d}"   # LUÔN ghi chữ (kể cả số 00)
+        tiktok_caption = (f"Mimi audio Số {_ep:02d}"
+                          if self._opt_settings.get("tiktok_caption", False) else None)
         try:
             tiktok_caption_pos = max(0, min(int(self.var_tiktok_caption_pos.get()), 100))
         except Exception:

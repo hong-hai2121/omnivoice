@@ -810,9 +810,28 @@ def _type_and_submit(driver, editor, text):
 
 
 # ── Gửi 1 đoạn ───────────────────────────────────────────────────────────────
+def strip_lead_lines(text, on_log=None):
+    """Bỏ câu dẫn nhập Gemini tự chèn ("Bản dịch tiếng Việt mạch truyện:", "Dưới đây là
+    bản dịch…:", kể cả dính giữa dòng) NGAY KHI NHẬN trả lời — 08/09/2026: người dùng
+    muốn gemini_result.docx sạch từ lúc lưu, không chỉ lúc tạo input. Quy tắc nằm ở
+    dich_chuanbi_input.remove_lead_lines (MỘT bộ duy nhất cho cả hai chỗ; bước tạo
+    input vẫn gọi lại như lưới an toàn cho docx cũ). Lỗi import → trả nguyên."""
+    if not text:
+        return text
+    try:
+        import dich_chuanbi_input as prep
+        out, removed = prep.remove_lead_lines(text)
+    except Exception:
+        return text
+    if removed and on_log:
+        on_log(f"🧹 Bỏ câu dẫn nhập Gemini chèn vào: {removed}")
+    return out.strip()
+
+
 def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
                    settle=RESPONSE_SETTLE, on_log=print):
-    """Gửi 1 đoạn tới Gemini, chờ tới khi câu trả lời ổn định rồi trả về văn bản.
+    """Gửi 1 đoạn tới Gemini, chờ tới khi câu trả lời ổn định rồi trả về văn bản
+    (đã bỏ câu dẫn nhập Gemini tự chèn — strip_lead_lines).
 
     prefix: câu hướng dẫn chèn lên đầu (thường chỉ dùng cho đoạn đầu tiên).
     """
@@ -894,7 +913,7 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
                 if stable_at is None:
                     stable_at = time.time()
                 elif time.time() - stable_at >= settle:
-                    return cur
+                    return strip_lead_lines(cur, on_log)
             else:
                 last_text, stable_at = cur, None
         time.sleep(1.5)
@@ -903,7 +922,7 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
         on_log("❌ Gemini không phản hồi (hết thời gian chờ) — hoặc câu trả lời mới "
                "TRÙNG y hệt câu đã có sẵn trong cuộc trò chuyện. KHÔNG lấy câu cũ "
                "làm kết quả.")
-    return last_text or None
+    return strip_lead_lines(last_text, on_log) or None
 
 
 def nudge_after_refusal(driver, chunk, on_log=print):
@@ -1290,6 +1309,10 @@ def save_results_docx(chunks, results, out_path, red=None, unred=None):
     from docx import Document
     from docx.shared import RGBColor
 
+    # Lưới an toàn (08/09/2026): mọi đường ghi docx (dán tay ở popup ✍️, 🔁, lưu lại
+    # docx cũ) đều đi qua đây → bỏ câu dẫn nhập Gemini còn sót trước khi ghi. Trả lời
+    # mới nhận đã sạch từ send_to_gemini (strip_lead_lines).
+    results = [strip_lead_lines(r) if r else r for r in results]
     keep = set(red or ())
     try:
         old = read_red_marks(out_path, len(results)) if Path(out_path).exists() else {}

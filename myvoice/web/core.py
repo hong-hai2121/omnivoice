@@ -507,6 +507,16 @@ def save_manual_translation(folder, j: int, text: str) -> dict:
         return {"ok": False, "loi": f"Số đoạn {j} ngoài phạm vi 1..{len(chunks)}."}
 
     canh_bao = []
+    # Dán kèm câu dẫn nhập ("Bản dịch tiếng Việt mạch truyện:"…) → bỏ trước khi ghi,
+    # cùng bộ với lúc nhận trả lời Gemini (save_results_docx cũng tự bỏ; làm ở đây
+    # để so khớp đọc lại đúng và báo cho người dùng).
+    sach = g.strip_lead_lines(text)
+    if sach != text:
+        if not sach or g.is_blank_result(sach):
+            return {"ok": False, "loi": "Ô bản dịch chỉ có câu dẫn nhập của Gemini, không "
+                                        "có nội dung — dán lại phần dịch."}
+        canh_bao.append("đã bỏ câu dẫn nhập Gemini chèn ở đầu (\"Bản dịch…:\")")
+        text = sach
     if g.is_refusal(text):
         canh_bao.append("giống câu TỪ CHỐI của Gemini chứ không phải bản dịch")
     if g.is_result_too_short(chunks[j - 1], text):
@@ -575,6 +585,10 @@ def review_red_segment(folder, j: int, text: str | None = None) -> dict:
     cu = (prior[j - 1] or "").strip()
     moi = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     moi = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", moi).strip()
+    # save_results_docx tự bỏ câu dẫn nhập Gemini khi ghi → so "cũ/mới" và đọc lại
+    # đều trên bản đã bỏ, kẻo docx cũ còn câu đó bị báo "đọc lại không khớp".
+    cu = g.strip_lead_lines(cu)
+    moi = g.strip_lead_lines(moi)
     sua = bool(moi) and " ".join(moi.split()) != " ".join(cu.split())
     if sua and g.is_blank_result(moi):
         return {"ok": False, "loi": "Ô bản dịch đang trống — muốn bỏ nội dung thì dùng "
@@ -607,12 +621,15 @@ def review_red_segment(folder, j: int, text: str | None = None) -> dict:
             "sao_luu": backup.name if backup else ""}
 
 
-def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -> dict:
+def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
+                 source: str = "") -> dict:
     """Các bước ĐÃ XONG của 1 tập, suy từ file thực tế — bản port của
     App._folder_steps (cùng quy ước tên file, để web và GUI báo giống nhau).
 
     pairs: kết quả translation_pairs(folder) nếu bên gọi đã đọc rồi (episode_rows
-    đọc một lần cho cả cột Dịch và nhãn đoạn trống)."""
+    đọc một lần cho cả cột Dịch và nhãn đoạn trống).
+    source: nguồn (link/file) của tập theo manifest — để cột Facebook nhận ra mục
+    sổ cũ cùng số nhưng của truyện khác (xem _facebook_posted)."""
     folder = Path(folder)
     zh = gui.find_zh_docx(folder)
     gem = folder / "gemini_result.docx"
@@ -662,7 +679,7 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None) -
         # còn hiệu lực. Chỉ nhìn biên nhận thì tập đăng trước khi có biên nhận / tập
         # đăng lại sau khi dựng lại (85, 04/09/2026) hiện "—" trong khi script bảo
         # "đã đăng, không xếp" — hai nơi nói hai đằng.
-        "facebook": _facebook_posted(folder, episode),
+        "facebook": _facebook_posted(folder, episode, source),
     }
 
 
@@ -674,13 +691,44 @@ def _short_posted(folder: Path) -> bool:
     return bool(isinstance(rec, dict) and rec.get("short_video_id"))
 
 
-def _facebook_posted(folder: Path, episode: str) -> bool:
+def other_sources_of(episode: str, source: str, before: str = "") -> list[str]:
+    """Nguồn KHÁC từng mang số tập này theo manifest — số tập được cấp lại cho
+    truyện khác (95–97: truyện 31/08 lên Page rồi bị xoá thư mục, 07/09/2026 làm bù
+    cấp lại cho ba link mới). Dùng cho mục sổ Facebook cũ không ghi bản dựng
+    (dang_video_facebook.ledger_covers).
+
+    before (ISO, mốc đăng bài): chỉ lấy mục cập nhật lần cuối KHÔNG MUỘN hơn mốc đó —
+    truyện xuất hiện sau lúc đăng thì không thể là bài đã đăng. Không rõ nguồn hiện
+    tại → [] (không đủ cơ sở kết luận, bên gọi coi là đã đăng cho khỏi đăng trùng)."""
+    if not source:
+        return []
+    cur = gui.norm_source(source)
+    want = str(episode).strip().lstrip("0") or "0"
+    moc = str(before or "").replace(" ", "T")[:19]
+    out = []
+    for key, entry in gui.load_manifest().items():
+        if (str(entry.get("episode", "")).strip().lstrip("0") or "0") != want:
+            continue
+        src = entry.get("source", key)
+        if gui.norm_source(src) == cur:
+            continue
+        upd = str(entry.get("updated") or "").replace(" ", "T")[:19]
+        if moc and upd and upd > moc:
+            continue
+        out.append(src)
+    return out
+
+
+def _facebook_posted(folder: Path, episode: str, source: str = "") -> bool:
+    """Tập trong thư mục này đã lên Page chưa — cùng phép xét với script FB
+    (ledger_covers): biên nhận trong thư mục, hoặc mục sổ da_dang.json thuộc ĐÚNG
+    bản dựng này (số tập cấp lại cho truyện khác thì mục sổ cũ không tính)."""
     try:
         fb = facebook_module()
-        if fb.marker_alive(folder):
-            return True
         key = str(int(str(episode).strip() or "0"))
-        return key in (fb.load_ledger().get("eps") or {})
+        info = (fb.load_ledger().get("eps") or {}).get(key)
+        return fb.ledger_covers(info, folder, source,
+                                other_sources_of(episode, source, fb.post_time(info)))
     except Exception:
         return (folder / "facebook_upload.json").exists()
 
@@ -725,7 +773,7 @@ def episode_rows() -> list[dict]:
         ep = gui.episode_of(folder.name)
         info = by_episode.get(ep, {})
         pairs = translation_pairs(folder)
-        steps = folder_steps(folder, ep, pairs)
+        steps = folder_steps(folder, ep, pairs, info.get("source", ""))
         core_steps = {k: v for k, v in steps.items() if k not in DONE_EXCLUDE}
         rows.append({
             "episode": ep,
@@ -910,11 +958,18 @@ def facebook_pending() -> dict:
         if folder is None:
             continue
         # Biên nhận facebook_upload.json bị đánh dấu removed_from_page (bài đã bị
-        # xoá khỏi Page, nút 🔄 phát hiện) thì tập đó lại là hàng chờ.
-        posted = (fb.marker_alive(folder) if fb
-                  else (folder / "facebook_upload.json").exists())
-        if int(r["episode"]) in seen or posted:
+        # xoá khỏi Page, nút 🔄 phát hiện) thì tập đó lại là hàng chờ. Mục sổ chỉ
+        # tính khi thuộc ĐÚNG bản dựng này (ledger_covers — cùng phép xét với script
+        # và cột Facebook của bảng): số tập cấp lại cho truyện khác thì tập mới vẫn
+        # là hàng chờ, kèm dòng nhắc Page còn bài cũ cùng số.
+        info = eps.get(str(int(r["episode"])))
+        if fb:
+            if fb.ledger_covers(info, folder, r["source"],
+                                other_sources_of(r["episode"], r["source"], fb.post_time(info))):
+                continue
+        elif int(r["episode"]) in seen or (folder / "facebook_upload.json").exists():
             continue
+        luu_y = fb.old_post_note(info) if fb and isinstance(info, dict) else ""
         video = None
         for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
             hits = sorted(folder.glob(pattern))
@@ -930,6 +985,7 @@ def facebook_pending() -> dict:
                      # của mô tả, gộp một dòng (compose_facebook_title).
                      "title": (seo or {}).get("title_facebook") or (seo or {}).get("title", ""),
                      "size_mb": video.stat().st_size // 1_000_000,
+                     "luu_y": luu_y,         # Page còn bài cũ cùng số (truyện khác)
                      "when": ""})            # điền ngay bên dưới
 
     # Giờ dự kiến của từng tập — tính bằng ĐÚNG hàm mà lúc chạy thật sẽ dùng
@@ -1069,6 +1125,8 @@ def tts_settings() -> tuple[dict | None, str]:
         doc_from_ngang=bool(opts.get("doc_from_ngang")),
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),
+        # Bản dọc từ video gốc + khung dọc tạo sẵn (scripts/video_doc_khung.py).
+        doc_khung=bool(opts.get("doc_khung", True)),
         make_tiktok=bool(opts.get("make_tiktok")),
         # YouTube Short ≤2:50 cắt từ chính video TikTok, đăng tự động sau bản chính
         # 1 giờ (xem scripts/video_short.py + YOUTUBE/dang_tap_youtube.upload_short).
@@ -1076,6 +1134,9 @@ def tts_settings() -> tuple[dict | None, str]:
         tiktok_speed=_f(opts.get("tiktok_speed"), 1.0, 0.5, 2.0),
         tiktok_percent=_i(opts.get("tiktok_percent"), 50, 1, 100),
         tiktok_no_effect=bool(opts.get("tiktok_no_effect")),
+        # Chữ 'Mimi audio Số N' nung lên TikTok — mặc định TẮT từ 08/09/2026 (bản dọc
+        # khung đã có thẻ Mimi audio + hashtag, TikTok lấy hình từ đó nên chữ bị chồng).
+        tiktok_caption=bool(opts.get("tiktok_caption", False)),
         tiktok_caption_pos=_i(opts.get("tiktok_caption_pos"), 40, 0, 100),
         tiktok_music=bool(opts.get("tiktok_music")),
         tiktok_music_db=_i(opts.get("tiktok_music_db"), -12, -40, 0),

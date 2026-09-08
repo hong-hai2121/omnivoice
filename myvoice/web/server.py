@@ -589,6 +589,25 @@ def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
     return FileResponse(str(p))
 
 
+@app.get("/giongnoi/khungdoc-xemtruoc")
+def khungdoc_xemtruoc(mau: str = "tím", lam_moi: int = 0):
+    """Ảnh xem trước KHUNG DỌC tạo sẵn (scripts/video_doc_khung.py) theo màu: nền hoa +
+    khung màu quanh dải video gốc + tiêu đề/số/ảnh mèo mẫu + một khung hình thật của
+    tập gần nhất. Vẽ một lần rồi cache ở static/khungdoc; lam_moi=1 vẽ lại."""
+    try:
+        import video_doc_khung as vdk
+        if mau not in vdk.MAU:
+            mau = "tím"
+        p = vdk.xem_truoc(mau, core.WEB_DIR / "static" / "khungdoc" / f"xt_{mau}.jpg",
+                          force=bool(lam_moi), log=log)
+    except Exception as e:
+        log(f"⚠️ Không vẽ được xem trước khung dọc: {e}")
+        p = None
+    if not p:
+        return JSONResponse({"error": "không vẽ được ảnh xem trước khung dọc"}, status_code=404)
+    return FileResponse(str(p))
+
+
 @app.get("/giongnoi/nghe")
 def play_audio(file: str = ""):
     """Phát audio ngay trong trình duyệt — bản web của nút “🔊 Nghe thử”.

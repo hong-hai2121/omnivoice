@@ -91,7 +91,8 @@
               <td><input type="checkbox" name="fbtap" value="{{ r.episode }}"></td>
               <td class="epcell">{{ r.episode }}</td>
               <td><b>{{ r.when or '—' }}</b></td>
-              <td style="text-align:left">{{ r.title or '—' }}</td>
+              <td style="text-align:left">{{ r.title or '—' }}
+                {%- if r.luu_y %}<div class="hint">⚠️ {{ r.luu_y }}</div>{% endif %}</td>
               <td style="text-align:left"><code>{{ r.video }}</code></td>
               <td>{{ r.size_mb }} MB</td>
             </tr>

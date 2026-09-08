@@ -69,6 +69,87 @@ def find_untranslated(text):
     return [m for m in _UNTRANSLATED_MARKS if m in low]
 
 
+# ── Câu DẪN NHẬP Gemini tự thêm ở đầu đoạn (08/09/2026) ─────────────────────────
+# Dù đề bài đã cấm, Gemini vẫn thỉnh thoảng mở đầu bằng một dòng kiểu
+# "Bản dịch tiếng Việt mạch truyện:", "Dưới đây là bản dịch tiếng Việt sát nghĩa:",
+# "**Bản dịch:**". Để lọt là TTS đọc luôn câu đó lên video. Bỏ TRƯỚC khi ghi input
+# (mọi đường tạo input đều gọi remove_lead_lines: _batch_prepare_input,
+# _prepare_input_from_gemini, main() ở dưới):
+#   • dòng chỉ gồm câu dẫn nhập (có/không ':' cuối)      → bỏ cả dòng;
+#   • câu dẫn nhập đứng đầu dòng, ':' rồi nội dung theo sau → chỉ cắt phần trước ':'.
+# Chỉ xét dòng BẮT ĐẦU bằng cụm trong _LEAD_STARTS, phần đầu ngắn (≤ _LEAD_MAX_LEN)
+# và có chữ "bản dịch"/"phần dịch"/"dịch sang tiếng Việt" (_LEAD_KEY_RE) — để không
+# cắt nhầm lời thoại thật: tập 96/100 có "theo mạch truyện thông thường…", "mạch
+# truyện của chính nó…" nằm giữa câu → không đụng. Giữ nguyên dấu tô đỏ U+E000/U+E001
+# bọc đoạn (dich_input_docx.wrap_red). Gặp mẫu mới thì thêm vào _LEAD_STARTS /
+# _LEAD_KEY_RE (đầu dòng) hoặc _LEAD_INLINE_RE (giữa dòng), đừng viết bộ lọc khác.
+_LEAD_STARTS = ("bản dịch", "dưới đây là", "sau đây là", "đây là", "tiếp theo là",
+                "phần dịch", "nội dung dịch")
+_LEAD_KEY_RE = re.compile(r"bản dịch|phần dịch|nội dung dịch|dịch (sang|ra) tiếng việt")
+_LEAD_MAX_LEN = 80          # phần đầu (trước ':') dài hơn thì coi là câu truyện thật
+_LEAD_EDGE = "*_\"'“”‘’ \t.:"   # ký tự trang trí quanh câu dẫn nhập (markdown, ngoặc kép)
+_REST_EDGE = "*_ \t"        # đầu phần nội dung còn lại chỉ bỏ markdown/khoảng trắng
+_split_marks_re = None      # dựng muộn: dich_input_docx import muộn dich_kiemtra ↔ file này
+# Câu dẫn nhập DÍNH GIỮA dòng (tập 95/101: Gemini dịch dở vài chục chữ rồi chèn
+# "Dưới đây là bản dịch tiếng Việt mượt mà, giữ trọn văn phong…:" và dịch lại từ đầu,
+# không xuống dòng → "…tất cả mọiDưới đây là bản dịch…"). Chỉ cắt ĐÚNG câu dẫn nhập,
+# giữ cả phần trước lẫn sau (không tự cắt bản dịch dở — xem is_result_duplicated bên
+# dich_gemini: người dùng muốn tự kiểm). Mẫu CHẶT để không cắt lời thoại thật: phải có
+# "dưới đây/sau đây/tiếp theo là bản dịch…" hoặc "bản dịch tiếng Việt" + chữ đặc trưng
+# của Gemini (mạch truyện / sát nghĩa / mượt mà / đầy đủ…) và kết bằng ':'.
+_LEAD_INLINE_RE = re.compile(
+    r"(?:(?:dưới đây|sau đây|tiếp theo) là (?:bản dịch|phần dịch|nội dung dịch)[^:\n.!?]{0,70}"
+    r"|bản dịch tiếng việt(?: (?:mạch truyện|sát nghĩa|mượt mà|đầy đủ|hoàn chỉnh|trọn vẹn"
+    r"|tự nhiên|chi tiết|của đoạn|của truyện)[^:\n.!?]{0,60})?)\s*:\s*",
+    re.IGNORECASE)
+
+
+def _split_marks(line):
+    """Tách dấu tô đỏ (dich_input_docx.MARK_START / MARK_END — mỗi dấu là CHUỖI, có
+    kèm dấu chấm) và khoảng trắng ở hai đầu dòng → (đầu, lõi, cuối): lõi đem so khớp,
+    hai đầu ghép lại nguyên vẹn."""
+    global _split_marks_re
+    if _split_marks_re is None:
+        try:
+            import dich_input_docx as inputdocx
+            marks = [re.escape(inputdocx.MARK_START), re.escape(inputdocx.MARK_END)]
+        except Exception:
+            marks = []
+        unit = "(?:" + "|".join(marks + [r"\s"]) + ")"
+        _split_marks_re = re.compile(rf"^({unit}*)(.*?)({unit}*)$", re.S)
+    return _split_marks_re.match(line).groups()
+
+
+def remove_lead_lines(text):
+    """Bỏ câu dẫn nhập Gemini tự thêm (xem chú thích trên) → (text_mới, [câu đã bỏ])."""
+    out, removed = [], []
+    for line in (text or "").split("\n"):
+        pre, core, post = _split_marks(line)
+        core_l = core.lstrip(_LEAD_EDGE)              # bỏ trang trí ĐẦU dòng (**, ngoặc kép)
+        if core_l.lower().startswith(_LEAD_STARTS):
+            head, sep, rest = core_l.partition(":")
+            if not sep:                                # cả dòng là câu dẫn nhập, không hai chấm
+                head, rest = core_l.rstrip(_LEAD_EDGE), ""
+            if len(head) <= _LEAD_MAX_LEN and _LEAD_KEY_RE.search(head.lower()):
+                removed.append(head.strip(_LEAD_EDGE) + ":")
+                rest = rest.lstrip(_REST_EDGE)         # giữ nguyên dấu câu / ngoặc kép câu thật
+                keep = pre + rest + post if rest else pre + post
+                if keep.strip():
+                    out.append(keep)                   # nội dung sau ':' hoặc dấu tô đỏ còn lại
+                continue
+        # Câu dẫn nhập dính giữa dòng → cắt riêng câu đó, giữ hai bên (cách nhau 1 khoảng trắng).
+        if _LEAD_INLINE_RE.search(core):
+            hits = []
+            core2 = _LEAD_INLINE_RE.sub(lambda m: hits.append(m.group(0).strip()) or " ", core)
+            removed.extend(hits)
+            core2 = re.sub(r"[ \t]{2,}", " ", core2).strip()
+            if (pre + core2 + post).strip():
+                out.append(pre + core2 + post)
+            continue
+        out.append(line)
+    return "\n".join(out), removed
+
+
 # Sửa từ/cụm cố định KHI tạo input.txt: (từ_gốc, từ_thay). Gồm 2 loại:
 #   • né bộ lọc  : giết→giớt, máu→máo… (TTS/nền tảng chặn từ nhạy cảm)
 #   • chính tả   : tỳ→tì (tì tay · tì vết · đàn tì bà)
@@ -182,6 +263,11 @@ def main(argv=None):
     if not content:
         print(f"❌ Không lấy được nội dung nào từ: {docx_path}")
         sys.exit(2)
+    # Bỏ câu dẫn nhập Gemini tự thêm ("Bản dịch tiếng Việt mạch truyện:"…) — xem
+    # remove_lead_lines. Không bỏ là TTS đọc luôn câu đó.
+    content, bo = remove_lead_lines(content)
+    if bo:
+        print(f"🧹 Bỏ {len(bo)} câu dẫn nhập của Gemini: {bo}")
 
     # ── CHẶN: còn đoạn CHƯA DỊCH thì dừng ngay, TRƯỚC khi bỏ chú thích ────────
     marks = find_untranslated(content)

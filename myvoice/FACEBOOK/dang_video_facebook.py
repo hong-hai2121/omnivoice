@@ -847,6 +847,69 @@ def unmark_removed(folder) -> None:
         pass
 
 
+def post_time(info) -> str:
+    """Mốc của một mục sổ (ISO): lúc tải lên, không có thì giờ đã xếp; không rõ → ""."""
+    if not isinstance(info, dict):
+        return ""
+    return str(info.get("uploaded_at") or info.get("scheduled") or "")
+
+
+def _same_source(a: str, b: str) -> bool:
+    """Hai chuỗi nguồn (link / đường dẫn file) có trỏ cùng một nơi không — so lỏng:
+    bỏ nháy, hoa/thường, kiểu gạch chéo (đường dẫn Windows mỗi lúc gõ một kiểu)."""
+    def norm(s):
+        return (s or "").strip().strip('"').strip("'").strip().lower().replace("/", "\\")
+    return bool(a) and bool(b) and norm(a) == norm(b)
+
+
+def _title_of(name: str) -> str:
+    """Phần tên nguồn trong tên thư mục tập: 'G95 - <nguồn>' → '<nguồn>'. Chữ cái
+    đứng trước số chỉ để Explorer xếp thứ tự, đổi tên thư mục không đổi phần này."""
+    return name.split(" - ", 1)[1].strip() if " - " in name else name.strip()
+
+
+def old_post_note(info) -> str:
+    """Dòng nhắc khi sổ có bài CÙNG SỐ của bản dựng trước (truyện khác)."""
+    khi = post_time(info)[:16].replace("T", " ")
+    return (f"sổ có bài cùng số của bản dựng TRƯỚC (truyện khác{', lịch ' + khi if khi else ''})"
+            " — bài mới vẫn xếp lịch; không muốn Page có hai bài cùng số thì xoá bài cũ"
+            " trên Page")
+
+
+def ledger_covers(info, folder, source: str = "", other_sources=()) -> bool:
+    """Tập trong `folder` đã lên Page chưa, theo biên nhận + mục sổ `info`
+    (da_dang.json["eps"][n], None = sổ không có số này).
+
+    Sổ ghi theo SỐ TẬP, nhưng một số có thể được CẤP LẠI cho truyện khác: tập 95–97
+    (31/08/2026) lên Page rồi mà YouTube từ chối, thư mục bị xoá, 07/09 chế độ làm bù
+    cấp lại 95–97 cho ba link mới → sổ vẫn nói "đã đăng": cột Facebook tick sẵn từ
+    lúc chưa có video, dựng xong lại không xếp lịch. Nên mục sổ chỉ được tính khi nó
+    thuộc ĐÚNG bản dựng đang nằm trong thư mục:
+      • thư mục có biên nhận facebook_upload.json còn hiệu lực → đúng là của nó;
+      • mục sổ ghi kèm thư mục / nguồn (thu_muc, nguon — ghi từ 08/09/2026) → so
+        với thư mục / nguồn hiện tại;
+      • mục sổ CŨ không ghi gì → bên gọi tra manifest: `other_sources` là các
+        TRUYỆN KHÁC từng mang số này trước lúc đăng (core.other_sources_of). Có →
+        bài trên Page là của truyện đó, tập này chưa đăng. Không có → coi là đã
+        đăng: tập dựng lại CÙNG truyện (85, 87) vẫn bỏ qua như trước — muốn đăng
+        bản mới thì xoá bài cũ trên Page rồi bấm 🔄 (không tự đăng trùng).
+    """
+    folder = Path(folder)
+    if marker_alive(folder):
+        return True
+    if info is None:
+        return False
+    if not isinstance(info, dict):
+        return True                     # mục sổ dạng lạ → coi là đã đăng, an toàn hơn
+    thu_muc = str(info.get("thu_muc") or "")
+    nguon = str(info.get("nguon") or "")
+    if thu_muc or nguon:
+        if thu_muc and (thu_muc == folder.name or _title_of(thu_muc) == _title_of(folder.name)):
+            return True
+        return _same_source(nguon, source)
+    return not list(other_sources or ())
+
+
 def find_video(folder: Path) -> Path | None:
     """Video dọc của tập — đúng thứ tự nhánh video_doc bên web/core.py."""
     if (folder / "facebook.mp4").exists():
@@ -880,26 +943,31 @@ def pending_episodes(core, led: dict) -> tuple[list[dict], list[str]]:
 
     "Chưa đăng" tra SỔ LOCAL (`led`) chứ không hỏi Page. Vẫn xét thêm dấu
     facebook_upload.json trong thư mục tập: đó là biên nhận của lần đăng trước,
-    giữ lại để lỡ sổ hỏng/mất vẫn không đăng trùng.
+    giữ lại để lỡ sổ hỏng/mất vẫn không đăng trùng. Mục sổ chỉ tính khi thuộc ĐÚNG
+    bản dựng trong thư mục (ledger_covers — số tập cấp lại cho truyện khác thì
+    tập mới vẫn là hàng chờ, kèm dòng nhắc Page còn bài cũ cùng số).
     """
     out, notes = [], []
-    done = set(led.get("eps") or {})
+    eps = led.get("eps") or {}
     rows = sorted(core.episode_rows(), key=lambda r: int(r["episode"]))
     for r in rows:
         n = int(r["episode"])
-        if str(n) in done:
-            continue
         folder = core.episode_folder(r["episode"])
         if folder is None:
             continue
-        if marker_alive(folder):            # biên nhận lần đăng trước còn hiệu lực
+        info = eps.get(str(n))
+        nguon = r.get("source", "")
+        if ledger_covers(info, folder, nguon,
+                         core.other_sources_of(r["episode"], nguon, post_time(info))):
             continue
         video = find_video(folder)
         if video is None:
             notes.append(f"  · tập {r['episode']}: CHƯA có video dọc — bỏ qua")
             continue
+        if isinstance(info, dict):
+            notes.append(f"  ⚠️ tập {r['episode']}: {old_post_note(info)}")
         title, desc = caption_for(core, folder, r["episode"])
-        out.append({"ep": r["episode"], "n": n, "folder": folder,
+        out.append({"ep": r["episode"], "n": n, "folder": folder, "nguon": nguon,
                     "video": video, "title": title, "desc": desc})
     return out, notes
 
@@ -1180,7 +1248,11 @@ def main() -> int:
             break
         info = {"video_id": video_id, "scheduled": when.isoformat(timespec="seconds"),
                 "uploaded_at": datetime.now().isoformat(timespec="seconds"),
-                "source": "script"}
+                "source": "script",
+                # Bài này là của BẢN DỰNG nào (08/09/2026): số tập có thể được cấp
+                # lại cho truyện khác, lúc đó sổ phải biết mà không chặn — xem
+                # ledger_covers.
+                "thu_muc": item["folder"].name, "nguon": item.get("nguon", "")}
         # Ghi SỔ trước, biên nhận trong thư mục tập sau: sổ là chỗ vòng sau tra
         # "đăng chưa", mất nó thì tập này bị xếp lại lần nữa.
         mark_posted(led, item["ep"], info)

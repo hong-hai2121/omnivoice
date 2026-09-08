@@ -160,7 +160,19 @@ còn token hỏng thì lần nào cũng hỏng như nhau.
 là nguồn sự thật cho câu hỏi tập nào đã lên Page: script ghi vào đó ngay khi
 Facebook nhận video (và ghi thêm biên nhận `facebook_upload.json` trong thư mục
 tập). Việc thường ngày vì thế chỉ hỏi Page **lịch đang chờ** (`page_schedule`), đủ
-để biết khung nào còn trống. Số request đo thật:
+để biết khung nào còn trống.
+
+Sổ khoá theo **số tập**, mà một số có thể được **cấp lại cho truyện khác** (95–97:
+truyện 31/08/2026 lên Page rồi bị xoá thư mục, 07/09 chế độ làm bù cấp lại cho ba
+link mới → sổ vẫn nói "đã đăng", cột Facebook tick sẵn từ lúc chưa có video, dựng
+xong lại không xếp lịch). Nên "tập này lên Page chưa" chỉ hỏi qua một hàm
+`ledger_covers` (script) — cột Facebook của bảng, khối Đăng Facebook và hàng chờ của
+script cùng dùng: biên nhận trong thư mục là chắc; mục sổ ghi kèm `thu_muc` +
+`nguon` (từ 08/09/2026) thì so với thư mục/nguồn hiện tại; mục sổ cũ không ghi gì
+thì tra manifest (`other_sources_of`) — có truyện **khác** từng mang số này trước
+lúc đăng là tập mới vẫn vào hàng chờ (kèm dòng nhắc Page còn bài cũ cùng số), còn
+dựng lại **cùng** truyện (85, 87) vẫn bỏ qua như trước: muốn đăng bản mới thì xoá
+bài cũ trên Page rồi bấm 🔄. Số request đo thật:
 
 | Thao tác | Request |
 |---|---|

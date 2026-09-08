@@ -618,11 +618,29 @@
     </div>
     <div class="chks">
       {{ chk('make_video_doc', 'Dựng video dọc', opts) }}
+      {{ chk('doc_khung', '🖼 Dựng từ VIDEO GỐC của bản ngang + khung dọc tạo sẵn (nhanh, không ghép clip dọc)', opts) }}
       {{ chk('doc_from_ngang', '♻ Dùng lại video ngang (phóng to khớp chiều cao)', opts) }}
       {{ chk('doc_from_subfolder', '📁 Ghép từ thư mục con videodoc (theo videodoc/input.txt)', opts) }}
       {{ chk('doc_no_effect', '🚫 Không áp hiệu ứng cho video dọc', opts) }}
     </div>
-    <p class="hint">Hai ô ♻ và 📁 loại trừ nhau — bật cả hai thì 📁 thắng, y như GUI.</p>
+    {# Xem trước khung dọc tạo sẵn (Backbround/khungdoc, 3 màu theo viền khung ngang).
+       Ảnh do scripts/video_doc_khung.xem_truoc vẽ, cache ở static/khungdoc. #}
+    <div class="khungdoc-xt" style="display:flex;flex-wrap:wrap;gap:12px;margin:8px 0 4px">
+      {% for mau in ['tím', 'xanh', 'đỏ'] %}
+        <figure style="margin:0;text-align:center">
+          <a href="/giongnoi/khungdoc-xemtruoc?mau={{ mau }}&lam_moi=1" target="_blank"
+             title="Bấm mở ảnh to (vẽ lại)">
+            <img src="/giongnoi/khungdoc-xemtruoc?mau={{ mau }}" alt="Khung dọc màu {{ mau }}"
+                 loading="lazy" style="height:300px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.18)"></a>
+          <figcaption class="hint" style="margin-top:4px">khung {{ mau }}</figcaption>
+        </figure>
+      {% endfor %}
+    </div>
+    <p class="hint">🖼 bật: bản dọc = video gốc (trước khi lồng khung) đặt vào dải giữa, khung màu
+      cùng màu viền khung ngang, tiêu đề + số tập + ảnh mèo + nút Đăng ký vẽ sẵn; phụ đề dọc nằm trong
+      dải video. Bộ khung nằm ở <code>Backbround/khungdoc/</code> — sửa/thay PNG ở đó là lần dựng
+      sau dùng ngay (vẽ lại: <code>python scripts/video_doc_khung.py --tao-khung --force</code>).
+      Tắt 🖼 thì dùng ♻ / 📁 như cũ (hai ô này loại trừ nhau — bật cả hai thì 📁 thắng).</p>
     <div class="actions"><button name="action" value="doc">▶ Dựng lại video dọc</button></div>
   </div>
 
@@ -637,7 +655,7 @@
     </div>
     <div class="grid">
       <label class="field">
-        <span>Vị trí chữ (% chiều cao)</span>
+        <span>Vị trí chữ (% chiều cao, chỉ khi bật 🔤)</span>
         <input name="tiktok_caption_pos" value="{{ opts.tiktok_caption_pos }}" inputmode="numeric">
       </label>
       <label class="field">
@@ -655,6 +673,9 @@
          lặp lại cho phủ hết video như trước. #}
       {{ chk('tiktok_music_loop', '🔁 Lặp lại nhạc nền tới hết video (tắt = chỉ phát 1 lần)', opts) }}
       {{ chk('tiktok_no_effect', '🚫 Không áp hiệu ứng cho TikTok', opts) }}
+      {# Mặc định TẮT từ 08/09/2026: bản dọc khung đã vẽ sẵn thẻ "Mimi audio" + hashtag,
+         TikTok lấy hình từ đó nên chữ nung thêm bị chồng. Tick vào mới ghi như trước. #}
+      {{ chk('tiktok_caption', '🔤 Ghi chữ "Mimi audio Số N" lên video TikTok (bản dọc khung đã có sẵn → thường không cần)', opts) }}
     </div>
     <div class="actions"><button name="action" value="tiktok">▶ Dựng lại video TikTok</button></div>
   </div>
