@@ -76,6 +76,12 @@ RESPONSE_SETTLE = float(os.environ.get("OMNI_GEMINI_SETTLE", "6"))
 # sàng; hết giờ vẫn đi tiếp gửi đoạn 1. Ngắn hơn RESPONSE_TIMEOUT vì câu xác nhận
 # thường chỉ vài giây.
 PREFIX_TIMEOUT = int(os.environ.get("OMNI_GEMINI_PREFIX_TIMEOUT", "120"))
+# Thời gian chờ Gemini BẮT ĐẦU trả lời CÂU NHẮC sau khi từ chối (nudge_after_refusal).
+# 15/09/2026: trước đây câu nhắc dùng chung RESPONSE_TIMEOUT (5 phút) → mỗi đoạn bị từ
+# chối làm cả luồng đứng 5–10 phút khi Gemini im hoặc trả đúng câu từ chối cũ. Nay chỉ
+# chờ NUDGE_TIMEOUT giây cho dấu hiệu trả lời đầu tiên; đã thấy Gemini bắt đầu trả lời
+# thì vẫn chờ tới khi nói xong (tối đa RESPONSE_TIMEOUT) để không cắt cụt bản dịch.
+NUDGE_TIMEOUT = int(os.environ.get("OMNI_GEMINI_NUDGE_TIMEOUT", "30"))
 # Số lần ĐÓNG HẲN Firefox → mở lại (chat mới) → gửi lại đoạn khi Gemini treo/không
 # trả lời gì sau RESPONSE_TIMEOUT giây (mặc định 5 phút). 0 = không tự mở lại.
 # 05/09/2026: MẶC ĐỊNH 0 theo yêu cầu — luồng tự động gửi MỖI ĐOẠN ĐÚNG MỘT LẦN: đoạn
@@ -124,7 +130,7 @@ _CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 # ═══════════════════════════════════════════════════════════════════════════════
 # CÂU GỬI GEMINI — MỌI lời nhắn / đề bài gửi sang Gemini nằm gọn trong khối này (gom
 # từ scripts/copy_prefix.txt + các hằng rải rác, 07/09/2026). Muốn đổi cách dặn Gemini
-# dịch thì sửa Ở ĐÂY; GUI nhận diện / web / dich_docx / dich_lai_trong đều lấy qua
+# dịch thì sửa Ở ĐÂY; GUI nhận diện / web / dich_docx lấy qua
 # load_prefix(). Thứ tự gửi trong một tập:
 #   1) TRANSLATE_PREFIX     — câu hướng dẫn dịch, MỘT tin nhắn riêng trước đoạn 1
 #                             (send_prefix_to_gemini).
@@ -132,7 +138,9 @@ _CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 #   3) REFUSAL_NUDGE        — Gemini từ chối → 1 câu nhắc trong CÙNG chat.
 #   4) RETRY_CHINESE_PREFIX — Firefox treo / mở lại chat mới mà bên gọi không đưa
 #                             prefix → câu ngắn thay thế.
-#   5) BLANK_RETRY_PROMPT   — lượt 2 trong CHAT MỚI cho đoạn "(trống)" (xem BLANK_RETRY).
+#   5) BLANK_RETRY_PROMPT   — lượt 2 trong CHAT MỚI cho đoạn "(trống)" (xem BLANK_RETRY)
+#                             VÀ nút 🔁 Dịch lại đoạn (Trống) (dich_lai_trong.py, 15/09/2026):
+#                             cả hai chỉ gửi câu này + nội dung, không 1) không 2).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Thẻ định danh ngữ cảnh truyện: gắn lên đầu MỖI ĐOẠN tiếng Trung gửi đi, để bộ lọc
@@ -201,7 +209,8 @@ TRANSLATE_PREFIX = (
 
 def load_prefix() -> str:
     """Câu hướng dẫn dịch gửi Gemini (TRANSLATE_PREFIX). Giữ tên hàm cũ để GUI / web /
-    dich_docx / dich_lai_trong gọi chung MỘT chỗ; không còn đọc file nào."""
+    dich_docx gọi chung MỘT chỗ; không còn đọc file nào. (🔁 dich_lai_trong không dùng
+    nữa từ 15/09/2026 — nó gửi BLANK_RETRY_PROMPT ngắn như lượt 2 chat mới.)"""
     return TRANSLATE_PREFIX.strip()
 
 
@@ -222,7 +231,7 @@ REFUSAL_NUDGE = os.environ.get(
 
 # Đề bài ngắn cho LƯỢT 2 trong chat mới (đoạn "(trống)" vừa phát sinh) — không câu hướng
 # dẫn dài, không thẻ hư cấu. Bật / tắt lượt này bằng BLANK_RETRY (khai báo phía dưới).
-BLANK_RETRY_PROMPT = os.environ.get("OMNI_GEMINI_BLANK_RETRY_PROMPT", "Dịch sang tiếng Việt:")
+BLANK_RETRY_PROMPT = os.environ.get("OMNI_GEMINI_BLANK_RETRY_PROMPT", "Dịch đi thẳng vào nội dung. Không giải thích thêm:")
 # ─────────────────────────────────────────────────────────────────────────────
 # Tỉ lệ chữ Hán còn sót TỐI ĐA mà vẫn coi đoạn là ĐÃ DỊCH. Bản dịch tốt đôi khi
 # còn vài chữ Hán (tên riêng Gemini giữ nguyên) → đừng coi là chưa dịch. Chỉ coi
@@ -276,7 +285,7 @@ RESEND_BLANK = os.environ.get("OMNI_GEMINI_RESEND_BLANK", "0") == "1"
 # ── LƯỢT 2 trong CHAT MỚI cho đoạn "(trống)" VỪA phát sinh (yêu cầu 07/09/2026) ─────
 # Gửi hết các đoạn của tập (lượt 1) xong, đoạn nào phải ghi "(trống)" (từ chối cả sau
 # câu nhắc / dịch cụt / không trả lời) thì mở MỘT chat mới rồi gửi LẦN LƯỢT từng đoạn
-# với đề bài ngắn gọn "Dịch sang tiếng Việt:" + nội dung — không câu hướng dẫn dài,
+# với đề bài ngắn gọn "Dịch đi thẳng vào nội dung. Không giải thích thêm:" + nội dung — không câu hướng dẫn dài,
 # không thẻ hư cấu (chat sạch + đề bài gọn thường qua được bộ lọc). Dịch được → lưu và
 # TÔ ĐỎ đoạn để kiểm (nhãn "n đỏ" ở cột Dịch trang Nhận diện); vẫn không được mới bỏ
 # qua, giữ "(trống)" cho 🔁 / ✍️. Chỉ áp dụng cho đoạn trống PHÁT SINH TRONG LƯỢT NÀY:
@@ -350,6 +359,25 @@ _REFUSAL_PHRASES = [
     "được lập trình",
     "chỉ có thể tạo văn bản",
     "công nghệ trí tuệ nhân tạo",
+    # 15/09/2026: gửi đề bài NGẮN (lượt 2 chat mới / 🔁 dich_lai_trong) thì Gemini hay
+    # từ chối BẰNG TIẾNG TRUNG — tập 110/112/113/114/118: "我只是一个语言模型，不具备这方面
+    # 的信息或能力，因此没法帮到你。" / "我只是一个文本 AI，在这方面没法帮到你。" / "我是一个
+    # 文本 AI，这超出了我的能力范围。" / "由于程序代码的局限，我没法办到。" / "我只会生成文本，
+    # 你提出的问题超出了我的程序逻辑范畴。" Không bắt → câu này được LƯU làm bản dịch: cột
+    # Dịch hiện "—" trần (không nhãn trống vì đã có chữ, không đỏ), 🔁 không lấp lại được.
+    # is_refusal so sau khi lower() nên "文本 AI" thành "文本 ai".
+    "语言模型",                # ngữ ngôn mô hình = mô hình ngôn ngữ
+    "没法帮到你",              # không giúp được bạn
+    "无法帮助",
+    "无法提供帮助",
+    "不能帮助",
+    "文本 ai",                 # "我只是一个文本 AI"
+    "文本ai",
+    "超出了我的",              # ...超出了我的能力范围 / 程序逻辑范畴
+    "程序代码的局限",
+    "没法办到",
+    "只会生成文本",
+    "不具备这方面",
     "language model",
     "can't help with",
     "cannot help with",
@@ -829,11 +857,15 @@ def strip_lead_lines(text, on_log=None):
 
 
 def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
-                   settle=RESPONSE_SETTLE, on_log=print):
+                   settle=RESPONSE_SETTLE, on_log=print, no_reply_timeout=None):
     """Gửi 1 đoạn tới Gemini, chờ tới khi câu trả lời ổn định rồi trả về văn bản
     (đã bỏ câu dẫn nhập Gemini tự chèn — strip_lead_lines).
 
     prefix: câu hướng dẫn chèn lên đầu (thường chỉ dùng cho đoạn đầu tiên).
+    no_reply_timeout: nếu đặt (giây) và tới lúc đó vẫn CHƯA thấy dấu hiệu Gemini trả
+        lời thì bỏ cuộc sớm (trả None) thay vì chờ hết `timeout`. Đã thấy trả lời rồi
+        thì vẫn chờ tới khi nói xong (tối đa `timeout`). Dùng cho câu nhắc sau khi
+        từ chối (NUDGE_TIMEOUT).
     """
     from selenium.webdriver.support.ui import WebDriverWait
 
@@ -864,8 +896,19 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     # Đánh đổi: nếu câu trả lời mới TRÙNG y hệt câu cũ thì coi như chưa trả lời và
     # chờ tới hết giờ → bên gọi báo lỗi. Chấp nhận được, vì thà dừng còn hơn lặng
     # lẽ lưu kết quả của tập khác.
+    #
+    # NGOẠI LỆ (15/09/2026): câu TỪ CHỐI của Gemini ("Tôi chỉ là một mô hình ngôn
+    # ngữ...") là câu mẫu, lần nào cũng y hệt từng chữ → cứ dính quy tắc "trùng câu
+    # cũ" là đứng đủ 5 phút mỗi lần (đoạn 2 bị từ chối trong cùng chat, hoặc Gemini
+    # trả lời câu nhắc bằng đúng câu từ chối cũ). Với RIÊNG câu từ chối, chấp nhận là
+    # trả lời mới khi nó là phần tử CUỐI CÙNG (không còn phần tử rỗng đang stream sau
+    # nó) VÀ số phần tử trả lời đã TĂNG so với trước khi gửi. Câu từ chối không bao
+    # giờ được lưu làm bản dịch (is_refusal → câu nhắc / "(trống)") nên dù có nhận
+    # nhầm câu cũ cũng không lặng lẽ lưu kết quả của tập khác như lỗi SEO xưa.
     before_all = []
+    before_count = 0
     for e in _get_responses(driver):
+        before_count += 1
         try:
             before_all.append(_norm(e.text))
         except Exception:
@@ -879,6 +922,7 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
     on_log("⌛ Đang chờ Gemini trả lời...")
 
     deadline = time.time() + timeout
+    no_reply_deadline = (time.time() + no_reply_timeout) if no_reply_timeout else None
 
     def _candidate():
         """Câu trả lời MỚI của Gemini, hoặc None nếu CHƯA có.
@@ -886,9 +930,12 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
         Chỉ xét phần tử CUỐI có chữ (bỏ phần tử rỗng đang stream và tin nhắn của
         chính mình). Nội dung trùng cái đã thấy trước khi gửi → coi như chưa có
         câu mới, chờ tiếp. TUYỆT ĐỐI không lần ngược lên lịch sử để lấy tạm một
-        câu cũ hơn — làm vậy là lấy nhầm SEO/bản dịch của tập khác.
+        câu cũ hơn — làm vậy là lấy nhầm SEO/bản dịch của tập khác. Ngoại lệ duy
+        nhất: câu TỪ CHỐI trùng câu cũ (xem chú thích trước before_all).
         """
-        for e in reversed(_get_responses(driver)):
+        els = _get_responses(driver)
+        grown = len(els) > before_count
+        for idx, e in zip(range(len(els) - 1, -1, -1), reversed(els)):
             try:
                 t = (e.text or "").strip()
             except Exception:
@@ -899,6 +946,8 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
             if nt == sent_norm or nt.startswith(sent_head) or sent_norm.startswith(nt[:60]):
                 continue   # đây là tin nhắn của chính mình (echo)
             if nt == before_last or nt in before_texts:
+                if grown and idx == len(els) - 1 and is_refusal(t):
+                    return t   # câu từ chối mẫu lặp lại nguyên văn — là trả lời MỚI
                 return None   # vẫn là câu CŨ → Gemini chưa trả lời xong
             return t
         return None
@@ -916,6 +965,10 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
                     return strip_lead_lines(cur, on_log)
             else:
                 last_text, stable_at = cur, None
+        elif no_reply_deadline is not None and not seen and time.time() >= no_reply_deadline:
+            on_log(f"❌ Gemini không bắt đầu trả lời sau {int(no_reply_timeout)} giây "
+                   "— bỏ qua, không chờ thêm.")
+            return None
         time.sleep(1.5)
 
     if not seen:
@@ -933,7 +986,10 @@ def nudge_after_refusal(driver, chunk, on_log=print):
         return None
     on_log(f"💬 Gemini từ chối → gửi thêm một câu nhắc trong cùng chat: \"{REFUSAL_NUDGE}\"")
     try:
-        ans = send_to_gemini(driver, REFUSAL_NUDGE, on_log=on_log)
+        # Chỉ chờ NUDGE_TIMEOUT giây cho Gemini BẮT ĐẦU trả lời; im lặng thì bỏ qua sớm
+        # (trước đây chờ đủ RESPONSE_TIMEOUT = 5 phút). Đã bắt đầu thì chờ nói xong.
+        ans = send_to_gemini(driver, REFUSAL_NUDGE, on_log=on_log,
+                             no_reply_timeout=NUDGE_TIMEOUT)
     except Exception as e:
         on_log(f"⚠️ Gửi câu nhắc lỗi: {e}")
         return None
@@ -951,14 +1007,30 @@ def nudge_after_refusal(driver, chunk, on_log=print):
     return ans
 
 
+# Trả lời có tỉ lệ chữ Hán từ mức này trở lên thì KHÔNG phải bản dịch (Gemini từ chối
+# bằng tiếng Trung, chép lại nguồn, hỏi lại bằng tiếng Trung...). Khác với
+# CHINESE_DONE_MAX_RATIO (vài chữ Hán sót — vẫn lưu, bước tạo input dịch local): đây là
+# cả câu trả lời còn nguyên tiếng Trung. 15/09/2026: đề bài ngắn (lượt 2 / 🔁) hay dính.
+CHINESE_REPLY_RATIO = float(os.environ.get("OMNI_GEMINI_CHINESE_REPLY_RATIO", "0.5"))
+
+
+def is_reply_chinese(text):
+    """True nếu câu trả lời về cơ bản vẫn là TIẾNG TRUNG (không phải bản dịch Việt)."""
+    return bool((text or "").strip()) and chinese_ratio(text) >= CHINESE_REPLY_RATIO
+
+
 def _unusable_reason(chunk, ans):
     """Vì sao kết quả `ans` của đoạn `chunk` KHÔNG dùng được → chuỗi lý do, hoặc None
-    nếu dùng được. Cùng bộ tiêu chí với bad_chunks (từ chối / cụt) + rỗng."""
+    nếu dùng được. Cùng bộ tiêu chí với bad_chunks (từ chối / cụt) + rỗng + trả lời
+    vẫn là tiếng Trung (is_reply_chinese)."""
     t = (ans or "").strip()
     if not t:
         return "không trả về nội dung"
     if is_refusal(t):
         return "vẫn từ chối dịch"
+    if is_reply_chinese(t):
+        return (f"trả lời vẫn là tiếng Trung ({int(chinese_ratio(t) * 100)}% chữ Hán — "
+                "không phải bản dịch)")
     if is_result_too_short(chunk, t):
         return f"trả về quá ngắn ({len(t)} ký tự — dịch cụt)"
     return None

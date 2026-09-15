@@ -7231,7 +7231,7 @@ class App(tk.Tk):
 
                 # ── LƯỢT 2 (07/09/2026): đoạn nào VỪA gửi trong lượt này mà trống (từ
                 #    chối cả sau câu nhắc / dịch cụt / không trả lời) → mở CHAT MỚI, gửi
-                #    lần lượt từng đoạn với đề bài ngắn "Dịch sang tiếng Việt:" + nội
+                #    lần lượt từng đoạn với đề bài ngắn "Dịch đi thẳng vào nội dung. Không giải thích thêm:" + nội
                 #    dung. Được thì lưu + TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch); vẫn không
                 #    được mới bỏ qua, giữ "(trống)" cho 🔁 / ✍️. Chỉ xét đoạn trống phát
                 #    sinh TRONG LƯỢT NÀY (nằm trong todo) — đoạn "(trống)" của lần chạy

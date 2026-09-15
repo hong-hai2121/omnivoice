@@ -476,16 +476,20 @@
 // (server sao lưu file cũ cạnh đó). Dùng chung khung CSS với popup "n trống".
 (function () {
   let dlg = null;       // phần tử .modal đang mở
-  let data = null;      // JSON từ /api/doan-do: {tap, ten, total, doan: [{j, zh, vi}]}
+  let data = null;      // JSON từ /api/doan-do: {tap, ten, total, doan: [{j, zh, vi, xong, trong}]}
   let cur = 0;          // chỉ số đoạn đang xem trong data.doan
   let tap = '';
   let notice = null;    // {kind, text} hiện dưới ô tiếng Việt sau khi render lại
+  let tatCa = false;    // true = mở từ dấu ✅/— (xem ĐẦY ĐỦ mọi đoạn, 15/09/2026)
 
+  // Nhãn "n đỏ" → chỉ các đoạn đỏ. Dấu ✅ / — (.badge-xem) → MỌI đoạn của tập
+  // (/api/doan-do?tatca=1), cùng một popup: đoạn đỏ còn lại vẫn ✔ được, đoạn khác
+  // chỉ xem, đoạn (trống) hiện dấu "(trống)".
   document.addEventListener('click', (e) => {
-    const b = e.target.closest('.badge-do');
+    const b = e.target.closest('.badge-do, .badge-xem');
     if (!b) return;
     e.preventDefault();
-    open(b.dataset.tap || '');
+    open(b.dataset.tap || '', b.classList.contains('badge-xem'));
   });
 
   function body() { return dlg ? dlg.querySelector('.modal-body') : null; }
@@ -509,23 +513,30 @@
   }
   function onEsc(e) { if (e.key === 'Escape') close(); }
 
-  async function open(t) {
+  async function open(t, all) {
     close(true);
     tap = t;
+    tatCa = !!all;
     dlg = document.createElement('div');
     dlg.className = 'modal';
+    const head = tatCa ? `📖 Toàn bộ đoạn dịch — tập ${esc(t)}` : `🔴 Đoạn tô đỏ cần kiểm — tập ${esc(t)}`;
+    const foot = tatCa
+      ? `Mọi đoạn của tập: trái tiếng Trung, phải tiếng Việt — bấm từng thẻ "Đoạn n" để xem.
+         Đoạn còn TÔ ĐỎ vẫn sửa / ✔ Đã kiểm được ngay tại đây; đoạn (trống) thì lấp bằng 🔁 Dịch lại
+         đoạn (Trống) hoặc nhãn "n trống" ✍️.`
+      : `Đoạn này Gemini dịch được nhờ câu nhắc sau khi từ chối, hoặc nhờ chat mới (lượt 2)
+         — đối chiếu tiếng Trung bên trái, sửa chữ bên phải nếu cần, rồi ✔ Đã kiểm để bỏ màu đỏ
+         trong gemini_result.docx (file cũ được sao lưu cạnh đó).`;
     dlg.innerHTML = `
       <div class="modal-card trongmodal">
         <div class="modal-head">
-          <b>🔴 Đoạn tô đỏ cần kiểm — tập ${esc(t)}</b>
+          <b>${head}</b>
           <span class="spacer"></span>
           <button type="button" class="small modal-x">✕</button>
         </div>
         <div class="modal-body"><p class="hint">Đang đọc gemini_result.docx…</p></div>
         <div class="modal-foot">
-          <span class="hint">Đoạn này Gemini dịch được nhờ câu nhắc sau khi từ chối, hoặc nhờ chat mới (lượt 2)
-            — đối chiếu tiếng Trung bên trái, sửa chữ bên phải nếu cần, rồi ✔ Đã kiểm để bỏ màu đỏ
-            trong gemini_result.docx (file cũ được sao lưu cạnh đó).</span>
+          <span class="hint">${foot}</span>
           <button type="button" class="small modal-x">Đóng</button>
         </div>
       </div>`;
@@ -540,7 +551,8 @@
 
     let j;
     try {
-      const resp = await fetch(`/api/doan-do?tap=${encodeURIComponent(t)}`, { credentials: 'same-origin' });
+      const url = `/api/doan-do?tap=${encodeURIComponent(t)}` + (tatCa ? '&tatca=1' : '');
+      const resp = await fetch(url, { credentials: 'same-origin' });
       j = await resp.json();
     } catch (_) {
       if (body()) body().innerHTML = '<p class="warn">Không đọc được dữ liệu — server còn chạy không?</p>';
@@ -549,7 +561,9 @@
     if (!dlg) return;                                   // đã đóng trong lúc chờ
     if (j.loi) { body().innerHTML = `<p class="warn">${esc(j.loi)}</p>`; return; }
     if (!j.doan || !j.doan.length) {
-      body().innerHTML = `<p class="empty">Tập ${esc(t)} không còn đoạn tô đỏ nào trong gemini_result.docx.</p>`;
+      body().innerHTML = tatCa
+        ? `<p class="empty">Tập ${esc(t)} chưa có đoạn nào trong gemini_result.docx.</p>`
+        : `<p class="empty">Tập ${esc(t)} không còn đoạn tô đỏ nào trong gemini_result.docx.</p>`;
       return;
     }
     data = j;
@@ -567,15 +581,25 @@
 
   function render() {
     const d = data.doan[cur];
-    const tabs = data.doan.map((x, i) =>
-      `<button type="button" class="trong-tab${x.xong ? ' xong' : ' do'}${i === cur ? ' dang' : ''}"
-               data-i="${i}">Đoạn ${x.j}${x.xong ? ' ✓' : ''}</button>`).join('');
+    // Thẻ mỗi đoạn: đỏ = còn phải kiểm, trống = chưa có bản dịch (chỉ xem), còn lại
+    // là bản dịch thường (✓ chỉ hiện ở popup đỏ, nơi nó nghĩa là "đã kiểm").
+    const tabs = data.doan.map((x, i) => {
+      const cls = x.trong ? ' trong' : (x.xong ? ' xong' : ' do');
+      const mark = x.trong ? ' ○' : (!x.xong ? ' 🔴' : (tatCa ? '' : ' ✓'));
+      return `<button type="button" class="trong-tab${cls}${i === cur ? ' dang' : ''}"
+               data-i="${i}">Đoạn ${x.j}${mark}</button>`;
+    }).join('');
     const conLai = data.doan.filter((x) => !x.xong).length;
-    const trangThai = d.xong ? 'đã kiểm ✓' : 'đang TÔ ĐỎ — cần kiểm';
+    const soTrong = data.doan.filter((x) => x.trong).length;
+    const tomTat = tatCa
+      ? `${data.total} đoạn của tập · ${conLai} đỏ · ${soTrong} trống`
+      : `${conLai} đoạn còn đỏ / ${data.total} đoạn của tập`;
+    const trangThai = d.trong ? 'đang (trống) — chưa có bản dịch'
+      : d.xong ? (tatCa ? 'bản dịch' : 'đã kiểm ✓') : 'đang TÔ ĐỎ — cần kiểm';
     const vi = d.draft != null ? d.draft : (d.vi || '');
     body().innerHTML = `
       <div class="trong-tabs">${tabs}
-        <span class="hint">${conLai} đoạn còn đỏ / ${data.total} đoạn của tập</span></div>
+        <span class="hint">${tomTat}</span></div>
       <div class="trong-grid">
         <div class="trong-pane">
           <div class="trong-pane-head">🇨🇳 Tiếng Trung — đoạn ${d.j}

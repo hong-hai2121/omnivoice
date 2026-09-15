@@ -455,14 +455,15 @@ async def api_save_manual_translation(request: Request):
 
 # ── Popup 🔴 xem đoạn TÔ ĐỎ: bấm nhãn "n đỏ" ở cột Dịch (app.js) ───────────────
 @app.get("/api/doan-do")
-def api_red_paragraphs(tap: str = ""):
+def api_red_paragraphs(tap: str = "", tatca: int = 0):
     """Các đoạn đang TÔ ĐỎ (dịch được nhờ câu nhắc / chat mới, cần kiểm) của 1 tập kèm
-    tiếng Trung và tiếng Việt — nội dung popup."""
+    tiếng Trung và tiếng Việt — nội dung popup. tatca=1 → MỌI đoạn của tập (bấm dấu ✅
+    ở cột Dịch để xem đầy đủ, 15/09/2026)."""
     folder = _episode_folder_or_none(tap)
     if folder is None:
         return JSONResponse({"loi": f"Không tìm thấy thư mục tập {tap} trong kịch_bản/."},
                             status_code=404)
-    out = core.red_detail(folder)
+    out = core.red_detail(folder, tatca=bool(tatca))
     out.update({"tap": str(tap).strip().zfill(2), "ten": folder.name})
     return JSONResponse(out)
 
@@ -735,8 +736,9 @@ def _run_resume(request: Request, form) -> RedirectResponse:
 
     steps_mod.cleanup_tmp()
     queued = 0
+    fb_ban = core.facebook_ban()        # đọc một lần cho cả vòng
     for r in sorted(targets, key=lambda r: int(r["episode"])):
-        missing = core.missing_steps(r["steps"])
+        missing = core.missing_steps(r["steps"], fb_ban)
         if not missing:
             continue
         post = [k for k in missing if k in core.POST_STEPS]
@@ -968,26 +970,30 @@ def _fb_picked(form) -> list[str]:
     return [str(e) for e in form.getlist("fbtap")]
 
 
-def _fb_ctx(note: str = "") -> dict:
+def _fb_ctx(note: str = "", note_top: bool = False) -> dict:
     """Ngữ cảnh khối Đăng Facebook: danh sách chờ + lịch Page (đọc đĩa, không gọi
     mạng) kèm trạng thái hàng đợi.
 
     `busy` để khối tự gọi lại /partials/facebook mỗi 6s trong lúc hàng đợi
     Facebook còn việc: bấm 🔄 xong là bảng tự vẽ lại theo lịch mới đọc được, khỏi
     phải nhớ tải lại trang. Hết việc thì bản vẽ mới không còn hx-get nên vòng làm
-    mới tự tắt."""
+    mới tự tắt.
+    `note_top`: mẩu trả lời đặt cạnh ô radio bản đăng (đầu khối) thay vì cạnh
+    hàng nút cuối khối — cho nút vừa bấm ở đâu thì thấy trả lời ở đó."""
     ctx = core.facebook_pending()
     ctx["busy"] = fb_runner.busy()
     ctx["note"] = note
+    ctx["note_top"] = note_top
     return ctx
 
 
-def _fb_block(request: Request, note: str, fallback: str = "/"):
-    """Trả lời cho ba nút của khối: htmx thì thay CHÍNH khối đó bằng bản mới vẽ
+def _fb_block(request: Request, note: str, fallback: str = "/",
+              note_top: bool = False):
+    """Trả lời cho các nút của khối: htmx thì thay CHÍNH khối đó bằng bản mới vẽ
     (kèm mẩu trả lời cạnh nút), không có JS thì chuyển hướng như cũ."""
     if request.headers.get("hx-request"):
         return templates.TemplateResponse(request, "_form_facebook.html",
-                                          {"fb": _fb_ctx(note)})
+                                          {"fb": _fb_ctx(note, note_top)})
     return _back(request, fallback)
 
 
@@ -1047,6 +1053,27 @@ async def toggle_facebook_auto(request: Request):
     return _saved(request, "/",
                   "✓ Đã bật tự động lên lịch Facebook" if on
                   else "✓ Đã tắt tự động lên lịch Facebook")
+
+
+@app.post("/dangfacebook/ban")
+async def choose_facebook_ban(request: Request):
+    """Ô radio "Bản đăng lên Page": full (facebook.mp4 trọn tập) hay ngan
+    (tiktok.mp4 cắt ngắn giống TikTok). Lưu vào web_settings.json khoá fb_ban.
+
+    Trả về CẢ KHỐI vẽ lại (không chỉ mẩu "đã lưu"): bảng tập chưa đăng đổi theo
+    bản — cột Video/Cỡ, tiêu đề (bản ngắn mở đầu "Full ở"), và tập nào bị bỏ vì
+    thiếu video của bản đó — nên phải vẽ lại mới thấy đúng. Áp cho cả tự động
+    lẫn nút 📘 đăng tay; script đọc lúc chạy nên việc đang chờ cũng theo."""
+    ban = str((await request.form()).get("ban") or "").strip().lower()
+    if ban not in ("full", "ngan"):
+        return _fb_block(request, "⚠️ Bản không hợp lệ — giữ nguyên", note_top=True)
+    core.save_web_settings({"fb_ban": ban})
+    log("📘 Đăng Page bản CẮT NGẮN giống TikTok (tiktok.mp4) — tập chưa dựng TikTok "
+        "sẽ bị bỏ qua có báo, không đăng bản full thay." if ban == "ngan"
+        else "📘 Đăng Page bản FULL (facebook.mp4, trọn tập).")
+    return _fb_block(request,
+                     "✓ Sẽ đăng bản cắt ngắn giống TikTok" if ban == "ngan"
+                     else "✓ Sẽ đăng bản full", note_top=True)
 
 
 # ── Trang Thumbnail ─────────────────────────────────────────────────────────

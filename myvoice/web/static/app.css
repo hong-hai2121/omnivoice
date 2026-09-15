@@ -278,9 +278,13 @@ input:focus, select:focus, textarea:focus {
   font-size: 13px; line-height: 1.35; cursor: pointer; transition: background .12s;
 }
 .chk:hover { background: var(--sunken); }
-.chk input[type=checkbox] {
+.chk input[type=checkbox], .chk input[type=radio] {
   flex: none; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;
 }
+/* Cụm radio nằm NGANG trong .chks (vd bản đăng Page: full / cắt ngắn) */
+.chks .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 10px; }
+.chks .row .chk { margin: 0; }      /* bỏ lề âm của .chk kẻo hai ô chồng lên nhau */
+.chks .row .lbl { font-size: 13px; padding: 4px 0; color: var(--muted); }
 
 /* ── Nút ─────────────────────────────────────────────────────────────────── */
 button {
@@ -775,6 +779,15 @@ button.badge-do:hover {
 }
 .trong-tab.do { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
 .trong-tab.do.dang { border-color: var(--danger); }
+/* Dấu ✅ / — ở cột Dịch là NÚT xem đầy đủ các đoạn Trung/Việt của tập (15/09/2026):
+   trông y như chữ thường, chỉ nổi lên khi rê chuột. Thẻ "trống" trong dải tab của
+   popup toàn bộ đoạn: màu xám, chỉ để xem. */
+button.badge-xem {
+  min-height: 0; padding: 0 4px; border: 0; border-radius: 6px; background: none;
+  font: inherit; line-height: 1.35; cursor: pointer; color: inherit;
+}
+button.badge-xem:hover { background: var(--ok-bg); box-shadow: 0 0 0 3px var(--ok-bg); }
+.trong-tab.trong { color: var(--muted); border-style: dashed; }
 .trong-vi.do { border-color: var(--danger); }
 .trongmodal { width: min(1140px, 100%); max-height: 92vh; }
 .trong-tabs { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }

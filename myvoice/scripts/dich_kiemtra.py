@@ -69,6 +69,15 @@ SUSPECT_PHRASES = [
     # dich_gemini có bộ bắt từ chối is_refusal). Ví dụ:
     # "Tôi chỉ là một mô hình ngôn ngữ, nên không thể trợ giúp về điều đó."
     "mô hình ngôn ngữ",
+    # 15/09/2026: Gemini từ chối BẰNG TIẾNG TRUNG khi gửi đề bài ngắn (lượt 2 / 🔁) — cùng
+    # bộ cụm với dich_gemini._REFUSAL_PHRASES (tập 110/112/113/114/118).
+    "语言模型",
+    "没法帮到你",
+    "文本 ai",
+    "超出了我的",
+    "程序代码的局限",
+    "没法办到",
+    "只会生成文本",
     "không thể trợ giúp",
     "không thể hỗ trợ",
     # Biến thể tập 86: "Yêu cầu của bạn nằm ngoài khả năng tôi được lập trình."

@@ -9,13 +9,18 @@ chốt là "dịch cụt" / "từ chối" — KHÔNG đụng tới: việc đó 
 (⏩ Chạy tiếp / ② Dịch), còn ở đây chỉ lấp chỗ trống.
 
 Cách gửi: MỖI ĐOẠN TRỐNG GỬI LÊN GEMINI ĐÚNG MỘT LẦN — không mở lại Firefox,
-không cắt đôi, không gửi lại khi kết quả xấu. Kết quả nhận về in nguyên văn ra
+không cắt đôi, không gửi lại khi kết quả xấu. Đề bài là câu ngắn
+dich_gemini.BLANK_RETRY_PROMPT ("Dịch đi thẳng vào nội dung. Không giải thích thêm:")
++ nội dung đoạn — KHÔNG gửi câu hướng dẫn dịch dài, KHÔNG gắn thẻ hư cấu (15/09/2026,
+cùng đề bài với lượt 2 chat mới của bước dịch chính). Kết quả nhận về in nguyên văn ra
 nhật ký và ghi ngay vào gemini_result.docx để người dùng tự kiểm. Gemini trả câu TỪ
 CHỐI ("...chỉ là một mô hình ngôn ngữ") thì gửi thêm ĐÚNG MỘT câu nhắc trong cùng chat
 (dich_gemini.REFUSAL_NUDGE); dịch được thì lưu và TÔ ĐỎ đoạn đó trong docx để kiểm;
-vẫn không được (hoặc Gemini không trả lời) thì để nguyên "(trống)" và báo rõ.
-Trước khi ghi đè, bản gemini_result.docx cũ được sao lưu cạnh đó
-(gemini_result.saoluu_<ngày-giờ>.docx) để lùi lại được.
+vẫn không được (hoặc Gemini không trả lời) thì để nguyên "(trống)" và báo rõ. Gemini
+trả lời mà vẫn là TIẾNG TRUNG (từ chối bằng tiếng Trung, chép lại nguồn...) cũng để
+nguyên "(trống)" — lưu vào là cột Dịch hiện "—" trần, không nhãn, 🔁 không lấp lại được.
+KHÔNG sao lưu gemini_result.docx trước khi ghi (bỏ 15/09/2026 theo yêu cầu người dùng):
+script này chỉ ghi vào đúng các đoạn đang "(trống)", đoạn có chữ không bị đụng.
 
 Chạy:
     python dich_lai_trong.py --episode 98            # một tập
@@ -57,9 +62,7 @@ for _p in (_REPO_ROOT, _SCRIPTS_DIR, os.path.join(_BASE_DIR, "YOUTUBE"), _BASE_D
 
 import argparse
 import logging
-import shutil
 import time
-from datetime import datetime
 from pathlib import Path
 
 import dich_gemini as g
@@ -98,20 +101,6 @@ def _doc_pairs(folder):
     return gem, chunks, prior
 
 
-def _backup(gem):
-    """Sao lưu gemini_result.docx cạnh file gốc trước khi ghi đè → đường dẫn hoặc None."""
-    if not gem.exists():
-        return None
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dst = gem.with_name(f"gemini_result.saoluu_{stamp}.docx")
-    try:
-        shutil.copy2(gem, dst)
-        return dst
-    except OSError as e:
-        log(f"⚠️ Không sao lưu được {gem.name}: {e}")
-        return None
-
-
 def _ket_qua_xau(chunk, ans):
     """Nhận xét kết quả vừa nhận (chỉ để BÁO, không gửi lại): list lý do, [] = ổn."""
     notes = []
@@ -126,8 +115,9 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
     """Lấp các đoạn trống của MỘT tập. → (driver, số đoạn còn trống, số đoạn đã gửi).
 
     driver: Firefox đang mở (dùng chung cho nhiều tập) — None thì tự mở khi cần.
-    Mỗi tập mở một CHAT MỚI rồi gửi câu hướng dẫn dịch trước đoạn đầu (chat mới
-    chưa có ngữ cảnh), giống _dich_gemini_cho_tap của GUI.
+    Mỗi tập mở một CHAT MỚI; mỗi đoạn gửi với đề bài ngắn BLANK_RETRY_PROMPT + nội
+    dung (không câu hướng dẫn dài, không thẻ hư cấu), giống lượt 2 chat mới
+    (dich_gemini.retry_blanks_in_new_chat).
     Số đoạn còn trống = -1 nghĩa là tập này lỗi (thiếu bản nhận diện).
     """
     folder = Path(folder)
@@ -165,20 +155,24 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
     else:
         driver.get(g.GEMINI_URL)
         time.sleep(8)
-    g.send_prefix_to_gemini(driver, g.load_prefix(), on_log=log)
+    # 15/09/2026: KHÔNG gửi câu hướng dẫn dịch dài (TRANSLATE_PREFIX) và KHÔNG gắn thẻ
+    # hư cấu nữa — dùng đúng đề bài ngắn của lượt 2 chat mới (BLANK_RETRY_PROMPT:
+    # "Dịch đi thẳng vào nội dung. Không giải thích thêm:") + nội dung đoạn. Đoạn trống
+    # thường là đoạn đã bị từ chối với đề bài dài; chat sạch + đề bài gọn qua dễ hơn.
+    de_bai = g.BLANK_RETRY_PROMPT.strip()
+    log(f"📝 Đề bài ngắn cho mỗi đoạn: \"{de_bai or '(chỉ nội dung)'}\" — không câu "
+        "hướng dẫn dài, không thẻ hư cấu.")
 
     results = list(prior)
     red = set()          # đoạn dịch được nhờ câu nhắc sau khi bị từ chối → tô đỏ
-    backed_up = False
     sent = 0
     for n, j in enumerate(todo, 1):
         chunk = chunks[j - 1]
-        tag = g.FICTION_TAG.strip()
-        tagged = (tag + "\n" + chunk) if tag else chunk
+        msg = (de_bai + "\n" + chunk) if de_bai else chunk
         log(f"📤 [{n}/{len(todo)}] Gửi đoạn {j}/{len(chunks)} ({len(chunk)} ký tự) — "
             "một lần duy nhất...")
         try:
-            ans = g.send_to_gemini(driver, tagged, on_log=log)
+            ans = g.send_to_gemini(driver, msg, on_log=log)
         except Exception as e:
             log(f"❌ Lỗi khi gửi đoạn {j}: {e} — giữ nguyên (trống), sang đoạn kế.")
             continue
@@ -195,6 +189,15 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
                 continue
             ans = nudged
             red.add(j)
+        if g.is_reply_chinese(ans):
+            # Từ chối bằng tiếng Trung chưa có trong danh sách / chép lại nguồn / hỏi
+            # lại bằng tiếng Trung... — không phải bản dịch. Lưu vào là cột Dịch hiện
+            # "—" trần (có chữ nên không còn nhãn "n trống"), 🔁 không lấp lại được.
+            log(f"🈶 Đoạn {j}: Gemini trả lời vẫn là TIẾNG TRUNG "
+                f"({int(g.chinese_ratio(ans) * 100)}% chữ Hán) — không phải bản dịch → "
+                f"giữ nguyên (trống): \"{ans[:200]}\"")
+            red.discard(j)
+            continue
 
         log(f"\n========== KẾT QUẢ ĐOẠN {j}/{len(chunks)} ==========\n{ans}\n"
             "==========================================")
@@ -204,11 +207,7 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
             # Chỉ ghi chú (không phải lỗi): người dùng xác nhận lặp là do nguồn tự lặp.
             log(f"ℹ️ Đoạn {j}: câu mở đầu xuất hiện lại phía sau (nguồn tự lặp) — giữ nguyên.")
         results[j - 1] = ans
-        if not backed_up:
-            dst = _backup(gem)
-            if dst:
-                log(f"🗂 Đã sao lưu bản cũ → {dst.name}")
-            backed_up = True
+        # Không sao lưu bản cũ nữa (15/09/2026): chỉ ghi vào đúng đoạn đang trống.
         g.save_results_docx(chunks, results, gem, red=red)
         log(f"💾 Đã ghi đoạn {j} vào {gem.name}" + (" (TÔ ĐỎ — kiểm lại)" if j in red else ""))
 

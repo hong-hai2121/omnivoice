@@ -86,7 +86,10 @@ def find_untranslated(text):
 _LEAD_STARTS = ("bản dịch", "dưới đây là", "sau đây là", "đây là", "tiếp theo là",
                 "phần dịch", "nội dung dịch")
 _LEAD_KEY_RE = re.compile(r"bản dịch|phần dịch|nội dung dịch|dịch (sang|ra) tiếng việt")
-_LEAD_MAX_LEN = 80          # phần đầu (trước ':') dài hơn thì coi là câu truyện thật
+_LEAD_MAX_LEN = 120         # phần đầu (trước ':') dài hơn thì coi là câu truyện thật
+                            # (11/09/2026: 80 → 120 vì "Bản dịch hoàn chỉnh, mượt mà và
+                            #  giữ nguyên văn phong hài hước, cung đấu của tiểu thuyết
+                            #  mạng:" dài 92 ký tự nên lọt qua)
 _LEAD_EDGE = "*_\"'“”‘’ \t.:"   # ký tự trang trí quanh câu dẫn nhập (markdown, ngoặc kép)
 _REST_EDGE = "*_ \t"        # đầu phần nội dung còn lại chỉ bỏ markdown/khoảng trắng
 _split_marks_re = None      # dựng muộn: dich_input_docx import muộn dich_kiemtra ↔ file này
@@ -96,11 +99,15 @@ _split_marks_re = None      # dựng muộn: dich_input_docx import muộn dich_
 # giữ cả phần trước lẫn sau (không tự cắt bản dịch dở — xem is_result_duplicated bên
 # dich_gemini: người dùng muốn tự kiểm). Mẫu CHẶT để không cắt lời thoại thật: phải có
 # "dưới đây/sau đây/tiếp theo là bản dịch…" hoặc "bản dịch tiếng Việt" + chữ đặc trưng
-# của Gemini (mạch truyện / sát nghĩa / mượt mà / đầy đủ…) và kết bằng ':'.
+# của Gemini (mạch truyện / sát nghĩa / mượt mà / đầy đủ…) và kết bằng ':'. Phần đuôi
+# cho dài tới 120 ký tự = _LEAD_MAX_LEN (15/09/2026: mẫu "Bản dịch tiếng Việt mượt mà,
+# giữ trọn nhịp văn hài hước, bựa bựa và phong cách tu tiên tấu hài của nguyên tác:"
+# có đuôi 89 ký tự, sát ngưỡng 90 cũ).
 _LEAD_INLINE_RE = re.compile(
-    r"(?:(?:dưới đây|sau đây|tiếp theo) là (?:bản dịch|phần dịch|nội dung dịch)[^:\n.!?]{0,70}"
-    r"|bản dịch tiếng việt(?: (?:mạch truyện|sát nghĩa|mượt mà|đầy đủ|hoàn chỉnh|trọn vẹn"
-    r"|tự nhiên|chi tiết|của đoạn|của truyện)[^:\n.!?]{0,60})?)\s*:\s*",
+    r"(?:(?:dưới đây|sau đây|tiếp theo) là (?:bản dịch|phần dịch|nội dung dịch)[^:\n.!?]{0,120}"
+    r"|(?:bản dịch|phần dịch) (?:tiếng việt|mạch truyện|sát nghĩa|mượt mà|đầy đủ|hoàn chỉnh"
+    r"|trọn vẹn|tự nhiên|chi tiết|hài hước|trau chuốt|của đoạn|của truyện)"
+    r"[^:\n.!?]{0,120})\s*:\s*",
     re.IGNORECASE)
 
 

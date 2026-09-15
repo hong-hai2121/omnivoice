@@ -1,9 +1,15 @@
 {# Khối Đăng Facebook — lên lịch video DỌC các tập lên Page MimiAudio.
-   Danh sách "chưa đăng" = tập trong kịch_bản/ có video dọc, chưa nằm trong SỔ
-   LOCAL (FACEBOOK/da_dang.json) và chưa có dấu facebook_upload.json còn hiệu
-   lực. Không tick ô nào nghĩa là làm tất cả. Mọi nút chạy trong HÀNG ĐỢI
-   FACEBOOK riêng — song song với hàng đợi chính lẫn hàng đợi đăng YouTube,
+   Danh sách "chưa đăng" = tập trong kịch_bản/ có video của BẢN đang chọn, chưa
+   nằm trong SỔ LOCAL (FACEBOOK/da_dang.json) và chưa có dấu facebook_upload.json
+   còn hiệu lực. Không tick ô nào nghĩa là làm tất cả. Mọi nút chạy trong HÀNG
+   ĐỢI FACEBOOK riêng — song song với hàng đợi chính lẫn hàng đợi đăng YouTube,
    không tải lại trang.
+
+   Bản đăng (ô radio, 15/09/2026): "full" = facebook.mp4 trọn tập · "ngan" =
+   tiktok.mp4 cắt ngắn giống TikTok (tiêu đề mở đầu "Full ở" như TikTok). Lưu ở
+   web_settings.json khoá fb_ban; áp cho cả tự động lẫn nút 📘; script đọc lúc
+   chạy. Đổi ô là server trả lại CẢ khối vì bảng bên dưới (video, cỡ, tiêu đề,
+   tập bị bỏ vì thiếu video) đổi theo.
 
    Cả khối nằm trong #fbblock: lúc hàng đợi Facebook còn việc thì tự gọi lại
    /partials/facebook mỗi 6 giây và thay chính nó. Bấm 🔄 xong là bảng tự vẽ
@@ -11,32 +17,72 @@
    hx-get nên vòng làm mới tự tắt. #}
 <div id="fbblock"{% if fb.busy %} hx-get="/partials/facebook" hx-trigger="every 6s" hx-swap="outerHTML"{% endif %}>
 
-{# Ô tự động: form RIÊNG chỉ chứa mỗi ô này, nên server suy được "vắng mặt = bỏ
-   tick" (giống ô 🌙 của hàng đợi). #}
-<form class="panel" method="post" action="/dangfacebook/tudong"
-      hx-post="/dangfacebook/tudong" hx-target="#luunote-fbauto" hx-swap="innerHTML">
+<div class="panel">
   <div class="phead"><h2>📘 Đăng Facebook — Page MimiAudio</h2></div>
-  <div class="chks">
-    <label class="chk">
-      <input type="checkbox" name="on" value="1" {{ 'checked' if fb.auto }}
-             onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
-      📘 Dựng xong video thì TỰ lên lịch đăng Page
-    </label>
-    <span id="luunote-fbauto" class="luunote"></span>
-  </div>
+
+  {# Ô tự động: form RIÊNG chỉ chứa mỗi ô này, nên server suy được "vắng mặt = bỏ
+     tick" (giống ô 🌙 của hàng đợi). #}
+  <form method="post" action="/dangfacebook/tudong"
+        hx-post="/dangfacebook/tudong" hx-target="#luunote-fbauto" hx-swap="innerHTML">
+    <div class="chks">
+      <label class="chk">
+        <input type="checkbox" name="on" value="1" {{ 'checked' if fb.auto }}
+               onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+        📘 Dựng xong video thì TỰ lên lịch đăng Page
+      </label>
+      <span id="luunote-fbauto" class="luunote"></span>
+    </div>
+    <noscript><button class="ghost small">Lưu</button></noscript>
+  </form>
+
+  {# Bản đăng: form riêng, đổi là lưu ngay và VẼ LẠI CẢ KHỐI (bảng bên dưới đổi
+     theo bản). Radio luôn gửi một giá trị nên không cần suy "vắng mặt". #}
+  <form method="post" action="/dangfacebook/ban"
+        hx-post="/dangfacebook/ban" hx-target="#fbblock" hx-swap="outerHTML">
+    <div class="chks">
+      <div class="row">
+        <span class="lbl">🎞 Bản đăng lên Page:</span>
+        <label class="chk">
+          <input type="radio" name="ban" value="full" {{ 'checked' if fb.ban != 'ngan' }}
+                 onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+          Bản full (trọn tập — <code>facebook.mp4</code>)
+        </label>
+        <label class="chk">
+          <input type="radio" name="ban" value="ngan" {{ 'checked' if fb.ban == 'ngan' }}
+                 onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+          Bản cắt ngắn giống TikTok (<code>tiktok.mp4</code>)
+        </label>
+        <span id="luunote-fbban" class="luunote">
+          {%- if fb.note and fb.note_top %}<span class="savenote">{{ fb.note }}</span>{% endif -%}
+        </span>
+      </div>
+    </div>
+    <noscript><button class="ghost small">Lưu</button></noscript>
+  </form>
+
   <p class="hint">Chạy <b>song song</b> với đăng YouTube và không giữ hàng đợi
      chính: dựng xong tập nào là xếp lịch Page tập đó rồi làm tiếp tập sau ngay,
      y như đăng YouTube. Bật/tắt lúc nào cũng được, kể cả giữa mẻ đang chạy —
-     tập kế tiếp theo ngay.</p>
-  <noscript><button class="ghost small">Lưu</button></noscript>
-</form>
+     tập kế tiếp theo ngay.
+     {% if fb.ban == 'ngan' -%}
+     <b>Bản cắt ngắn</b> là chính video TikTok của tập (cắt theo % ở khối Video
+     TikTok, có nhạc nền), tiêu đề bài mở đầu “Full ở …” như TikTok để trỏ về bản
+     đầy đủ trên YouTube. Tập <b>chưa dựng TikTok</b> thì bị bỏ qua có báo — không
+     lặng lẽ đăng bản full thay.
+     {%- else -%}
+     <b>Bản full</b> là video dọc trọn tập (audio đầy đủ). Chọn <b>bản cắt ngắn</b>
+     nếu muốn Page chỉ đăng bài mồi như TikTok rồi dẫn về YouTube.
+     {%- endif %}</p>
+</div>
 
 <form class="panel" method="post" action="/dangfacebook/chay">
   <p class="hint">Xếp vào các khung <b>09:00 / 19:00 hằng ngày còn TRỐNG</b>, tính
      từ bây giờ. Ngày nào trên Page đã có bài chờ thì bỏ qua ngày đó, ngày nào
      trống thì lấp vào — xoá bớt bài đã lên lịch là lần xếp sau lấp lại đúng chỗ
-     ấy. Video lấy trong thư mục mỗi tập (<code>facebook….mp4</code>), tiêu đề +
-     mô tả lấy từ SEO của tập.</p>
+     ấy. Video lấy trong thư mục mỗi tập
+     ({% if fb.ban == 'ngan' %}<b>bản cắt ngắn</b> — <code>tiktok.mp4</code>, hoặc tên
+     tiêu đề TikTok sau khi đã đăng YouTube{% else %}<b>bản full</b> —
+     <code>facebook….mp4</code>{% endif %}), tiêu đề + mô tả lấy từ SEO của tập.</p>
 
   {% if fb.cooldown %}
     <p class="warn">⏸ Đang tạm ngưng gọi Facebook tới <b>{{ fb.cooldown }}</b> —
@@ -109,11 +155,15 @@
        Tiêu đề hiện đúng như bài sẽ đăng — tiêu đề YouTube kèm hashtag của mô tả
        trên cùng một dòng.</p>
   {% else %}
-    <p class="hint">Không có tập nào chờ đăng Page (đã lên hết, hoặc chưa dựng video dọc).</p>
+    <p class="hint">Không có tập nào chờ đăng Page (đã lên hết, hoặc chưa dựng
+       {% if fb.ban == 'ngan' %}video TikTok{% else %}video dọc{% endif %}).</p>
   {% endif %}
 
   {% if fb.missing %}
-    <p class="hint">Chưa có video dọc nên bỏ qua: {{ fb.missing|join(', ') }}.</p>
+    <p class="hint">{% if fb.ban == 'ngan' %}Chưa có bản TikTok (<code>tiktok.mp4</code>)
+       nên bỏ qua: {{ fb.missing|join(', ') }} — bật “Tạo video TikTok” rồi dựng lại,
+       hoặc chọn bản full ở trên.{% else %}Chưa có video dọc nên bỏ qua:
+       {{ fb.missing|join(', ') }}.{% endif %}</p>
   {% endif %}
 
   {# hx-post: xếp việc tại chỗ, KHÔNG tải lại trang — server trả về CHÍNH khối này
@@ -128,7 +178,7 @@
     <button formaction="/dangfacebook/quet" formnovalidate
             hx-post="/dangfacebook/quet" hx-target="#fbblock" hx-swap="outerHTML">🔄 Cập nhật lịch Page</button>
     <span id="luunote-facebook" class="luunote">
-      {%- if fb.note %}<span class="savenote">{{ fb.note }}</span>{% endif -%}
+      {%- if fb.note and not fb.note_top %}<span class="savenote">{{ fb.note }}</span>{% endif -%}
     </span>
   </div>
   <p class="hint"><b>🔄 Cập nhật lịch Page</b> hỏi lại Facebook ba việc: bài nào

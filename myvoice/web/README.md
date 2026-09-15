@@ -101,6 +101,20 @@ của từng tập), và "Số tập (chữ trên video)" (tự suy từ bộ đ
 chạy; ba nút — 📘 đăng các tập chưa đăng · 🔍 xem kế hoạch (dry-run) · 🔄 cập nhật
 lịch Page. Tick vài tập thì chỉ làm những tập đó, không tick ô nào = làm tất cả.
 
+**Bản đăng lên Page** (ô radio đầu khối, 15/09/2026; `web_settings.json` khoá
+`fb_ban`, route `/dangfacebook/ban`): **full** = `facebook.mp4` trọn tập (mặc
+định, nếp cũ) · **ngan** = `tiktok.mp4` **cắt ngắn giống TikTok** (theo % ở khối
+Video TikTok, có nhạc nền). Áp cho CẢ tự động lẫn nút 📘; script đọc lúc CHẠY
+(`core.facebook_ban()`, hoặc cờ `--ban`) nên việc đang nằm chờ cũng theo ô mới.
+Bản ngắn: video tìm qua `find_video_ngan` — `tiktok.mp4`, không có thì tra tên đã
+đổi trong `youtube_upload.json` (`tiktok_file`, vì đăng YouTube xong file bị đổi
+tên theo tiêu đề SEO TikTok), rồi mới mò mẫu `tiktok *.mp4` / `Full ở *.mp4`;
+tiêu đề bài mở đầu **“Full ở”** như TikTok (`title_for`) để bài mồi trỏ về bản
+đầy đủ trên YouTube. Tập chưa dựng TikTok thì **bỏ qua có báo, không đăng bản
+full thay** — người chọn bản ngắn là cố ý không đưa trọn tập lên Page. Đổi ô là
+server trả lại CẢ khối (bảng video/cỡ/tiêu đề/tập bị bỏ đổi theo); sổ + biên
+nhận ghi thêm `ban` và `video` để biết Page đang có bản nào của tập.
+
 Lịch xếp vào các khung **9h/19h còn TRỐNG** tính từ bây giờ, chứ không nối đuôi
 bài chờ xa nhất: xoá bài đã lên lịch ngày mai thì lần xếp sau lấp lại đúng ngày
 mai. Mỗi mốc đọc được quy về khung gần nhất (`slot_key`) nên bài đăng tay lúc

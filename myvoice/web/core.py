@@ -62,7 +62,11 @@ WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # 📘 Dựng xong video thì tự xếp lịch đăng Page Facebook. Để ở
                     # đây (không phải taogiong_pipeline.json) vì đăng Facebook là
                     # chức năng CHỈ bản web có, GUI không biết tới.
-                    fb_auto=True)
+                    fb_auto=True,
+                    # Bản video đăng lên Page (15/09/2026): "full" = facebook.mp4
+                    # trọn tập (nếp cũ) · "ngan" = tiktok.mp4 cắt ngắn giống TikTok.
+                    # Áp cho CẢ tự động lẫn nút 📘 đăng tay — script đọc lúc chạy.
+                    fb_ban="full")
 
 # ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
 SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
@@ -541,9 +545,15 @@ def save_manual_translation(folder, j: int, text: str) -> dict:
 # lượt 2 chat mới, được TÔ ĐỎ trong gemini_result.docx để người dùng kiểm. Nhãn
 # "n đỏ" mở popup: trái tiếng Trung, phải tiếng Việt (sửa được). ✔ Đã kiểm → bỏ màu
 # đỏ (giữ nội dung); 💾 Lưu bản sửa → ghi nội dung mới + bỏ đỏ. Route: /api/doan-do.
-def red_detail(folder) -> dict:
+def red_detail(folder, tatca: bool = False) -> dict:
     """Các đoạn đang TÔ ĐỎ của 1 tập kèm nguồn tiếng Trung và bản dịch.
-    → {"total": số đoạn, "doan": [{"j", "zh", "vi"}], "loi": chuỗi nếu không làm được}"""
+    → {"total": số đoạn, "doan": [{"j", "zh", "vi", "xong", "trong"}], "loi": chuỗi nếu
+    không làm được}. "xong" = không (còn) đỏ → popup chỉ cho xem; "trong" = đoạn đang
+    "(trống)"/"(chưa dịch)".
+
+    tatca=True (15/09/2026): trả về MỌI đoạn của tập, không chỉ đoạn đỏ — cho nút ✅ ở
+    cột Dịch: người dùng bấm vào dấu tick để xem đầy đủ các đoạn Trung/Việt cạnh nhau
+    sau khi đã lấp trống và kiểm đỏ xong. Đoạn đỏ (nếu còn) vẫn ✔ được ngay trong popup."""
     folder = Path(folder)
     chunks, prior = translation_pairs(folder)
     if not chunks:
@@ -555,9 +565,14 @@ def red_detail(folder) -> dict:
                 "loi": "Tập này chưa dịch lần nào (chưa có gemini_result.docx)."}
     import dich_gemini as g
     red = g.read_red_marks(gem, len(chunks))
-    doan = [{"j": j, "zh": chunks[j - 1], "vi": (prior[j - 1] or red[j] or "").strip()}
-            for j in sorted(red)]
-    return {"total": len(chunks), "doan": doan}
+    which = range(1, len(chunks) + 1) if tatca else sorted(red)
+    doan = []
+    for j in which:
+        vi = (prior[j - 1] or red.get(j) or "").strip()
+        trong = g.blank_kind(vi) is not None or not vi
+        doan.append({"j": j, "zh": chunks[j - 1], "vi": vi if vi else g.BLANK_SENT,
+                     "xong": j not in red, "trong": trong})
+    return {"total": len(chunks), "doan": doan, "tatca": bool(tatca)}
 
 
 def review_red_segment(folder, j: int, text: str | None = None) -> dict:
@@ -669,6 +684,10 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         "video_doc": (folder / "facebook.mp4").exists()
                       or bool(list(folder.glob("facebook *.mp4")))
                       or bool(list(folder.glob("*_doc.mp4"))),
+        # Bản TikTok (tiktok.mp4, hoặc tên SEO sau khi đăng YouTube) — không thành
+        # cột trong bảng (STEP_LABELS), chỉ để missing_steps biết tập có gì để đăng
+        # Page khi ô radio chọn "bản cắt ngắn" (fb_ban = ngan).
+        "video_tiktok": _tiktok_video_exists(folder),
         # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
         "upload": (folder / "youtube_upload.json").exists(),
         # Short: cùng bản ghi đó, chỉ khi có short_video_id (upload_short thành công;
@@ -681,6 +700,15 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # "đã đăng, không xếp" — hai nơi nói hai đằng.
         "facebook": _facebook_posted(folder, episode, source),
     }
+
+
+def _tiktok_video_exists(folder: Path) -> bool:
+    """Tập có bản TikTok để đăng Page không — cùng phép tìm với script Facebook
+    (find_video_ngan: tiktok.mp4 → tên ghi ở youtube_upload.json → mẫu tên)."""
+    try:
+        return facebook_module().find_video_ngan(Path(folder)) is not None
+    except Exception:
+        return (Path(folder) / "tiktok.mp4").exists()
 
 
 def _short_posted(folder: Path) -> bool:
@@ -733,7 +761,7 @@ def _facebook_posted(folder: Path, episode: str, source: str = "") -> bool:
         return (folder / "facebook_upload.json").exists()
 
 
-def missing_steps(steps: dict) -> list[str]:
+def missing_steps(steps: dict, fb_ban: str | None = None) -> list[str]:
     """Các bước runner CÒN THIẾU của 1 tập, đúng thứ tự chạy — cho nút ⏩ Chạy tiếp
     (bản web của '▶ Chạy tiếp tập đang chọn' bên GUI). Nhận dict của folder_steps.
 
@@ -748,12 +776,16 @@ def missing_steps(steps: dict) -> list[str]:
     # chuỗi dựng tự nối việc đăng (queue_after_build) nên không liệt vào đây.
     #   short    — video chính đã lên YouTube mà bản ghi chưa có Short (lượt đăng
     #              đổ giữa chừng như tập 85, hoặc Short rớt vì quota như tập 94);
-    #   facebook — có video dọc mà chưa có biên nhận Page.
+    #   facebook — có video của BẢN đang chọn (facebook.mp4, hoặc tiktok.mp4 khi ô
+    #              radio chọn bản cắt ngắn) mà chưa có biên nhận Page. Bên gọi lặp
+    #              nhiều tập thì truyền fb_ban đọc một lần, khỏi đọc file mỗi vòng.
     # Tập chưa đăng video chính thì Short đi kèm lượt đăng chính, không tách.
     if not out:
         if steps.get("upload") and not steps.get("short"):
             out.append("short")
-        if steps.get("video_doc") and not steps.get("facebook"):
+        ban = fb_ban if fb_ban is not None else facebook_ban()
+        has_fb_video = steps.get("video_tiktok") if ban == "ngan" else steps.get("video_doc")
+        if has_fb_video and not steps.get("facebook"):
             out.append("facebook")
     return out
 
@@ -789,6 +821,9 @@ def episode_rows() -> list[dict]:
             # Đoạn TÔ ĐỎ (dịch được nhờ câu nhắc / chat mới, cần kiểm) → nhãn "n đỏ"
             # ở cột Dịch, bấm mở popup xem Trung/Việt cạnh nhau (app.js).
             "do": red_chunks(folder, pairs),
+            # Đã có gemini_result.docx → dấu ✅ / — ở cột Dịch là nút xem đầy đủ các
+            # đoạn Trung/Việt (popup dùng chung với "n đỏ", app.js .badge-xem).
+            "co_dich": (folder / "gemini_result.docx").exists(),
             "done_count": sum(1 for v in core_steps.values() if v),
             "total_steps": len(core_steps),
         })
@@ -900,6 +935,17 @@ def facebook_auto() -> bool:
     return bool(load_web_settings().get("fb_auto", True))
 
 
+def facebook_ban() -> str:
+    """Bản video đăng lên Page: "full" (facebook.mp4) hay "ngan" (tiktok.mp4 cắt
+    ngắn giống TikTok) — ô radio trong khối 📘 Đăng Facebook.
+
+    Cũng đọc lại mỗi lần hỏi như facebook_auto: script Facebook hỏi lúc CHẠY nên
+    đổi ô trong lúc việc còn nằm chờ trong hàng đợi là lượt đó theo bản mới. Giá
+    trị lạ quy về "full" để tập cũ/không có cài đặt vẫn đăng như trước nay."""
+    val = str(load_web_settings().get("fb_ban", "full") or "").strip().lower()
+    return "ngan" if val == "ngan" else "full"
+
+
 _FB_MOD = None
 
 
@@ -951,6 +997,9 @@ def facebook_pending() -> dict:
         fb = facebook_module()
     except Exception:
         fb = None
+    # Bản đăng (full / ngan) — cùng phép chọn video + tiêu đề với script (find_video
+    # / title_for của nó), để bảng xem trước hiện ĐÚNG file và tiêu đề sẽ lên Page.
+    ban = facebook_ban()
 
     rows, missing = [], []
     for r in sorted(episode_rows(), key=lambda r: int(r["episode"])):
@@ -971,19 +1020,28 @@ def facebook_pending() -> dict:
             continue
         luu_y = fb.old_post_note(info) if fb and isinstance(info, dict) else ""
         video = None
-        for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
-            hits = sorted(folder.glob(pattern))
-            if hits:
-                video = hits[0]
-                break
+        if fb:
+            video = fb.find_video(folder, ban)
+        elif ban == "ngan":
+            if (folder / "tiktok.mp4").exists():
+                video = folder / "tiktok.mp4"
+        else:
+            for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
+                hits = sorted(folder.glob(pattern))
+                if hits:
+                    video = hits[0]
+                    break
         if video is None:
-            missing.append(r["episode"])       # có tập nhưng chưa dựng video dọc
+            missing.append(r["episode"])       # có tập nhưng chưa dựng video bản này
             continue
         seo = seo_blocks(folder, r["episode"])
         rows.append({"episode": r["episode"], "video": video.name,
                      # Tiêu đề ĐÚNG như bài sẽ đăng: tiêu đề YouTube + hashtag
-                     # của mô tả, gộp một dòng (compose_facebook_title).
-                     "title": (seo or {}).get("title_facebook") or (seo or {}).get("title", ""),
+                     # của mô tả, gộp một dòng (compose_facebook_title); bản cắt
+                     # ngắn thêm "Full ở" đằng trước như TikTok (title_for).
+                     "title": (fb.title_for(seo, r["episode"], ban) if fb
+                               else (seo or {}).get("title_facebook")
+                               or (seo or {}).get("title", "")),
                      "size_mb": video.stat().st_size // 1_000_000,
                      "luu_y": luu_y,         # Page còn bài cũ cùng số (truyện khác)
                      "when": ""})            # điền ngay bên dưới
@@ -1029,6 +1087,8 @@ def facebook_pending() -> dict:
     return {"rows": rows, "missing": missing, "scanned": bool(eps),
             "fetched": str(led.get("synced", "")), "on_page": len(seen),
             "cooldown": cooldown, "auto": facebook_auto(),
+            # Bản đang chọn: khối vẽ ô radio + đổi lời chú (video nào, thiếu gì).
+            "ban": ban,
             # Lịch đang chờ + lúc đọc được nó: khối trên trang hiện thành bảng
             # riêng, và biết `filled` để nói giờ dự kiến là lấp chỗ trống hay chỉ
             # nối đuôi (chưa bấm 🔄 lần nào).

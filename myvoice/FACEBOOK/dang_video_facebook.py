@@ -1,10 +1,21 @@
-"""Lên lịch đăng video DỌC (facebook.mp4) của các tập lên Page MimiAudio.
+"""Lên lịch đăng video DỌC của các tập lên Page MimiAudio.
+
+Có HAI BẢN dọc để chọn (15/09/2026), chọn ở ô radio trong khối "📘 Đăng
+Facebook" trên web (web_settings.json khoá `fb_ban`) hoặc cờ --ban:
+    full → facebook.mp4  — bản đầy đủ, audio trọn tập (mặc định, như trước nay)
+    ngan → tiktok.mp4    — bản CẮT NGẮN giống TikTok (theo % ở khối Video TikTok,
+                           có nhạc nền), caption mở đầu "Full ở …" như TikTok.
+Sau khi đăng YouTube, tiktok.mp4 đã bị đổi tên theo tiêu đề SEO TikTok (xem
+dang_tap_youtube.rename_doc) → find_video_ngan tra youtube_upload.json rồi mới
+mò theo mẫu tên. Tập chọn bản ngắn mà chưa dựng TikTok thì BỎ QUA có báo, không
+lặng lẽ đăng bản full thay.
 
 Cách chạy:
     venv\\Scripts\\python.exe myvoice\\FACEBOOK\\dang_video_facebook.py            → xem kế hoạch rồi hỏi y/N
     venv\\Scripts\\python.exe myvoice\\FACEBOOK\\dang_video_facebook.py --dry-run  → chỉ xem, không đăng
     thêm --limit 4   → mỗi lần chạy chỉ xếp tối đa 4 tập
     thêm --yes       → khỏi hỏi (cho chạy tự động)
+    thêm --ban ngan  → đăng bản cắt ngắn (không truyền = theo cài đặt trên web)
 
 Cách hoạt động:
   1. Hỏi Page (Graph API) LỊCH ĐANG CHỜ: /scheduled_posts + /videos, rồi hỏi lại
@@ -58,6 +69,19 @@ LEDGER_FILE = Path(__file__).resolve().parent / "da_dang.json"
 SLOT_HOURS = (9, 19)              # 09:00 sáng · 19:00 tối, giờ máy (VN)
 MIN_LEAD_MIN = 15                 # FB đòi lịch cách hiện tại ≥10 phút — chừa 15
 MAX_AHEAD_DAYS = 75               # FB không nhận lịch xa hơn ~75 ngày
+
+# Bản video đăng lên Page — giá trị của khoá `fb_ban` (web_settings.json) và cờ
+# --ban. Nhãn dùng chung cho log + khối web để hai nơi gọi tên giống nhau.
+BAN_FULL = "full"                 # facebook.mp4 — audio trọn tập
+BAN_NGAN = "ngan"                 # tiktok.mp4   — cắt ngắn giống TikTok
+BAN_LABELS = {BAN_FULL: "bản FULL (facebook.mp4)",
+              BAN_NGAN: "bản CẮT NGẮN giống TikTok (tiktok.mp4)"}
+TIKTOK_TITLE_HEAD = "Full ở"      # = thumbnail_gui.TIKTOK_TITLE_HEAD (mở đầu tiêu đề TikTok)
+
+
+def norm_ban(value) -> str:
+    """'ngan' hay 'full' — mọi giá trị lạ/rỗng quy về full (nếp cũ)."""
+    return BAN_NGAN if str(value or "").strip().lower() == BAN_NGAN else BAN_FULL
 
 # Chạm bấy nhiêu phần trăm hạn mức là TỰ NGƯNG, không đợi Meta chặn. Mọi response
 # của Graph API đều kèm header hạn mức (X-App-Usage / X-Page-Usage /
@@ -910,8 +934,8 @@ def ledger_covers(info, folder, source: str = "", other_sources=()) -> bool:
     return not list(other_sources or ())
 
 
-def find_video(folder: Path) -> Path | None:
-    """Video dọc của tập — đúng thứ tự nhánh video_doc bên web/core.py."""
+def find_video_full(folder: Path) -> Path | None:
+    """Video dọc ĐẦY ĐỦ của tập — đúng thứ tự nhánh video_doc bên web/core.py."""
     if (folder / "facebook.mp4").exists():
         return folder / "facebook.mp4"
     for pattern in ("facebook *.mp4", "*_doc.mp4"):
@@ -921,32 +945,98 @@ def find_video(folder: Path) -> Path | None:
     return None
 
 
-def caption_for(core, folder: Path, episode: str) -> tuple[str, str]:
+def find_video_ngan(folder: Path) -> Path | None:
+    """Video CẮT NGẮN giống TikTok của tập (tiktok.mp4), kể cả sau khi đã đổi tên.
+
+    Đăng YouTube xong thì dang_tap_youtube.rename_doc đổi tiktok.mp4 thành đúng
+    tiêu đề SEO TikTok ('Full ở Mimi audio Số 12 - ….mp4'), hoặc 'tiktok <giờ>.mp4'
+    khi chưa có tiêu đề. Tên mới ghi ở youtube_upload.json (`tiktok_file`) nên tra
+    đó trước, hai mẫu tên chỉ là đường lui khi bản ghi mất. short.mp4 (≤2:50, cho
+    YouTube Short) KHÔNG tính — nó ngắn hơn hẳn bản TikTok.
+    """
+    if (folder / "tiktok.mp4").exists():
+        return folder / "tiktok.mp4"
+    try:
+        rec = json.loads((folder / "youtube_upload.json").read_text(encoding="utf-8"))
+        name = str(rec.get("tiktok_file") or "")
+        if name and (folder / name).is_file():
+            return folder / name
+    except (OSError, ValueError, AttributeError):
+        pass
+    for pattern in ("tiktok *.mp4", f"{TIKTOK_TITLE_HEAD} *.mp4"):
+        hits = sorted(folder.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
+
+
+def find_video(folder: Path, ban: str = BAN_FULL) -> Path | None:
+    """Video sẽ đăng của tập theo bản đã chọn (BAN_FULL / BAN_NGAN); None = chưa dựng."""
+    return find_video_ngan(folder) if norm_ban(ban) == BAN_NGAN else find_video_full(folder)
+
+
+def missing_video_note(ban: str = BAN_FULL) -> str:
+    """Câu báo tập thiếu video — nói đúng bản đang chọn để người đọc biết phải
+    dựng gì (dựng TikTok hay dựng video dọc) chứ không chỉ "chưa có video dọc"."""
+    return ("CHƯA có bản TikTok (tiktok.mp4) — bật 'Tạo video TikTok' rồi dựng lại, "
+            "hoặc đổi sang bản full" if norm_ban(ban) == BAN_NGAN
+            else "CHƯA có video dọc")
+
+
+def title_for(seo: dict | None, episode: str, ban: str = BAN_FULL) -> str:
+    """Dòng tiêu đề bài đăng theo bản đã chọn; '' nếu tập chưa có SEO.
+
+    full → `title_facebook` (tiêu đề YouTube + hashtag mô tả, một dòng — xem
+           compose_facebook_title).
+    ngan → CÙNG dòng đó nhưng mở đầu 'Full ở' như tiêu đề TikTok: bản cắt ngắn là
+           bài mồi trỏ về bản đầy đủ trên YouTube, để nguyên tiêu đề bản full thì
+           người xem tưởng đây là trọn tập. Ghép từ title_tiktok + phần hashtag
+           của title_facebook để không tự bịa chữ.
+    """
+    if not seo:
+        return ""
+    fb_title = str(seo.get("title_facebook") or seo.get("title") or "")
+    if norm_ban(ban) != BAN_NGAN or not fb_title:
+        return fb_title
+    tk = str(seo.get("title_tiktok") or "")
+    yt = str(seo.get("title") or "")
+    if tk and yt and fb_title.startswith(yt):
+        return tk + fb_title[len(yt):]
+    return tk or f"{TIKTOK_TITLE_HEAD} {fb_title}"
+
+
+def caption_for(core, folder: Path, episode: str,
+                ban: str = BAN_FULL) -> tuple[str, str]:
     """→ (tiêu đề bài, caption đầy đủ) — lấy từ SEO của tập.
 
-    Tiêu đề dùng `compose_facebook_title` bên thumbnail_gui: TIÊU ĐỀ YOUTUBE kèm
-    bộ hashtag của mô tả, gộp MỘT DÒNG (xem chú thích ở hàm đó). Caption = dòng
-    tiêu đề ấy rồi tới mô tả SEO.
+    Tiêu đề theo `title_for` (bản full: tiêu đề YouTube kèm bộ hashtag của mô tả,
+    gộp MỘT DÒNG; bản ngắn: thêm 'Full ở' đằng trước). Caption = dòng tiêu đề ấy
+    rồi tới mô tả SEO.
     """
     seo = core.seo_blocks(folder, episode)
     n = int(episode)
-    if seo and (seo.get("title_facebook") or seo.get("title")):
-        head = seo.get("title_facebook") or seo["title"]
+    head = title_for(seo, episode, ban)
+    if head:
         desc = f"{head}\n\n{seo['desc']}" if seo.get("desc") else head
         return head, desc
     head = f"Mimi audio Số {n} #MimiAudioSo{episode}"
+    if norm_ban(ban) == BAN_NGAN:
+        head = f"{TIKTOK_TITLE_HEAD} {head}"
     return head, head
 
 
-def pending_episodes(core, led: dict) -> tuple[list[dict], list[str]]:
-    """Tập CHƯA đăng mà đã dựng xong video dọc, cũ → mới.
+def pending_episodes(core, led: dict, ban: str = BAN_FULL) -> tuple[list[dict], list[str]]:
+    """Tập CHƯA đăng mà đã dựng xong video của bản đã chọn (`ban`), cũ → mới.
 
     "Chưa đăng" tra SỔ LOCAL (`led`) chứ không hỏi Page. Vẫn xét thêm dấu
     facebook_upload.json trong thư mục tập: đó là biên nhận của lần đăng trước,
     giữ lại để lỡ sổ hỏng/mất vẫn không đăng trùng. Mục sổ chỉ tính khi thuộc ĐÚNG
     bản dựng trong thư mục (ledger_covers — số tập cấp lại cho truyện khác thì
     tập mới vẫn là hàng chờ, kèm dòng nhắc Page còn bài cũ cùng số).
+    Chọn bản ngắn mà tập chưa có tiktok.mp4 thì bỏ qua có báo — không đăng bản
+    full thay, vì người chọn bản ngắn là cố ý không đưa trọn tập lên Page.
     """
+    ban = norm_ban(ban)
     out, notes = [], []
     eps = led.get("eps") or {}
     rows = sorted(core.episode_rows(), key=lambda r: int(r["episode"]))
@@ -960,15 +1050,15 @@ def pending_episodes(core, led: dict) -> tuple[list[dict], list[str]]:
         if ledger_covers(info, folder, nguon,
                          core.other_sources_of(r["episode"], nguon, post_time(info))):
             continue
-        video = find_video(folder)
+        video = find_video(folder, ban)
         if video is None:
-            notes.append(f"  · tập {r['episode']}: CHƯA có video dọc — bỏ qua")
+            notes.append(f"  · tập {r['episode']}: {missing_video_note(ban)} — bỏ qua")
             continue
         if isinstance(info, dict):
             notes.append(f"  ⚠️ tập {r['episode']}: {old_post_note(info)}")
-        title, desc = caption_for(core, folder, r["episode"])
+        title, desc = caption_for(core, folder, r["episode"], ban)
         out.append({"ep": r["episode"], "n": n, "folder": folder, "nguon": nguon,
-                    "video": video, "title": title, "desc": desc})
+                    "video": video, "title": title, "desc": desc, "ban": ban})
     return out, notes
 
 
@@ -1039,6 +1129,10 @@ def main() -> int:
                     help="chỉ in danh sách tập chưa đăng theo SỔ LOCAL — không gọi API")
     ap.add_argument("--tap", default="",
                     help="chỉ các tập này, cách nhau bằng dấu phẩy (vd: 08,49)")
+    ap.add_argument("--ban", choices=(BAN_FULL, BAN_NGAN), default=None,
+                    help="bản video đăng lên Page: full = facebook.mp4 trọn tập · "
+                         "ngan = tiktok.mp4 cắt ngắn giống TikTok (không truyền = theo "
+                         "ô radio trên web, khoá fb_ban trong web_settings.json)")
     args = ap.parse_args()
 
     if not PAGE_ID or not TOKEN:
@@ -1060,6 +1154,12 @@ def main() -> int:
     # myvoice.web.core cho danh sách tập + SEO — import muộn vì nó kéo cả module GUI.
     sys.path.insert(0, str(ROOT))
     from myvoice.web import core
+
+    # Bản đăng: cờ --ban thắng; không truyền thì đọc ô radio trên web NGAY LÚC
+    # CHẠY (không phải lúc xếp việc) — việc nằm chờ trong hàng đợi hàng giờ, đổi ô
+    # giữa chừng là lượt kế theo ngay, cùng nếp với ô 📘 tự động (facebook_auto).
+    ban = norm_ban(args.ban if args.ban else core.facebook_ban())
+    print(f"🎞 Bản đăng lên Page: {BAN_LABELS[ban]}")
 
     led = load_ledger()
 
@@ -1121,7 +1221,7 @@ def main() -> int:
         if not snap["slots"]:
             print("   (không còn bài nào chờ đăng)")
 
-        queue, _ = pending_episodes(core, led)
+        queue, _ = pending_episodes(core, led, ban)
         print(f"\n📋 Chưa đăng: {', '.join(it['ep'] for it in queue) or '(không có tập nào)'}")
         if queue:
             print("   Khung trống sẽ nhận các tập này:")
@@ -1131,7 +1231,7 @@ def main() -> int:
         return 0
 
     # ── Việc thường ngày: "đăng chưa" tra SỔ LOCAL, không hỏi Page ──────────
-    queue, notes = pending_episodes(core, led)
+    queue, notes = pending_episodes(core, led, ban)
     if notes:
         print("\n".join(notes))
     print(f"📒 Sổ local: đã đăng {len(led.get('eps') or {})} tập"
@@ -1211,7 +1311,8 @@ def main() -> int:
         print("✅ Không còn khung giờ hợp lệ để xếp.")
         return 0
 
-    print(f"\n📅 Kế hoạch ({len(plan)} tập, khung {SLOT_HOURS[0]}h/{SLOT_HOURS[1]}h):")
+    print(f"\n📅 Kế hoạch ({len(plan)} tập, khung {SLOT_HOURS[0]}h/{SLOT_HOURS[1]}h, "
+          f"{BAN_LABELS[ban]}):")
     for item, when in plan:
         print(f"  tập {item['ep']} → {when:%a %d/%m %H:%M} · {item['video'].name}"
               f" · {item['title'][:50]}")
@@ -1252,7 +1353,10 @@ def main() -> int:
                 # Bài này là của BẢN DỰNG nào (08/09/2026): số tập có thể được cấp
                 # lại cho truyện khác, lúc đó sổ phải biết mà không chặn — xem
                 # ledger_covers.
-                "thu_muc": item["folder"].name, "nguon": item.get("nguon", "")}
+                "thu_muc": item["folder"].name, "nguon": item.get("nguon", ""),
+                # Đăng bản nào, file nào (15/09/2026) — để sau này mở sổ/biên nhận
+                # là biết Page đang có bản full hay bản cắt ngắn của tập.
+                "ban": item.get("ban", BAN_FULL), "video": item["video"].name}
         # Ghi SỔ trước, biên nhận trong thư mục tập sau: sổ là chỗ vòng sau tra
         # "đăng chưa", mất nó thì tập này bị xếp lại lần nữa.
         mark_posted(led, item["ep"], info)
