@@ -6753,7 +6753,7 @@ class App(tk.Tk):
             if youtube_dir not in sys.path:
                 sys.path.insert(0, youtube_dir)
             import dien_tieu_de_thumbnail as renderer
-            from seo_docx_parser import parse_seo_docx
+            from seo_docx_parser import parse_seo_docx, title_too_long, core_title
 
             out_png = folder / f"thumbnail{episode}.png"        # bản NGANG
             out_doc = folder / f"thumbnail{episode}_dọc.png"    # bản DỌC
@@ -6775,10 +6775,13 @@ class App(tk.Tk):
             # Tiêu đề hợp lệ luôn NGẮN (1 câu đã chọn). Nếu parse SEO lấy nhầm cả đoạn
             # (vd câu mở đầu Gemini "Dưới đây là 5 tiêu đề...") thì title rất dài → BỎ QUA
             # thumbnail thay vì nhồi vào renderer (tránh treo CPU + thumbnail xấu).
-            if len(title) > 120 or len(title.split()) > 18:
+            # Đo bằng đúng thước của parser (tên truyện trần, bỏ '| Mimi audio') để hai
+            # bên không lệch nhau: parser nhận mà đây gạt thì tập mất thumbnail.
+            if title_too_long(title):
+                core = core_title(title)
                 logging.warning(
-                    f"⚠️ {folder.name}: tiêu đề SEO BẤT THƯỜNG ({len(title.split())} từ, "
-                    f"{len(title)} ký tự) — có thể parse nhầm câu mở đầu. BỎ QUA thumbnail. "
+                    f"⚠️ {folder.name}: tiêu đề SEO BẤT THƯỜNG ({len(core.split())} từ, "
+                    f"{len(core)} ký tự) — có thể parse nhầm câu mở đầu. BỎ QUA thumbnail. "
                     f"Tiêu đề: {title[:80]}…")
                 return False
 

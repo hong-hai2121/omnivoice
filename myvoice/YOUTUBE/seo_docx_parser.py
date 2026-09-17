@@ -64,19 +64,59 @@ def _is_note(text):
     return core.endswith(")") or core.endswith("）")
 
 
+# Hậu tố thương hiệu '| Mimi audio' Gemini gắn sau tên truyện — KHÔNG tính vào độ dài
+# khi xét "có phải tiêu đề không" (bản đăng lẫn thumbnail đều bỏ hậu tố này rồi ghép lại).
+_BRAND_TAIL_RE = re.compile(r"\s*\|\s*mimi\s*(?:audio|truyện)\s*$", re.IGNORECASE)
+# Ngưỡng cho TÊN TRUYỆN trần (đã bỏ hậu tố + ghi chú số ký tự). Tập 113 (09/2026): tên
+# truyện 17 từ + '| Mimi audio' = 20 từ, ngưỡng cũ 18 từ (đếm cả hậu tố) gạt mất tiêu đề
+# được chọn → vòng tìm trôi qua mốc '🏷️ BƯỚC 3: VIẾT THẺ TAG YOUTUBE' (Word không gán
+# Heading) và lấy nhầm dòng đó làm tiêu đề — lên cả thumbnail lẫn tên video. Câu mở đầu
+# dài dòng của Gemini vẫn bị loại vì vượt 110 ký tự.
+TITLE_MAX_CHARS = 110
+TITLE_MAX_WORDS = 22
+
+# Dòng MỐC mục của Gemini ('🎯 BƯỚC 2: CHỌN TIÊU ĐỀ VIDEO', '🏷️ BƯỚC 3: VIẾT THẺ TAG
+# YOUTUBE', '📝 BƯỚC 4: VIẾT MÔ TẢ VIDEO CHUẨN SEO'). Nhận theo NỘI DUNG vì Word không
+# phải lúc nào cũng gán style Heading cho các dòng này.
+_STEP_RE = re.compile(r"^\W*BƯỚC\s*\d+\b")
+_SECTION_KEYS = ("CHỌN TIÊU ĐỀ", "THẺ TAG", "MÔ TẢ VIDEO", "TIÊU ĐỀ TỐT NHẤT")
+
+
+def core_title(title):
+    """Tên truyện trần để ĐO độ dài: bỏ ghi chú '(N ký tự)' và hậu tố '| Mimi audio'."""
+    return _BRAND_TAIL_RE.sub("", strip_char_count_note(title)).strip()
+
+
+def title_too_long(title):
+    """Tiêu đề dài bất thường (đo trên tên truyện trần) → gần như chắc là parse nhầm
+    câu mở đầu / đoạn văn. Dùng chung cho parser và chốt chặn trước khi vẽ thumbnail."""
+    core = core_title(title)
+    return len(core) > TITLE_MAX_CHARS or len(core.split()) > TITLE_MAX_WORDS
+
+
+def _is_section_marker(text):
+    """Dòng mốc mục ('BƯỚC n: ...' hoặc chứa từ khoá mục) — không bao giờ là tiêu đề."""
+    t = _norm(text)
+    return bool(_STEP_RE.match(t)) or any(k in t for k in _SECTION_KEYS)
+
+
 def _looks_like_title(text):
-    """Dòng TIÊU ĐỀ thật: ngắn gọn, không phải chú thích/câu dẫn.
+    """Dòng TIÊU ĐỀ thật: ngắn gọn, không phải chú thích/câu dẫn/mốc mục.
 
     Loại bỏ: dòng chú thích '(...)'; dòng MỐC kết thúc bằng ':' (vd 'Tiêu đề quán
-    quân tốt nhất:'); và CÂU MỞ ĐẦU dài dòng của Gemini (vd 'Dưới đây là 5 tiêu đề
-    được thiết kế chuẩn SEO...') — vốn hay bị lấy nhầm làm tiêu đề.
+    quân tốt nhất:'); dòng mốc mục 'BƯỚC n: ...' dù Word không gán Heading; và CÂU
+    MỞ ĐẦU dài dòng của Gemini (vd 'Dưới đây là 5 tiêu đề được thiết kế chuẩn
+    SEO...') — vốn hay bị lấy nhầm làm tiêu đề. Độ dài đo trên tên truyện trần (bỏ
+    '| Mimi audio' + ghi chú số ký tự) để tên truyện dài hợp lệ không bị gạt.
     """
     t = (text or "").strip()
     if not t or _is_note(t):
         return False
     if t.endswith(":") or t.endswith("："):
         return False
-    return len(t) <= 110 and len(t.split()) <= 18
+    if _is_section_marker(t):
+        return False
+    return not title_too_long(t)
 
 
 # Nhãn rác do Gemini chèn khi xuất khối code (không phải nội dung thật).
@@ -152,6 +192,11 @@ def parse_seo_docx(path):
     if i_desc < 0:
         i_desc = find("MÔ TẢ")
 
+    def section_end(start, *marks):
+        """Chỉ số dòng mốc mục KẾ TIẾP sau `start` (hoặc n) — tiêu đề chỉ tìm TRONG mục
+        của nó, không được trôi sang mục THẺ TAG / MÔ TẢ (tập 113 đã trôi như vậy)."""
+        return min([i for i in marks if i > start] + [n])
+
     # ── TIÊU ĐỀ: ưu tiên phần CÙNG dòng với mốc (kiểu dán), sau đó tới dòng kế ──
     title = ""
     if i_best >= 0:
@@ -162,7 +207,7 @@ def parse_seo_docx(path):
         else:
             # Kiểu Gemini gốc: tiêu đề ở dòng NỘI DUNG kế tiếp (bỏ qua các dòng mốc/heading
             # như 'Plaintext' không phải heading nhưng dòng mốc BƯỚC 3/4 thì bỏ nhờ heads).
-            for idx in range(i_best + 1, n):
+            for idx in range(i_best + 1, section_end(i_best, i_tag, i_desc)):
                 if heads[idx]:
                     continue
                 if _looks_like_title(paras[idx]):
@@ -173,7 +218,7 @@ def parse_seo_docx(path):
     if not title:
         i_pick = find("CHỌN TIÊU ĐỀ")
         if i_pick >= 0:
-            for t in paras[i_pick + 1:]:
+            for t in paras[i_pick + 1:section_end(i_pick, i_best, i_tag, i_desc)]:
                 if _looks_like_title(t):
                     title = t
                     break
