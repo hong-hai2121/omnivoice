@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>THU-BAM-NEN san sang</title>
+<body style="margin:0;font:22px system-ui;background:#fff">
+<div style="padding:24px">
+  <div id="but" style="width:520px;height:240px;background:#FF00FF;color:#fff;
+       display:flex;align-items:center;justify-content:center;font-size:34px">
+    NUT THU — bam vao day
+  </div>
+  <input id="o" style="margin-top:24px;width:760px;height:70px;font-size:26px;
+         padding:10px;background:#FFFF00;border:0" placeholder="o nhap thu">
+  <pre id="kq" style="font-size:24px">chua co gi</pre>
+</div>
+<script>
+let n = 0;
+function bao(s){ document.title = 'THU-BAM-NEN ' + s; kq.textContent = s; }
+document.addEventListener('click', e => {
+  n++; bao('BAM=' + n + ' TRUSTED=' + e.isTrusted +
+           ' X=' + e.clientX + ' Y=' + e.clientY);
+});
+o.addEventListener('input', () => bao('GO=' + o.value));
+</script></body>

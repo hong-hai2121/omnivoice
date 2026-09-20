@@ -106,11 +106,16 @@ lịch Page. Tick vài tập thì chỉ làm những tập đó, không tick ô 
 định, nếp cũ) · **ngan** = `tiktok.mp4` **cắt ngắn giống TikTok** (theo % ở khối
 Video TikTok, có nhạc nền). Áp cho CẢ tự động lẫn nút 📘; script đọc lúc CHẠY
 (`core.facebook_ban()`, hoặc cờ `--ban`) nên việc đang nằm chờ cũng theo ô mới.
-Bản ngắn: video tìm qua `find_video_ngan` — `tiktok.mp4`, không có thì tra tên đã
-đổi trong `youtube_upload.json` (`tiktok_file`, vì đăng YouTube xong file bị đổi
-tên theo tiêu đề SEO TikTok), rồi mới mò mẫu `tiktok *.mp4` / `Full ở *.mp4`;
-tiêu đề bài mở đầu **“Full ở”** như TikTok (`title_for`) để bài mồi trỏ về bản
-đầy đủ trên YouTube. Tập chưa dựng TikTok thì **bỏ qua có báo, không đăng bản
+Đăng YouTube xong thì **cả hai bản dọc bị đổi tên theo tiêu đề SEO**
+(`dang_tap_youtube.rename_doc`): bản TikTok thành `Full ở Mimi audio Số 111 -
+….mp4`, bản full thành `[Full] Mimi audio Số 111 - ….mp4` (từ 20/09/2026; trước
+đó là `facebook <ngày giờ>.mp4`). Nên cả hai hàm tìm video đều tra
+`youtube_upload.json` trước (`facebook_file` / `tiktok_file`) rồi mới mò theo mẫu
+tên: `find_video_full` — `facebook.mp4` → bản ghi → `[Full] ….mp4` → `facebook
+*.mp4` → `*_doc.mp4`; `find_video_ngan` — `tiktok.mp4` → bản ghi → `tiktok *.mp4`
+/ `Full ở *.mp4`. Mẫu `[Full] …` **không glob được** (trong mẫu glob `[...]` là
+lớp ký tự) nên so bằng `startswith`. Bản ngắn: tiêu đề bài mở đầu **“Full ở”**
+như TikTok (`title_for`) để bài mồi trỏ về bản đầy đủ trên YouTube. Tập chưa dựng TikTok thì **bỏ qua có báo, không đăng bản
 full thay** — người chọn bản ngắn là cố ý không đưa trọn tập lên Page. Đổi ô là
 server trả lại CẢ khối (bảng video/cỡ/tiêu đề/tập bị bỏ đổi theo); sổ + biên
 nhận ghi thêm `ban` và `video` để biết Page đang có bản nào của tập.

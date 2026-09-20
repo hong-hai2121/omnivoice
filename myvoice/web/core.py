@@ -679,11 +679,10 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         "audio": (folder / "output.wav").exists(),
         "video_ngang": (folder / "YOUTUBE.mp4").exists()
                         or bool(list(folder.glob("*_videodone.mp4"))),
-        # "facebook <ngày giờ>.mp4": tên sau khi đăng YouTube (xem rename_doc) —
-        # thiếu nhánh này là tập đã đăng lại hiện "chưa có video dọc".
-        "video_doc": (folder / "facebook.mp4").exists()
-                      or bool(list(folder.glob("facebook *.mp4")))
-                      or bool(list(folder.glob("*_doc.mp4"))),
+        # '[Full] … .mp4' (trước 20/09/2026: 'facebook <ngày giờ>.mp4') là tên sau
+        # khi đăng YouTube (xem rename_doc) — thiếu nhánh này là tập đã đăng lại
+        # hiện "chưa có video dọc".
+        "video_doc": _doc_video_exists(folder),
         # Bản TikTok (tiktok.mp4, hoặc tên SEO sau khi đăng YouTube) — không thành
         # cột trong bảng (STEP_LABELS), chỉ để missing_steps biết tập có gì để đăng
         # Page khi ô radio chọn "bản cắt ngắn" (fb_ban = ngan).
@@ -700,6 +699,35 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # "đã đăng, không xếp" — hai nơi nói hai đằng.
         "facebook": _facebook_posted(folder, episode, source),
     }
+
+
+def doc_video_fallback(folder: Path) -> Path | None:
+    """Video dọc ĐẦY ĐỦ của tập theo mẫu tên — đường lui khi không nạp được script
+    Facebook. Cùng thứ tự với find_video_full của nó."""
+    folder = Path(folder)
+    if (folder / "facebook.mp4").exists():
+        return folder / "facebook.mp4"
+    # '[Full] …' = tên sau khi đăng YouTube. Không glob thẳng mẫu đó được vì trong
+    # mẫu glob '[...]' là LỚP KÝ TỰ → so bằng startswith.
+    hits = sorted(p for p in folder.glob("*.mp4")
+                  if p.name.lower().startswith("[full] "))
+    if hits:
+        return hits[0]
+    for pattern in ("facebook *.mp4", "*_doc.mp4"):
+        hits = sorted(folder.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
+
+
+def _doc_video_exists(folder: Path) -> bool:
+    """Tập có video dọc đầy đủ để đăng Page không — cùng phép tìm với script
+    Facebook (find_video_full: facebook.mp4 → tên ghi ở youtube_upload.json →
+    mẫu tên)."""
+    try:
+        return facebook_module().find_video_full(Path(folder)) is not None
+    except Exception:
+        return doc_video_fallback(folder) is not None
 
 
 def _tiktok_video_exists(folder: Path) -> bool:
@@ -1026,11 +1054,7 @@ def facebook_pending() -> dict:
             if (folder / "tiktok.mp4").exists():
                 video = folder / "tiktok.mp4"
         else:
-            for pattern in ("facebook.mp4", "facebook *.mp4", "*_doc.mp4"):
-                hits = sorted(folder.glob(pattern))
-                if hits:
-                    video = hits[0]
-                    break
+            video = doc_video_fallback(folder)
         if video is None:
             missing.append(r["episode"])       # có tập nhưng chưa dựng video bản này
             continue

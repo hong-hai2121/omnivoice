@@ -5,10 +5,13 @@ Facebook" trên web (web_settings.json khoá `fb_ban`) hoặc cờ --ban:
     full → facebook.mp4  — bản đầy đủ, audio trọn tập (mặc định, như trước nay)
     ngan → tiktok.mp4    — bản CẮT NGẮN giống TikTok (theo % ở khối Video TikTok,
                            có nhạc nền), caption mở đầu "Full ở …" như TikTok.
-Sau khi đăng YouTube, tiktok.mp4 đã bị đổi tên theo tiêu đề SEO TikTok (xem
-dang_tap_youtube.rename_doc) → find_video_ngan tra youtube_upload.json rồi mới
-mò theo mẫu tên. Tập chọn bản ngắn mà chưa dựng TikTok thì BỎ QUA có báo, không
-lặng lẽ đăng bản full thay.
+Sau khi đăng YouTube, CẢ HAI bản dọc đã bị đổi tên theo tiêu đề SEO (xem
+dang_tap_youtube.rename_doc): tiktok.mp4 → 'Full ở Mimi audio Số 111 - ….mp4',
+facebook.mp4 → '[Full] Mimi audio Số 111 - ….mp4' (từ 20/09/2026; trước đó là
+'facebook <ngày giờ>.mp4'). find_video_full / find_video_ngan tra
+youtube_upload.json rồi mới mò theo mẫu tên, nên bản đã đổi tên vẫn đăng được.
+Tập chọn bản ngắn mà chưa dựng TikTok thì BỎ QUA có báo, không lặng lẽ đăng bản
+full thay.
 
 Cách chạy:
     venv\\Scripts\\python.exe myvoice\\FACEBOOK\\dang_video_facebook.py            → xem kế hoạch rồi hỏi y/N
@@ -77,6 +80,9 @@ BAN_NGAN = "ngan"                 # tiktok.mp4   — cắt ngắn giống TikTok
 BAN_LABELS = {BAN_FULL: "bản FULL (facebook.mp4)",
               BAN_NGAN: "bản CẮT NGẮN giống TikTok (tiktok.mp4)"}
 TIKTOK_TITLE_HEAD = "Full ở"      # = thumbnail_gui.TIKTOK_TITLE_HEAD (mở đầu tiêu đề TikTok)
+# = thumbnail_gui.FACEBOOK_TITLE_HEAD — mở đầu TÊN FILE bản dọc đầy đủ sau khi đăng
+# YouTube ('[Full] Mimi audio Số 111 - Tên truyện.mp4'), xem find_video_full.
+FACEBOOK_TITLE_HEAD = "[Full]"
 
 
 def norm_ban(value) -> str:
@@ -934,10 +940,43 @@ def ledger_covers(info, folder, source: str = "", other_sources=()) -> bool:
     return not list(other_sources or ())
 
 
+def renamed_doc_name(folder: Path, key: str) -> str:
+    """Tên file bản dọc SAU KHI đổi tên, đọc ở youtube_upload.json — key là
+    'tiktok_file' hoặc 'facebook_file'. Tập chưa đăng / bản ghi hỏng → ''."""
+    try:
+        rec = json.loads((folder / "youtube_upload.json").read_text(encoding="utf-8"))
+        return str(rec.get(key) or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def mp4_starting_with(folder: Path, prefix: str) -> list[Path]:
+    """Các .mp4 trong thư mục có tên MỞ ĐẦU bằng `prefix` (không phân biệt hoa thường).
+
+    Không dùng folder.glob() cho mấy tên này được: trong mẫu glob thì '[...]' là
+    LỚP KÝ TỰ, nên '[Full] *.mp4' lại khớp mọi tên bắt đầu bằng F, u hoặc l.
+    """
+    low = prefix.lower()
+    return sorted(p for p in folder.glob("*.mp4") if p.name.lower().startswith(low))
+
+
 def find_video_full(folder: Path) -> Path | None:
-    """Video dọc ĐẦY ĐỦ của tập — đúng thứ tự nhánh video_doc bên web/core.py."""
+    """Video dọc ĐẦY ĐỦ của tập (facebook.mp4), kể cả sau khi đã đổi tên.
+
+    Đăng YouTube xong thì dang_tap_youtube.rename_doc đổi facebook.mp4 thành tiêu
+    đề YouTube có '[Full]' phía trước ('[Full] Mimi audio Số 111 - ….mp4'; trước
+    20/09/2026 là 'facebook <ngày giờ>.mp4'). Tên mới ghi ở youtube_upload.json
+    (`facebook_file`) nên tra đó trước, các mẫu tên chỉ là đường lui khi bản ghi
+    mất. Đúng thứ tự nhánh video_doc bên web/core.py.
+    """
     if (folder / "facebook.mp4").exists():
         return folder / "facebook.mp4"
+    name = renamed_doc_name(folder, "facebook_file")
+    if name and (folder / name).is_file():
+        return folder / name
+    hits = mp4_starting_with(folder, f"{FACEBOOK_TITLE_HEAD} ")
+    if hits:
+        return hits[0]
     for pattern in ("facebook *.mp4", "*_doc.mp4"):
         hits = sorted(folder.glob(pattern))
         if hits:
@@ -956,13 +995,9 @@ def find_video_ngan(folder: Path) -> Path | None:
     """
     if (folder / "tiktok.mp4").exists():
         return folder / "tiktok.mp4"
-    try:
-        rec = json.loads((folder / "youtube_upload.json").read_text(encoding="utf-8"))
-        name = str(rec.get("tiktok_file") or "")
-        if name and (folder / name).is_file():
-            return folder / name
-    except (OSError, ValueError, AttributeError):
-        pass
+    name = renamed_doc_name(folder, "tiktok_file")
+    if name and (folder / name).is_file():
+        return folder / name
     for pattern in ("tiktok *.mp4", f"{TIKTOK_TITLE_HEAD} *.mp4"):
         hits = sorted(folder.glob(pattern))
         if hits:

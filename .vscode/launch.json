@@ -22,6 +22,47 @@
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      "name": "🌐 TikTok — bảng điều khiển WEB",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Desktop Automation/chay_web.py",
+      "python": "${workspaceFolder}/venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/Desktop Automation",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "🔎 TikTok — chỉ dò nút (an toàn, không bấm gì)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Desktop Automation/tiktok_chon_video.py",
+      "args": ["--chi-do"],
+      "python": "${workspaceFolder}/venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/Desktop Automation",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "🎬 TikTok — nạp video thật (KHÔNG bấm Đăng)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Desktop Automation/tiktok_chon_video.py",
+      "python": "${workspaceFolder}/venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/Desktop Automation",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "🧪 Bài đo — bấm ngầm, không chiếm chuột",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/Desktop Automation/thu_khong_chiem_chuot.py",
+      "python": "${workspaceFolder}/venv/Scripts/python.exe",
+      "cwd": "${workspaceFolder}/Desktop Automation",
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ]
 }

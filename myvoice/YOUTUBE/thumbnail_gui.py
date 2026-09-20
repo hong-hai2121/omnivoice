@@ -161,6 +161,10 @@ def add_full_prefix(title: str) -> str:
 #   TikTok : 'Full ở Mimi audio Số <tập> | <tên truyện>'  (thêm 'Full ở' phía trước)
 BRAND_NAME = "Mimi audio"
 TIKTOK_TITLE_HEAD = "Full ở"    # mở đầu tiêu đề TikTok (thay cho '[FULL]' cũ)
+# Mở đầu TÊN FILE của bản dọc ĐẦY ĐỦ (facebook.mp4 sau khi đăng YouTube — xem
+# dang_tap_youtube.full_stem). '[Full]' chứ không phải 'Full ở': bản này CHÍNH LÀ
+# trọn tập, không phải bài mồi trỏ người xem đi nơi khác như bản TikTok.
+FACEBOOK_TITLE_HEAD = "[Full]"
 
 # Cụm thương hiệu ở bất kỳ đâu trong tiêu đề, kèm 'Số <n>' và dấu '|' đứng trước.
 _BRAND_CHUNK_RE = re.compile(r"\s*\|?\s*mimi\s*audio(\s*số\s*\d+)?\s*", re.IGNORECASE)
@@ -197,6 +201,17 @@ def compose_tiktok_title(title: str, ep: str) -> str:
         'Full ở Mimi audio Số 12 | Mẹ Chồng Nàng Dâu'."""
     yt = compose_youtube_title(title, ep)
     return f"{TIKTOK_TITLE_HEAD} {yt}" if yt else ""
+
+
+def compose_facebook_full_title(title: str, ep: str) -> str:
+    """Tiêu đề bản dọc ĐẦY ĐỦ = tiêu đề YouTube thêm '[Full]' phía trước:
+        '[Full] Mimi audio Số 111 | Màn Trở Lại Đoạt Mạng…'
+
+    Dùng để ĐẶT TÊN FILE facebook.mp4 sau khi đăng YouTube (dang_tap_youtube.
+    full_stem đổi '|' thành '-' cho hợp lệ trên Windows), không dùng làm caption
+    bài đăng — caption bản full vẫn là compose_facebook_title."""
+    yt = compose_youtube_title(title, ep)
+    return f"{FACEBOOK_TITLE_HEAD} {yt}" if yt else ""
 
 
 def hashtags_in(text: str) -> list[str]:

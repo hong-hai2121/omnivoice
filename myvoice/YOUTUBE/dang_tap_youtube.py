@@ -40,6 +40,15 @@ SHORT_HASHTAG = "#Shorts"
 BAD_CHARS = '<>:"/\\|?*'   # Windows cấm các ký tự này trong tên file
 MAX_STEM = 120            # cắt tên cho đường dẫn không chạm giới hạn 260 của Windows
 
+# Mở đầu TÊN FILE bản dọc đầy đủ sau khi đăng YouTube (= thumbnail_gui.
+# FACEBOOK_TITLE_HEAD): '[Full] Mimi audio Số 111 - Tên truyện.mp4'. Bản TikTok mở
+# đầu 'Full ở' vì nó là bài MỒI trỏ về YouTube; bản này là trọn tập nên chỉ gắn
+# nhãn '[Full]'.
+FACEBOOK_TITLE_HEAD = "[Full]"
+# Nhãn mở đầu đã có sẵn trong tiêu đề ('[Full]' / 'Full ở') — bỏ rồi mới gắn lại,
+# để đặt tên nhiều lần không bị nhân đôi (= thumbnail_gui._TITLE_HEAD_RE).
+_TITLE_HEAD_RE = re.compile(r"^\s*(\[full\]|full\s+ở)\s*", re.IGNORECASE)
+
 # Chốt chống đăng trùng TÊN TRUYỆN (xem upload_episode). Chỉ tắt khi thật sự muốn
 # hai video cùng tên trên kênh — đặt biến môi trường này =1 trước khi chạy.
 ALLOW_DUP_TITLE_ENV = "OMNI_ALLOW_DUP_TITLE"
@@ -134,15 +143,32 @@ def safe_stem(text: str) -> str:
 
 
 def time_stem(name, when) -> str:
-    """Tên theo GIỜ BẢN YOUTUBE LÊN SÓNG: 'facebook 09-08-2026 18h00'.
+    """Tên theo GIỜ BẢN YOUTUBE LÊN SÓNG: 'tiktok 09-08-2026 18h00'.
 
-    Video dọc là bản MỒI trỏ về bản đầy đủ trên YouTube ("Full ở Mimi audio Số
-    N"), nên đăng tay phải canh theo lúc bản YouTube lên sóng. Giờ đó chỉ biết
-    được SAU khi đăng (mới xếp được khung giờ), nên gắn vào tên file ngay lúc này
-    — mở thư mục là thấy, khỏi phải tra lại từng video trên kênh.
+    ĐƯỜNG LUI khi SEO không cho được tiêu đề: bản dọc là bài đăng tay canh theo
+    lúc bản YouTube lên sóng, mà giờ đó chỉ biết được SAU khi đăng (mới xếp được
+    khung giờ), nên gắn vào tên file ngay — mở thư mục là thấy, khỏi tra lại từng
+    video trên kênh. Có tiêu đề thì đặt tên theo tiêu đề: bản TikTok 'Full ở …',
+    bản Facebook '[Full] …' (xem full_stem).
     """
     # Windows cấm dấu ':' trong tên file → dùng '18h00'.
     return f"{Path(name).stem} {when:%d-%m-%Y %Hh%M}"
+
+
+def full_stem(blocks, when) -> str:
+    """Tên file bản dọc ĐẦY ĐỦ: '[Full] Mimi audio Số 111 - Tên truyện'.
+
+    Cùng tên truyện với tiêu đề YouTube, chỉ thêm '[Full]' phía trước — mở thư mục
+    là biết ngay đăng Page bằng tên nào, mà tên vẫn nói rõ đây là TRỌN TẬP chứ
+    không phải bài mồi như bản TikTok ('Full ở …').
+
+    Từ 20/09/2026 thay cho tên theo giờ ('facebook 16-09-2026 18h00'); tên cũ vẫn
+    được các hàm tìm video nhận, xem dang_video_facebook.find_video_full. SEO lỗi
+    nên không có tiêu đề thì vẫn lùi về tên theo giờ, hơn là để nguyên facebook.mp4.
+    """
+    title = _TITLE_HEAD_RE.sub("", str((blocks or {}).get("title") or "")).strip()
+    stem = safe_stem(f"{FACEBOOK_TITLE_HEAD} {title}") if title else ""
+    return stem or time_stem(FACEBOOK_NAME, when)
 
 
 def rename_doc(folder, name, stem, log):
@@ -270,7 +296,8 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
     """Đăng video của 1 tập, hẹn giờ vào khung trống kế tiếp (08:00 / 18:00).
 
     blocks: {'title', 'desc', 'tags'} đã chuẩn hoá; 'tags' là chuỗi ngăn dấu phẩy.
-    'title_tiktok' (nếu có) dùng để đặt tên file video TikTok — xem rename_doc.
+    'title_tiktok' (nếu có) dùng để đặt tên file video TikTok, 'title' để đặt tên
+    file video Facebook ('[Full] …') — xem rename_doc / full_stem.
     log(msg, level): level dùng chung với dang_video_youtube ('info'/'warn'/'err'/'ok').
 
     Trả về bản ghi đã lưu (dict), hoặc None nếu BỎ QUA — đã đăng rồi, thiếu video,
@@ -355,13 +382,14 @@ def upload_episode(folder, episode, blocks, log, progress_cb=None):
     #   • TikTok  → ĐÚNG tiêu đề SEO TikTok ('Full ở Mimi audio Số 12 - Tên truyện'),
     #     đăng tay chỉ việc nhìn tên file mà điền. Chưa có tiêu đề thì lùi về tên
     #     theo giờ, hơn là để nguyên tiktok.mp4.
-    #   • Facebook → theo giờ bản YouTube lên sóng, để trong thư mục vẫn còn một chỗ
-    #     nhìn ra lịch đăng.
+    #   • Facebook → tiêu đề YouTube thêm '[Full]' phía trước ('[Full] Mimi audio Số
+    #     111 - Tên truyện') — xem full_stem. Trước 20/09/2026 đặt theo giờ bản
+    #     YouTube lên sóng; giờ đó vẫn còn trong youtube_upload.json.
     live_at = publish_local or datetime.now().astimezone()
     tiktok = rename_doc(folder, TIKTOK_NAME,
                         safe_stem(blocks.get("title_tiktok")) or time_stem(TIKTOK_NAME, live_at),
                         log)
-    facebook = rename_doc(folder, FACEBOOK_NAME, time_stem(FACEBOOK_NAME, live_at), log)
+    facebook = rename_doc(folder, FACEBOOK_NAME, full_stem(blocks, live_at), log)
 
     # YouTube Short — video PHỤ. Bản chính đã lên kênh rồi, nên mọi sự cố ở đây chỉ
     # được phép thành một dòng cảnh báo: nuốt lỗi để còn ghi bản ghi, không thì lần

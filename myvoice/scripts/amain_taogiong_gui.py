@@ -7352,12 +7352,16 @@ class App(tk.Tk):
             # Đã đăng YouTube chưa — suy từ bản ghi youtube_upload.json của tập.
             "upload": (folder / "youtube_upload.json").exists(),
             # Bản tự động đặt tên YOUTUBE.mp4 / facebook.mp4; sau khi đăng YouTube
-            # thì bản dọc thành "facebook <ngày giờ>.mp4" (xem dang_tap_youtube.
-            # rename_doc). Vẫn nhận tên cũ (*_videodone.mp4 / *_doc.mp4) cho các
+            # thì bản dọc thành "[Full] Mimi audio Số N - Tên truyện.mp4" (xem
+            # dang_tap_youtube.rename_doc; trước 20/09/2026 là "facebook <ngày
+            # giờ>.mp4"). Vẫn nhận tên cũ (*_videodone.mp4 / *_doc.mp4) cho các
             # tập tạo trước đây.
             "video_ngang": (folder / "YOUTUBE.mp4").exists()
                             or bool(list(folder.glob("*_videodone.mp4"))),
             "video_doc": (folder / "facebook.mp4").exists()
+                          # '[Full] …': glob không dùng được ('[...]' là lớp ký tự).
+                          or any(p.name.lower().startswith("[full] ")
+                                 for p in folder.glob("*.mp4"))
                           or bool(list(folder.glob("facebook *.mp4")))
                           or bool(list(folder.glob("*_doc.mp4"))),
         }
