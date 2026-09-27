@@ -45,6 +45,7 @@ WM_SETTEXT = 0x000C
 WM_GETTEXT = 0x000D
 WM_GETTEXTLENGTH = 0x000E
 WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0200, 0x0201, 0x0202
+WM_MOUSEWHEEL, NAC_LAN = 0x020A, 120        # 120 = một nấc lăn chuột
 WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
 MK_LBUTTON = 0x0001
 VK_RETURN, VK_TAB, VK_ESCAPE, VK_BACK, VK_DELETE = 0x0D, 0x09, 0x1B, 0x08, 0x2E
@@ -61,6 +62,10 @@ for _f, _res, _arg in (
     (gdi32.DeleteDC, wintypes.BOOL, [wintypes.HDC]),
     (user32.ReleaseDC, ctypes.c_int, [wintypes.HWND, wintypes.HDC]),
     (user32.PrintWindow, wintypes.BOOL, [wintypes.HWND, wintypes.HDC, wintypes.UINT]),
+    # LPARAM phải khai báo hẳn: tin nhắn NHẢ phím có bit 31 bật nên vượt quá
+    # số nguyên 32 bit có dấu mà ctypes mặc định dùng.
+    (user32.PostMessageW, wintypes.BOOL,
+     [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]),
 ):
     _f.restype, _f.argtypes = _res, _arg
 
@@ -138,9 +143,119 @@ def cua_so_nhan_chuot(hwnd_chrome: int) -> int:
     """Cửa sổ con của Chrome thật sự nhận tin nhắn chuột/bàn phím.
 
     Chromium dựng 'Chrome_RenderWidgetHostHWND' làm cửa sổ cầu nối cho tin nhắn
-    Win32; gửi vào cửa sổ cha thì trôi đi mất."""
-    con = con_theo_lop(hwnd_chrome, "RenderWidget")
-    return con[0] if con else hwnd_chrome
+    Win32; gửi vào cửa sổ cha thì trôi đi mất.
+
+    Một cửa sổ Chrome có thể có MẤY cái cùng lớp ấy — của trang, của ô gợi ý
+    thanh địa chỉ, và cả cái vừa bị bỏ đi mà chưa dọn. Đã gặp thật: lấy bừa cái
+    đầu danh sách thì lệnh gửi đi không báo lỗi, trang vẫn vẽ ra ảnh bình
+    thường, mà chẳng có gì nhúc nhích. Nên chọn cái PHỦ GẦN HẾT cửa sổ — đó mới
+    là khung trang web — và phải gọi lại trước mỗi bước, đừng nhớ số cũ."""
+    l, t, r, b = khung(hwnd_chrome)
+    dien_cha = max((r - l) * (b - t), 1)
+    tot, diem_tot = hwnd_chrome, 0.0
+    for h in con_theo_lop(hwnd_chrome, "RenderWidget"):
+        cl, ct, cr, cb = khung(h)
+        phu = (cr - cl) * (cb - ct) / dien_cha
+        if phu < 0.4:                       # mảnh con con: không phải khung trang
+            continue
+        diem = phu + (0.25 if user32.IsWindowVisible(h) else 0)
+        if diem > diem_tot:
+            tot, diem_tot = h, diem
+    return tot
+
+
+def danh_thuc_cua_so(hwnd: int, log=print) -> int:
+    """Gọi lại cửa sổ cầu nối khi Chrome đã bỏ nó.
+
+    Chrome bỏ khung trang của cửa sổ KHÔNG được kích hoạt sau một lúc nằm im; từ
+    đó mọi cú bấm/gõ gửi vào đều rơi vào hư không mà không hề báo lỗi, trang vẫn
+    vẽ ra ảnh cũ nên nhìn không biết. Đo thật trên máy này: kích hoạt cửa sổ một
+    cái là khung trang hiện lại ngay, vẫn đúng số cũ.
+
+    Chỉ ăn thua khi cửa sổ đang KHÔNG được kích hoạt. Nếu nó vốn đã ở trên cùng
+    mà khung trang vẫn mất thì Chrome đã bỏ hẳn thẻ đó (đóng băng để tiết kiệm)
+    — kích hoạt, thu nhỏ rồi mở lại đều vô ích, phải đóng cửa sổ chạy lại từ đầu.
+
+    Đây là chỗ DUY NHẤT bot đụng tới tiêu điểm bàn phím, và chỉ đụng khi đã mất
+    cầu nối. Con trỏ chuột thì vẫn không hề bị dời."""
+    # Windows chặn tiến trình nền giành tiêu điểm; mẹo cũ là gắn tạm luồng nhập
+    # liệu của mình vào luồng đang giữ tiêu điểm rồi mới gọi.
+    kia = user32.GetForegroundWindow()
+    luong_kia = user32.GetWindowThreadProcessId(kia, None)
+    luong_minh = ctypes.windll.kernel32.GetCurrentThreadId()
+    user32.AttachThreadInput(luong_minh, luong_kia, True)
+    user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)  # lên trên
+    user32.SetForegroundWindow(hwnd)
+    user32.AttachThreadInput(luong_minh, luong_kia, False)
+    time.sleep(1.5)
+    return cua_so_nhan_chuot(hwnd)
+
+
+def cho_cau_noi(hwnd: int, giay: float = 12.0, log=print) -> int:
+    """Chờ Chrome dựng xong khung trang (cửa sổ cầu nối) của một tab MỚI MỞ.
+
+    Tab vừa mở thì vài giây đầu chưa có khung trang; hỏi `cua_so_nhan_chuot()`
+    lúc đó nó trả về cửa sổ cha, và cú bấm gửi vào cha thì mất tăm — đã gặp
+    thật: dò đúng nút 'Chọn video', bấm, mà hộp thoại chọn file không hề hiện.
+    Chờ tới khi có khung trang; hết giờ vẫn chưa có thì kích hoạt cửa sổ một
+    nhịp cho Chrome dựng."""
+    han = time.time() + giay
+    while time.time() < han:
+        dich = cua_so_nhan_chuot(hwnd)
+        if dich != hwnd:
+            return dich
+        time.sleep(0.5)
+    log("  ⚠ Chờ mãi chưa có khung trang — kích hoạt cửa sổ một nhịp.")
+    return danh_thuc_cua_so(hwnd, log)
+
+
+def san_sang(hwnd: int, log=print) -> int | None:
+    """Cửa sổ nhận lệnh, đã thử đến nơi đến chốn. None = chịu, không lái được."""
+    dich = cua_so_nhan_chuot(hwnd)
+    if dich != hwnd and con_nhan_lenh(hwnd, dich, log=lambda *_: None):
+        return dich
+    log("  ⚠ Mất cửa sổ cầu nối của Chrome — kích hoạt cửa sổ TikTok một nhịp "
+        "để lấy lại (bạn sẽ thấy nó nhảy lên trước).")
+    dich = danh_thuc_cua_so(hwnd, log)
+    if dich != hwnd and con_nhan_lenh(hwnd, dich, log):
+        log("  ✅ Lấy lại được, chạy tiếp.")
+        return dich
+    return None
+
+
+def khac_anh(a, b, nguong: int = 8) -> float:
+    """Hai ảnh lệch nhau bao nhiêu phần trăm điểm ảnh."""
+    if a is None or b is None or a.size != b.size:
+        return 100.0
+    x = np.asarray(a.convert("L"), dtype=np.int16)
+    y = np.asarray(b.convert("L"), dtype=np.int16)
+    return float((np.abs(x - y) > nguong).mean() * 100)
+
+
+def con_nhan_lenh(hwnd: int, dich: int | None = None, log=print) -> bool:
+    """Trang CÒN nhận lệnh không? Lăn xuống 1 nấc, xem ảnh có đổi, rồi lăn trả.
+
+    Phải hỏi câu này trước mỗi việc quan trọng: khi Chrome bỏ cửa sổ cầu nối,
+    mọi cú bấm/gõ sau đó đều rơi vào hư không mà không hề báo lỗi — không kiểm
+    thì bot tưởng mình đã đặt lịch xong trong khi trang không hề đổi."""
+    dich = dich or cua_so_nhan_chuot(hwnd)
+    l, t, r, b = khung(hwnd)
+    giua = ((l + r) // 2, (t + b) // 2)
+    # Thử cả hai chiều: đang ở đúng đáy trang thì lăn xuống chẳng đổi gì, kết
+    # luận 'không nhận lệnh' là oan.
+    for huong in (-1, 1):
+        truoc, _, _ = chup_ngam(hwnd)
+        cuon_ngam(dich, giua[0], giua[1], huong)
+        time.sleep(0.8)
+        sau, _, _ = chup_ngam(hwnd)
+        doi = khac_anh(truoc, sau)
+        cuon_ngam(dich, giua[0], giua[1], -huong)      # trả trang về chỗ cũ
+        time.sleep(0.5)
+        if doi >= 0.3:
+            return True
+    log("  ❌ Trang không nhúc nhích dù lăn cả hai chiều — Chrome không còn "
+        "nhận lệnh qua cửa sổ này (xem chữa cháy trong tiktok_len_lich.py).")
+    return False
 
 
 def khung(hwnd: int) -> tuple[int, int, int, int]:
@@ -309,6 +424,22 @@ def bam_ngam_theo_anh(hwnd_dich: int, goc_cua_so: tuple[int, int],
     return cx, cy
 
 
+def cuon_ngam(hwnd: int, x_man: int, y_man: int, nac: int,
+              nghi: float = 0.15) -> None:
+    """Lăn chuột NGẦM: `nac` > 0 là cuộn lên, < 0 là cuộn xuống.
+
+    Hai chỗ khác hẳn các tin nhắn chuột kia, sai là cuộn trượt đi đâu mất:
+      • toạ độ trong lParam là toạ độ MÀN HÌNH, không phải toạ độ khách,
+      • số nấc nằm ở NỬA TRÊN của wParam và là số CÓ DẤU.
+    Lăn nhiều nấc nhỏ chứ đừng một nấc thật lớn: trang web cuộn mượt (smooth
+    scroll) cần vài nhịp mới đuổi kịp, nhảy một phát là chụp phải lúc đang trôi."""
+    lp = ((y_man & 0xFFFF) << 16) | (x_man & 0xFFFF)
+    wp = ((NAC_LAN if nac > 0 else -NAC_LAN) & 0xFFFF) << 16
+    for _ in range(abs(nac)):
+        user32.PostMessageW(hwnd, WM_MOUSEWHEEL, wp, lp)
+        time.sleep(nghi)
+
+
 def go_ngam(hwnd: int, chu: str, nghi: float = 0.02) -> None:
     """Gõ từng ký tự bằng WM_CHAR — đi theo mã Unicode nên có dấu và chữ Hán."""
     for c in chu:
@@ -316,10 +447,20 @@ def go_ngam(hwnd: int, chu: str, nghi: float = 0.02) -> None:
         time.sleep(nghi)
 
 
-def phim_ngam(hwnd: int, vk: int, nghi: float = 0.05) -> None:
-    user32.PostMessageW(hwnd, WM_KEYDOWN, vk, 1)
+def phim_ngam(hwnd: int, vk: int, nghi: float = 0.05, mo_rong: bool = False) -> None:
+    """Bấm một phím chức năng (Enter, Backspace, Tab...) bằng tin nhắn.
+
+    lParam phải dựng cho đúng chứ không gửi bừa số 1: Chromium đọc MÃ QUÉT ở bit
+    16-23 để suy ra `event.code` ('Enter', 'Backspace') gửi cho trang web, còn
+    bit 30/31 trong tin nhắn nhả phím là dấu 'phím vừa được thả'. Gửi thiếu thì
+    trang vẫn nhận phím, nhưng bảng gợi ý hashtag của TikTok có thể bỏ qua.
+
+    `mo_rong`=True cho các phím mở rộng (mũi tên, Insert, Delete rời)."""
+    ma_quet = user32.MapVirtualKeyW(vk, 0) & 0xFF        # 0 = MAPVK_VK_TO_VSC
+    lp = 1 | (ma_quet << 16) | ((1 << 24) if mo_rong else 0)
+    user32.PostMessageW(hwnd, WM_KEYDOWN, vk, lp)
     time.sleep(nghi)
-    user32.PostMessageW(hwnd, WM_KEYUP, vk, 1)
+    user32.PostMessageW(hwnd, WM_KEYUP, vk, lp | (1 << 30) | (1 << 31))
 
 
 def dat_chu(hwnd_o_nhap: int, chu: str) -> bool:

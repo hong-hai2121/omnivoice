@@ -12,6 +12,11 @@ Trang có một bảng, mỗi dòng là một video sắp đăng:
 
 Ba ô đầu sửa thẳng trong bảng, gõ tới đâu lưu tới đó vào danh_sach.json.
 
+Bấm Chạy thì mỗi dòng đi qua ba bước: tiktok_chon_video.py nạp video lên trang
+tải lên, tiktok_dien_mo_ta.py gõ tiêu đề + hashtag vào ô 'Mô tả', rồi
+tiktok_len_lich.py hẹn giờ đăng theo cột 'Giờ đăng'. Nút Đăng/Lên lịch CHỈ được
+bấm khi người dùng tự tay bật ô 'bấm nút Lên lịch' — mặc định là tắt.
+
 Vì sao phải có nút "➕ Thêm file mp4" thay vì ô chọn file của trình duyệt: trình
 duyệt CỐ TÌNH giấu đường dẫn thật, `<input type=file>` chỉ trả về mỗi tên file.
 Mà muốn đưa video cho TikTok thì phải có đường dẫn đầy đủ. Nên nút này gọi
@@ -36,6 +41,7 @@ dam_bao_venv(__file__)
 
 import json                     # noqa: E402
 import re                       # noqa: E402
+from datetime import datetime, timedelta   # noqa: E402
 import subprocess               # noqa: E402
 import threading                # noqa: E402
 import time                     # noqa: E402
@@ -44,7 +50,9 @@ import uuid                     # noqa: E402
 from fastapi import FastAPI, Header, HTTPException, Request   # noqa: E402
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse  # noqa: E402
 
-import tiktok_chon_video as tct  # noqa: E402
+import tiktok_chon_video as tct   # noqa: E402  bước 1 — nạp video
+import tiktok_dien_mo_ta as tdm   # noqa: E402  bước 2 — tiêu đề + hashtag
+import tiktok_len_lich as tll     # noqa: E402  bước 3 — hẹn giờ đăng
 
 HERE = Path(__file__).resolve().parent
 DANH_SACH_FILE = HERE / "danh_sach.json"
@@ -54,11 +62,13 @@ CONG = 8770
 KHOA = "omni-tiktok"           # header X-Omni: chặn trang lạ gọi vào
 
 HASHTAG_MAC_DINH = "#truyenaudio #truyenfull #audio #fyp"
+KHUNG_GIO_MAC_DINH = "20:00"   # mỗi ngày đăng vào (các) giờ này; "12:00, 20:00" = 2 tập/ngày
 
 
 # ─────────────────────────────── danh sách ──────────────────────────────────
 def danh_sach_rong() -> dict:
-    return {"hashtag_chung": HASHTAG_MAC_DINH, "profile": tct.PROFILE, "muc": []}
+    return {"hashtag_chung": HASHTAG_MAC_DINH, "khung_gio": KHUNG_GIO_MAC_DINH,
+            "profile": tct.PROFILE, "muc": []}
 
 
 def doc_danh_sach() -> dict:
@@ -69,8 +79,11 @@ def doc_danh_sach() -> dict:
     except (json.JSONDecodeError, OSError):
         return danh_sach_rong()
     d.setdefault("hashtag_chung", HASHTAG_MAC_DINH)
+    d.setdefault("khung_gio", KHUNG_GIO_MAC_DINH)
     d.setdefault("profile", tct.PROFILE)
     d.setdefault("muc", [])
+    for m in d["muc"]:
+        m.setdefault("gio_dang", "")      # bảng cũ chưa có cột giờ
     return d
 
 
@@ -80,8 +93,11 @@ def ghi_danh_sach(d: dict) -> None:
 
 
 def muc_moi(video: str = "", tieu_de: str = "", hashtag: str = "") -> dict:
+    # gio_dang: "2026-09-23T20:30" — giờ hẹn đăng của TikTok. Để TRỐNG nghĩa là
+    # không hẹn giờ: video chỉ nằm ở màn soạn bài, không ai bấm Đăng.
     return {"id": uuid.uuid4().hex[:8], "chon": True, "tieu_de": tieu_de,
-            "hashtag": hashtag, "video": video, "trang_thai": "chờ", "ghi_chu": ""}
+            "hashtag": hashtag, "video": video, "gio_dang": "",
+            "trang_thai": "chờ", "ghi_chu": ""}
 
 
 # ───────────────────────── quét thư mục kịch_bản ────────────────────────────
@@ -174,11 +190,116 @@ class HangDoi:
 hang_doi = HangDoi()
 
 
-def chay_hang_doi(ids: list[str], chi_do: bool) -> None:
+def doc_gio_dang(chuoi: str) -> tuple[datetime | None, str]:
+    """'2026-09-23T20:30' → datetime, kèm lời chê nếu TikTok không nhận giờ đó."""
+    chuoi = (chuoi or "").strip()
+    if not chuoi:
+        return None, ""
+    try:
+        khi_nao = datetime.fromisoformat(chuoi.replace(" ", "T"))
+    except ValueError:
+        return None, f"Giờ đăng không đọc được: {chuoi!r}"
+    khi_nao, ghi = tll.kiem_gio(khi_nao)
+    return (None, ghi) if "❌" in ghi else (khi_nao, ghi)
+
+
+# ───────────────────────────── xếp lịch đăng ────────────────────────────────
+# Cách chọn giờ dễ nhất là KHÔNG phải chọn: người dùng chỉ khai "mỗi ngày đăng
+# lúc mấy giờ" (khung giờ), còn ngày nào tập nào thì máy rải theo thứ tự trong
+# bảng — tập 105 hôm nay, 106 ngày mai... Ô giờ từng dòng vẫn sửa tay được.
+_DA_XONG = ("đã đăng", "đã chốt lịch")   # dòng này không xếp lại nữa
+
+
+def doc_khung_gio(chuoi: str) -> tuple[list[tuple[int, int]], str]:
+    """'20:00, 12:30' → [(12, 30), (20, 0)], phút lùi về bội số 5; kèm lời chê."""
+    ra, ghi = [], []
+    for phan in re.split(r"[,\s;]+", (chuoi or "").strip()):
+        if not phan:
+            continue
+        m = re.fullmatch(r"(\d{1,2})[:h.](\d{2})?", phan)
+        if not m or not (0 <= int(m.group(1)) <= 23):
+            ghi.append(f"bỏ qua '{phan}' (viết kiểu 20:00 hoặc 20h30)")
+            continue
+        gio, phut = int(m.group(1)), int(m.group(2) or 0)
+        if phut > 59:
+            ghi.append(f"bỏ qua '{phan}' (phút {phut}?)")
+            continue
+        if phut % tll.BUOC_PHUT:
+            phut -= phut % tll.BUOC_PHUT
+            ghi.append(f"'{phan}' lùi về {gio:02d}:{phut:02d} (bánh xe chỉ có bội số 5)")
+        ra.append((gio, phut))
+    return sorted(set(ra)), "; ".join(ghi)
+
+
+def xep_lich(d: dict, ids: list[str], khung: str, bat_dau: str = "",
+             chi_trong: bool = True) -> dict:
+    """Rải giờ đăng cho các dòng `ids` theo THỨ TỰ TRONG BẢNG.
+
+    Mỗi ngày có bấy nhiêu khung giờ; giờ nào đã có dòng khác chiếm, hoặc quá
+    gần hiện tại, thì nhường sang khung kế tiếp. Không nhét quá hạn 30 ngày —
+    TikTok từ chối thì xếp cũng vô ích."""
+    khung_list, ghi_khung = doc_khung_gio(khung)
+    if not khung_list:
+        return {"ok": False, "loi": "Khung giờ trống — ví dụ 20:00 hoặc 12:00, 20:00."}
+    bay_gio = datetime.now()
+    som_nhat = bay_gio + timedelta(minutes=tll.SOM_NHAT + 5)
+    han = bay_gio + timedelta(days=tll.XA_NHAT_NGAY)
+    try:
+        ngay = datetime.fromisoformat(bat_dau).date() if bat_dau else bay_gio.date()
+    except ValueError:
+        ngay = bay_gio.date()
+    ngay = max(ngay, bay_gio.date())
+
+    def se_xep(m: dict) -> bool:
+        if m["id"] not in ids or m.get("trang_thai") in _DA_XONG:
+            return False
+        return not (chi_trong and (m.get("gio_dang") or "").strip())
+
+    # Giờ của các dòng KHÔNG xếp lại vẫn là chỗ đã có chủ.
+    da_dung = {m["gio_dang"] for m in d["muc"]
+               if m.get("gio_dang") and not se_xep(m)}
+    slot = (datetime.combine(ngay + timedelta(days=n), datetime.min.time())
+            .replace(hour=g, minute=p)
+            for n in range(tll.XA_NHAT_NGAY + 2) for g, p in khung_list)
+    dat, bo, het_cho = [], [], []
+    for m in d["muc"]:
+        if m["id"] not in ids:
+            continue
+        if not se_xep(m):
+            bo.append(m)
+            continue
+        iso = None
+        for t in slot:
+            if t > han:
+                break
+            if t >= som_nhat and t.isoformat(timespec="minutes") not in da_dung:
+                iso = t.isoformat(timespec="minutes")
+                break
+        if not iso:
+            het_cho.append(m)
+            continue
+        m["gio_dang"] = iso
+        da_dung.add(iso)
+        dat.append(m)
+    ghi = []
+    if ghi_khung:
+        ghi.append(ghi_khung)
+    if het_cho:
+        ghi.append(f"{len(het_cho)} dòng không còn chỗ trong {tll.XA_NHAT_NGAY} "
+                   "ngày tới — thêm khung giờ hoặc để lại đợt sau.")
+    return {"ok": True, "dat": len(dat), "bo_qua": len(bo), "ghi_chu": ghi}
+
+
+def chay_hang_doi(ids: list[str], chi_do: bool, dien_mo_ta: bool = True,
+                  len_lich: bool = True, bam_dang: bool = False) -> None:
     d = doc_danh_sach()
     can_lam = [m for m in d["muc"] if m["id"] in ids]
     hang_doi.ghi(f"▶ Bắt đầu — {len(can_lam)} video"
-                 + ("  (chế độ chỉ dò nút, không bấm)" if chi_do else ""))
+                 + ("  (chế độ chỉ dò nút, không bấm)" if chi_do else "")
+                 + ("" if dien_mo_ta or chi_do else "  (chỉ nạp, không điền mô tả)"))
+    if len_lich and not bam_dang and not chi_do:
+        hang_doi.ghi("⚠ Ô 'bấm nút Lên lịch' đang TẮT: chỉ đặt ngày giờ, KHÔNG bấm "
+                     "nút — video sẽ nằm ở màn soạn bài chờ bạn tự bấm.")
     try:
         for i, m in enumerate(can_lam, 1):
             if hang_doi.xin_dung:
@@ -191,8 +312,34 @@ def chay_hang_doi(ids: list[str], chi_do: bool) -> None:
             try:
                 ket = tct.nap_video(m["video"], profile=d.get("profile", tct.PROFILE),
                                     chi_do=chi_do, log=hang_doi.ghi)
-                _dat_trang_thai(m["id"], "đã nạp" if ket["ok"] else "lỗi",
-                                ket["ly_do"])
+                if not ket["ok"]:
+                    _dat_trang_thai(m["id"], "lỗi", ket["ly_do"])
+                    continue
+                _dat_trang_thai(m["id"], "đã nạp", ket["ly_do"])
+                if chi_do or not dien_mo_ta:
+                    continue
+                # Điền mô tả NGAY trong lúc video còn đang lên — đúng như người
+                # dùng tay vẫn làm; khỏi phải chờ nạp xong mới gõ.
+                _dat_trang_thai(m["id"], "đang điền", "")
+                ket2 = tdm.dien_mo_ta(ket["hwnd"], m.get("tieu_de", ""),
+                                      m.get("hashtag", ""), log=hang_doi.ghi)
+                _dat_trang_thai(m["id"], "đã điền" if ket2["ok"] else "lỗi mô tả",
+                                ket2["ly_do"])
+                if not (len_lich and (m.get("gio_dang") or "").strip()):
+                    continue
+                khi_nao, ghi = doc_gio_dang(m.get("gio_dang", ""))
+                if not khi_nao:
+                    hang_doi.ghi(f"⏩ Bỏ hẹn giờ: {ghi}")
+                    _dat_trang_thai(m["id"], "lỗi lịch", ghi)
+                    continue
+                _dat_trang_thai(m["id"], "đang hẹn giờ", ghi)
+                ket3 = tll.len_lich(ket["hwnd"], khi_nao, bam_dang=bam_dang,
+                                    log=hang_doi.ghi)
+                _dat_trang_thai(
+                    m["id"],
+                    ("đã chốt lịch" if ket3["da_bam"] else "đã hẹn giờ")
+                    if ket3["ok"] else "lỗi lịch",
+                    (ghi + " " + ket3["ly_do"]).strip())
             except Exception as e:                      # noqa: BLE001
                 hang_doi.ghi(f"❌ {type(e).__name__}: {e}")
                 _dat_trang_thai(m["id"], "lỗi", f"{type(e).__name__}: {e}")
@@ -237,11 +384,29 @@ async def api_luu(req: Request, x_omni: str = Header(None)) -> dict:
     d = await req.json()
     cu = doc_danh_sach()
     cu["hashtag_chung"] = d.get("hashtag_chung", cu["hashtag_chung"])
+    cu["khung_gio"] = d.get("khung_gio", cu["khung_gio"])
     cu["profile"] = d.get("profile", cu["profile"])
     if "muc" in d:
         cu["muc"] = d["muc"]
     ghi_danh_sach(cu)
     return {"ok": True, "so_dong": len(cu["muc"])}
+
+
+@app.post("/api/xep-lich")
+async def api_xep_lich(req: Request, x_omni: str = Header(None)) -> dict:
+    """Rải giờ đăng cho các dòng được chọn theo khung giờ mỗi ngày."""
+    canh(x_omni)
+    than = await req.json()
+    d = doc_danh_sach()
+    if "muc" in than:                      # lấy bảng đang hiện, kẻo mất sửa dở
+        d["muc"] = than["muc"]
+    ket = xep_lich(d, than.get("ids") or [], than.get("khung_gio") or d["khung_gio"],
+                   than.get("bat_dau") or "", bool(than.get("chi_trong", True)))
+    if ket["ok"]:
+        d["khung_gio"] = than.get("khung_gio") or d["khung_gio"]
+        ghi_danh_sach(d)
+        ket["danh_sach"] = d
+    return ket
 
 
 @app.post("/api/them-file")
@@ -289,7 +454,11 @@ async def api_chay(req: Request, x_omni: str = Header(None)) -> dict:
     hang_doi.xoa_nhat_ky()
     hang_doi.dang_chay = True
     hang_doi.xin_dung = False
-    threading.Thread(target=chay_hang_doi, args=(ids, bool(than.get("chi_do"))),
+    threading.Thread(target=chay_hang_doi,
+                     args=(ids, bool(than.get("chi_do")),
+                           bool(than.get("dien_mo_ta", True)),
+                           bool(than.get("len_lich", True)),
+                           bool(than.get("bam_dang", False))),
                      daemon=True).start()
     return {"ok": True, "so_dong": len(ids)}
 
@@ -345,9 +514,21 @@ TRANG = r"""<!doctype html>
   button:hover{border-color:var(--mo)}
   button.chinh{background:var(--do);border-color:var(--do);color:#fff;font-weight:600}
   button.chinh:disabled{opacity:.45;cursor:not-allowed}
-  input[type=text]{font:inherit;width:100%;padding:7px 9px;border-radius:7px;
+  input[type=text],input[type=datetime-local]{font:inherit;width:100%;
+       padding:7px 9px;border-radius:7px;
        border:1px solid var(--vien);background:var(--nen);color:var(--chu)}
-  input[type=text]:focus{outline:2px solid var(--do);outline-offset:-1px}
+  input[type=text]:focus,input[type=datetime-local]:focus{
+       outline:2px solid var(--do);outline-offset:-1px}
+  input[type=datetime-local]{font-size:13px}
+  input[type=date]{font:inherit;font-size:13px;padding:6px 8px;border-radius:7px;
+       border:1px solid var(--vien);background:var(--nen);color:var(--chu)}
+  .o-gio{display:flex;gap:4px;align-items:center}
+  .o-gio input{flex:1;min-width:0}
+  .o-gio button{padding:4px 7px;font-size:13px;line-height:1}
+  .gio-nhan{font-size:11px;color:var(--mo);margin-top:3px;white-space:nowrap;
+       overflow:hidden;text-overflow:ellipsis}
+  .gio-nhan.loi{color:var(--do);font-weight:600}
+  .gio-nhan.canh{color:var(--vang)}
   table{width:100%;border-collapse:collapse}
   th,td{padding:7px 8px;border-bottom:1px solid var(--vien);vertical-align:middle}
   th{text-align:left;font-size:12px;color:var(--mo);text-transform:uppercase;
@@ -374,12 +555,22 @@ TRANG = r"""<!doctype html>
   .anh figcaption{font-size:12px;color:var(--mo);padding-top:6px}
   .canhbao{border-left:3px solid var(--do);padding-left:10px;font-size:13px;
       color:var(--mo);margin-top:10px}
+  .canhbao-do{margin-top:10px;padding:8px 12px;border-radius:8px;font-size:13px;
+      background:#fde2e6;color:#7a1023;border:1px solid var(--do)}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .canhbao-do{
+      background:#3a1119;color:#ffb3c0}}
 </style></head><body><div class="boc">
 
 <h1>TikTok — bảng điều khiển</h1>
 <p class="phu">Nhìn màn hình và bấm ngầm vào Chrome <b id="ten-profile">Profile 83</b>.
    Không cướp chuột — bạn cứ làm việc bình thường trong lúc nó chạy.
-   Hiện mới tới bước <b>nạp video</b>: điền caption và bấm Đăng chưa làm.</p>
+   Ba bước: <b>nạp video</b> → <b>điền tiêu đề + hashtag</b> (mỗi hashtag chờ
+   bảng gợi ý rồi ấn Enter) → <b>hẹn giờ</b> bằng chính chức năng "Lên lịch" của
+   TikTok.<br>
+   Cột <b>Giờ đăng</b> để trống = không hẹn, video chỉ nằm ở màn soạn bài.
+   TikTok đòi hẹn sau ít nhất 15 phút, trong vòng 30 ngày, phút là bội số của 5
+   (lẻ thì tự lùi xuống). Chỉ khi bật ô <b>bấm nút Lên lịch</b> thì video mới
+   thật sự tự lên kênh.</p>
 
 <div class="the">
   <div class="hang">
@@ -387,10 +578,21 @@ TRANG = r"""<!doctype html>
     <button onclick="quet()">🔎 Quét thư mục kịch_bản</button>
     <button onclick="themDongTrong()">➕ Dòng trống</button>
     <span style="flex:1"></span>
+    <label class="nho"><input type="checkbox" id="dien-mo-ta" checked>
+       điền tiêu đề + hashtag</label>
+    <label class="nho"><input type="checkbox" id="len-lich" checked
+       onchange="capNhatCanhBao()"> hẹn giờ theo cột <b>Giờ đăng</b></label>
+    <label class="nho" title="Bật cái này là video SẼ tự lên kênh đúng giờ đã hẹn">
+       <input type="checkbox" id="bam-dang" onchange="capNhatCanhBao()">
+       <b style="color:var(--do)">bấm nút Lên lịch</b> (video sẽ tự lên kênh)</label>
     <label class="nho"><input type="checkbox" id="chi-do"> chỉ dò nút, không bấm</label>
     <button class="chinh" id="nut-chay" onclick="chay()">▶ Chạy dòng đã chọn</button>
     <button id="nut-dung" onclick="dung()" disabled>⏹ Dừng</button>
   </div>
+  <div id="canh-bao-dang" class="canhbao-do" style="display:none">⚠ Ô
+    <b>bấm nút Lên lịch</b> đang TẮT — bấm ▶ bây giờ thì bot chỉ đặt ngày giờ rồi
+    dừng, <b>không</b> bấm nút, video nằm chờ ở màn soạn bài. Tick ô đó nếu muốn
+    nó bấm luôn (nó sẽ chờ video tải xong, mỗi phút kiểm nút một lần).</div>
   <div class="hang" style="margin-top:10px">
     <span class="nho">Hashtag chung (dùng cho dòng mới):</span>
     <input type="text" id="hashtag-chung" style="flex:1;min-width:260px"
@@ -399,14 +601,35 @@ TRANG = r"""<!doctype html>
 </div>
 
 <div class="the">
+  <div class="hang">
+    <b>🗓 Xếp lịch đăng</b>
+    <span class="nho">Mỗi ngày đăng lúc</span>
+    <input type="text" id="khung-gio" style="width:150px" placeholder="20:00"
+           title="Một hoặc nhiều giờ, cách nhau dấu phẩy: 12:00, 20:00 = 2 tập mỗi ngày"
+           oninput="luuHoan()">
+    <span class="nho">bắt đầu từ</span>
+    <input type="date" id="bat-dau" title="Để trống = hôm nay">
+    <label class="nho"><input type="checkbox" id="chi-trong" checked>
+       chỉ điền dòng còn trống giờ</label>
+    <button onclick="xepLich()">🗓 Xếp cho dòng đã tick</button>
+    <button onclick="xoaGioTick()" title="Xoá giờ của các dòng đã tick">✕ Xoá giờ</button>
+  </div>
+  <p class="nho" style="margin:8px 0 0">Máy rải theo <b>thứ tự trong bảng</b>: dòng
+    trên đăng trước. Giờ nào đã có dòng khác chiếm, hoặc quá gần hiện tại, thì
+    nhường sang khung kế tiếp. Muốn chỉnh riêng dòng nào thì sửa thẳng ô giờ, hoặc
+    bấm ⚡ ở dòng đó để lấy khung giờ trống kế tiếp.</p>
+</div>
+
+<div class="the">
   <table>
     <thead><tr>
       <th class="giua" style="width:38px"><input type="checkbox" id="chon-tat"
           onchange="chonTat(this.checked)"></th>
-      <th style="width:28%">Tiêu đề</th>
-      <th style="width:24%">Hashtag</th>
+      <th style="width:23%">Tiêu đề</th>
+      <th style="width:18%">Hashtag</th>
       <th>Link local (file mp4)</th>
-      <th style="width:150px">Trạng thái</th>
+      <th style="width:270px">Giờ đăng</th>
+      <th style="width:140px">Trạng thái</th>
       <th style="width:36px"></th>
     </tr></thead>
     <tbody id="than"></tbody>
@@ -427,6 +650,11 @@ TRANG = r"""<!doctype html>
     <figure><img id="anh1"><figcaption>Nút máy nhìn thấy — khung đỏ dày là chỗ nó bấm,
       khung xanh là ứng viên bị loại</figcaption></figure>
     <figure><img id="anh2"><figcaption>Màn hình sau khi nạp video</figcaption></figure>
+    <figure><img id="anh3"><figcaption>Sau khi điền mô tả — khung xanh dương là ô
+      Mô tả máy dò ra, khung xanh lá là vùng gõ chữ, chữ thập đỏ là chỗ nó bấm
+      để đặt con nháy</figcaption></figure>
+    <figure><img id="anh4"><figcaption>Sau khi hẹn giờ — soi hai ô Giờ/Ngày xem
+      có đúng giờ mình đặt không</figcaption></figure>
   </div>
   <p class="canhbao">Lúc hộp thoại chọn file bật lên, Windows kéo tiêu điểm bàn phím
      sang đó chưa tới một giây rồi tự đóng. Đó là chỗ duy nhất giành với bạn;
@@ -444,14 +672,63 @@ const esc = s => (s??"").replace(/[&<>"]/g, c =>
 async function tai(){
   DL = await (await fetch("/api/danh-sach")).json();
   document.getElementById("hashtag-chung").value = DL.hashtag_chung || "";
+  document.getElementById("khung-gio").value = DL.khung_gio || "20:00";
   document.getElementById("ten-profile").textContent = DL.profile || "Profile 83";
   ve();
 }
 
+// Nhãn dưới ô giờ: thứ + ngày + còn mấy hôm, và báo ngay nếu TikTok sẽ chê
+// (quá gần, quá 30 ngày, phút lẻ) — khỏi phải chạy rồi mới biết.
+const THU = ["CN","T2","T3","T4","T5","T6","T7"];
+const h2 = n => String(n).padStart(2,"0");
+function nhanGio(iso){
+  if(!(iso||"").trim()) return {chu:"", lop:""};
+  const d = new Date(iso);
+  if(isNaN(d)) return {chu:"giờ không đọc được", lop:"loi"};
+  const phut = (d - new Date())/60000;
+  const s = `${THU[d.getDay()]} ${d.getDate()}/${d.getMonth()+1} ${h2(d.getHours())}:${h2(d.getMinutes())}`;
+  if(phut < 15) return {chu:s + " — đã qua / quá gần (cần trước ≥15 phút)", lop:"loi"};
+  if(phut > 30*1440) return {chu:s + " — quá 30 ngày, TikTok không nhận", lop:"loi"};
+  if(d.getMinutes() % 5) return {chu:s + " — phút lẻ, sẽ lùi về bội số 5", lop:"canh"};
+  const ngay = Math.floor(phut/1440);
+  return {chu:s + (ngay ? ` · còn ${ngay} ngày` : phut < 60 ? " · sắp tới" : " · hôm nay"), lop:""};
+}
+function suaGio(i, gt){
+  DL.muc[i].gio_dang = gt;
+  const n = nhanGio(gt), o = document.getElementById("nhan-" + DL.muc[i].id);
+  if(o){ o.textContent = n.chu; o.className = "gio-nhan " + n.lop; }
+  luuHoan(); capNhatCanhBao();
+}
+async function xepLich(ids, chiTrong){
+  await luu();
+  ids = ids || DL.muc.filter(m => m.chon).map(m => m.id);
+  if(!ids.length){ alert("Chưa tick dòng nào."); return; }
+  const r = await (await fetch("/api/xep-lich",{method:"POST",headers:H,
+    body:JSON.stringify({ids, muc:DL.muc,
+      khung_gio:document.getElementById("khung-gio").value,
+      bat_dau:document.getElementById("bat-dau").value,
+      chi_trong: chiTrong ?? document.getElementById("chi-trong").checked})})).json();
+  if(!r.ok){ alert(r.loi); return; }
+  DL = r.danh_sach; ve();
+  let s = `Đã xếp giờ cho ${r.dat} dòng.`;
+  if(r.bo_qua) s += ` Bỏ qua ${r.bo_qua} dòng (đã có giờ / đã đăng).`;
+  if(r.ghi_chu && r.ghi_chu.length) s += "\n" + r.ghi_chu.join("\n");
+  if(r.dat === 0 || (r.ghi_chu && r.ghi_chu.length)) alert(s);
+}
+function gioKe(id){ xepLich([id], false); }   // ⚡: dòng này lấy khung trống kế tiếp
+function xoaGioTick(){
+  const n = DL.muc.filter(m => m.chon && (m.gio_dang||"").trim()).length;
+  if(!n){ alert("Dòng đã tick không có giờ nào để xoá."); return; }
+  if(!confirm(`Xoá giờ hẹn của ${n} dòng đã tick?`)) return;
+  DL.muc.forEach(m => { if(m.chon) m.gio_dang = ""; });
+  ve(); luu();
+}
+
 function lopTT(t){
-  if(t==="đã nạp"||t==="đã đăng") return "xong";
-  if(t==="lỗi") return "loi";
-  if(t==="đang nạp") return "chay";
+  if(["đã nạp","đã đăng","đã điền","đã hẹn giờ","đã chốt lịch"].includes(t))
+    return "xong";
+  if(["lỗi","lỗi mô tả","lỗi lịch"].includes(t)) return "loi";
+  if(["đang nạp","đang điền","đang hẹn giờ"].includes(t)) return "chay";
   return "";
 }
 
@@ -466,26 +743,49 @@ function ve(){
         oninput="sua(${i},'hashtag',this.value)"></td>
     <td><input type="text" class="duongdan" value="${esc(m.video)}"
         placeholder="D:\\...\\video.mp4" oninput="sua(${i},'video',this.value)"></td>
+    <td><div class="o-gio">
+        <input type="datetime-local" step="300" value="${esc(m.gio_dang)}"
+          title="Để trống = không hẹn giờ, video chỉ nằm ở màn soạn bài"
+          oninput="suaGio(${i},this.value)">
+        <button title="Lấy khung giờ trống kế tiếp cho dòng này"
+          onclick="gioKe('${m.id}')">⚡</button>
+        <button title="Bỏ giờ hẹn" onclick="suaGio(${i},'');ve()">✕</button></div>
+      <div class="gio-nhan ${nhanGio(m.gio_dang).lop}" id="nhan-${m.id}"
+        >${esc(nhanGio(m.gio_dang).chu)}</div></td>
     <td><span class="tt ${lopTT(m.trang_thai)}" title="${esc(m.ghi_chu)}"
         >${esc(m.trang_thai||"chờ")}</span></td>
     <td class="giua"><button class="xoa" title="Bỏ dòng"
         onclick="boDong(${i})">✕</button></td></tr>`).join("");
   document.getElementById("trong").style.display = DL.muc.length ? "none" : "block";
+  capNhatCanhBao();
 }
 
-function sua(i, truong, gt){ DL.muc[i][truong] = gt; luuHoan(); }
+// Băng đỏ khi có dòng tick sẵn giờ mà ô 'bấm nút Lên lịch' đang tắt — lần chạy
+// đầu đã đặt đủ ngày giờ rồi dừng chỉ vì sót ô này (F5 là nó về mặc định tắt).
+function capNhatCanhBao(){
+  const coGio = DL.muc.some(m => m.chon && (m.gio_dang||"").trim());
+  const can = coGio && document.getElementById("len-lich").checked
+              && !document.getElementById("bam-dang").checked;
+  document.getElementById("canh-bao-dang").style.display = can ? "block" : "none";
+}
+
+function sua(i, truong, gt){
+  DL.muc[i][truong] = gt; luuHoan();
+  if(truong === "chon") capNhatCanhBao();
+}
 function boDong(i){ DL.muc.splice(i,1); ve(); luu(); }
 function chonTat(v){ DL.muc.forEach(m => m.chon = v); ve(); luu(); }
 function themDongTrong(){
   DL.muc.push({id:Math.random().toString(16).slice(2,10), chon:true, tieu_de:"",
                hashtag:document.getElementById("hashtag-chung").value,
-               video:"", trang_thai:"chờ", ghi_chu:""});
+               video:"", gio_dang:"", trang_thai:"chờ", ghi_chu:""});
   ve(); luu();
 }
 
 function luuHoan(){ clearTimeout(hen); hen = setTimeout(luu, 400); }
 async function luu(){
   DL.hashtag_chung = document.getElementById("hashtag-chung").value;
+  DL.khung_gio = document.getElementById("khung-gio").value;
   await fetch("/api/luu", {method:"POST", headers:H, body:JSON.stringify(DL)});
 }
 
@@ -509,10 +809,13 @@ async function chay(){
   const ids = DL.muc.filter(m => m.chon).map(m => m.id);
   if(!ids.length){ alert("Chưa tick dòng nào."); return; }
   const chiDo = document.getElementById("chi-do").checked;
-  if(!chiDo && !confirm(`Sẽ nạp ${ids.length} video lên TikTok (KHÔNG bấm Đăng). Tiếp?`))
-    return;
+  const dienMoTa = document.getElementById("dien-mo-ta").checked;
+  const lenLich = document.getElementById("len-lich").checked;
+  const bamDang = document.getElementById("bam-dang").checked;
+  // Không hỏi lại: các ô tick phía trên đã là lời xác nhận rồi.
   const r = await (await fetch("/api/chay",{method:"POST",headers:H,
-    body:JSON.stringify({ids, chi_do:chiDo})})).json();
+    body:JSON.stringify({ids, chi_do:chiDo, dien_mo_ta:dienMoTa,
+                         len_lich:lenLich, bam_dang:bamDang})})).json();
   if(!r.ok){ alert(r.loi); return; }
   theoDoi();
 }
@@ -542,6 +845,8 @@ function xemAnh(){
   const t = Date.now();
   document.getElementById("anh1").src = "/anh/tiktok_b1_do_nut.png?t=" + t;
   document.getElementById("anh2").src = "/anh/tiktok_b1_sau_khi_nap.png?t=" + t;
+  document.getElementById("anh3").src = "/anh/tiktok_b2_mo_ta.png?t=" + t;
+  document.getElementById("anh4").src = "/anh/tiktok_b3_len_lich.png?t=" + t;
   document.getElementById("khung-anh").style.display = "flex";
 }
 

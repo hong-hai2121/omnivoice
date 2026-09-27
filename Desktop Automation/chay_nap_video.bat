@@ -10,6 +10,9 @@ echo.
 echo   KHONG bam nut Dang, KHONG dien caption. Video chi nam o man
 echo   soan bai, chua len kenh. Muon bo thi dong tab la xong.
 echo.
+echo   Dien tieu de + hashtag la buoc rieng:  chay_dien_mo_ta.bat
+echo   (hoac dung bang dieu khien web - no chay lien ca hai buoc)
+echo.
 echo   Con tro chuot cua ban KHONG bi dung toi. Cu lam viec binh thuong.
 echo.
 echo   Doi video khac:  chay_nap_video.bat --video "D:\duong\dan\video.mp4"

@@ -60,7 +60,13 @@ def mo_trang(url: str = URL, profile: str = PROFILE, giay: float = 30) -> int:
     Ghi nhớ danh sách cửa sổ Chrome TRƯỚC khi mở rồi chỉ nhận cửa sổ mới, để
     không bám nhầm một cửa sổ TikTok còn sót từ lần chạy trước."""
     truoc = set(nw.tim_cua_so("Chrome_WidgetWin_1"))
+    # Hai cờ này bảo Chrome đừng "tiết kiệm" với cửa sổ bị che: bị che kín thì
+    # nó bỏ khung trang, mà mất khung trang là bấm/gõ ngầm rơi vào hư không.
+    # (Chỉ ăn thua khi lệnh này là lệnh MỞ Chrome đầu tiên; Chrome đang chạy sẵn
+    # thì cờ bị bỏ qua — nen_win.san_sang() lo phần chữa cháy.)
     subprocess.Popen([str(CHROME_EXE), f"--profile-directory={profile}",
+                      "--disable-features=CalculateNativeWinOcclusion",
+                      "--disable-backgrounding-occluded-windows",
                       "--new-window", url])
     han = time.time() + giay
     while time.time() < han:
@@ -128,11 +134,15 @@ def nap_video(video: str | Path, profile: str = PROFILE, cho: int = 12,
 
     log(f"▶ Mở trang tải lên bằng Chrome '{profile}'")
     hwnd = mo_trang(profile=profile)
-    dich = nw.cua_so_nhan_chuot(hwnd)
     ket["hwnd"] = hwnd
     log(f"  Cửa sổ {hwnd} — {nw.tieu_de(hwnd)!r}")
     log(f"  Chờ {cho}s cho trang dựng xong ...")
     time.sleep(cho)
+    # Hỏi cửa sổ nhận lệnh SAU khi trang dựng xong, không phải lúc vừa mở tab:
+    # hỏi sớm quá là chưa có khung trang, bấm vào cửa sổ cha thì mất tăm.
+    dich = nw.cho_cau_noi(hwnd, log=log)
+    log(f"  Cửa sổ nhận lệnh: {dich}"
+        + ("" if dich != hwnd else "  ⚠ vẫn là cửa sổ cha — có thể bấm không tới"))
 
     # ── dò nút ──────────────────────────────────────────────────────────────
     img, goc, ok = nw.chup_ngam(hwnd)
@@ -163,12 +173,27 @@ def nap_video(video: str | Path, profile: str = PROFILE, cho: int = 12,
     # ── bấm ngầm + hộp thoại ────────────────────────────────────────────────
     log("▶ Bấm ngầm vào nút 'Chọn video'")
     hop_cu = nw.hop_thoai_dang_mo()
-    cx, cy = nw.bam_ngam_theo_anh(dich, goc, nut["cx"], nut["cy"])
-    log(f"  Gửi cú bấm tới cửa sổ {dich} ở toạ độ khách ({cx},{cy})")
-
-    hop = nw.cho_hop_thoai(15, tru=hop_cu)
+    hop = None
+    for lan in (1, 2):
+        cx, cy = nw.bam_ngam_theo_anh(dich, goc, nut["cx"], nut["cy"])
+        log(f"  Gửi cú bấm tới cửa sổ {dich} ở toạ độ khách ({cx},{cy})")
+        hop = nw.cho_hop_thoai(15, tru=hop_cu)
+        if hop or lan == 2:
+            break
+        # Không thấy hộp thoại mà nút dò đúng → cú bấm không tới trang. Lấy lại
+        # cửa sổ cầu nối (có thể Chrome vừa dựng lại), chụp lại, bấm lần nữa.
+        log("  ⚠ Chưa thấy hộp thoại — lấy lại cửa sổ nhận lệnh rồi bấm lần hai.")
+        dich = nw.cho_cau_noi(hwnd, giay=6, log=log)
+        anh, goc2, _ = nw.chup_ngam(hwnd)
+        nut2 = chon_nut_chon_video(
+            nw.tim_nut_mau(anh, DO_TIKTOK, dung_sai=34, it_nhat=1500),
+            anh.size[0]) if anh is not None else None
+        if nut2:
+            nut, goc = nut2, goc2
     if not hop:
-        ket["ly_do"] = "Không thấy hộp thoại chọn file (có thể dò sai nút)."
+        ket["ly_do"] = ("Bấm hai lần mà không thấy hộp thoại chọn file — cú bấm "
+                        "không tới trang (Chrome chưa dựng khung trang, hoặc có "
+                        "cửa sổ TikTok khác đang kẹt hộp thoại).")
         log("❌ " + ket["ly_do"])
         return ket
     log(f"  Hộp thoại: {hop} — {nw.tieu_de(hop)!r}")
