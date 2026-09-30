@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OmniVoice TikTok</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="brand-mark"><i data-lucide="clapperboard"></i></span><div><h1>OmniVoice <span>TikTok</span></h1><span class="workspace-name">Quản lý video &amp; lịch đăng · <span id="build-version"></span></span></div></div>
+    <button id="popout" class="icon-button" title="Mở cửa sổ riêng" aria-label="Mở cửa sổ riêng"><i data-lucide="panels-top-left"></i></button>
+  </header>
+  <main>
+    <section class="connection">
+      <div class="connection-label"><i data-lucide="monitor"></i><label for="tab">TikTok Studio</label></div>
+      <div class="toolbar">
+        <select id="tab" aria-label="Tab TikTok Studio"></select>
+        <button id="refresh" class="icon-button" title="Làm mới danh sách tab" aria-label="Làm mới danh sách tab"><i data-lucide="refresh-cw"></i></button>
+        <button id="open"><i data-lucide="external-link"></i>Mở Studio</button>
+        <span id="connection-status" role="status"></span>
+      </div>
+    </section>
+    <section class="overview" aria-label="Tổng quan">
+      <div><span>Tổng video</span><strong id="total-count">0</strong></div>
+      <div><span>Có giờ đăng</span><strong id="scheduled-count">0</strong></div>
+      <div><span>Đã xử lý</span><strong id="done-count">0</strong></div>
+      <div><span>Cần kiểm tra</span><strong id="attention-count">0</strong></div>
+    </section>
+    <section class="queue-section">
+      <div class="toolbar queue-tools">
+        <div class="section-heading"><h2>Danh sách video</h2><span id="count">0 video</span></div>
+        <button id="import"><i data-lucide="folder-open"></i>Nhập JSON</button>
+        <button id="export" class="icon-button" title="Xuất danh sách" aria-label="Xuất danh sách"><i data-lucide="download"></i></button>
+        <button id="add" class="icon-button" title="Thêm video" aria-label="Thêm video"><i data-lucide="plus"></i></button>
+        <input id="json-file" type="file" accept="application/json,.json" hidden>
+      </div>
+      <details id="scan-source" open>
+      <summary>Nguồn video &amp; lịch</summary>
+      <div class="scan-tools">
+        <label>Bản quét mặc định<select id="scan-kind"><option value="dai">Full</option><option value="nua">Nửa video</option><option value="ngan">Short</option></select></label>
+        <label class="hashtags">Hashtag chung<input id="scan-hashtags" type="text" value="#truyenaudio #truyenfull #audio #fyp"></label>
+        <label class="check"><input id="auto-scan" type="checkbox" checked>Tự cập nhật</label>
+        <button id="scan"><i data-lucide="folder-search"></i>Quét kịch_bản</button>
+      </div>
+      <div class="sync-status"><p id="scan-status" role="status"></p><p id="schedule-status" role="status"></p></div>
+      </details>
+      <div class="list-toolbar">
+        <label class="search"><i data-lucide="search"></i><input id="search" type="search" placeholder="Tìm tập, tiêu đề, tên file..." aria-label="Tìm video"></label>
+        <select id="status-filter" aria-label="Lọc trạng thái"><option value="all">Tất cả trạng thái</option><option value="waiting">Chờ</option><option value="scheduled">Có lịch</option><option value="running">Đang xử lý</option><option value="review">Cần kiểm tra</option><option value="error">Lỗi</option><option value="done">Đã xử lý</option></select>
+        <div class="bulk-controls"><span id="selection-count">0 đã chọn</span><button id="clear-selection" class="icon-button" title="Bỏ chọn tất cả" aria-label="Bỏ chọn tất cả"><i data-lucide="list-x"></i></button><button id="variant-half"><i data-lucide="scissors"></i>Nửa video</button><button id="variant-full"><i data-lucide="film"></i>Full</button><button id="variant-short"><i data-lucide="video"></i>Short</button></div>
+      </div>
+      <div class="run-controls">
+      <div class="toolbar actions">
+        <label class="check"><input id="schedule" type="checkbox" checked>Đặt ngày giờ</label>
+        <label class="check"><input id="publish" type="checkbox" checked>Bấm Đăng / Lên lịch</label>
+        <label class="check"><input id="repost" type="checkbox">Cho phép đăng lại</label>
+        <button id="prepare" class="primary"><i data-lucide="upload"></i>Nạp &amp; điền</button>
+        <button id="fill"><i data-lucide="text-cursor-input"></i>Điền tiếp</button>
+        <button id="check-posts"><i data-lucide="list-checks"></i>Kiểm tra bài đăng</button>
+        <button id="stop" disabled><i data-lucide="square"></i>Dừng</button>
+        <button id="reviewed"><i data-lucide="check-check"></i>Đã xử lý</button>
+      </div>
+      <p id="action-state" role="status"></p>
+      <p id="operation-error" role="alert" hidden></p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th><input id="select-all" type="checkbox" aria-label="Chọn tất cả video đang hiển thị"></th><th>Nội dung</th><th>Phiên bản video</th><th>Giờ đăng</th><th>Trạng thái</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p id="empty">Chưa có video</p>
+    </section>
+    <section class="activity">
+      <div class="toolbar"><h2>Nhật ký hoạt động</h2><span id="state">Sẵn sàng</span><button id="inspect"><i data-lucide="scan-search"></i>Xuất chẩn đoán</button><button id="last-diagnostic" class="icon-button" title="Tải chẩn đoán lỗi gần nhất" aria-label="Tải chẩn đoán lỗi gần nhất"><i data-lucide="file-down"></i></button><button id="receipts" class="icon-button" title="Xuất biên nhận đăng" aria-label="Xuất biên nhận đăng"><i data-lucide="receipt-text"></i></button></div>
+      <pre id="log" role="log" aria-live="polite"></pre>
+    </section>
+    <details class="advanced">
+      <summary>Bộ chọn phần tử</summary>
+      <div id="selectors" class="selector-grid">
+        <label>File video<input data-key="file" type="text" spellcheck="false" placeholder="input[type=file]"></label>
+        <label>Mô tả<input data-key="caption" type="text" spellcheck="false"></label>
+        <label>Tùy chọn lên lịch<input data-key="schedule" type="text" spellcheck="false"></label>
+        <label>Ngày<input data-key="date" type="text" spellcheck="false"></label>
+        <label>Giờ<input data-key="time" type="text" spellcheck="false"></label>
+        <label>Nút Đăng / Lên lịch<input data-key="publish" type="text" spellcheck="false"></label>
+      </div>
+    </details>
+  </main>
+  <script src="vendor/lucide.js"></script>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "OmniVoice TikTok",
+  "version": "0.5.14",
+  "minimum_chrome_version": "125",
+  "description": "Prepare TikTok videos in a tab without controlling the desktop.",
+  "permissions": ["debugger", "storage", "sidePanel"],
+  "host_permissions": ["https://www.tiktok.com/*", "https://tiktok.com/*", "http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "OmniVoice TikTok" },
+  "side_panel": { "default_path": "dashboard.html" }
+}
