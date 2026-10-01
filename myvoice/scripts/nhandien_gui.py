@@ -325,8 +325,8 @@ def batch_worker(sources, model_name, speed, prefix, on_seg, on_prog, on_done):
 
                 # 3) Dịch Gemini (tái dùng Firefox; điều hướng về chat dịch).
                 if driver is None:
-                    log("🌐 Mở Firefox + Gemini (chat dịch)...")
-                    driver = dich_gemini.init_firefox()
+                    log(f"🌐 Mở {dich_gemini.browser_label()} + Gemini (chat dịch)...")
+                    driver = dich_gemini.init_firefox(on_log=log)
                 else:
                     driver.get(dich_gemini.GEMINI_URL)   # chat mới cho link này
                     time.sleep(8)

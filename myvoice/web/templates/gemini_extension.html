@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Extension Gemini — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🧩</span> Chrome Extension — Gemini</h1>
+  <p class="muted">Dịch, dịch lại đoạn trống và SEO chạy trên <b>hồ sơ Chrome nào đã cài
+     extension</b> và đăng nhập Gemini — không cần Selenium hay geckodriver. Firefox/Selenium
+     giữ làm dự phòng: extension không kết nối được thì ứng dụng tự mở Firefox.</p>
+</div>
+
+<div class="panel">
+  <div class="phead"><h2>Cài một lần</h2></div>
+  <ol>
+    <li>Mở <code>chrome://extensions</code>, bật <b>Developer mode</b> (Chế độ nhà phát triển), chọn <b>Load unpacked</b> (Tải tiện ích đã giải nén).</li>
+    <li>Chọn thư mục: <code>{{ extension_dir }}</code>.</li>
+    <li>Đăng nhập <a href="https://gemini.google.com/app" target="_blank" rel="noopener">Gemini</a> trên hồ sơ Chrome đó.
+        Extension tự bật với mã kết nối mặc định bên dưới — không phải dán gì.</li>
+    <li>Bấm <b>🔌 Kiểm tra kết nối</b> ở khối dưới; thấy ✅ thì về Home bấm Dịch như trước.</li>
+  </ol>
+  <p class="warn">Mã kết nối extension KHÁC mã <code>?token=</code> trong link trang web này.
+     Dán nhầm mã web vào popup sẽ báo “Sai mã kết nối”. Bản extension 1.1.1 trở lên tự đổi
+     về mã mặc định khi gặp lỗi đó.</p>
+  <label class="field">
+    <span>Mã kết nối
+      {% if token_is_default %}(mặc định — chỉ chạy nội bộ máy nên không cần đổi; extension đã điền sẵn)
+      {% else %}(đã đổi qua file <code>.gemini_extension_token</code> / biến <code>OMNI_GEMINI_EXTENSION_TOKEN</code> — dán đúng mã này vào popup extension)
+      {% endif %}</span>
+    <input type="text" readonly value="{{ connection_token }}" aria-label="Mã kết nối extension">
+  </label>
+  <p class="hint">Giữ Chrome và tab Gemini mở trong lúc chạy. Khi ứng dụng chưa chạy việc nào, popup
+     extension báo “Đang chờ ứng dụng” là bình thường. Chỉ cài extension trên MỘT hồ sơ Chrome.
+     Sửa mã extension thì bấm <b>Reload</b> ở <code>chrome://extensions</code>.
+     Thay đổi cách dịch ở Home chỉ áp dụng cho việc mới xếp hàng. Muốn tắt dự phòng Firefox:
+     <code>OMNI_GEMINI_EXTENSION_FALLBACK=0</code>.</p>
+</div>
+
+<div class="panel" id="ext-test">
+  <div class="phead"><h2>Thử extension</h2><span class="muted small" id="ext-status"></span></div>
+  <p class="hint">Lượt thử ép dùng extension (không dự phòng Firefox), mở chat Gemini mới, không ghi
+     file nào. Đang có phiên dịch thật chạy thì cổng bận — thử sau.</p>
+  <div class="actions">
+    <button type="button" id="ext-check">🔌 Kiểm tra kết nối</button>
+    <span class="muted small">mở cầu nối, chờ Chrome hỏi lệnh (tối đa 40 s), mở tab Gemini và tìm ô nhập</span>
+  </div>
+  <label class="field"><span>Đoạn tiếng Trung thử (ngắn)</span>
+    <textarea id="ext-text" rows="3">{{ sample_text }}</textarea></label>
+  <div class="chks">
+    <label class="chk"><input type="checkbox" id="ext-full">
+      Gửi kèm câu hướng dẫn dịch đầy đủ + thẻ hư cấu như lúc dịch thật (2 tin nhắn, lâu hơn)</label>
+  </div>
+  <div class="actions">
+    <button type="button" class="primary" id="ext-send">🧪 Gửi thử qua extension</button>
+  </div>
+  <div class="field"><span>Nhật ký</span><pre class="copybox" id="ext-log">Chưa chạy.</pre></div>
+  <div class="field"><span>Kết quả Gemini</span><pre class="copybox" id="ext-result"></pre></div>
+</div>
+{% endblock %}

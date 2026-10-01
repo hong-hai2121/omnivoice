@@ -10,7 +10,7 @@ chốt là "dịch cụt" / "từ chối" — KHÔNG đụng tới: việc đó 
 
 Cách gửi: MỖI ĐOẠN TRỐNG GỬI LÊN GEMINI ĐÚNG MỘT LẦN — không mở lại Firefox,
 không cắt đôi, không gửi lại khi kết quả xấu. Đề bài là câu ngắn
-dich_gemini.BLANK_RETRY_PROMPT ("Dịch đi thẳng vào nội dung. Không giải thích thêm:")
+dich_gemini.BLANK_RETRY_PROMPT ("Dịch đi thẳng vào nội dung, từ nào quá nhạy cảm thì thay bằng cách nói nhẹ nhàng hơn. Không giải thích thêm:")
 + nội dung đoạn — KHÔNG gửi câu hướng dẫn dịch dài, KHÔNG gắn thẻ hư cấu (15/09/2026,
 cùng đề bài với lượt 2 chat mới của bước dịch chính). Kết quả nhận về in nguyên văn ra
 nhật ký và ghi ngay vào gemini_result.docx để người dùng tự kiểm. Gemini trả câu TỪ
@@ -150,14 +150,14 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
 
     # Mở Firefox (lần đầu) hoặc mở CHAT MỚI cho tập này.
     if driver is None:
-        log("🌐 Đang mở Firefox + Gemini...")
-        driver = g.init_firefox()
+        log(f"🌐 Đang mở {g.browser_label()} + Gemini...")
+        driver = g.init_firefox(on_log=log)
     else:
         driver.get(g.GEMINI_URL)
         time.sleep(8)
     # 15/09/2026: KHÔNG gửi câu hướng dẫn dịch dài (TRANSLATE_PREFIX) và KHÔNG gắn thẻ
     # hư cấu nữa — dùng đúng đề bài ngắn của lượt 2 chat mới (BLANK_RETRY_PROMPT:
-    # "Dịch đi thẳng vào nội dung. Không giải thích thêm:") + nội dung đoạn. Đoạn trống
+    # "Dịch đi thẳng vào nội dung, từ nào quá nhạy cảm thì thay bằng cách nói nhẹ nhàng hơn. Không giải thích thêm:") + nội dung đoạn. Đoạn trống
     # thường là đoạn đã bị từ chối với đề bài dài; chat sạch + đề bài gọn qua dễ hơn.
     de_bai = g.BLANK_RETRY_PROMPT.strip()
     log(f"📝 Đề bài ngắn cho mỗi đoạn: \"{de_bai or '(chỉ nội dung)'}\" — không câu "

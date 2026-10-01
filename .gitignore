@@ -50,6 +50,7 @@ examples/exp*
 /myvoice/effect_favorites.json
 /myvoice/taogiong_options.json
 /myvoice/taogiong_pipeline.json
+/myvoice/.gemini_extension_token
 /myvoice/taogiong_skip_episodes.json
 /myvoice/YOUTUBE/thumbnail_gui_state.json
 

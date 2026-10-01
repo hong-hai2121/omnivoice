@@ -1471,6 +1471,10 @@ def subprocess_env() -> dict:
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    # Snapshot the selection when queueing, including retries and SEO runners.
+    # Mặc định extension (01/10/2026); Firefox chỉ khi người dùng chọn rõ.
+    from gemini_backend import DEFAULT_BACKEND
+    env["OMNI_GEMINI_BACKEND"] = load_pipeline().get("gemini_backend") or DEFAULT_BACKEND
     env["PYTHONPATH"] = os.pathsep.join(
         [str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)

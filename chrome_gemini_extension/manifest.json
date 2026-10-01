@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "OmniVoice Gemini",
+  "version": "1.2.0",
+  "minimum_chrome_version": "120",
+  "description": "Dịch và tạo SEO qua Gemini cho OmniVoice bằng phiên Chrome đã đăng nhập.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*", "https://gemini.google.com/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_popup": "popup.html", "default_title": "OmniVoice Gemini"},
+  "content_scripts": [{
+    "matches": ["https://gemini.google.com/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }]
+}

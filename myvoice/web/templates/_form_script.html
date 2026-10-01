@@ -91,8 +91,9 @@
       <p class="hint"><code>tiengTrung.docx</code> → <code>gemini_result.docx</code>.</p>
     </div>
     <div class="actions">
-      <button class="primary" name="start" value="translate">🌐 Gửi Gemini (Firefox)</button>
+      <button class="primary" name="start" value="translate">🌐 Gửi Gemini</button>
     </div>
+    {% include "_gemini_backend.html" %}
     <div class="chks">
       <label class="chk"><input type="checkbox" name="seo" {{ 'checked' if pipe.seo }}>
         🔎 Tạo SEO YouTube + thumbnail sau khi xong</label>
@@ -121,8 +122,7 @@
       <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
          — sửa ở <a href="/giongnoi">Giọng nói</a>.</p>
     {% endif %}
-    <p class="hint">Bước 2 và SEO điều khiển Firefox — đóng Firefox đang mở và đảm bảo
-       đã đăng nhập Google trước khi chạy.</p>
+    <p class="hint">Bước 2 và SEO dùng cách dịch đã chọn ở trên.</p>
   </div>
 
   <div class="savebar span-all">

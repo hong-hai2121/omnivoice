@@ -24,7 +24,7 @@ Chrome sẽ báo quyền debugger và hiển thị thanh thông báo khi extensi
 với tab. Đó là cơ chế chính thức của Chrome. Không mở DevTools trên tab đang chạy
 vì có thể ngắt kết nối debugger. Khi nâng cấp mã, bấm Reload ở `chrome://extensions`
 rồi tải lại bảng điều khiển.
-Số phiên bản nằm cạnh tên bảng (hiện tại `v0.5.14`). Nhật ký khôi phục khi mở lại
+Số phiên bản nằm cạnh tên bảng (hiện tại `v0.5.15`). Nhật ký khôi phục khi mở lại
 được ghi rõ **Lần chạy trước**, không phải lỗi vừa phát sinh. Lần chạy mới thay
 nhật ký cũ và lưu thời điểm cùng phiên bản đã xử lý. Nếu vẫn thấy giao diện cũ,
 đóng bảng/cửa sổ tiện ích, Reload chính tiện ích rồi mở lại; F5 TikTok không cập nhật tiện ích.

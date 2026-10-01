@@ -247,8 +247,8 @@ thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiế
 Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
 **🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*, **mặc định
-BẬT sẵn mỗi lần mở server** (an toàn vì phải từng thấy hàng đợi bận rồi mới đếm
-ngủ — tick suông lúc chưa chạy gì thì không úp máy). Chạy xong CẢ
+TẮT mỗi lần mở server** (tick tay trên web hoặc cửa sổ desktop; phải từng thấy
+hàng đợi bận rồi mới đếm ngủ — tick suông lúc chưa chạy gì thì không úp máy). Chạy xong CẢ
 hàng đợi chính lẫn hàng đợi đăng YouTube, rảnh thêm 3 phút thì máy ngủ; có việc
 mới chen vào là huỷ đếm; ngủ xong tự bỏ tick (một lần duy nhất). Bỏ tick là huỷ,
 kể cả lúc đang đếm ngược. Ngủ chứ không tắt máy: sáng chạm chuột là server, hàng

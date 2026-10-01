@@ -32,7 +32,7 @@ svg { width: 17px; height: 17px; flex-shrink: 0; }
 .scan-tools .check { min-height: 36px; margin: 0; }
 #scan-status { font-size: 12px; color: #656b76; overflow-wrap: anywhere; margin: 12px 0; }
 #schedule-status { font-size: 12px; color: #087465; overflow-wrap: anywhere; margin: 8px 0 12px; }
-.table-wrap { overflow: auto; max-height: 420px; background: #fff; border-top: 1px solid #e0e6e5; }
+.table-wrap { background: #fff; border-top: 1px solid #e0e6e5; }
 table { width: 100%; min-width: 850px; border-collapse: collapse; table-layout: fixed; }
 th { position: sticky; top: 0; z-index: 1; text-align: left; font-size: 12px; font-weight: 600; color: #656b76; background: #eef0f3; }
 th, td { padding: 10px 8px; border-bottom: 1px solid #dce0e5; vertical-align: top; }
@@ -121,7 +121,9 @@ td textarea + input { margin-top: 6px; font-size: 12px !important; color: #65787
   .search, #status-filter, .bulk-controls { width: 100%; }
   #selection-count { width: 100%; margin: 2px 0 5px; }
   .bulk-controls button { padding: 7px 8px; font-size: 12px; }
-  .table-wrap { max-height: 650px; } table { min-width: 0; } table, tbody { display: block; width: 100%; }
+}
+@media (max-width: 1024px) {
+  table { min-width: 0; } table, tbody { display: block; width: 100%; }
   thead { display: block; } thead tr { display: block; padding: 10px 12px; } th { display: none; } th:first-child { display: block; width: auto; padding: 0; position: static; }
   tbody tr { display: grid; grid-template-columns: minmax(0,1fr) 40px; padding: 12px; gap: 10px; border-top: 1px solid #e0e6e5; }
   td { padding: 0; border: 0; min-width: 0; } td:first-child { grid-column: 1; grid-row: 1; align-self: center; }

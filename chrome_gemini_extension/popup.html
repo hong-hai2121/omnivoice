@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><title>OmniVoice Gemini</title>
+<link rel="stylesheet" href="popup.css"></head><body>
+<h1>OmniVoice Gemini</h1>
+<p>Dùng tài khoản Gemini đã đăng nhập trên hồ sơ Chrome này để dịch và tạo SEO.</p>
+<label for="token">Mã kết nối: mặc định <code>omnivoice-gemini-local</code>. KHÔNG phải mã <code>?token=</code> trong link trang web. Chỉ đổi khi tab 🧩 Extension trên web hiện mã khác.</label>
+<input id="token" type="text" autocomplete="off" spellcheck="false" placeholder="omnivoice-gemini-local">
+<button id="connect">Lưu và kết nối</button><button id="disconnect">Ngắt kết nối</button>
+<p id="status" role="status">Chưa kết nối.</p>
+<p class="hint">Extension tự kết nối ngay khi cài. “Đang chờ ứng dụng” nghĩa là GUI chưa chạy việc dịch nào — bình thường. Giữ Chrome và tab Gemini mở; bạn có thể đóng cửa sổ nhỏ này.</p>
+<script src="popup.js"></script></body></html>

@@ -47,6 +47,7 @@ body.p-recog     { --accent: #2563eb; --accent2: #38bdf8; --accent-soft: #e8f1ff
 body.p-voice     { --accent: #db2777; --accent2: #fb7185; --accent-soft: #ffe9f2; }
 body.p-thumbnail { --accent: #ea580c; --accent2: #fbbf24; --accent-soft: #fff0e2; }
 body.p-seo       { --accent: #0d9488; --accent2: #34d399; --accent-soft: #e2f7f3; }
+body.p-ext       { --accent: #0891b2; --accent2: #22d3ee; --accent-soft: #e0f6fb; }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -68,6 +69,7 @@ body.p-seo       { --accent: #0d9488; --accent2: #34d399; --accent-soft: #e2f7f3
   body.p-voice     { --accent: #f472b6; --accent2: #fda4af; --accent-soft: #35182a; }
   body.p-thumbnail { --accent: #fb923c; --accent2: #fcd34d; --accent-soft: #35210f; }
   body.p-seo       { --accent: #2dd4bf; --accent2: #6ee7b7; --accent-soft: #102b2a; }
+  body.p-ext       { --accent: #22d3ee; --accent2: #67e8f9; --accent-soft: #0f2a30; }
   body.p-home,
   body.p-post      { --accent: #f87171; --accent2: #fda4af; --accent-soft: #331819; }
 
@@ -814,3 +816,7 @@ button.badge-xem:hover { background: var(--ok-bg); box-shadow: 0 0 0 3px var(--o
 .trong-note.ok { color: var(--ok); }
 .trong-note.warn { color: var(--warn); }
 .trong-note.bad { color: var(--danger); }
+
+/* Tab 🧩 Extension: nhật ký lượt thử cuộn trong khung, kết quả xuống dòng. */
+#ext-log { max-height: 320px; overflow: auto; }
+#ext-log, #ext-result { white-space: pre-wrap; }

@@ -154,6 +154,37 @@ test("dashboard imports existing queue, defaults scheduling and publishing on, r
   assert.deepEqual(errors, []);
   await dashboard.setViewportSize({ width: 1440, height: 960 });
 });
+test('episode list uses the page scrollbar on desktop, medium and narrow windows', async () => {
+  const rows = importQueue(Array.from({ length: 30 }, (_, i) => ({
+    video: `D:\\episodes\\A${i + 100}\\full.mp4`, tieu_de: `Full ở Mimi audio Số ${i + 100} | Video kiểm tra danh sách`,
+    hashtag: '#truyenaudio #truyenfull', gio_dang: date + 'T20:00',
+  })));
+  await dashboard.evaluate(rows => chrome.storage.local.set({ rows, checkedIds: [], scanSettings: { auto: false } }), rows);
+  await dashboard.reload(); await expect(dashboard.locator('#rows tr')).toHaveCount(30);
+  await mkdir(path.join(root, 'test-results'), { recursive: true });
+  for (const [width, name] of [[1440, 'desktop'], [900, 'medium'], [390, 'mobile']]) {
+    await dashboard.setViewportSize({ width, height: 900 });
+    const layout = await dashboard.locator('.table-wrap').evaluate(el => ({
+      overflow: getComputedStyle(el).overflowY, maxHeight: getComputedStyle(el).maxHeight,
+      height: el.clientHeight, scrollHeight: el.scrollHeight, viewport: innerHeight,
+      horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+    }));
+    assert.equal(layout.overflow, 'visible'); assert.equal(layout.maxHeight, 'none');
+    assert.ok(layout.height > layout.viewport); assert.ok(layout.scrollHeight <= layout.height + 1);
+    assert.equal(layout.horizontalOverflow, false);
+    await dashboard.locator('#rows tr').nth(2).hover({ position: { x: 5, y: 5 } });
+    const before = await dashboard.evaluate(() => scrollY);
+    await dashboard.mouse.wheel(0, 500);
+    await expect.poll(() => dashboard.evaluate(() => scrollY)).toBeGreaterThan(before);
+    assert.equal(await dashboard.locator('.table-wrap').evaluate(el => el.scrollTop), 0);
+    await dashboard.screenshot({ path: path.join(root, 'test-results', 'page-scroll-' + name + '.png') });
+    await dashboard.locator('#rows tr').last().scrollIntoViewIfNeeded();
+    await expect(dashboard.locator('#rows tr').last()).toBeInViewport();
+    assert.equal(await dashboard.locator('.table-wrap').evaluate(el => el.scrollTop), 0);
+  }
+  await dashboard.setViewportSize({ width: 1440, height: 960 });
+});
+
 test("dashboard auto-scans on open and refreshes periodically without duplicates", async () => {
   await dashboard.evaluate(() => chrome.storage.local.clear());
   scannedRows = [{ video: "D:\\episodes\\A200\\[Full] video.mp4", tieu_de: "Full ở Video 200", hashtag: "#MimiAudioSo200" }];

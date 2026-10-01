@@ -274,7 +274,7 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     own_driver = driver is None
     try:
         if driver is None:
-            driver = g.init_firefox(url=NEW_CHAT_URL if SEO_NEW_CHAT else SEO_GEMINI_URL)
+            driver = g.init_firefox(url=NEW_CHAT_URL if SEO_NEW_CHAT else SEO_GEMINI_URL, on_log=log)
 
         ans = ""
         for lan in range(1, max(1, attempts) + 1):

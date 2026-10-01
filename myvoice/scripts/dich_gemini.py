@@ -40,9 +40,11 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+import logging
 import re
 import time
 from pathlib import Path
+from gemini_backend import browser_label, fallback_enabled, get_backend
 
 # ── Cấu hình (có thể override bằng biến môi trường) ──────────────────────────
 GEMINI_URL = os.environ.get(
@@ -141,6 +143,8 @@ _CHINESE_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 #   5) BLANK_RETRY_PROMPT   — lượt 2 trong CHAT MỚI cho đoạn "(trống)" (xem BLANK_RETRY)
 #                             VÀ nút 🔁 Dịch lại đoạn (Trống) (dich_lai_trong.py, 15/09/2026):
 #                             cả hai chỉ gửi câu này + nội dung, không 1) không 2).
+# 30/09/2026: cả 1) 3) 4) 5) đều cho phép Gemini THAY từ quá nhạy cảm bằng cách nói nhẹ
+# nhàng / nói tránh (giữ mạch truyện, không đánh dấu chỗ thay) thay vì từ chối cả đoạn.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Thẻ định danh ngữ cảnh truyện: gắn lên đầu MỖI ĐOẠN tiếng Trung gửi đi, để bộ lọc
@@ -173,6 +177,12 @@ TRANSLATE_PREFIX = (
     "hệ, diễn biến, cảm xúc và ý nghĩa gốc. "
     "Không tự ý thêm tình tiết mới, không bớt nội dung, không biến đổi truyện thành câu "
     "chuyện khác. "
+    "Ngoại lệ duy nhất cho yêu cầu dịch sát: nếu gặp từ ngữ quá nhạy cảm hoặc thô tục "
+    "(bạo lực, máu me, tình dục, chửi thề, tự sát, chất cấm...) khiến bạn khó dịch nguyên "
+    "văn, hãy thay riêng những từ đó bằng cách nói nhẹ nhàng, tế nhị hoặc nói tránh mà "
+    "người nghe vẫn hiểu, giữ đúng mạch truyện và ý nghĩa tình tiết. Tuyệt đối không từ "
+    "chối, không bỏ trống hay bỏ qua cả đoạn chỉ vì vài từ nhạy cảm, và không ghi chú hay "
+    "đánh dấu chỗ đã thay. "
     "Nếu gặp tiếng lóng, ẩn dụ, châm biếm, cách nói truyện mạng hoặc cụm từ có nghĩa hàm "
     "ý, hãy dịch theo nghĩa thực tế trong ngữ cảnh. "
     "Nếu văn bản có lỗi do nhận diện giọng nói, lỗi chính tả, đồng âm, thiếu dấu câu, dính "
@@ -217,7 +227,8 @@ def load_prefix() -> str:
 # Câu yêu cầu chèn lên đầu khi PHẢI gửi lại đoạn — CHỈ dùng khi Firefox treo / mở lại
 # chat mới (mất ngữ cảnh) mà bên gọi không đưa prefix. KHÔNG còn dùng để gửi lại vì
 # tiếng Trung (retry đó đã bỏ).
-RETRY_CHINESE_PREFIX = "chỉ trả về nội dung dịch không giao tiếp gì thêm :"
+RETRY_CHINESE_PREFIX = ("chỉ trả về nội dung dịch không giao tiếp gì thêm, từ nào quá nhạy "
+                        "cảm thì thay bằng cách nói nhẹ nhàng hơn :")
 
 # Gemini trả câu TỪ CHỐI ("Tôi không thể trợ giúp về điều đó, vì tôi chỉ là một mô hình
 # ngôn ngữ.") → trước khi ghi "(trống)", gửi thêm ĐÚNG MỘT câu nhắc này trong CÙNG chat
@@ -226,12 +237,16 @@ RETRY_CHINESE_PREFIX = "chỉ trả về nội dung dịch không giao tiếp g�
 # rỗng để tắt.
 REFUSAL_NUDGE = os.environ.get(
     "OMNI_GEMINI_REFUSAL_NUDGE",
-    "Bị lỗi mô hình ngôn ngữ kìa. Dịch lại đoạn tiếng Trung vừa gửi sang tiếng Việt đi, "
-    "chỉ trả về bản dịch.")
+    "Bị lỗi mô hình ngôn ngữ kìa. Dịch lại đoạn tiếng Trung vừa gửi sang tiếng Việt đi. "
+    "Chỗ nào từ ngữ quá nhạy cảm thì cứ thay bằng cách nói nhẹ nhàng, tế nhị hơn, miễn "
+    "giữ đúng mạch truyện. Chỉ trả về bản dịch.")
 
 # Đề bài ngắn cho LƯỢT 2 trong chat mới (đoạn "(trống)" vừa phát sinh) — không câu hướng
 # dẫn dài, không thẻ hư cấu. Bật / tắt lượt này bằng BLANK_RETRY (khai báo phía dưới).
-BLANK_RETRY_PROMPT = os.environ.get("OMNI_GEMINI_BLANK_RETRY_PROMPT", "Dịch đi thẳng vào nội dung. Không giải thích thêm:")
+BLANK_RETRY_PROMPT = os.environ.get(
+    "OMNI_GEMINI_BLANK_RETRY_PROMPT",
+    "Dịch đi thẳng vào nội dung, từ nào quá nhạy cảm thì thay bằng cách nói nhẹ nhàng "
+    "hơn. Không giải thích thêm:")
 # ─────────────────────────────────────────────────────────────────────────────
 # Tỉ lệ chữ Hán còn sót TỐI ĐA mà vẫn coi đoạn là ĐÃ DỊCH. Bản dịch tốt đôi khi
 # còn vài chữ Hán (tên riêng Gemini giữ nguyên) → đừng coi là chưa dịch. Chỉ coi
@@ -285,7 +300,7 @@ RESEND_BLANK = os.environ.get("OMNI_GEMINI_RESEND_BLANK", "0") == "1"
 # ── LƯỢT 2 trong CHAT MỚI cho đoạn "(trống)" VỪA phát sinh (yêu cầu 07/09/2026) ─────
 # Gửi hết các đoạn của tập (lượt 1) xong, đoạn nào phải ghi "(trống)" (từ chối cả sau
 # câu nhắc / dịch cụt / không trả lời) thì mở MỘT chat mới rồi gửi LẦN LƯỢT từng đoạn
-# với đề bài ngắn gọn "Dịch đi thẳng vào nội dung. Không giải thích thêm:" + nội dung — không câu hướng dẫn dài,
+# với đề bài ngắn gọn "Dịch đi thẳng vào nội dung, từ nào quá nhạy cảm thì thay bằng cách nói nhẹ nhàng hơn. Không giải thích thêm:" + nội dung — không câu hướng dẫn dài,
 # không thẻ hư cấu (chat sạch + đề bài gọn thường qua được bộ lọc). Dịch được → lưu và
 # TÔ ĐỎ đoạn để kiểm (nhãn "n đỏ" ở cột Dịch trang Nhận diện); vẫn không được mới bỏ
 # qua, giữ "(trống)" cho 🔁 / ✍️. Chỉ áp dụng cho đoạn trống PHÁT SINH TRONG LƯỢT NÀY:
@@ -683,9 +698,32 @@ def _ensure_selenium():
         ) from e
 
 
-# ── Khởi tạo Firefox ─────────────────────────────────────────────────────────
-def init_firefox(profile=None, url=GEMINI_URL, wait=8):
-    """Mở Firefox bằng Selenium (dùng profile đã đăng nhập Google) và vào Gemini."""
+# ── Khởi tạo trình duyệt (tên cũ init_firefox giữ cho mọi nơi đang gọi) ──────
+def init_firefox(profile=None, url=GEMINI_URL, wait=8, backend=None, on_log=None):
+    """Mở trình duyệt theo cách dịch đã chọn (gemini_backend.get_backend) rồi vào `url`.
+
+    • "extension" (mặc định 01/10/2026): Chrome Extension OmniVoice Gemini — dùng hồ sơ
+      Chrome đã cài extension + đăng nhập Gemini, không Selenium. Extension KHÔNG kết
+      nối được (Chrome đóng, chưa bấm Kết nối, chưa đăng nhập, cổng bận...) → DỰ PHÒNG:
+      ghi log rồi mở Firefox (Selenium) như cách cũ, trừ khi
+      OMNI_GEMINI_EXTENSION_FALLBACK=0 (khi đó ném lỗi để bên gọi dừng).
+    • "firefox": Selenium + Firefox với profile đã đăng nhập (cách cũ, giữ nguyên).
+    backend: ép một cách cụ thể (restart_firefox dùng để việc đang chạy Firefox không
+    nhảy sang extension giữa chừng). on_log: nơi ghi dòng báo dự phòng (mặc định
+    logging.warning — GUI/web đều bắt được).
+    """
+    _log = on_log or logging.getLogger(__name__).warning
+    if (backend or get_backend()) == "extension":
+        from gemini_extension import ChromeExtensionDriver
+        try:
+            return ChromeExtensionDriver(url)
+        except Exception as e:
+            if backend == "extension" or not fallback_enabled():
+                raise
+            _log(f"⚠️ Chrome Extension không sẵn sàng: {e}")
+            _log("🦊 DỰ PHÒNG: mở Firefox (Selenium) để dịch tiếp — cần Firefox đang đóng "
+                 "và profile đã đăng nhập Gemini. ĐỪNG ĐÓNG cửa sổ Firefox sắp mở cho tới "
+                 "khi xong. Muốn dùng extension: mở Chrome, bấm Kết nối rồi chạy lại việc sau.")
     _ensure_selenium()
     from selenium import webdriver
     from selenium.webdriver.firefox.options import Options as FirefoxOptions
@@ -718,6 +756,8 @@ def is_driver_alive(driver):
         _ = driver.current_url
         return True
     except Exception:
+        if getattr(driver, "is_chrome_extension", False):
+            driver.quit()  # Release the bridge before a caller opens a new session.
         return False
 
 
@@ -728,6 +768,10 @@ def restart_firefox(driver=None, profile=None, url=GEMINI_URL, wait=8, on_log=pr
     mới rồi gửi lại đoạn. Luôn cố đóng cũ trước (nuốt lỗi) và chờ vài giây cho hệ
     điều hành nhả khóa profile trước khi mở lại.
     """
+    if getattr(driver, "is_chrome_extension", False):
+        on_log("🌐 Mở chat Gemini mới qua Chrome Extension...")
+        driver.get(url)
+        return driver
     if driver is not None:
         try:
             driver.quit()
@@ -735,7 +779,11 @@ def restart_firefox(driver=None, profile=None, url=GEMINI_URL, wait=8, on_log=pr
             pass
         time.sleep(3)   # nhả khóa profile trước khi mở lại
     on_log("🦊 Đã đóng Firefox — đang mở lại...")
-    return init_firefox(profile=profile, url=url, wait=wait)
+    # A running Firefox job must stay on Firefox even if another GUI changes
+    # the saved preference while it is running.
+    return init_firefox(profile=profile, url=url, wait=wait,
+                        backend="firefox" if driver is not None else None,
+                        on_log=on_log)
 
 
 # ── Helper thao tác DOM ──────────────────────────────────────────────────────
@@ -753,6 +801,8 @@ def _find_editor(driver):
 
 def _get_responses(driver):
     """Danh sách phần tử chứa câu trả lời của model (theo selector khớp đầu tiên)."""
+    if getattr(driver, "is_chrome_extension", False):
+        return driver.responses(RESPONSE_SELECTORS)
     from selenium.webdriver.common.by import By
     for sel in RESPONSE_SELECTORS:
         els = driver.find_elements(By.CSS_SELECTOR, sel)
@@ -800,6 +850,9 @@ def _type_and_submit(driver, editor, text):
     Đưa text lên clipboard rồi Ctrl+V (nhanh + giữ đúng nội dung). Nếu không dán
     được thì mới fallback sang gõ send_keys.
     """
+    if getattr(driver, "is_chrome_extension", False):
+        driver.submit(text, EDITOR_SELECTORS, SEND_SELECTORS)
+        return
     from selenium.webdriver.common.keys import Keys
 
     editor.click()
@@ -856,6 +909,11 @@ def strip_lead_lines(text, on_log=None):
     return out.strip()
 
 
+class GeminiNotSentError(RuntimeError):
+    """Chưa gửi được tin nhắn nào (trình duyệt chết / không có ô nhập). Khác hẳn trường
+    hợp đã gửi mà Gemini không trả lời: đoạn phải giữ "(chưa dịch)", không phải "(trống)"."""
+
+
 def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
                    settle=RESPONSE_SETTLE, on_log=print, no_reply_timeout=None):
     """Gửi 1 đoạn tới Gemini, chờ tới khi câu trả lời ổn định rồi trả về văn bản
@@ -867,19 +925,30 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
         thì vẫn chờ tới khi nói xong (tối đa `timeout`). Dùng cho câu nhắc sau khi
         từ chối (NUDGE_TIMEOUT).
     """
-    from selenium.webdriver.support.ui import WebDriverWait
-
-    if driver is None or not is_driver_alive(driver):
+    extension = getattr(driver, "is_chrome_extension", False)
+    # 02/10/2026: hai trường hợp dưới là CHƯA GỬI GÌ → ném GeminiNotSentError chứ không
+    # trả None. Trả None thì bên gọi ghi "(trống)" = "đã gửi một lần mà trống", và theo
+    # quy ước 05/09 đoạn đó KHÔNG BAO GIỜ tự gửi lại — tập 113 dính cả 9 đoạn khi cửa sổ
+    # Firefox dự phòng bị đóng. Ném lỗi thì send_chunks_to_gemini lưu "(chưa dịch)", dừng
+    # việc, ⏩ chạy tiếp sẽ gửi lại bình thường.
+    if driver is None or (not extension and not is_driver_alive(driver)):
         on_log("❌ Firefox/driver không sẵn sàng.")
-        return None
+        raise GeminiNotSentError(
+            "Trình duyệt không sẵn sàng (cửa sổ Firefox đã đóng?) — CHƯA gửi đoạn này. "
+            "Mở lại rồi ⏩ chạy tiếp.")
 
     prompt = (prefix.strip() + "\n\n" + text) if prefix and prefix.strip() else text
 
-    try:
-        editor = WebDriverWait(driver, 30).until(lambda d: _find_editor(d))
-    except Exception:
-        on_log("❌ Không tìm thấy ô nhập của Gemini. Kiểm tra đã vào gemini.google.com chưa.")
-        return None
+    editor = None
+    if not extension:
+        from selenium.webdriver.support.ui import WebDriverWait
+        try:
+            editor = WebDriverWait(driver, 30).until(lambda d: _find_editor(d))
+        except Exception:
+            on_log("❌ Không tìm thấy ô nhập của Gemini. Kiểm tra đã vào gemini.google.com chưa.")
+            raise GeminiNotSentError(
+                "Không tìm thấy ô nhập Gemini (chưa đăng nhập / trang khác) — CHƯA gửi đoạn "
+                "này. Đăng nhập Gemini trong cửa sổ đó rồi ⏩ chạy tiếp.") from None
 
     def _norm(s):
         return " ".join((s or "").split())
@@ -961,7 +1030,8 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
             if cur == last_text:
                 if stable_at is None:
                     stable_at = time.time()
-                elif time.time() - stable_at >= settle:
+                elif (time.time() - stable_at >= settle
+                      and not (extension and driver.generating)):
                     return strip_lead_lines(cur, on_log)
             else:
                 last_text, stable_at = cur, None
@@ -971,6 +1041,8 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
             return None
         time.sleep(1.5)
 
+    if extension and driver.generating:
+        raise TimeoutError("Gemini vẫn đang trả lời khi hết giờ; chưa lưu bản dịch dở. Chạy tiếp sau khi kiểm tra tab Chrome.")
     if not seen:
         on_log("❌ Gemini không phản hồi (hết thời gian chờ) — hoặc câu trả lời mới "
                "TRÙNG y hệt câu đã có sẵn trong cuộc trò chuyện. KHÔNG lấy câu cũ "
@@ -1121,6 +1193,8 @@ def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
         send_to_gemini(driver, prefix.strip(),
                        timeout=(timeout or PREFIX_TIMEOUT), on_log=on_log)
     except Exception as e:
+        if getattr(driver, "is_chrome_extension", False):
+            raise  # Do not overwrite an unacknowledged instruction with a chunk.
         on_log(f"⚠️ Gửi câu hướng dẫn lỗi ({e}) — vẫn tiếp tục gửi đoạn kế.")
 
 
@@ -1206,8 +1280,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
             # Cần gửi đoạn này → đảm bảo có Firefox (mở muộn: nếu mọi đoạn đã xong
             # thì không phải mở trình duyệt).
             if driver is None:
-                on_log("🌐 Đang mở Firefox + Gemini...")
-                driver = init_firefox(profile=profile)
+                on_log(f"🌐 Đang mở {browser_label()} + Gemini...")
+                driver = init_firefox(profile=profile, on_log=on_log)
                 if on_driver:
                     try:
                         on_driver(driver)
@@ -1356,7 +1430,11 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
         on_log("🎉 Đã gửi xong tất cả các đoạn cho Gemini.")
         return results
     finally:
-        if own_driver and not keep_open and driver is not None:
+        # Chrome's tab stays open after quit; release an otherwise unowned bridge
+        # so the next click can start another job in this same GUI process.
+        release_extension = (getattr(driver, "is_chrome_extension", False)
+                             and on_driver is None)
+        if own_driver and (not keep_open or release_extension) and driver is not None:
             try:
                 driver.quit()
             except Exception:

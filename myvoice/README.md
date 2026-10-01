@@ -11,6 +11,55 @@ mở bằng `myvoice\chay_gui.bat` khi cần.
 Trong VS Code thì mở `myvoice/chay.py` bấm ▶ Run (hoặc F5 → “▶ myvoice — bảng
 điều khiển WEB”); nút ▶ của VS Code không chạy được file .bat.
 
+## Dịch qua Chrome Extension (Gemini) — mặc định; Firefox/Selenium là dự phòng
+
+Từ 01/10/2026 bước dịch, dịch lại đoạn trống và SEO dùng **hồ sơ Chrome nào đã cài
+extension `chrome_gemini_extension`** và đăng nhập Gemini — không cần Selenium hay
+geckodriver. Ở khối **Dịch qua Gemini** hoặc **Nhận diện → Chạy cho những tập đã
+tick** có hai ô loại trừ nhau: **Dịch bằng Chrome Extension (mặc định)** và **Dịch
+bằng Firefox / Selenium (dự phòng)** — cách cũ giữ nguyên, chỉ bật khi muốn. Lựa
+chọn lưu chung cho web và GUI Tkinter; việc đã xếp hàng trên web giữ lựa chọn tại
+lúc xếp.
+
+**Dự phòng tự động:** chọn extension mà extension không kết nối được (Chrome đóng,
+chưa bấm Kết nối, chưa đăng nhập Gemini, cổng bận vì phiên khác…) thì nhật ký ghi
+`⚠️ Chrome Extension không sẵn sàng…` rồi `🦊 DỰ PHÒNG: mở Firefox` và việc chạy tiếp
+bằng Firefox như trước (cần Firefox đang đóng, profile đã đăng nhập). Chờ Chrome hỏi
+lệnh tối đa 40 s trước khi dự phòng. Tắt bằng `OMNI_GEMINI_EXTENSION_FALLBACK=0`
+(khi đó việc dừng và báo lỗi). Việc đang chạy Firefox không nhảy sang extension
+giữa chừng, và ngược lại extension mất kết nối giữa chừng thì dừng, giữ tiến độ
+(đoạn chưa xác nhận không tự gửi lại) — ⏩ chạy tiếp sau khi kiểm tra tab.
+
+1. Mở `chrome://extensions`, bật **Developer mode** → **Load unpacked**.
+2. Chọn thư mục [`chrome_gemini_extension`](../chrome_gemini_extension) ở gốc dự án (cùng cấp với `myvoice`).
+3. Extension tự bật với **mã kết nối mặc định** `omnivoice-gemini-local` (máy chỉ chạy
+   nội bộ, bridge chỉ nghe 127.0.0.1 nên không cần đổi). Muốn mã riêng: ghi vào
+   `myvoice/.gemini_extension_token` hoặc đặt `OMNI_GEMINI_EXTENSION_TOKEN`, rồi dán
+   cùng mã vào popup extension → **Lưu và kết nối**.
+4. Đăng nhập Gemini trên hồ sơ Chrome đó. Vào tab **🧩 Extension** trên web
+   (`/gemini-extension`) bấm **🔌 Kiểm tra kết nối**, rồi **🧪 Gửi thử** một đoạn
+   tiếng Trung ngắn — nhật ký và kết quả hiện ngay trên trang (ép dùng extension,
+   không dự phòng Firefox, không ghi file). Xong thì bấm Dịch ở Home như trước.
+
+Giữ Chrome và tab Gemini mở; có thể đóng popup extension. Extension tự mở một
+tab riêng cho phiên dịch, không yêu cầu đóng Chrome hoặc cài ChromeDriver. Trước
+khi bấm Dịch, trạng thái “Đang chờ ứng dụng” là bình thường (extension thăm dò
+chậm dần tới 5 s/lần khi ứng dụng chưa chạy). Chỉ cài extension trên MỘT hồ sơ
+Chrome và chỉ chạy một phiên dịch extension tại một thời điểm — phiên thứ hai sẽ
+dự phòng Firefox. Khi cập nhật mã extension, bấm **Reload** ở `chrome://extensions`,
+rồi chạy công việc mới.
+
+Extension chỉ thay phần điều khiển trình duyệt. Câu hướng dẫn, chia đoạn, lưu
+DOCX từng đoạn, tiếp tục bản dịch dở, tô đỏ/kiểm tra và retry vẫn dùng lõi Python
+cũ. Tab được giữ lại để đối chiếu khi xong. Bridge chỉ nghe `127.0.0.1:17863`, mã kết
+nối mặc định cố định (xem trên; file `.gemini_extension_token` chỉ là tuỳ chọn ghi đè,
+không đưa vào Git). Không cần API key Gemini.
+
+Kiểm tra phần cầu nối và lưu DOCX: `venv\Scripts\python.exe -m unittest discover -s myvoice/tests -v`.
+Kiểm tra extension đã cài trong Chromium với trang Gemini giả lập (dùng Playwright
+sẵn ở `Desktop Automation/gptcode`):
+`node --test "Desktop Automation/gptcode/tests/gemini-extension.test.mjs"`.
+
 ## Chạy script lẻ
 
 Chạy từ thư mục gốc `OmniVoice/` để dùng đúng môi trường Python:

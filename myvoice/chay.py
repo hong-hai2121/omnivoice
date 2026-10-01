@@ -15,8 +15,8 @@ Cửa sổ nhỏ (mặc định) tự bật server rồi TỰ MỞ trình duyệ
 sàng — nút 🌐 vẫn còn để mở LẠI. Đóng cửa sổ = tắt server (nếu server do cửa sổ
 này bật). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
 Thùng rác) · và hai chế độ khi hàng đợi web chạy xong hết — ⏻ tắt máy hoặc
-🌙 cho máy ngủ (chọn một, tick cái này thì cái kia tự bỏ). 🌙 do server giữ và
-MẶC ĐỊNH BẬT sẵn (web/power.py) — ô ở đây chỉ hiện theo.
+🌙 cho máy ngủ (chọn một, tick cái này thì cái kia tự bỏ). 🌙 do server giữ,
+mặc định TẮT (web/power.py) — ô ở đây chỉ hiện theo.
 """
 
 from __future__ import annotations
@@ -340,7 +340,7 @@ def _run_launcher(port: int) -> int:
             btn_quit.config(text="✖  Đóng cửa sổ")
         log(f"🌐 Sẵn sàng: {url_var.get()}")
         _open()                 # tự mở luôn — nút 🌐 chỉ còn để mở LẠI khi lỡ đóng tab
-        _sync_sleep_now()       # server mặc định bật 🌙 → tick ô ngay cho khớp
+        _sync_sleep_now()       # lấy trạng thái 🌙 của server → ô khớp ngay từ đầu
 
     def _poll(n: int = 0) -> None:
         if _port_busy(port):
@@ -516,7 +516,7 @@ def _run_launcher(port: int) -> int:
 
     def _sync_sleep_now() -> None:
         """Hỏi NGAY trạng thái 🌙 của server (không đợi lượt poll): lúc server vừa
-        sẵn sàng — nó mặc định bật ngủ-khi-xong, ô ở đây phải khớp từ đầu — và sau
+        sẵn sàng — server đang chạy sẵn có thể đã bật 🌙, ô ở đây phải khớp — và sau
         khi POST hỏng. Chạy luồng nền."""
         with sync_lock:
             seq = flags["sleep_seq"]

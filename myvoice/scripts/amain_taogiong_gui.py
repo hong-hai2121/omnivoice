@@ -93,7 +93,7 @@ OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài
 # upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
 # khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False, sleep=False, upload=False)
+                     shutdown=False, sleep=False, upload=False, gemini_backend="extension")
 # Số phút chờ trước khi tắt máy khi bật ô "Xong thì tắt máy" (huỷ bằng: shutdown /a).
 SHUTDOWN_DELAY_MIN = 5
 # Số phút chờ trước khi CHO MÁY NGỦ khi bật ô "🌙 Xong thì cho máy ngủ". Ngắn hơn
@@ -3743,7 +3743,7 @@ class App(tk.Tk):
             # 5) SEO
             if not self._seo_docx_valid(seo_docx):
                 if driver is None:
-                    driver = g.init_firefox()
+                    driver = g.init_firefox(on_log=logging.info)
                 logging.info("🔎 Tạo SEO YouTube...")
                 seo.run(str(gemini_docx), str(seo_docx),
                         keep_open=True, log=logging.info, driver=driver)
@@ -4022,6 +4022,10 @@ class App(tk.Tk):
             s1, text="🎧  ①  Nhận diện các link rồi ngưng",
             style="Accent.TButton", command=self._recog_tab_run)
         self.recog_tab_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(0, 8))
+        from gemini_backend import backend_picker
+        picker, buttons = backend_picker(s1, self.var_gemini_backend, self._save_pipe_settings)
+        picker.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+        self._backend_buttons.extend(buttons)
 
         # ── Bảng trạng thái các tập trong kịch_bản/ ─────────────────────────────
         tbl = ttk.LabelFrame(right, text="  Các tập trong kịch_bản/  ")
@@ -4529,8 +4533,8 @@ class App(tk.Tk):
                         logging.info(f"♻ Tập {episode}: đã có seoYoutube.docx hợp lệ — bỏ qua SEO.")
                     else:
                         if driver is None:
-                            logging.info("🌐 Mở Firefox cho SEO...")
-                            driver = g.init_firefox()
+                            logging.info(f"🌐 Mở {g.browser_label()} cho SEO...")
+                            driver = g.init_firefox(on_log=logging.info)
                         logging.info(f"🔎 Tập {episode}: tạo SEO YouTube...")
                         # seo.run mở cuộc trò chuyện MỚI cho mỗi tập nhưng vẫn dùng lại
                         # đúng Firefox này; keep_open=True → worker đóng ở cuối.
@@ -5816,7 +5820,7 @@ class App(tk.Tk):
         s2 = ttk.LabelFrame(wrap, text="  ②  Dịch qua Gemini  ")
         s2.grid(row=2, column=0, sticky="ew", pady=(0, 12))
         s2.columnconfigure(0, weight=1)
-        self.btn_gemini = ttk.Button(s2, text="🌐  Gửi Gemini (Firefox)",
+        self.btn_gemini = ttk.Button(s2, text="🌐  Gửi Gemini",
                                      style="Accent.TButton", command=self._pipe_send_gemini)
         self.btn_gemini.grid(row=0, column=0, sticky="ew")
         ttk.Label(s2, text="(tiengTrung.docx → gemini_result.docx)",
@@ -5829,6 +5833,10 @@ class App(tk.Tk):
         self.var_auto3 = tk.BooleanVar(value=self._pipe_settings["auto3"])
         ttk.Checkbutton(s2, text="⛓  Tự động chạy bước ③ sau khi xong",
                         variable=self.var_auto3).grid(row=4, column=0, sticky="w", pady=(6, 0))
+        from gemini_backend import backend_picker
+        self.var_gemini_backend = tk.StringVar(value=self._pipe_settings.get("gemini_backend", "extension"))
+        picker, self._backend_buttons = backend_picker(s2, self.var_gemini_backend, self._save_pipe_settings)
+        picker.grid(row=5, column=0, sticky="w", pady=(6, 0))
 
         # ③ Chuẩn bị input.txt
         s3 = ttk.LabelFrame(wrap, text="  ③  Chuẩn bị input.docx  ")
@@ -6095,6 +6103,8 @@ class App(tk.Tk):
         if busy:
             self._cancel_sleep("🌙 Có việc mới → huỷ đếm ngược ngủ, chờ xong hết đã.")
         state = "disabled" if busy else "normal"
+        for button in getattr(self, "_backend_buttons", ()):
+            button.config(state=state)
         for b in (self.btn_recog, self.btn_gemini, self.btn_prep,
                   getattr(self, "recog_tab_btn", None),
                   getattr(self, "recog_translate_btn", None),
@@ -6116,6 +6126,7 @@ class App(tk.Tk):
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
+            gemini_backend=self.var_gemini_backend.get(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
             sleep=getattr(self, "var_sleep", tk.BooleanVar()).get(),
             upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
@@ -6127,6 +6138,7 @@ class App(tk.Tk):
         self.var_auto3.set(PIPE_DEFAULTS["auto3"])
         self.var_auto_tts.set(PIPE_DEFAULTS["auto_tts"])
         self.var_seo.set(PIPE_DEFAULTS["seo"])
+        self.var_gemini_backend.set(PIPE_DEFAULTS["gemini_backend"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
         if hasattr(self, "var_sleep"):
@@ -7218,8 +7230,8 @@ class App(tk.Tk):
                     logging.info(f"⚠️ {gemini_docx.name} có đoạn hỏng {todo} (từ chối/"
                                  "dịch cụt/chưa dịch) → gửi lại các đoạn đó.")
                 if state["driver"] is None:
-                    logging.info("🌐 Mở Firefox + Gemini...")
-                    state["driver"] = g.init_firefox()
+                    logging.info(f"🌐 Mở {g.browser_label()} + Gemini...")
+                    state["driver"] = g.init_firefox(on_log=logging.info)
                 else:
                     state["driver"].get(g.GEMINI_URL)   # chat mới cho tập này
                     time.sleep(8)
@@ -7234,7 +7246,7 @@ class App(tk.Tk):
 
                 # ── LƯỢT 2 (07/09/2026): đoạn nào VỪA gửi trong lượt này mà trống (từ
                 #    chối cả sau câu nhắc / dịch cụt / không trả lời) → mở CHAT MỚI, gửi
-                #    lần lượt từng đoạn với đề bài ngắn "Dịch đi thẳng vào nội dung. Không giải thích thêm:" + nội
+                #    lần lượt từng đoạn với đề bài ngắn "Dịch đi thẳng vào nội dung, từ nào quá nhạy cảm thì thay bằng cách nói nhẹ nhàng hơn. Không giải thích thêm:" + nội
                 #    dung. Được thì lưu + TÔ ĐỎ để kiểm (nhãn "n đỏ" cột Dịch); vẫn không
                 #    được mới bỏ qua, giữ "(trống)" cho 🔁 / ✍️. Chỉ xét đoạn trống phát
                 #    sinh TRONG LƯỢT NÀY (nằm trong todo) — đoạn "(trống)" của lần chạy
@@ -7548,8 +7560,8 @@ class App(tk.Tk):
                         logging.info("♻ Bỏ qua SEO (đã có seoYoutube.docx hợp lệ).")
                     else:
                         if driver is None:        # dịch đã bỏ qua → mở Firefox cho SEO
-                            logging.info("🌐 Mở Firefox cho SEO...")
-                            driver = g.init_firefox()
+                            logging.info(f"🌐 Mở {g.browser_label()} cho SEO...")
+                            driver = g.init_firefox(on_log=logging.info)
                         logging.info("🔎 Tạo SEO YouTube...")
                         seo.run(str(gemini_docx), str(seo_docx),
                                 keep_open=True, log=logging.info, driver=driver)
@@ -7604,7 +7616,7 @@ class App(tk.Tk):
                         if driver is not None:
                             try:
                                 driver.quit()
-                                logging.info("🦊 Đã đóng Firefox trước khi tạo video.")
+                                logging.info("🌐 Đã kết thúc phiên Gemini trước khi tạo video.")
                             except Exception:
                                 pass
                             driver = None
@@ -7690,11 +7702,11 @@ class App(tk.Tk):
                 "(hoặc đặt file tiengTrung.docx vào thư mục kịch_bản).")
             return
         # Khi chạy tự động (chuỗi) thì bỏ qua hộp hỏi xác nhận cho liền mạch.
+        from gemini_backend import browser_hint, browser_label
         if not auto and not messagebox.askyesno(
                 "Gửi Gemini",
-                "Sẽ mở Firefox và gửi nội dung sang Gemini.\n\n"
-                "Hãy ĐÓNG Firefox đang mở (nếu có) và đảm bảo profile đã đăng nhập "
-                "Google.\n\nTiếp tục?"):
+                f"Sẽ gửi nội dung sang Gemini qua {browser_label()}.\n\n"
+                f"{browser_hint()}\n\nTiếp tục?"):
             return
         if auto:
             logging.info("⛓ Tự động: gửi Gemini (bỏ qua hỏi xác nhận).")
@@ -7726,8 +7738,8 @@ class App(tk.Tk):
             # đóng Firefox sau khi dịch rồi mở lại cho SEO — lần mở thứ hai hay kẹt
             # khóa profile khiến SEO không chạy được.
             if seo_on:
-                logging.info("🌐 Mở Firefox (dùng chung cho dịch + SEO)...")
-                driver = g.init_firefox()
+                logging.info(f"🌐 Mở {g.browser_label()} (dùng chung cho dịch + SEO)...")
+                driver = g.init_firefox(on_log=logging.info)
             logging.info(f"🌐 Gửi {len(chunks)} đoạn sang Gemini...")
             results = g.send_chunks_to_gemini(
                 chunks, prefix=prefix, on_log=logging.info, out_path=GEMINI_DOCX,

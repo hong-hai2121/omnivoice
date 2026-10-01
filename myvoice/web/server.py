@@ -33,7 +33,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     __package__ = "myvoice.web"
 
-from . import core, power, steps as steps_mod              # noqa: E402
+from . import core, gemini_test, power, steps as steps_mod  # noqa: E402
 from .jobs import (fb_log, fb_runner, log, runner,          # noqa: E402
                    upload_log, upload_runner)
 
@@ -118,6 +118,39 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
 
 
 # ── Context dùng chung ──────────────────────────────────────────────────────
+@app.get("/gemini-extension", response_class=HTMLResponse)
+def gemini_extension_setup(request: Request):
+    """Tab 🧩 Extension: hướng dẫn cài + mã kết nối + thử kết nối / gửi thử (gemini_test)."""
+    from gemini_backend import DEFAULT_TOKEN, EXTENSION_DIR, connection_token
+    token = connection_token()
+    return _page(request, "gemini_extension.html", active="ext",
+                 extension_dir=str(EXTENSION_DIR), connection_token=token,
+                 token_is_default=(token == DEFAULT_TOKEN),
+                 sample_text=gemini_test.SAMPLE_TEXT)
+
+
+@app.get("/api/gemini-test")
+def api_gemini_test():
+    """Trạng thái + nhật ký lượt thử extension (tab 🧩 hỏi mỗi giây khi đang chạy)."""
+    return gemini_test.tester.state()
+
+
+@app.post("/api/gemini-test/chay")
+async def api_gemini_test_start(request: Request):
+    """Bắt đầu một lượt thử: mode=check (chỉ kết nối + mở tab) hoặc send (gửi `text`)."""
+    form = await request.form()
+    mode = str(form.get("mode") or "")
+    try:
+        gemini_test.tester.start(mode, str(form.get("text") or ""),
+                                 full_prefix=bool(form.get("full_prefix")))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    log(f"🧩 Thử Chrome Extension Gemini ({mode}) — xem tab Extension.")
+    return {"ok": True}
+
+
 # Trang Home gom cả bốn khối (giống view "Home (đầy đủ)" bên GUI) nên bốn hàm
 # này là NGUỒN DUY NHẤT: sửa một chỗ, cả Home lẫn trang riêng cùng đổi.
 def _script_ctx() -> dict:
@@ -254,6 +287,8 @@ def _save_pipe_from_form(form) -> dict:
     ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻/🌙 của GUI.
     """
     pipe = core.load_pipeline()
+    if form.get("gemini_backend") in ("firefox", "extension"):
+        pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
@@ -270,6 +305,8 @@ def _save_model_speed(form) -> dict:
     """Chỉ model + tốc độ. Dùng cho form hàng loạt — form đó KHÔNG có các ô ⛓,
     gọi _save_pipe_from_form sẽ tắt sạch chúng."""
     pipe = core.load_pipeline()
+    if form.get("gemini_backend") in ("firefox", "extension"):
+        pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
@@ -1451,8 +1488,7 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    log("🌙 Mặc định BẬT “xong hết thì cho máy ngủ” — không muốn thì bỏ tick "
-        "trên trang web.")
+    log("🌙 “Xong hết thì cho máy ngủ” mặc định TẮT — muốn thì tick trên trang web.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

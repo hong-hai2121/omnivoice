@@ -673,3 +673,52 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 })();
+// Exactly one Gemini browser, synchronized between the Home page's two forms.
+document.addEventListener("change", event => {
+  if (!event.target.matches('input[type="checkbox"][name="gemini_backend"]')) return;
+  const selected = event.target.value;
+  document.querySelectorAll('input[name="gemini_backend"]').forEach(input => {
+    input.checked = input.value === selected;
+  });
+});
+// ── Tab 🧩 Extension: thử kết nối / gửi thử qua Chrome Extension. Lượt thử chạy
+//    trong tiến trình server (web/gemini_test.py); trang hỏi /api/gemini-test mỗi
+//    giây khi đang chạy để in nhật ký và kết quả.
+(() => {
+  const panel = document.getElementById('ext-test');
+  if (!panel) return;
+  const $ = id => document.getElementById(id);
+  const logBox = $('ext-log'), resultBox = $('ext-result'), status = $('ext-status');
+  let timer = null;
+  async function refresh() {
+    clearTimeout(timer);
+    try {
+      const resp = await fetch('/api/gemini-test', { credentials: 'same-origin' });
+      const s = await resp.json();
+      logBox.textContent = s.lines.length ? s.lines.join('\n') : 'Chưa chạy.';
+      resultBox.textContent = s.result || '';
+      status.textContent = s.running ? '⌛ đang chạy…'
+        : s.error ? '❌ ' + s.error
+        : s.finished ? '✅ xong' : '';
+      $('ext-check').disabled = $('ext-send').disabled = Boolean(s.running);
+      logBox.scrollTop = logBox.scrollHeight;
+      if (s.running) timer = setTimeout(refresh, 1000);
+    } catch (e) {
+      status.textContent = 'Không lấy được trạng thái: ' + e;
+    }
+  }
+  async function start(mode) {
+    const fd = new FormData();
+    fd.set('mode', mode);
+    fd.set('text', $('ext-text').value);
+    if ($('ext-full').checked) fd.set('full_prefix', '1');
+    status.textContent = '⌛ đang gửi yêu cầu…';
+    const resp = await fetch('/api/gemini-test/chay', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const s = await resp.json().catch(() => ({}));
+    if (!resp.ok) { status.textContent = '❌ ' + (s.error || ('HTTP ' + resp.status)); return; }
+    refresh();
+  }
+  $('ext-check').addEventListener('click', () => start('check'));
+  $('ext-send').addEventListener('click', () => start('send'));
+  refresh();
+})();

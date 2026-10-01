@@ -1,0 +1,12 @@
+<div class="gemini-backend">
+  <div class="chks">
+    <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"
+      {{ 'checked' if pipe.get('gemini_backend', 'extension') != 'firefox' }}> Dịch bằng Chrome Extension (mặc định)</label>
+    <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"
+      {{ 'checked' if pipe.get('gemini_backend') == 'firefox' }}> Dịch bằng Firefox / Selenium (dự phòng)</label>
+  </div>
+  <p class="hint">Áp dụng cho dịch, dịch lại đoạn trống và SEO.
+    Extension: giữ Chrome đã cài extension và đăng nhập Gemini mở; không kết nối được thì
+    tự mở Firefox thay. Firefox: đóng Firefox trước khi chạy.
+    <a href="/gemini-extension" target="_blank" rel="noopener">Hướng dẫn cài extension</a>.</p>
+</div>

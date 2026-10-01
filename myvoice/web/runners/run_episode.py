@@ -218,8 +218,8 @@ def step_seo(app, folder: Path, episode: str, state: dict) -> int:
     else:
         driver = state.get("driver")
         if driver is None:
-            logging.info("🌐 Mở Firefox cho SEO...")
-            driver = g.init_firefox()
+            logging.info(f"🌐 Mở {g.browser_label()} cho SEO...")
+            driver = g.init_firefox(on_log=logging.info)
             state["driver"] = driver
         logging.info("🔎 Tạo SEO YouTube...")
         seo.run(str(gemini_docx), str(seo_docx), keep_open=True,
@@ -286,7 +286,7 @@ def _close_driver(state: dict) -> None:
     if driver is not None:
         try:
             driver.quit()
-            logging.info("🦊 Đã đóng Firefox.")
+            logging.info("🌐 Đã kết thúc phiên Gemini.")
         except Exception:
             pass
 
