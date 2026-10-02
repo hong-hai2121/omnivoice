@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { postTitle, postStage, matchContentPost } from '../extension/posts.js';
 import { pageTask } from '../extension/dom.js';
 import { episodeKey, TIKTOK_UPLOAD_URL } from '../extension/model.js';
+import { isolatedExtension } from './helpers.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const title = 'Full ở Mimi audio Số 124 | Sự Thật Đằng Sau Ngày Trở Về Bi Kịch Của Trúc Mã';
@@ -47,7 +48,7 @@ const job = () => ({ type: 'prepare', tabId, schedule: true, publish: true, row:
 before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'omni-posts-'));
   video = path.join(directory, 'fixture.mp4'); await writeFile(video, 'test bytes');
-  const extension = path.join(root, 'extension');
+  const extension = await isolatedExtension(directory);
   context = await chromium.launchPersistentContext(path.join(directory, 'profile'), { headless: true, channel: 'chromium',
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');

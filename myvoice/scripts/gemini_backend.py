@@ -40,6 +40,31 @@ def get_backend():
     return "firefox" if value == "firefox" else DEFAULT_BACKEND
 
 
+def saved_backend():
+    """Lựa chọn ĐÃ LƯU trong taogiong_pipeline.json (bỏ qua biến môi trường) — để GUI
+    hiển thị đúng điều web / cửa sổ khác vừa chọn."""
+    try:
+        value = json.loads(PIPE_FILE.read_text(encoding="utf-8")).get("gemini_backend")
+    except (OSError, ValueError, AttributeError):
+        value = None
+    return "firefox" if value == "firefox" else DEFAULT_BACKEND
+
+
+def set_backend(value):
+    """Ghi RIÊNG khoá gemini_backend, giữ nguyên mọi cài đặt khác trong file (02/10/2026:
+    GUI ghi cả file từ biến trong bộ nhớ nên lặng lẽ đè lựa chọn vừa đổi trên web)."""
+    value = "firefox" if value == "firefox" else DEFAULT_BACKEND
+    try:
+        data = json.loads(PIPE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    data["gemini_backend"] = value
+    PIPE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return value
+
+
 def fallback_enabled():
     """Extension không kết nối được → có tự mở Firefox (Selenium) thay không."""
     return os.environ.get("OMNI_GEMINI_EXTENSION_FALLBACK", "1").strip().lower() not in (
@@ -59,18 +84,21 @@ def browser_hint():
     return "Đóng Firefox đang mở và đảm bảo profile đã đăng nhập Google/Gemini."
 
 
-def backend_picker(parent, variable, on_change):
-    """Two mutually exclusive checkboxes, shared by desktop GUI panels."""
+def backend_picker(parent, variable, on_change, horizontal=False):
+    """Two mutually exclusive checkboxes, shared by desktop GUI panels.
+    horizontal=True xếp ngang (thanh nút của cửa sổ Nhận diện riêng)."""
     from tkinter import ttk
     frame = ttk.Frame(parent)
+    place = dict(side="left", padx=(0, 8)) if horizontal else dict(anchor="w")
     buttons = []
     for value, title in (("extension", "Dịch bằng Chrome Extension (mặc định)"),
                          ("firefox", "Dịch bằng Firefox / Selenium (dự phòng)")):
         button = ttk.Checkbutton(frame, text=title, variable=variable,
                                  onvalue=value, offvalue=value, command=on_change)
-        button.pack(anchor="w")
+        button.pack(**place)
         buttons.append(button)
-    ttk.Button(frame, text="Hướng dẫn cài extension", command=lambda: show_setup(parent)).pack(anchor="w", pady=(4, 0))
+    ttk.Button(frame, text="Hướng dẫn cài extension", command=lambda: show_setup(parent)).pack(
+        **(place if horizontal else dict(anchor="w", pady=(4, 0))))
     return frame, buttons
 
 

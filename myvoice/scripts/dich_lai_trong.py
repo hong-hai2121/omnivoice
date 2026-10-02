@@ -104,8 +104,9 @@ def _doc_pairs(folder):
 def _ket_qua_xau(chunk, ans):
     """Nhận xét kết quả vừa nhận (chỉ để BÁO, không gửi lại): list lý do, [] = ổn."""
     notes = []
-    if g.is_result_too_short(chunk, ans):
-        notes.append("ngắn bất thường so với nguồn (dịch cụt?)")
+    short = g.short_red_note(chunk, ans)   # gồm cả dịch cụt (dưới VIET_HAN_MIN_RATIO)
+    if short:
+        notes.append(short)
     if not g.is_translation_done(ans):
         notes.append("còn nhiều chữ Hán")
     return notes
@@ -203,6 +204,10 @@ def run_folder(folder, episode, only=None, dry_run=False, driver=None):
             "==========================================")
         for note in _ket_qua_xau(chunk, ans):
             log(f"⚠️ Đoạn {j}: {note} — vẫn ghi, hãy kiểm lại.")
+        if g.is_result_suspiciously_short(chunk, ans):
+            # 02/10/2026: tập 125 đoạn 2 (486 ký tự cho 1.293 chữ Hán) được 🔁 ghi vào mà
+            # chỉ có dòng ⚠️ trong nhật ký → không ai thấy. Ngắn đáng ngờ = TÔ ĐỎ để kiểm.
+            red.add(j)
         if g.is_result_duplicated(ans, chunk):
             # Chỉ ghi chú (không phải lỗi): người dùng xác nhận lặp là do nguồn tự lặp.
             log(f"ℹ️ Đoạn {j}: câu mở đầu xuất hiện lại phía sau (nguồn tự lặp) — giữ nguyên.")
@@ -251,7 +256,7 @@ def main(argv=None):
                     help="Chỉ gửi các đoạn trống này (số đoạn 1-based, vd 1,4). Dùng với 1 tập.")
     ap.add_argument("--dry-run", action="store_true", help="Chỉ liệt kê đoạn trống, không gửi.")
     ap.add_argument("--giu-firefox", action="store_true",
-                    help="Xong không đóng Firefox (mặc định đóng để không khoá profile).")
+                    help="Xong không đóng trình duyệt (Firefox; extension luôn giữ tab Gemini).")
     args = ap.parse_args(argv)
 
     _setup_logging()
@@ -301,7 +306,7 @@ def main(argv=None):
         if driver is not None and not args.giu_firefox:
             try:
                 driver.quit()
-                log("🦊 Đã đóng Firefox.")
+                log("🌐 Đã kết thúc phiên Gemini.")
             except Exception:
                 pass
 

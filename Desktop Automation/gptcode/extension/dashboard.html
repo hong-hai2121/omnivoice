@@ -30,24 +30,26 @@
     <section class="queue-section">
       <div class="toolbar queue-tools">
         <div class="section-heading"><h2>Danh sách video</h2><span id="count">0 video</span></div>
+        <button id="update" class="primary" title="Quét lại kịch_bản (lấy lại cả dòng đã xóa), rồi đối chiếu danh sách bài đã lên lịch trên TikTok"><i data-lucide="refresh-ccw"></i>Cập nhật kịch bản</button>
         <button id="import"><i data-lucide="folder-open"></i>Nhập JSON</button>
         <button id="export" class="icon-button" title="Xuất danh sách" aria-label="Xuất danh sách"><i data-lucide="download"></i></button>
         <button id="add" class="icon-button" title="Thêm video" aria-label="Thêm video"><i data-lucide="plus"></i></button>
         <input id="json-file" type="file" accept="application/json,.json" hidden>
       </div>
+      <p id="update-status" role="status"></p>
       <details id="scan-source" open>
       <summary>Nguồn video &amp; lịch</summary>
       <div class="scan-tools">
         <label>Bản quét mặc định<select id="scan-kind"><option value="dai">Full</option><option value="nua">Nửa video</option><option value="ngan">Short</option></select></label>
         <label class="hashtags">Hashtag chung<input id="scan-hashtags" type="text" value="#truyenaudio #truyenfull #audio #fyp"></label>
         <label class="check"><input id="auto-scan" type="checkbox" checked>Tự cập nhật</label>
-        <button id="scan"><i data-lucide="folder-search"></i>Quét kịch_bản</button>
+        <button id="scan" title="Chỉ quét thư mục, không mở TikTok"><i data-lucide="folder-search"></i>Quét thư mục</button>
       </div>
       <div class="sync-status"><p id="scan-status" role="status"></p><p id="schedule-status" role="status"></p></div>
       </details>
       <div class="list-toolbar">
         <label class="search"><i data-lucide="search"></i><input id="search" type="search" placeholder="Tìm tập, tiêu đề, tên file..." aria-label="Tìm video"></label>
-        <select id="status-filter" aria-label="Lọc trạng thái"><option value="all">Tất cả trạng thái</option><option value="waiting">Chờ</option><option value="scheduled">Có lịch</option><option value="running">Đang xử lý</option><option value="review">Cần kiểm tra</option><option value="error">Lỗi</option><option value="done">Đã xử lý</option></select>
+        <select id="status-filter" aria-label="Lọc trạng thái"><option value="all">Tất cả trạng thái</option><option value="waiting">Chờ</option><option value="novideo">Chưa có video</option><option value="scheduled">Có lịch</option><option value="running">Đang xử lý</option><option value="review">Cần kiểm tra</option><option value="error">Lỗi</option><option value="done">Đã xử lý</option></select>
         <div class="bulk-controls"><span id="selection-count">0 đã chọn</span><button id="clear-selection" class="icon-button" title="Bỏ chọn tất cả" aria-label="Bỏ chọn tất cả"><i data-lucide="list-x"></i></button><button id="variant-half"><i data-lucide="scissors"></i>Nửa video</button><button id="variant-full"><i data-lucide="film"></i>Full</button><button id="variant-short"><i data-lucide="video"></i>Short</button></div>
       </div>
       <div class="run-controls">

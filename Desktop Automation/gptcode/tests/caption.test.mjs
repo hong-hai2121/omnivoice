@@ -13,3 +13,14 @@ test("caption audit distinguishes changed titles from missing or extra hashtags"
   assert.deepEqual(state.extra, ['#one', '#wrong']);
   assert.equal(state.tagsMatch, false);
 });
+test("only a near-identical title is close; an empty, different or mostly missing one is not", async () => {
+  const { titleClose } = await import("../extension/caption.js");
+  const title = "Full ở Mimi audio Số 117 | Màn Cắt Đứt Tính Cả Nể Của Đứa Con Mới Tròn Mười Tuổi";
+  assert.equal(titleClose(title.replace(" | ", " - "), title), true);
+  assert.equal(titleClose(title + ".", title), true);
+  assert.equal(titleClose("", title), false);
+  assert.equal(titleClose("Full ở Mimi audio Số 117", title), false);
+  assert.equal(titleClose("[Full] Mimi audio Số 117 - Màn Cắt Đứt Tính Cả Nể Của Đứa Con Mới Tròn Mười Tuổi", title), false);
+  assert.equal(titleClose("Changed title", "Test"), false);
+  assert.equal(titleClose("", ""), true);
+});

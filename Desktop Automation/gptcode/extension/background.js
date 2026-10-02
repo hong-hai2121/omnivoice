@@ -1,8 +1,9 @@
 import { TabDriver } from "./driver.js";
 import { observeUpload } from "./upload.js";
 import { auditCaption } from "./caption.js";
-import { matchContentPost } from './posts.js';
-import { isTikTok, validateJob, episodeKey, statusGroup, TIKTOK_UPLOAD_URL } from "./model.js";
+import { matchContentPost, postTitle, postEpisode } from './posts.js';
+import { pageTask } from "./dom.js";
+import { isTikTok, validateJob, episodeKey, statusGroup, TIKTOK_UPLOAD_URL, TIKTOK_CONTENT_URL } from "./model.js";
 
 let running = null;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -51,8 +52,9 @@ async function run(request, token) {
   };
   const snapshot = async label => {
     const value = await dom("captionSnapshot");
-    captionTrace.push({ step: label, at: new Date().toISOString(), ...value });
-    if (captionTrace.length > 30) captionTrace.shift();
+    // Keep the first steps too (where a lost title shows up) and a short HTML excerpt.
+    captionTrace.push({ step: label, at: new Date().toISOString(), ...value, html: value.html?.slice(0, 3000) });
+    if (captionTrace.length > 60) captionTrace.splice(10, 1);
     return value;
   };
   const checkCaption = async (label, tags) => {
@@ -61,6 +63,8 @@ async function run(request, token) {
     if (!state.present) throw new Error("Không thấy ô mô tả khi đọc lại.");
     if (!state.tagsMatch) throw new Error(`Hashtag chưa khớp. Thiếu: ${state.missing.join(" ") || "không"}; thừa/sai: ${state.extra.join(" ") || "không"}. Chưa bấm đăng.`);
     if (!state.titleMatches) {
+      // Only a near-identical title may pass on a warning; a missing or different one never posts.
+      if (!state.titleClose) throw new Error(`Tiêu đề chưa khớp: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa bấm đăng.`);
       if (!request.schedule || !request.publish) throw new Error("Tiêu đề chưa khớp sau khi điền. Kiểm tra nội dung trên TikTok.");
       titleWarning = true;
       await report("running", `Cảnh báo: tiêu đề khác nội dung dự kiến. Vẫn tiếp tục theo lựa chọn Đặt ngày giờ + Bấm Đăng / Lên lịch. Tiêu đề hiện tại: ${state.actualTitle}`);
@@ -292,16 +296,31 @@ async function run(request, token) {
       await verifyEditor(false);
       return value;
     };
+    // TikTok has wiped a freshly typed title (2/10, tập 117): read it back and retype it
+    // before any hashtag, instead of finding out only at the final check.
+    const typeTitle = async () => {
+      const title = request.row.tieu_de.trim();
+      for (let tries = 0; ; tries++) {
+        await key("a", "KeyA", 65, 2);
+        await verifyEditor();
+        if (tries) { await key("Backspace", "Backspace", 8); await verifyEditor(); }
+        await command("Input.insertText", { text: title });
+        await verifyEditor();
+        await sleep(500);
+        const state = auditCaption(await snapshot(tries ? `Đọc lại tiêu đề (lần ${tries + 1})` : "Sau khi nhập tiêu đề"), title, []);
+        if (state.titleClose && !state.actualTags.length) return;
+        if (tries >= 2) throw new Error(`Tiêu đề chưa khớp sau ${tries + 1} lần nhập: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa nhập hashtag, chưa bấm đăng.`);
+        await report("running", `Tiêu đề chưa vào ô mô tả (đang có "${state.actualTitle || "trống"}"). Xóa và nhập lại lần ${tries + 2}.`);
+        await focusCaption();
+      }
+    };
     for (let attempt = 0; attempt < 2; attempt++) {
       expectedEditor = await stableCaption();
       try {
         if (knownDraft && !await dom("draftCheck", { video: request.row.video })) throw new Error("Video trong bản nháp đã đổi. Không tự điền lại mô tả.");
         if (attempt && !neutralFocus(expectedEditor)) throw focusError();
         await focusCaption(attempt === 0);
-        await key("a", "KeyA", 65, 2);
-        await verifyEditor();
-        await command("Input.insertText", { text: request.row.tieu_de.trim() });
-        await verifyEditor();
+        await typeTitle();
         const completed = [];
         for (const tag of tags) {
           completed.push(tag);
@@ -316,14 +335,21 @@ async function run(request, token) {
           if (!state.tagsMatch) throw new Error(`Sau Enter ${tag}, hashtag chưa được giữ đủ. Thiếu: ${state.missing.join(" ")}; thừa/sai: ${state.extra.join(" ")}. Đã lưu từng bước để kiểm tra.`);
         }
         await verifyEditor(false);
+        const filled = auditCaption(await snapshot("Kiểm tra tiêu đề sau hashtag"), request.row.tieu_de, tags);
+        if (!filled.titleClose) {
+          const error = new Error(`Tiêu đề bị mất sau khi nhập hashtag: ô mô tả đang có "${filled.actualTitle || "(trống)"}".`);
+          error.code = 'TITLE_LOST'; throw error;
+        }
         await checkCaption("Sau khi điền", tags);
         break;
       } catch (error) {
-        if (error.code !== 'CAPTION_REPLACED') throw error;
-        await snapshot("Ô mô tả bị tạo lại");
-        if (attempt) throw new Error("TikTok tiếp tục tạo lại ô mô tả sau một lần thử lại. Chưa bấm đăng; chờ trang ổn định rồi Điền tiếp.");
-        if (!knownDraft || !await dom("draftCheck", { video: request.row.video })) throw new Error("Video trong bản nháp đã đổi hoặc chưa được xác nhận. Không tự điền lại mô tả.");
-        await report("running", "TikTok vừa tạo lại ô mô tả. Chờ ổn định rồi điền lại tiêu đề và hashtag một lần trên cùng video.");
+        if (!['CAPTION_REPLACED', 'TITLE_LOST'].includes(error.code)) throw error;
+        const lost = error.code === 'TITLE_LOST';
+        await snapshot(lost ? "Tiêu đề bị mất" : "Ô mô tả bị tạo lại");
+        if (attempt) throw new Error(lost ? `${error.message} Đã điền lại một lần vẫn mất. Chưa bấm đăng.` : "TikTok tiếp tục tạo lại ô mô tả sau một lần thử lại. Chưa bấm đăng; chờ trang ổn định rồi Điền tiếp.");
+        if (!lost && (!knownDraft || !await dom("draftCheck", { video: request.row.video }))) throw new Error("Video trong bản nháp đã đổi hoặc chưa được xác nhận. Không tự điền lại mô tả.");
+        await report("running", lost ? "Tiêu đề bị mất sau khi nhập hashtag. Xóa ô mô tả, điền lại tiêu đề và hashtag một lần."
+          : "TikTok vừa tạo lại ô mô tả. Chờ ổn định rồi điền lại tiêu đề và hashtag một lần trên cùng video.");
       }
     }
     await report("running", "Đã điền và đọc lại mô tả/hashtag." + (titleWarning ? " Có cảnh báo tiêu đề." : ""));
@@ -409,6 +435,9 @@ async function run(request, token) {
     await report(token.cancelled ? "stopped" : "error", error.message);
     throw error;
   } finally {
+    // Every run (done, error or stopped) keeps its caption steps for later diagnosis.
+    if (captionTrace.length) await chrome.storage.local.set({ lastCaptionTrace: { at: new Date().toISOString(),
+      version: chrome.runtime.getManifest().version, rowId: request.row?.id, title: request.row?.tieu_de, stopped: token.cancelled, trace: captionTrace } }).catch(() => {});
     token.detaching = true;
     await driver.close();
     token.detaching = false;
@@ -470,6 +499,88 @@ async function checkContentList(request, token) {
   }
 }
 
+/* Read TikTok Studio's post list (scheduled + published) in a temporary tab, read-only.
+   The tab is shown briefly because hidden tabs do not render the virtualized table. */
+async function readPostList(request) {
+  if (running) throw new Error("Đang có thao tác chạy. Chờ xong rồi cập nhật.");
+  const token = { cancelled: false, reading: true };
+  running = token;
+  let tabId, previous;
+  try {
+    const own = request.windowId ? await chrome.windows.get(request.windowId).catch(() => null) : null;
+    const win = own?.type === "normal" ? own : await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => null);
+    [previous] = win ? await chrome.tabs.query({ active: true, windowId: win.id }) : [];
+    tabId = (await chrome.tabs.create({ url: "about:blank", active: true, ...(win ? { windowId: win.id } : {}) })).id;
+    await chrome.tabs.update(tabId, { url: TIKTOK_CONTENT_URL });
+    const read = async (action, data = {}) => {
+      const tab = await chrome.tabs.get(tabId);
+      if (!isTikTok(tab.url)) return null;
+      if (action !== "postProbe" && !/^\/tiktokstudio\/content\/?$/.test(new URL(tab.url).pathname)) {
+        if (tab.status === "complete" && /login/.test(tab.url)) throw new Error("TikTok chưa đăng nhập trong profile này.");
+        return null;
+      }
+      try {
+        const [frame] = await chrome.scripting.executeScript({ target: { tabId }, func: pageTask, args: [action, data] });
+        return frame?.result ?? null;
+      } catch { return null; } // The SPA can replace the document between polls.
+    };
+    const targets = (request.targets || []).map(item => ({ title: postTitle(item.title), episode: item.episode ?? postEpisode(item.title) }));
+    const found = new Map();
+    let total = null, complete = false, first = 0, idle = 0;
+    const end = Date.now() + 30_000;
+    try {
+      // Wait for the first rows; an account without posts shows an empty table for a while.
+      while (Date.now() < end) {
+        const content = await read("postList");
+        if (content?.ready) {
+          total = content.total ?? total;
+          for (const post of content.posts) found.set(post.id, post);
+          if (found.size || (first && Date.now() - first > 4000)) break;
+          first ||= Date.now();
+        }
+        await sleep(700);
+      }
+      if (!first && !found.size) {
+        const page = (await chrome.tabs.get(tabId).catch(() => null))?.url || "";
+        throw new Error(`Không đọc được danh sách Bài đăng trên TikTok Studio sau 30 giây (trang đang mở: ${page.split("?")[0] || "không rõ"}).`);
+      }
+      // Scroll only as far as needed: stop once every target is found or the list is older than it.
+      for (let round = 0; round < 40 && !complete; round++) {
+        const numbers = [...found.values()].map(post => postEpisode(post.caption)).filter(value => value !== null);
+        const oldest = numbers.length ? Math.min(...numbers) : null;
+        const titles = new Set([...found.values()].map(post => postTitle(post.caption)));
+        if (targets.every(item => titles.has(item.title) || (item.episode !== null && oldest !== null && oldest < item.episode))) break;
+        if (total !== null && found.size >= total) { complete = true; break; }
+        const step = await read("contentScroll");
+        await sleep(900);
+        const before = found.size;
+        for (const post of (await read("postList"))?.posts || []) found.set(post.id, post);
+        idle = found.size > before ? 0 : idle + 1;
+        if (step?.atEnd && idle >= 2) complete = true;
+        else if (!step?.moved && idle >= 3) break;
+      }
+    } catch (error) {
+      // Keep what the page looked like so a changed TikTok layout can be diagnosed later.
+      await chrome.storage.local.set({ lastPostRead: { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
+        ok: false, error: error.message, found: found.size, tabUrl: (await chrome.tabs.get(tabId).catch(() => null))?.url,
+        probe: await read("postProbe").catch(() => null) } });
+      throw error;
+    }
+    if (total !== null && found.size >= total) complete = true;
+    const posts = [...found.values()];
+    await chrome.storage.local.set({ lastPostRead: { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
+      ok: true, found: posts.length, total, complete, sample: posts.slice(0, 3), probe: posts.length ? null : await read("postProbe") } });
+    return { list: { posts, total, complete, readAt: new Date().toISOString() } };
+  } finally {
+    if (tabId !== undefined) {
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      await chrome.tabs.remove(tabId).catch(() => {});
+      if (tab?.active && previous?.id !== undefined) await chrome.tabs.update(previous.id, { active: true }).catch(() => {});
+    }
+    if (running === token) running = null;
+  }
+}
+
 async function runQueue(request) {
   if (running) throw new Error("Dang co thao tac chay. Dung hoac cho hoan tat.");
   const token = { tabId: Number(request.tabId), cancelled: false };
@@ -479,6 +590,9 @@ async function runQueue(request) {
     const rows = request.rows || [request.row];
     if (!rows.length || rows.length > 1 && (!request.publish || request.type !== "prepare")) throw new Error("Chay nhieu video can bat Bam Dang / Len lich va dung Nap & dien.");
     if (request.type !== "inspect") for (const row of rows) validateJob(row, request.schedule);
+    if (request.publish && rows.some(row => !String(row.tieu_de || "").trim())) {
+      throw new Error("Có video chưa có tiêu đề. Nhập tiêu đề trước khi bật Bấm Đăng / Lên lịch.");
+    }
     if (request.publish) {
       const { submissions = {} } = await chrome.storage.local.get("submissions");
       const keys = rows.map(row => episodeKey(row.video) || row.video.toLowerCase());
@@ -503,7 +617,11 @@ chrome.runtime.onMessage.addListener((request, sender, respond) => {
     if (running) running.cancelled = true;
     respond({ ok: true }); return false;
   }
-  if (request.type === "status") { respond({ ok: true, running: !!running }); return false; }
+  if (request.type === "status") { respond({ ok: true, running: !!running && !running.reading }); return false; }
+  if (request.type === "readPosts") {
+    readPostList(request).then(result => respond({ ok: true, ...result }), error => respond({ ok: false, error: error.message }));
+    return true;
+  }
   if (!["prepare", "fill", "inspect", "checkPosts"].includes(request.type)) return false;
   runQueue(request).then(result => respond({ ok: true, ...result }), error => respond({ ok: false, error: error.message }));
   return true;

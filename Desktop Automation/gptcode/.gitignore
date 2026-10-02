@@ -2,3 +2,4 @@ node_modules/
 backups/
 test-results/
 __pycache__/
+native_host.json

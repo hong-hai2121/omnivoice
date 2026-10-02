@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pageTask } from '../extension/dom.js';
+import { isolatedExtension } from './helpers.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const calendarHTML = await readFile(new URL('./tiktok-calendar.fixture.html', import.meta.url), 'utf8');
@@ -19,7 +20,7 @@ const job = date => ({ type: 'prepare', tabId, row: { id: 'calendar', video, tie
 before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'omni-calendar-'));
   video = path.join(directory, 'fixture.mp4'); await writeFile(video, 'test file bytes');
-  const extension = path.join(root, 'extension');
+  const extension = await isolatedExtension(directory);
   context = await chromium.launchPersistentContext(path.join(directory, 'profile'), {
     headless: true, channel: 'chromium', args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });

@@ -30,6 +30,8 @@ svg { width: 17px; height: 17px; flex-shrink: 0; }
 .scan-tools label:not(.check) { display: grid; gap: 6px; }
 .scan-tools .hashtags { flex: 1 1 260px; }
 .scan-tools .check { min-height: 36px; margin: 0; }
+#update-status { font-size: 12px; color: #087465; overflow-wrap: anywhere; margin: -8px 0 12px; }
+#update-status:empty { display: none; }
 #scan-status { font-size: 12px; color: #656b76; overflow-wrap: anywhere; margin: 12px 0; }
 #schedule-status { font-size: 12px; color: #087465; overflow-wrap: anywhere; margin: 8px 0 12px; }
 .table-wrap { background: #fff; border-top: 1px solid #e0e6e5; }
@@ -52,6 +54,7 @@ tr.selected { background: #eaf4f2; }
 .status.review, .status.running { color: #956715; background: #fff2d9; }
 .status.done { color: #08735c; background: #def3e8; }
 .status.scheduled { color: #296c90; background: #e5f0f9; }
+.status.novideo { color: #8b979a; background: #f5f6f7; border: 1px dashed #d3d8da; }
 .status-source { display: block; margin-top: 6px; font-size: 10px; color: #8b979a; }
 .check { display: flex; align-items: center; gap: 6px; margin-right: auto; }
 input[type=checkbox], input[type=radio] { accent-color: #087465; width: 16px; height: 16px; flex-shrink: 0; }
@@ -102,7 +105,8 @@ td textarea + input { margin-top: 6px; font-size: 12px !important; color: #65787
 @media (max-width: 700px) {
   .overview { display: none; }
   .queue-section { display: flex; flex-direction: column; padding-top: 16px; }
-  .queue-tools { order: -3; }
+  .queue-tools { order: -4; }
+  #update-status { order: -3; margin-top: 0; }
   .run-controls { order: -2; }
   #scan-source { order: -1; }
   .run-controls .actions { gap: 8px; padding-bottom: 10px; }

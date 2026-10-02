@@ -24,19 +24,25 @@ Chrome sẽ báo quyền debugger và hiển thị thanh thông báo khi extensi
 với tab. Đó là cơ chế chính thức của Chrome. Không mở DevTools trên tab đang chạy
 vì có thể ngắt kết nối debugger. Khi nâng cấp mã, bấm Reload ở `chrome://extensions`
 rồi tải lại bảng điều khiển.
-Số phiên bản nằm cạnh tên bảng (hiện tại `v0.5.15`). Nhật ký khôi phục khi mở lại
+Số phiên bản nằm cạnh tên bảng (hiện tại `v0.6.2`). Nhật ký khôi phục khi mở lại
 được ghi rõ **Lần chạy trước**, không phải lỗi vừa phát sinh. Lần chạy mới thay
 nhật ký cũ và lưu thời điểm cùng phiên bản đã xử lý. Nếu vẫn thấy giao diện cũ,
 đóng bảng/cửa sổ tiện ích, Reload chính tiện ích rồi mở lại; F5 TikTok không cập nhật tiện ích.
 
 ## Tự cập nhật từ kịch_bản
 
-1. Chạy `chay_quet.py` trong VS Code hoặc mở `chay_quet.bat` ngay trong `gptcode`.
-   Chỉ cần Python 3.9 trở lên, không cần cài thư viện. Giữ bộ quét đang chạy.
-2. Nếu extension đã cài bản trước, bấm **Reload** trong `chrome://extensions`,
-   chấp nhận quyền truy cập localhost nếu Chrome yêu cầu, rồi tải lại bảng điều khiển.
-3. Bảng tự quét lúc mở và mỗi 30 giây khi bật **Tự cập nhật**. Có thể bấm
-   **Quét kịch_bản** bất kỳ lúc nào. Chức năng này cần bảng điều khiển đang mở.
+1. Bấm đúp `cai_bo_quet.bat` trong `gptcode` **một lần** (bản 0.6.0 trở lên). File này
+   đăng ký `chay_quet.py` với Chrome (khóa `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.omnivoice.gptcode_scanner`
+   và file `native_host.json` cạnh đó). Từ đó Chrome tự chạy bộ quét mỗi lần cần,
+   **không phải mở `chay_quet.py` và giữ cửa sổ nữa**. Gỡ: `cai_bo_quet.bat --go`.
+   Nếu chuyển thư mục extension hoặc nạp lại ở profile khác, chạy lại file này.
+2. Bấm **Reload** trong `chrome://extensions` (bản 0.6.0 xin thêm quyền `scripting`
+   và `nativeMessaging`), rồi mở lại bảng điều khiển.
+3. Bấm **Cập nhật kịch bản** (nút xanh trên danh sách): quét lại `kịch_bản`, lấy lại
+   cả các dòng đã xóa, thêm kịch bản mới làm, rồi đối chiếu với danh sách bài trên
+   TikTok (xem mục dưới). **Quét thư mục** trong *Nguồn video & lịch* chỉ quét thư mục,
+   không mở TikTok. Khi bật **Tự cập nhật**, bảng tự quét thư mục lúc mở và mỗi 30 giây.
+   Vẫn dùng được cách cũ: để `chay_quet.py` chạy trên cổng 8771 nếu chưa đăng ký.
 
 Thư mục mặc định là `myvoice\kịch_bản` trong cùng repo. Bộ quét chọn `[Full] *.mp4`,
 nếu không có thì lấy `facebook*.mp4`, giống bản cũ. Chọn **Đoạn ngắn** để lấy
@@ -44,6 +50,10 @@ nếu không có thì lấy `facebook*.mp4`, giống bản cũ. Chọn **Đoạn
 đổi tên. Đây là bản đã dựng sẵn theo tỷ lệ ở công cụ tạo video, không cắt mới và
 không mặc định coi `short.mp4` là nửa tập. File rỗng được bỏ qua; cần đợi render
 hoàn tất trước khi nạp lên TikTok.
+Thư mục tập (`<chữ><số> - …`, ví dụ `D125 - …`) chưa có video vẫn hiện thành dòng
+**Chưa có video**, kể cả khi chưa có `youtube_upload.json`. Không nạp lên TikTok được
+cho tới khi dựng xong; lần quét sau tự điền đường dẫn video và chuyển sang **Chờ**.
+Thư mục khác (như `output`) chỉ hiện khi có video.
 Tiêu đề lấy từ `youtube_upload.json`, thêm `Full ở`; hashtag thêm `#MimiAudioSoN`
 và phần **Hashtag chung**. Có `tiktok_upload.json` thì ghi trạng thái đã đăng.
 
@@ -51,7 +61,8 @@ Chống trùng theo thư mục tập, giữ lịch đăng và nội dung bạn �
 của dòng nhập từ bản cũ được cập nhật sang file quét thấy lần đầu; những lần sau chỉ
 cập nhật các trường còn giống dữ liệu tự điền trước đó. Dòng đã xử lý, đã đăng hoặc
 đang chờ kiểm tra không bị thay đổi.
-Xóa dòng sẽ ẩn tập đó khỏi các lần quét tự động; bấm **Quét kịch_bản** để lấy lại.
+Xóa dòng sẽ ẩn tập đó khỏi các lần quét tự động; bấm **Cập nhật kịch bản** (hoặc
+**Quét thư mục**) là dòng quay lại nếu thư mục tập còn trong `kịch_bản`.
 Bộ quét đối chiếu toàn bộ thư mục tập: thư mục đã xóa khỏi `kịch_bản` thì dòng
 tương ứng tự rời danh sách sau lần quét thành công tiếp theo, kể cả dòng nhập từ
 JSON cũ hoặc đã xử lý. Không xóa file, JSON gốc hay biên nhận đăng. Dòng thêm thủ
@@ -60,6 +71,47 @@ nhưng thư mục tập còn tồn tại, dòng vẫn được giữ. Khi quét 
 đọc, không tự loại dòng dựa trên danh sách chưa đầy đủ.
 Sau khi cập nhật bản 0.5.3, khởi động lại `chay_quet.py` để có danh mục thư mục mới.
 Bộ quét chỉ đọc dữ liệu, không sửa thư mục kịch bản hay danh sách của công cụ cũ.
+
+## Đánh giá đã đăng theo danh sách trên TikTok
+
+**Cập nhật kịch bản** mở tạm trang *Bài đăng* của TikTok Studio
+(`/tiktokstudio/content`) trong cửa sổ đang dùng vài giây, chỉ đọc, rồi đóng tab và
+quay về tab trước. Tab phải hiện ra vì TikTok không vẽ bảng bài đăng ở tab ẩn. Bảng
+này tải dần khi cuộn, nên extension cuộn từng màn hình cho tới khi thấy mọi tiêu đề
+cần tìm hoặc đã qua số tập cũ nhất cần kiểm tra (tối đa 40 lần cuộn).
+
+- Tiêu đề khớp (bỏ hashtag, chuẩn hóa Unicode/khoảng trắng) và có biểu tượng hẹn giờ
+  hoặc ngày hiển thị nằm trong tương lai (ví dụ `2 tháng 10, 8:00 CH` khi chưa tới giờ)
+  → **Đã lên lịch**; giờ đăng của dòng lấy đúng ngày giờ TikTok hiển thị.
+  Ngày đã qua hoặc không có nhãn ngày → **Đã đăng**. Có bài trùng tiêu đề thì ghi chú số bài.
+- Bộ đọc đi từ từng link video (`/@…/video/<id>`) tới dòng chứa riêng bài đó, rồi đọc
+  nhãn `components_PublishStageLabel_*` và biểu tượng trong dòng; không cần trang chỉ
+  có đúng một bảng.
+- Thấy tiêu đề nhưng TikTok còn *Đang xử lý/kiểm tra*, hoặc chỉ thấy bài cùng
+  `Số N` mà tiêu đề khác (số tập có thể đã dùng cho truyện khác) → **Chờ kiểm tra**.
+- Không thấy trên TikTok → **Chờ** (hoặc **Chưa có video**), ghi chú
+  *Chưa thấy trên TikTok*. Tập có số cũ hơn mọi bài đã đọc mà danh sách chưa tải hết
+  thì giữ nguyên trạng thái cũ, không kết luận.
+- Trạng thái lấy từ TikTok (nhãn nguồn **TikTok**) đứng trên trạng thái của
+  `danh_sach.json` cũ. Biên nhận bấm đăng của extension vẫn được giữ; muốn đăng lại
+  video có biên nhận vẫn phải bật **Cho phép đăng lại**.
+- Ngày muộn nhất trên TikTok (thường là video trên cùng) cho biết đã lên lịch tới đâu.
+  Mọi video chưa đăng nhận các khung giờ kế tiếp sau mốc đó, kể cả tập số cũ làm lại
+  (ví dụ 113 làm lại vẫn nhận ngày trong tương lai), kể cả khi thư mục tập của mốc đã xóa.
+- Kết quả đọc được lưu lại; lần quét tự động chỉ dùng nó để gắn trạng thái cho dòng
+  mới thêm, không ghi đè dòng extension vừa đăng sau lần đọc đó.
+- Chưa đăng nhập TikTok trong profile hoặc không đọc được bảng sau 30 giây thì vẫn
+  cập nhật thư mục và báo *Chưa đối chiếu được TikTok* (kèm địa chỉ trang đang mở) ngay
+  dưới nút. Mỗi lần đọc lưu `lastPostRead` trong kho extension (lỗi, số link video,
+  nhãn ngày, đoạn chữ đầu trang) để chẩn đoán khi TikTok đổi giao diện.
+
+## Đồng bộ giữa side panel và cửa sổ riêng
+
+Side panel và cửa sổ riêng (nút góc trên bên phải) dùng chung một kho dữ liệu. Khi một
+bên cập nhật kịch bản, sửa tiêu đề, giờ đăng hay chọn phiên bản, bên kia nhận danh sách
+mới ngay, không cần tải lại. Bên đang gõ dở, đang quét hoặc đang đổi phiên bản sẽ nhận
+sau khi xong thao tác đó. Mở một cửa sổ mới cũng tự tính lại giờ đăng từ danh sách TikTok
+và `danh_sach.json` đã lưu, kể cả khi tắt **Tự cập nhật**.
 
 Lệnh chạy từ terminal:
 
@@ -98,10 +150,13 @@ bản cũ sang `[Full]` hoặc `short.mp4`. Không ghi ngược vào JSON cũ.
 
 - Khôi phục giờ đã có trong JSON cho các ô trống; thời gian bạn sửa tay trong
   extension được giữ nguyên.
-- Lấy giờ đăng muộn nhất làm mốc, xếp các tập tiếp theo theo số tập và khung giờ
-  của JSON. Tập cũ trước mốc không tự nhận lịch mới.
-- Ví dụ: tập 124 lúc `2026-10-02T20:00`, khung `08:00, 20:00` thì tập 125 nhận
-  `2026-10-03T08:00`, tập 126 nhận `2026-10-03T20:00`.
+- Lấy giờ đăng muộn nhất (TikTok, JSON, dòng đã đăng, giờ sửa tay) làm mốc, rồi xếp
+  **mọi** video chưa đăng vào các khung giờ sau mốc: video đã dựng xong trước, theo số
+  tập; kịch bản chưa có video xếp sau (giờ tạm, tự dời khi video xong).
+- Ví dụ: mốc 124 lúc `2026-10-02T20:00`, khung `08:00, 20:00`, còn 117 và 125 chưa
+  đăng thì 117 nhận `2026-10-03T08:00`, 125 nhận `2026-10-03T20:00`.
+- Giờ trong JSON đã qua mà video chưa đăng thì không dùng lại; video đó nhận khung giờ
+  mới. Giờ sửa tay đã qua cũng được xếp lại.
 - Khi JSON đổi hoặc bạn sửa giờ của một dòng, các lịch tự sinh tiếp theo được
   tính lại. Dòng đã đăng/đã xử lý/đang chờ kiểm tra giữ nguyên lịch.
 - Tránh lịch trùng, bỏ giờ quá gần hiện tại (dưới 20 phút), chỉ xếp trong 30 ngày
@@ -241,9 +296,17 @@ hoặc xóa bản nháp trên TikTok.
   được đọc lại; nếu Enter chọn sai gợi ý làm đổi hashtag, dừng trước khi đăng.
 - Kiểm tra riêng tiêu đề và hashtag, bỏ qua khác biệt khoảng trắng/ký tự zero-width
   do token tạo ra. Theo lựa chọn của người dùng, khi **cả Đặt ngày giờ và Bấm Đăng /
-  Lên lịch đều bật**, tiêu đề lệch chỉ ghi cảnh báo và vẫn tiếp tục lên lịch/đăng.
+  Lên lịch đều bật**, tiêu đề chỉ lệch chút ít (khoảng trắng, dấu câu, bị cắt dưới 20%)
+  chỉ ghi cảnh báo và vẫn tiếp tục lên lịch/đăng. Từ bản 0.6.2, tiêu đề **trống hoặc
+  khác hẳn luôn dừng** trước nút Đăng (lỗi 2/10/2026: tập 117 suýt lên lịch chỉ có hashtag).
   Thiếu/sai hashtag, bản nháp không xác định, ngày giờ sai hoặc tải chưa đủ 100%
   vẫn dừng. Nhật ký hoàn tất giữ lại cảnh báo tiêu đề, không báo đã xác minh khớp.
+- Bản 0.6.2 đọc lại tiêu đề ngay sau khi nhập: chưa thấy thì xóa ô (Ctrl+A, Backspace)
+  và nhập lại, tối đa 3 lần, rồi mới nhập hashtag. Sau hashtag, nếu tiêu đề lại mất thì
+  xóa và điền lại toàn bộ tiêu đề + hashtag một lần; mất tiếp thì dừng, không bấm đăng.
+  Bật **Bấm Đăng / Lên lịch** mà dòng chưa có tiêu đề thì không chạy.
+  Mỗi lần chạy (xong, lỗi hay bấm Dừng) lưu từng bước của ô mô tả vào `lastCaptionTrace`
+  trong kho extension để tìm lúc TikTok làm mất tiêu đề.
 - Hỗ trợ radio `.Radio__innerCircle--checked-false/true`, bộ chọn giờ/phút
   `.tiktok-timepicker-left/right` và nút `[data-e2e="post_video_button"]` từ HTML
   TikTok đã cung cấp. Radio đã bật không bị bấm tắt. Ngày đã đúng được giữ nguyên.

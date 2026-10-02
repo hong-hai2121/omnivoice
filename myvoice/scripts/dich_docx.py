@@ -109,7 +109,7 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=0,
                         help="Chỉ gửi N đoạn đầu (0 = tất cả).")
     parser.add_argument("--no-keep-open", dest="keep_open", action="store_false",
-                        help="Đóng Firefox sau khi xong.")
+                        help="Đóng trình duyệt sau khi xong (Firefox; extension luôn giữ tab Gemini).")
     args = parser.parse_args(argv)
 
     run(args.input, args.output, limit=args.limit, keep_open=args.keep_open)

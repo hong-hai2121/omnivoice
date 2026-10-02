@@ -2,7 +2,10 @@
 
 import argparse
 import json
+import os
 import re
+import struct
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -12,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[2] / "myvoice" / "k\u1ecbch_b\u1ea3n"
 DEFAULT_HASHTAGS = "#truyenaudio #truyenfull #audio #fyp"
 PORT = 8771
 QUEUE_FILE = Path(__file__).resolve().parent.parent / "danh_sach.json"
+# Episode folders are "<letter><number> - <source>"; other folders (output...) are not episodes.
+EPISODE_FOLDER = re.compile(r"^[A-Za-z]?(\d+)")
+NO_VIDEO = "chưa có video"
+KIND_NAMES = {"dai": "Full", "nua": "Nửa video", "ngan": "Short"}
 
 
 def pick_video(folder, kind):
@@ -45,7 +52,10 @@ def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
             if not folder.resolve().is_relative_to(root):
                 continue
             video = pick_video(folder, kind)
-            if video is None or not video.resolve().is_relative_to(root) or video.stat().st_size == 0:
+            if video is not None and (not video.resolve().is_relative_to(root) or video.stat().st_size == 0):
+                video = None
+            # New scripts are listed before their video is rendered; other folders need a video.
+            if video is None and not EPISODE_FOLDER.match(folder.name):
                 continue
             title, episode = "", ""
             metadata = folder / "youtube_upload.json"
@@ -58,7 +68,7 @@ def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
                 except (OSError, ValueError) as error:
                     notes.append(f"{folder.name}: khong doc duoc youtube_upload.json ({error})")
             if not episode:
-                match = re.match(r"^[A-Za-z]?(\d+)", folder.name)
+                match = EPISODE_FOLDER.match(folder.name)
                 episode = match.group(1) if match else ""
             if title and not title.lower().startswith("full \u1edf"):
                 title = f"Full \u1edf {title}"
@@ -68,11 +78,17 @@ def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
                 candidate = pick_video(folder, variant)
                 if candidate and candidate.resolve().is_relative_to(root) and candidate.stat().st_size > 0:
                     variants[variant] = str(candidate)
+            if uploaded:
+                status, note = "\u0111\u00e3 \u0111\u0103ng", "Da co bien nhan tiktok_upload.json"
+            elif video is None:
+                status = NO_VIDEO
+                note = f"Chua co ban {KIND_NAMES[kind]}" + (" (co ban khac, doi o Phien ban video)" if variants else "")
+            else:
+                status, note = "cho", ""
             rows.append({
-                "video": str(video), "tieu_de": title,
+                "video": str(video) if video else "", "thu_muc": str(folder), "tieu_de": title,
                 "hashtag": ((f"#MimiAudioSo{episode} " if episode else "") + hashtags).strip(),
-                "gio_dang": "", "trang_thai": "\u0111\u00e3 \u0111\u0103ng" if uploaded else "cho",
-                "ghi_chu": "Da co bien nhan tiktok_upload.json" if uploaded else "",
+                "gio_dang": "", "trang_thai": status, "ghi_chu": note,
                 "variants": variants, "statusOrigin": "receipt" if uploaded else "",
             })
         except OSError as error:
@@ -154,13 +170,41 @@ def make_server(root=ROOT, port=PORT, queue_file=QUEUE_FILE):
     return ThreadingHTTPServer(("127.0.0.1", port), Handler)
 
 
+def native_reply(stdin, stdout, root=ROOT, queue_file=QUEUE_FILE):
+    """Answer one Chrome native-messaging request: 4-byte length + JSON in each direction."""
+    header = stdin.read(4)
+    if len(header) < 4:
+        return False
+    request = json.loads(stdin.read(struct.unpack("@I", header)[0]).decode("utf-8"))
+    try:
+        if not isinstance(request, dict):
+            raise ValueError("Yeu cau phai la object")
+        result = scan_payload(root, str(request.get("kind") or "dai"),
+                              str(request.get("hashtags") or DEFAULT_HASHTAGS)[:2000], queue_file)
+    except (OSError, ValueError) as error:
+        result = {"ok": False, "error": str(error)}
+    body = json.dumps(result, ensure_ascii=True).encode("utf-8")
+    stdout.write(struct.pack("@I", len(body)) + body)
+    stdout.flush()
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--queue", type=Path, default=QUEUE_FILE)
     parser.add_argument("--once", action="store_true", help="Scan once and print JSON")
-    args = parser.parse_args()
+    parser.add_argument("--native", action="store_true", help="Chrome native messaging host (cai_bo_quet.py)")
+    # Chrome appends the caller origin and --parent-window to native hosts.
+    args, _chrome_args = parser.parse_known_args()
+    if args.native:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+            msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        native_reply(sys.stdin.buffer, sys.stdout.buffer, args.root, args.queue)
+        return
     if args.once:
         print(json.dumps(scan_payload(args.root, queue_file=args.queue), ensure_ascii=True))
         return

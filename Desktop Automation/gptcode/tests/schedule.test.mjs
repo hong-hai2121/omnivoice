@@ -9,17 +9,35 @@ const row = (number, time = "") => ({
 });
 const source = () => ({ khung_gio: "08:00, 20:00", muc: [row(118, "2026-09-30T08:00"), row(124, "2026-10-02T20:00")] });
 
-test("restore JSON dates by folder and schedule only subsequent episodes", () => {
+test("restore JSON dates by folder and give every unposted episode, even an older number, the next slots", () => {
   const rows = [row(105), row(118), row(124), row(126), row(125)];
   rows[2].video = "D:/episodes/A124/short.mp4";
   const result = syncSchedule(rows, source(), now);
   assert.equal(result.restored, 2);
-  assert.equal(rows[0].gio_dang, "");
   assert.equal(rows[1].gio_dang, "2026-09-30T08:00");
   assert.equal(rows[2].gio_dang, "2026-10-02T20:00");
-  assert.equal(rows[4].gio_dang, "2026-10-03T08:00");
-  assert.equal(rows[3].gio_dang, "2026-10-03T20:00");
+  assert.equal(rows[0].gio_dang, "2026-10-03T08:00");
+  assert.equal(rows[4].gio_dang, "2026-10-03T20:00");
+  assert.equal(rows[3].gio_dang, "2026-10-04T08:00");
   assert.equal(syncSchedule(rows, source(), now).changed, 0);
+});
+test("a remade old episode and stale past plans move after the latest schedule; ready videos go first", () => {
+  const later = new Date("2026-10-02T18:00");
+  const rows = [row(113), row(117), row(119), row(125)];
+  rows[0].video = ""; rows[2].video = "";
+  rows[1].gio_dang = "2026-09-29T08:00"; rows[1].scheduleKind = "manual";
+  const data = { khung_gio: "08:00, 20:00", muc: [row(124, "2026-10-02T20:00"), { ...row(119), gio_dang: "2026-09-30T20:00" }] };
+  const result = syncSchedule(rows, data, later);
+  assert.equal(result.anchor, "2026-10-02T20:00");
+  assert.equal(result.restored, 0, "a past JSON plan is not restored");
+  assert.deepEqual(rows.map(item => item.gio_dang), ["2026-10-04T08:00", "2026-10-03T08:00", "2026-10-04T20:00", "2026-10-03T20:00"]);
+  rows[0].video = "D:\episodes\A113\[Full] video.mp4";
+  syncSchedule(rows, data, later);
+  assert.deepEqual(rows.map(item => item.gio_dang), ["2026-10-03T08:00", "2026-10-03T20:00", "2026-10-04T20:00", "2026-10-04T08:00"]);
+  rows[1].trang_thai = "đã lên lịch";
+  syncSchedule(rows, data, later);
+  assert.equal(rows[1].gio_dang, "2026-10-03T20:00", "a posted row keeps its time and becomes the anchor");
+  assert.deepEqual([rows[0], rows[3], rows[2]].map(item => item.gio_dang), ["2026-10-04T08:00", "2026-10-04T20:00", "2026-10-05T08:00"]);
 });
 test("use JSON anchors even when the previous video is absent", () => {
   const rows = [row(125)];
@@ -68,13 +86,13 @@ test("missing slots inherit anchor time and invalid dates are ignored", () => {
   syncSchedule(rows, { muc: [row(123, "2026-02-30T20:00"), row(124, "2026-10-02T08:00")] }, now);
   assert.equal(rows[0].gio_dang, "2026-10-03T08:00");
 });
-test("moving a later manual anchor onto an earlier generated slot does not leave a duplicate", () => {
+test("a manual time moves the generated slots after it without a duplicate", () => {
   const rows = [row(125), row(126)];
   syncSchedule(rows, source(), now);
   rows[1].gio_dang = rows[0].gio_dang;
   rows[1].scheduleKind = "manual";
   const result = syncSchedule(rows, source(), now);
-  assert.equal(rows[0].gio_dang, "");
   assert.equal(rows[1].gio_dang, "2026-10-03T08:00");
-  assert.ok(result.notes.some(note => note.includes("bị trùng")));
+  assert.equal(rows[0].gio_dang, "2026-10-03T20:00");
+  assert.equal(result.notes.length, 0);
 });

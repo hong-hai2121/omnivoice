@@ -1,4 +1,6 @@
+import io
 import json
+import struct
 import tempfile
 import threading
 import unittest
@@ -7,7 +9,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from chay_quet import make_server, scan_episodes, scan_payload
+from chay_quet import NO_VIDEO, make_server, native_reply, scan_episodes, scan_payload
 
 
 class ScannerTests(unittest.TestCase):
@@ -42,7 +44,10 @@ class ScannerTests(unittest.TestCase):
         (folder / "Full \u1edf test.mp4").unlink()
         self.assertEqual(scan_episodes(self.root, "nua")["muc"][0]["video"], str(folder / "tiktok.mp4"))
         (folder / "tiktok.mp4").unlink()
-        self.assertEqual(scan_episodes(self.root, "nua")["muc"], [])
+        row = scan_episodes(self.root, "nua")["muc"][0]
+        self.assertEqual(row["video"], "")
+        self.assertEqual(row["trang_thai"], NO_VIDEO)
+        self.assertEqual(set(row["variants"]), {"dai", "ngan"})
 
     def test_fallback_receipt_and_corrupt_metadata(self):
         folder = self.episode(files=("facebook.mp4",))
@@ -56,19 +61,33 @@ class ScannerTests(unittest.TestCase):
 
     def test_repeat_scan_observes_new_files_and_skips_empty_videos(self):
         folder = self.episode(files=())
-        self.assertEqual(scan_episodes(self.root)["muc"], [])
+        rows = scan_episodes(self.root)["muc"]
+        self.assertEqual([(row["video"], row["trang_thai"], row["thu_muc"]) for row in rows], [("", NO_VIDEO, str(folder))])
         (folder / "[Full] test.mp4").touch()
-        self.assertEqual(scan_episodes(self.root)["muc"], [])
+        self.assertEqual(scan_episodes(self.root)["muc"][0]["video"], "")
         (folder / "[Full] test.mp4").write_bytes(b"video")
-        self.assertEqual(len(scan_episodes(self.root)["muc"]), 1)
-        self.assertEqual(len(scan_episodes(self.root)["muc"]), 1)
+        rows = scan_episodes(self.root)["muc"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["video"], str(folder / "[Full] test.mp4"))
+        self.assertEqual(rows[0]["trang_thai"], "cho")
+
+    def test_new_script_folders_are_listed_but_other_folders_need_a_video(self):
+        (self.root / "D125 - nguon").mkdir()
+        (self.root / "output").mkdir()
+        loose = self.root / "khac"
+        loose.mkdir()
+        (loose / "[Full] khac.mp4").write_bytes(b"video")
+        rows = {Path(row["thu_muc"]).name: row for row in scan_episodes(self.root)["muc"]}
+        self.assertEqual(set(rows), {"D125 - nguon", "khac"})
+        self.assertTrue(rows["D125 - nguon"]["hashtag"].startswith("#MimiAudioSo125 "))
+        self.assertEqual(rows["D125 - nguon"]["tieu_de"], "")
 
     def test_folder_inventory_includes_missing_variants_and_observes_deleted_folders(self):
         folder = self.episode(files=("short.mp4",))
         empty = self.root / "A106"
         empty.mkdir()
         result = scan_episodes(self.root, "dai")
-        self.assertEqual(result["muc"], [])
+        self.assertEqual([row["video"] for row in result["muc"]], ["", ""])
         self.assertEqual(set(result["folders"]), {str(folder), str(empty)})
         self.assertTrue(result["folders_complete"])
         empty.rmdir()
@@ -129,6 +148,24 @@ class ScannerTests(unittest.TestCase):
         self.assertIsNone(result["schedule"])
         self.assertEqual(len(result["muc"]), 1)
         self.assertIn("Khong doc duoc lich", result["ghi_chu"][0])
+
+    def test_native_messaging_round_trip_and_errors(self):
+        self.episode()
+        def ask(request):
+            body = json.dumps(request).encode("utf-8")
+            out = io.BytesIO()
+            self.assertTrue(native_reply(io.BytesIO(struct.pack("@I", len(body)) + body), out, self.root,
+                                         self.root / "missing.json"))
+            data = out.getvalue()
+            self.assertEqual(struct.unpack("@I", data[:4])[0], len(data) - 4)
+            return json.loads(data[4:])
+        result = ask({"kind": "ngan", "hashtags": "#a"})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["muc"][0]["video"].endswith("short.mp4"))
+        self.assertEqual(result["muc"][0]["hashtag"], "#MimiAudioSo105 #a")
+        self.assertIsNone(result["schedule"])
+        self.assertEqual(ask({"kind": "bad"}), {"ok": False, "error": "Loai video phai la dai, nua hoac ngan."})
+        self.assertFalse(native_reply(io.BytesIO(b""), io.BytesIO(), self.root))
 
 
 if __name__ == "__main__":

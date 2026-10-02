@@ -207,7 +207,70 @@ export function pageTask(action, data = {}) {
     }
     return { page: true, ready: true, posts };
   };
-  if (action === 'contentPosts') return contentPosts();
+  // "Bài đăng 113" tab heading; only small elements are read to keep this cheap.
+  const postTotal = () => {
+    for (const el of document.querySelectorAll('body *')) {
+      if (el.childElementCount > 3 || !visible(el)) continue;
+      const match = /^\s*(?:bai dang|posts)\s*\(?\s*(\d[\d.,]*)\s*\)?\s*$/.exec(normalize(el.textContent));
+      if (match) return Number(match[1].replace(/[.,]/g, ''));
+    }
+    return null;
+  };
+  if (action === 'contentPosts') return data.withTotal ? { ...contentPosts(), total: postTotal() } : contentPosts();
+  // Read-only list for "Cập nhật kịch bản": starts from each video link instead of requiring
+  // one table container, and reads the row's date label and icons (alarm = scheduled).
+  const videoId = link => {
+    try {
+      const url = new URL(link.getAttribute('href'), location.href);
+      const match = /^\/@[^/]+\/video\/(\d+)\/?$/.exec(url.pathname);
+      return url.origin === location.origin && match ? match[1] : null;
+    } catch { return null; }
+  };
+  if (action === 'postList') {
+    if (!/^\/tiktokstudio\/content\/?$/.test(location.pathname)) return { page: false, ready: false, posts: [] };
+    const byId = new Map();
+    for (const link of all('a[href*="/video/"]')) {
+      const id = videoId(link), caption = link.textContent.trim();
+      if (!id || !caption || !visible(link)) continue;
+      // The row is the widest ancestor that still holds this post only.
+      let row = link;
+      for (let parent = row.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+        if ([...parent.querySelectorAll('a[href*="/video/"]')].some(other => (videoId(other) || id) !== id)) break;
+        row = parent;
+      }
+      const labels = [...row.querySelectorAll('[data-tt^="components_PublishStageLabel_"]')].filter(visible);
+      const post = { id, url: location.origin + new URL(link.getAttribute('href'), location.href).pathname, caption,
+        stage: [...new Set(labels.map(el => el.textContent.trim()).filter(Boolean))].join(' | '),
+        icons: [...new Set([...row.querySelectorAll('[data-icon]')].map(icon => icon.getAttribute('data-icon')))] };
+      if (!byId.has(id) || caption.length > byId.get(id).caption.length) byId.set(id, post);
+    }
+    const table = all('[data-tt="components_PostTable_Container"]').some(visible);
+    return { page: true, ready: byId.size > 0 || table, posts: [...byId.values()], total: postTotal() };
+  }
+  if (action === 'postProbe') {
+    const count = selector => all(selector).length;
+    const links = all('a[href*="/video/"]');
+    return { url: location.href, title: document.title, readyState: document.readyState,
+      counts: { table: count('[data-tt="components_PostTable_Container"]'), rows: count('[data-tt="components_PostTable_Absolute"]'),
+        captionLinks: count('a[data-tt="components_PostInfoCell_a"]'), stageLabels: count('[data-tt^="components_PublishStageLabel_"]'), videoLinks: links.length },
+      links: links.slice(0, 5).map(link => ({ href: link.getAttribute('href'), text: link.textContent.trim().slice(0, 80), visible: visible(link) })),
+      labels: all('[data-tt^="components_PublishStageLabel_"]').slice(0, 6).map(el => el.textContent.trim().slice(0, 40)),
+      text: (document.body?.innerText || '').slice(0, 400) };
+  }
+  if (action === 'contentScroll') {
+    // Virtualized rows: move one screen at a time so no row is skipped.
+    const table = all('[data-tt="components_PostTable_Container"]').find(visible) ||
+      all('a[href*="/video/"]').find(link => visible(link) && link.textContent.trim())?.parentElement;
+    if (!table) return { ok: false, atEnd: true };
+    const scrollable = el => /(auto|scroll|overlay)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 4;
+    let box = table;
+    while (box && box !== document.body && !scrollable(box)) box = box.parentElement;
+    const target = box && box !== document.body ? box : document.scrollingElement;
+    const view = target === document.scrollingElement ? innerHeight : target.clientHeight;
+    const before = target.scrollTop;
+    target.scrollTop = before + Math.max(200, view * 0.8);
+    return { ok: true, moved: target.scrollTop > before, atEnd: target.scrollTop + view >= target.scrollHeight - 4 };
+  }
   if (action === "probe") return { fileCount: fileInputs().length, caption: !!caption(), uploadTrigger: !!uploadTrigger() };
   if (action === "openUpload") {
     if (caption() && (caption().innerText || caption().value || "").trim()) throw new Error("Tab đang có mô tả. Dùng Điền tiếp cho bản nháp hiện tại.");

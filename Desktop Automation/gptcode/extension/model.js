@@ -1,4 +1,8 @@
 export const TIKTOK_UPLOAD_URL = 'https://www.tiktok.com/tiktokstudio/upload?from=creator_center&tab=video';
+export const TIKTOK_CONTENT_URL = 'https://www.tiktok.com/tiktokstudio/content';
+export const NO_VIDEO = "chưa có video";
+// Rows in these states are not rewritten by folder scans or generated schedules.
+export const LOCKED_STATUSES = ["done", "review", "running", "đã đăng", "đã chốt lịch", "đã lên lịch"];
 
 export function importQueue(data) {
   const rows = Array.isArray(data) ? data : data.muc;
@@ -8,6 +12,7 @@ export function importQueue(data) {
     tieu_de: String(row.tieu_de || ""),
     hashtag: String(row.hashtag || ""),
     video: String(row.video || ""),
+    thu_muc: String(row.thu_muc || ""),
     gio_dang: String(row.gio_dang || ""),
     trang_thai: String(row.trang_thai || "cho"),
     ghi_chu: String(row.ghi_chu || ""),
@@ -18,6 +23,7 @@ export function importQueue(data) {
 
 export function validateJob(row, schedule, now = Date.now()) {
   if (!row) throw new Error("Chon mot video.");
+  if (!row.video) throw new Error(`${row.tieu_de || "Tập này"}: chưa có video. Dựng video xong bấm Cập nhật kịch bản.`);
   if (!/^(?:[a-z]:[\\/]|\\\\)/i.test(row.video) || !/\.(mp4|mov|webm)$/i.test(row.video)) {
     throw new Error("Can duong dan day du den video tren Windows (mp4, mov, webm).");
   }
@@ -45,6 +51,12 @@ export function episodeKey(video) {
   return path.includes("\\") ? path.slice(0, path.lastIndexOf("\\")) : "";
 }
 
+// Episode folder of a row; rows of new scripts have a folder but no video yet.
+export function rowKey(row) {
+  const folder = String(row?.thu_muc || "").trim().replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
+  return folder || episodeKey(row?.video);
+}
+
 export function pruneMissingFolders(rows, scan) {
   // Older/failed scans cannot prove that a folder was deleted.
   if (scan?.ok !== true || scan.folders_complete !== true || !Array.isArray(scan.folders) || !scan.root) return 0;
@@ -55,21 +67,22 @@ export function pruneMissingFolders(rows, scan) {
   const present = new Set(scan.folders.map(normalize));
   let removed = 0;
   for (let index = rows.length - 1; index >= 0; index--) {
-    const path = normalize(rows[index].video);
+    const folder = rows[index].thu_muc ? normalize(rows[index].thu_muc) : "";
+    const path = folder ? folder + "\\" : normalize(rows[index].video);
     if (!path.startsWith(root + "\\")) continue;
     const parts = path.slice(root.length + 1).split("\\");
-    if (parts.length < 2 || parts.some(part => !part || part === "." || part === "..")) continue;
+    if (parts.length < 2 || parts.slice(0, folder ? 1 : undefined).some(part => !part || part === "." || part === "..")) continue;
     if (!present.has(root + "\\" + parts[0])) { rows.splice(index, 1); removed++; }
   }
   return removed;
 }
 
 export function mergeScan(rows, incoming, ignored = []) {
-  const byFolder = new Map(rows.map(row => [episodeKey(row.video), row]).filter(([key]) => key));
+  const byFolder = new Map(rows.map(row => [rowKey(row), row]).filter(([key]) => key));
   const excluded = new Set(ignored);
   let added = 0, updated = 0;
   for (const item of incoming) {
-    const key = episodeKey(item.video);
+    const key = rowKey(item);
     if (!key || excluded.has(key)) continue;
     const current = byFolder.get(key);
     const source = { video: item.video, tieu_de: item.tieu_de, hashtag: item.hashtag };
@@ -80,7 +93,8 @@ export function mergeScan(rows, incoming, ignored = []) {
     }
     const before = JSON.stringify(current);
     current.variants = item.variants || {};
-    if (["done", "review", "running", "đã đăng", "đã chốt lịch"].includes(current.trang_thai)) {
+    if (item.thu_muc) current.thu_muc = item.thu_muc;
+    if (LOCKED_STATUSES.includes(current.trang_thai)) {
       if (JSON.stringify(current) !== before) updated++;
       continue;
     }
@@ -89,9 +103,16 @@ export function mergeScan(rows, incoming, ignored = []) {
         if (item.variants?.[current.variantChoice]) current.video = item.variants[current.variantChoice];
         continue;
       }
+      // A folder that lost its file keeps the last known video path.
+      if (field === "video" && !item.video) continue;
       if (!current[field] || current[field] === current.scanSource?.[field] || (field === "video" && !current.scanSource)) current[field] = item[field];
     }
-    if (item.trang_thai === "đã đăng" && current.statusOrigin !== "local") {
+    if (current.trang_thai === NO_VIDEO && current.video) {
+      current.trang_thai = "cho"; current.ghi_chu = "";
+    } else if (!current.video && item.trang_thai === NO_VIDEO && current.statusOrigin !== "tiktok") {
+      current.trang_thai = NO_VIDEO; current.ghi_chu = item.ghi_chu;
+    }
+    if (item.trang_thai === "đã đăng" && !["local", "tiktok"].includes(current.statusOrigin)) {
       current.trang_thai = item.trang_thai; current.ghi_chu = item.ghi_chu; current.statusOrigin = "receipt";
     }
     current.scanSource = source;
@@ -104,8 +125,9 @@ export function syncStatuses(rows, source) {
   const legacy = new Map((source?.muc || []).map(row => [episodeKey(row.video), row]));
   let changed = 0;
   for (const row of rows) {
-    const saved = legacy.get(episodeKey(row.video));
-    if (!saved?.trang_thai || ["local", "receipt"].includes(row.statusOrigin)) continue;
+    const saved = legacy.get(rowKey(row));
+    // The TikTok post list outranks the retired tool's JSON statuses.
+    if (!saved?.trang_thai || ["local", "receipt", "tiktok"].includes(row.statusOrigin)) continue;
     if (!row.statusOrigin && ["done", "review", "running", "error", "stopped"].includes(row.trang_thai)) continue;
     const note = String(saved.ghi_chu || "");
     if (row.trang_thai !== saved.trang_thai || row.ghi_chu !== note || row.statusOrigin !== "json") changed++;
@@ -123,17 +145,18 @@ export function videoKind(row) {
 }
 
 export function switchVariants(rows, ids, kind, available) {
-  const catalog = new Map(available.map(row => [episodeKey(row.video), row]));
+  const catalog = new Map(available.map(row => [rowKey(row), row]));
   const selected = new Set(ids);
   let changed = 0;
   const missing = [];
   for (const row of rows) {
     if (!selected.has(row.id)) continue;
-    const source = catalog.get(episodeKey(row.video));
+    const source = catalog.get(rowKey(row));
     const video = source?.variants?.[kind];
-    if (!video) { missing.push(row.tieu_de || row.video); continue; }
+    if (!video) { missing.push(row.tieu_de || row.video || row.thu_muc); continue; }
     if (row.video !== video) changed++;
     row.video = video; row.variantChoice = kind; row.variants = source.variants;
+    if (row.trang_thai === NO_VIDEO) { row.trang_thai = "cho"; row.ghi_chu = ""; }
   }
   return { changed, missing };
 }
@@ -141,7 +164,8 @@ export function switchVariants(rows, ids, kind, available) {
 export function statusGroup(row) {
   const value = String(row.trang_thai || "").toLowerCase();
   if (/error|lỗi/.test(value)) return "error";
-  if (["done", "đã đăng", "đã chốt lịch"].includes(value)) return "done";
+  if (["done", "đã đăng", "đã chốt lịch", "đã lên lịch"].includes(value)) return "done";
+  if (value === NO_VIDEO) return "novideo";
   if (/^đang |^running$/.test(value)) return "running";
   if (["review", "stopped", "đã nạp", "đã điền"].includes(value)) return "review";
   if (row.gio_dang || value === "đã hẹn giờ") return "scheduled";

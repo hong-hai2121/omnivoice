@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pageTask } from "../extension/dom.js";
 import { episodeKey } from "../extension/model.js";
+import { isolatedExtension } from "./helpers.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let context, directory, dashboard, tab, tabId, video, body, extensionId;
@@ -87,7 +88,7 @@ before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), "omni-automation-"));
   video = path.join(directory, "fixture.mp4");
   await writeFile(video, "test bytes");
-  const extension = path.join(root, "extension");
+  const extension = await isolatedExtension(directory);
   context = await chromium.launchPersistentContext(path.join(directory, "profile"), {
     headless: true, channel: "chromium", args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });
@@ -348,10 +349,10 @@ test("a lost hashtag gets one repair pass before advancing to the next hashtag",
   assert.equal(await task('captionCheck', { text: 'Test #first #second' }), true);
 });
 
-test("title mismatch warns but still schedules and publishes when both options are selected", async () => {
+test("a near-identical title warns but still schedules and publishes when both options are selected", async () => {
   await tab.evaluate(() => {
     const editor = document.querySelector('[role="textbox"]');
-    editor.addEventListener('input', () => { if (editor.textContent === 'Test') editor.textContent = 'Changed title'; });
+    editor.addEventListener('input', () => { if (editor.textContent === 'Test') editor.textContent = 'Test.'; });
   });
   const result = await message(job({ publish: true }));
   assert.equal(result.ok, true, result.error);
@@ -359,6 +360,70 @@ test("title mismatch warns but still schedules and publishes when both options a
   const progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
   assert.equal(progress.status, 'done');
   assert.ok(progress.log.some(line => line.includes('Cảnh báo: tiêu đề')));
+});
+
+test("a wiped or different title never publishes on a warning, even with both options", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.addEventListener('input', () => { if (editor.textContent.includes('Test')) editor.textContent = ''; });
+  });
+  const result = await message(job({ publish: true }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Tiêu đề chưa khớp sau 3 lần nhập: ô mô tả đang có "\(trống\)"/);
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+  const progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
+  assert.ok(progress.log.some(line => line.includes('Xóa và nhập lại lần 2')));
+  const { lastCaptionTrace } = await dashboard.evaluate(() => chrome.storage.local.get('lastCaptionTrace'));
+  assert.deepEqual(lastCaptionTrace.trace.map(step => step.step), ['Sau khi nhập tiêu đề', 'Đọc lại tiêu đề (lần 2)', 'Đọc lại tiêu đề (lần 3)']);
+  assert.equal(lastCaptionTrace.title, 'Test');
+});
+
+test("a title wiped once while typing is retyped and published with the title", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    let wiped = false;
+    editor.addEventListener('input', () => { if (!wiped && editor.textContent.includes('Test')) { wiped = true; editor.textContent = ''; } });
+  });
+  const request = job({ publish: true }); request.row.hashtag = '#first';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+  assert.match(await tab.locator('[role="textbox"]').innerText(), /^Test #first/);
+});
+
+test("a title lost while entering hashtags is refilled once, and a repeated loss stops without publishing", async () => {
+  const loseTitle = always => tab.evaluate(always => {
+    const editor = document.querySelector('[role="textbox"]');
+    window.losses = 0;
+    editor.onkeydown = event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (always || !window.losses) { window.losses++; editor.textContent = editor.textContent.replace('Test', '').trim(); }
+    };
+  }, always);
+  const request = job({ publish: true }); request.row.hashtag = '#first';
+  await loseTitle(false);
+  let result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+  assert.match(await tab.locator('[role="textbox"]').innerText(), /^Test #first/);
+  let progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
+  assert.ok(progress.log.some(line => line.includes('Tiêu đề bị mất sau khi nhập hashtag')));
+  await dashboard.evaluate(() => chrome.storage.local.remove(['submissions', 'rowResults', 'progress']));
+  await tab.goto('https://www.tiktok.com/tiktokstudio/upload');
+  await loseTitle(true);
+  result = await message(request);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Đã điền lại một lần vẫn mất/);
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+});
+
+test("publishing a row without a title is refused before touching the page", async () => {
+  const request = job({ publish: true }); request.row.tieu_de = '  ';
+  const result = await message(request);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /chưa có tiêu đề/);
+  assert.equal(await tab.locator('[type="file"]').evaluate(el => el.files.length), 0);
 });
 
 test("title mismatch still stops preparation without both options, and diagnostics include the actual caption", async () => {

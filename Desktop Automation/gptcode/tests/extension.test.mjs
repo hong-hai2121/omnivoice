@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { importQueue, validateJob, isTikTok, mergeScan, episodeKey } from "../extension/model.js";
 import { pageTask } from "../extension/dom.js";
+import { isolatedExtension } from "./helpers.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let context, directory, worker, dashboard, tab, video;
@@ -30,7 +31,7 @@ before(async () => {
   directory = await mkdtemp(path.join(tmpdir(), "omnivoice-extension-test-"));
   video = path.join(directory, "fixture.mp4");
   await writeFile(video, Buffer.from("test file bytes, not a real video"));
-  const extension = path.join(root, "extension");
+  const extension = await isolatedExtension(directory);
   context = await chromium.launchPersistentContext(path.join(directory, "profile"), {
     headless: true, channel: "chromium", args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });

@@ -286,6 +286,115 @@ class TranslationTests(unittest.TestCase):
             self.assertFalse(g.is_sent_blank(g.read_results_docx(path, 1)[0]))
 
 
+class BackendSyncAcrossWindowsTests(unittest.TestCase):
+    """02/10/2026: GUI ghi cả taogiong_pipeline.json từ biến trong bộ nhớ → lặng lẽ đè
+    lựa chọn cách dịch vừa đổi trên web. Mọi nơi chỉ ghi riêng khoá gemini_backend."""
+
+    def setUp(self):
+        import amain_taogiong_gui as gui
+        self.gui = gui
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.file = Path(tmp.name) / "taogiong_pipeline.json"
+        from types import SimpleNamespace
+        # _save_pipe_settings builds a fallback tk.BooleanVar eagerly; no Tk root here.
+        fake_bool = lambda *a, **k: SimpleNamespace(get=lambda: False)  # noqa: E731
+        for target in (patch.object(backend, "PIPE_FILE", self.file),
+                       patch.object(gui, "PIPE_FILE", self.file),
+                       patch.object(gui.tk, "BooleanVar", fake_bool)):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def test_set_backend_keeps_other_settings_and_saved_backend_ignores_env(self):
+        self.file.write_text('{"model": "large-v3", "upload": true}', encoding="utf-8")
+        self.assertEqual(backend.set_backend("firefox"), "firefox")
+        data = json.loads(self.file.read_text(encoding="utf-8"))
+        self.assertEqual(data, {"model": "large-v3", "upload": True, "gemini_backend": "firefox"})
+        with patch.dict(os.environ, {"OMNI_GEMINI_BACKEND": "extension"}):
+            self.assertEqual(backend.saved_backend(), "firefox")
+        self.assertEqual(backend.set_backend("bogus"), "extension")
+
+    def fake_app(self, backend_in_memory):
+        """App không dựng cửa sổ, chỉ có các biến mà _save_pipe_settings đọc."""
+        from types import SimpleNamespace
+        app = self.gui.App.__new__(self.gui.App)
+        values = dict(var_auto2=True, var_auto3=True, var_auto_tts=False, var_seo=True,
+                      pipe_var_model="medium", pipe_var_speed="0.7",
+                      var_shutdown=False, var_sleep=False, var_upload=False,
+                      var_gemini_backend=backend_in_memory)
+        for name, value in values.items():
+            holder = {"v": value}
+            setattr(app, name, SimpleNamespace(get=lambda h=holder: h["v"],
+                                               set=lambda v, h=holder: h.__setitem__("v", v)))
+        return app
+
+    def test_gui_saving_other_options_keeps_the_choice_made_on_the_web(self):
+        app = self.fake_app("extension")                       # GUI opened earlier
+        backend.set_backend("firefox")                          # then changed on the web
+        app._save_pipe_settings()                               # user ticks ⛓ in the GUI
+        self.assertEqual(backend.saved_backend(), "firefox")
+        self.assertEqual(app.var_gemini_backend.get(), "firefox")   # display follows the file
+
+    def test_gui_picker_writes_only_its_key(self):
+        self.file.write_text('{"model": "large-v3", "upload": true}', encoding="utf-8")
+        app = self.fake_app("firefox")
+        app._save_backend_choice()
+        data = json.loads(self.file.read_text(encoding="utf-8"))
+        self.assertEqual(data["gemini_backend"], "firefox")
+        self.assertEqual(data["model"], "large-v3")
+        self.assertTrue(data["upload"])
+
+
+class SuspiciouslyShortTranslationTests(unittest.TestCase):
+    """02/10/2026: tập 125 đoạn 2 (0,38) và đoạn 4 (2,47), tập 113 đoạn 3 (2,70) là bản
+    dịch DỞ mà không bị tô đỏ. Bản dịch đủ đo được 3,83–5,28 ký tự Việt/chữ Hán."""
+    SRC = "你" * 200        # 200 chữ Hán
+
+    def test_thresholds(self):
+        self.assertTrue(g.is_result_suspiciously_short(self.SRC, "a" * 494))    # 2,47
+        self.assertTrue(g.is_result_suspiciously_short(self.SRC, "a" * 76))     # 0,38 (cụt)
+        self.assertFalse(g.is_result_suspiciously_short(self.SRC, "a" * 766))   # 3,83
+        self.assertFalse(g.is_result_suspiciously_short("你" * 50, "a"))        # nguồn quá ít
+        self.assertIn("2.47", g.short_red_note(self.SRC, "a" * 494))
+        self.assertEqual(g.short_red_note(self.SRC, "a" * 940), "")
+
+    def run_translation(self, answer):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "gemini_result.docx"
+            logs = []
+            with patch.object(g, "send_to_gemini", return_value=answer), \
+                    patch.object(g, "send_prefix_to_gemini"):
+                results = g.send_chunks_to_gemini([self.SRC], driver=object(), out_path=path,
+                                                  on_log=logs.append)
+            return results, g.read_red_marks(path, 1), logs
+
+    def test_main_translation_keeps_and_reds_a_partial_answer(self):
+        partial = "Một ngày đẹp trời. " * 26           # 494 ký tự = 2,47/chữ
+        results, red, logs = self.run_translation(partial)
+        self.assertEqual(results, [partial])                # giữ nguyên, không gửi lại
+        self.assertIn(1, red)
+        self.assertTrue(any("🔴" in line and "ngắn đáng ngờ" in line for line in logs), logs)
+
+    def test_main_translation_leaves_a_full_answer_unmarked(self):
+        full = "Một ngày đẹp trời. " * 50              # 950 ký tự = 4,75/chữ
+        _results, red, _logs = self.run_translation(full)
+        self.assertNotIn(1, red)
+
+    def test_blank_retry_button_reds_a_partial_answer(self):
+        import dich_lai_trong as dlt
+        with tempfile.TemporaryDirectory() as tmp:
+            gem = Path(tmp) / "gemini_result.docx"
+            g.save_results_docx([self.SRC], [""], gem)
+            partial = "Tiếng hô ấy vang từ đầu phố đến tận cửa cung. " * 2
+            driver = Mock(is_chrome_extension=True)
+            with patch.object(dlt, "_doc_pairs", return_value=(gem, [self.SRC], ["(trống)"])), \
+                    patch.object(g, "send_to_gemini", return_value=partial), \
+                    patch.object(dlt.time, "sleep"), patch.object(dlt, "log"):
+                dlt.run_folder(tmp, "125", driver=driver)
+            self.assertEqual(g.read_results_docx(gem, 1), [partial.strip()])
+            self.assertIn(1, g.read_red_marks(gem, 1))
+
+
 class WebChoiceTests(unittest.TestCase):
     def test_both_forms_persist_browser_without_resetting_other_settings(self):
         from myvoice.web import server

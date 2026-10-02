@@ -523,8 +523,8 @@ def save_manual_translation(folder, j: int, text: str) -> dict:
         text = sach
     if g.is_refusal(text):
         canh_bao.append("giống câu TỪ CHỐI của Gemini chứ không phải bản dịch")
-    if g.is_result_too_short(chunks[j - 1], text):
-        canh_bao.append("ngắn bất thường so với nguồn (dịch cụt?)")
+    if g.short_red_note(chunks[j - 1], text):    # cùng ngưỡng tô đỏ của bước dịch
+        canh_bao.append(g.short_red_note(chunks[j - 1], text))
     if not g.is_translation_done(text):
         canh_bao.append("còn nhiều chữ Hán")
 
@@ -615,8 +615,8 @@ def review_red_segment(folder, j: int, text: str | None = None) -> dict:
     if sua:
         if g.is_refusal(moi):
             canh_bao.append("giống câu TỪ CHỐI của Gemini chứ không phải bản dịch")
-        if g.is_result_too_short(chunks[j - 1], moi):
-            canh_bao.append("ngắn bất thường so với nguồn (dịch cụt?)")
+        if g.short_red_note(chunks[j - 1], moi):
+            canh_bao.append(g.short_red_note(chunks[j - 1], moi))
         if not g.is_translation_done(moi):
             canh_bao.append("còn nhiều chữ Hán")
 

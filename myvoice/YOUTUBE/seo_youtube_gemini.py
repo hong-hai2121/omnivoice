@@ -323,7 +323,7 @@ def main(argv=None):
     parser.add_argument("--chars", type=int, default=0,
                         help="Chỉ gửi N ký tự đầu của đoạn (0 = cả đoạn).")
     parser.add_argument("--no-keep-open", dest="keep_open", action="store_false",
-                        help="Đóng Firefox sau khi xong.")
+                        help="Đóng trình duyệt sau khi xong (Firefox; extension luôn giữ tab Gemini).")
     args = parser.parse_args(argv)
 
     run(args.input, args.output, max_chars=args.chars, keep_open=args.keep_open)

@@ -438,6 +438,40 @@ def is_result_too_short(source_chunk, result):
     return len((result or "").strip()) < n_han * VIET_HAN_MIN_RATIO
 
 
+# ── Ngưỡng NGẮN ĐÁNG NGỜ → TÔ ĐỎ (02/10/2026) ─────────────────────────────────
+# Gemini hay dịch được MỘT PHẦN rồi dừng giữa chừng: tập 113 đoạn 3 (2,70 — dừng ở "Bố
+# cũng phụ họa theo:"), tập 125 đoạn 4 (2,47 — mới được nửa đoạn). Hai đoạn này lọt
+# ngưỡng cụt 2,0 nên được lưu như bản dịch đủ, không ai biết. 60 đoạn dịch đủ của tập
+# 113–128 đo được 3,83–5,28 (trung vị 4,7). Nằm giữa ngưỡng cụt và ngưỡng này → GIỮ bản
+# dịch nhưng TÔ ĐỎ để người kiểm (nhãn "n đỏ" cột Dịch; popup sửa/✔), KHÔNG gửi lại.
+# Đỏ chặn tạo input/giọng như mọi đoạn đỏ khác cho tới khi ✔ Đã kiểm.
+VIET_HAN_WARN_RATIO = float(os.environ.get("OMNI_GEMINI_VIET_HAN_WARN", "3.3"))
+
+
+def viet_han_ratio(source_chunk, result):
+    """Số ký tự Việt trên mỗi chữ Hán nguồn; None khi nguồn quá ít chữ Hán để đo."""
+    n_han = len(_CHINESE_RE.findall(source_chunk or ""))
+    if n_han < VIET_HAN_MIN_SRC:
+        return None
+    return len((result or "").strip()) / n_han
+
+
+def is_result_suspiciously_short(source_chunk, result):
+    """True nếu bản dịch ngắn đáng ngờ (có thể dịch dở) — kể cả trường hợp dịch cụt."""
+    ratio = viet_han_ratio(source_chunk, result)
+    return ratio is not None and ratio < VIET_HAN_WARN_RATIO
+
+
+def short_red_note(source_chunk, result):
+    """Câu giải thích cho nhật ký / popup khi bản dịch ngắn đáng ngờ; "" nếu bình thường."""
+    if not is_result_suspiciously_short(source_chunk, result):
+        return ""
+    ratio = viet_han_ratio(source_chunk, result)
+    return (f"bản dịch ngắn đáng ngờ ({len((result or '').strip())} ký tự Việt cho "
+            f"{len(_CHINESE_RE.findall(source_chunk or ''))} chữ Hán = {ratio:.2f}/chữ, "
+            f"bản dịch đủ thường ≥ {VIET_HAN_WARN_RATIO:g}) — có thể Gemini dịch dở giữa chừng")
+
+
 # ── Phát hiện bản dịch LẶP (câu mở đầu xuất hiện lại phía sau) ─────────────────
 # 05/09/2026 (chiều): người dùng xác nhận chỗ lặp là do NGUỒN tiếng Trung tự lặp (thiên
 # thư / đạn mạc chiếu lại cảnh) nên bản dịch lặp theo là ĐÚNG → is_result_duplicated
@@ -1309,7 +1343,7 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                 while not ans and restart_on_timeout and restarts < max_restarts:
                     restarts += 1
                     on_log(f"🔄 Đoạn {i + 1}/{total} không nhận được nội dung sau "
-                           f"{RESPONSE_TIMEOUT // 60} phút — đóng Firefox & mở lại "
+                           f"{RESPONSE_TIMEOUT // 60} phút — mở lại {browser_label()} (chat mới) "
                            f"(lần {restarts}/{max_restarts})...")
                     driver = restart_firefox(driver, profile=profile, on_log=on_log)
                     if on_driver:
@@ -1321,7 +1355,7 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     # riêng) rồi mới gửi lại đoạn, giống đầu phiên.
                     send_prefix_to_gemini(driver, prefix or RETRY_CHINESE_PREFIX,
                                           on_log=on_log)
-                    on_log(f"📤 Gửi lại đoạn {i + 1}/{total} sau khi mở lại Firefox...")
+                    on_log(f"📤 Gửi lại đoạn {i + 1}/{total} trong chat mới...")
                     ans = send_to_gemini(driver, tagged, on_log=on_log)
                 # ── Gemini TỪ CHỐI dịch hoặc dịch CỤT (trả một mẩu ngắn) ────────
                 # Cứu theo bậc: (1) đóng Firefox → chat MỚI → gửi lại nguyên đoạn
@@ -1417,6 +1451,11 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     on_log(f"💾 Đã lưu {len(results)}/{total} đoạn xong → {out_path}. "
                            "Chạy lại để dịch tiếp phần còn thiếu.")
                 raise
+            if ans and is_result_suspiciously_short(chunk, ans):
+                # Lọt ngưỡng cụt nhưng vẫn ngắn hơn hẳn bản dịch đủ → giữ, TÔ ĐỎ để kiểm.
+                red.add(i + 1)
+                on_log(f"🔴 Đoạn {i + 1}/{total}: {short_red_note(chunk, ans)} → GIỮ và TÔ "
+                       "ĐỎ để kiểm (nhãn \"n đỏ\" ở cột Dịch).")
             if ans:
                 on_log(f"✅ Đã nhận kết quả đoạn {i + 1}/{total}.")
             else:

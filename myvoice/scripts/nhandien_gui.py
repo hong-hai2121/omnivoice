@@ -490,10 +490,20 @@ class App:
         self.btn_copy = ttk.Button(res_bar, text="📋 Sao chép kết quả",
                                    style="Ghost.TButton", command=self._copy_result)
         self.btn_copy.pack(side="right")
-        # Gửi thẳng các đoạn sang Gemini (mở Firefox bằng Selenium) — xem dich_gemini.py
+        # Gửi thẳng các đoạn sang Gemini theo cách dịch đã chọn (Chrome Extension mặc
+        # định, Firefox/Selenium dự phòng) — xem dich_gemini.init_firefox.
         self.btn_gemini = ttk.Button(res_bar, text="🤖 Gửi Gemini",
                                      style="Accent.TButton", command=self._send_gemini)
         self.btn_gemini.pack(side="right", padx=(0, 8))
+        # Cùng ô chọn với GUI chính / web (02/10/2026): ghi riêng khoá gemini_backend
+        # trong taogiong_pipeline.json; quay lại cửa sổ là đọc lại lựa chọn đã lưu.
+        from gemini_backend import backend_picker, saved_backend, set_backend
+        self.var_backend = tk.StringVar(value=saved_backend())
+        picker, _ = backend_picker(
+            res_bar, self.var_backend,
+            lambda: self.var_backend.set(set_backend(self.var_backend.get())), horizontal=True)
+        picker.pack(side="left")
+        self.root.bind("<FocusIn>", lambda _e: self.var_backend.set(saved_backend()), add="+")
 
         # Hàng nút sao chép theo từng ĐOẠN (1,2,3...) — tạo động sau khi nhận diện
         # xong, trùng với cách .docx tách đoạn. Bấm số nào thì chép đoạn đó;
@@ -669,7 +679,8 @@ class App:
 
     # ── Gửi sang Gemini ───────────────────────────────────────────────────────
     def _send_gemini(self):
-        """Gửi các đoạn (đã tách khi nhận diện) sang Gemini qua Firefox/Selenium."""
+        """Gửi các đoạn (đã tách khi nhận diện) sang Gemini theo cách dịch đã chọn."""
+        from gemini_backend import browser_hint, browser_label
         if self._busy:
             messagebox.showinfo("Đang bận", "Đang nhận diện, vui lòng đợi xong rồi gửi Gemini.")
             return
@@ -690,9 +701,8 @@ class App:
 
         if not messagebox.askyesno(
             "Gửi sang Gemini",
-            f"Sẽ mở Firefox và gửi {len(chunks)} đoạn sang Gemini.\n\n"
-            "Hãy ĐÓNG Firefox đang mở (profile bị khoá khi đang chạy) và đảm bảo "
-            "profile đã đăng nhập Google.\n\nTiếp tục?",
+            f"Sẽ gửi {len(chunks)} đoạn sang Gemini qua {browser_label()}.\n\n"
+            f"{browser_hint()}\n\nTiếp tục?",
         ):
             return
 
@@ -777,13 +787,13 @@ class App:
     def _start_batch(self, sources, speed):
         """Xử lý nhiều link lần lượt: mỗi link 1 thư mục kịch_bản/NN, chạy full
         pipeline (nhận diện → dịch Gemini → input.txt → SEO YouTube)."""
+        from gemini_backend import browser_hint, browser_label
         if not messagebox.askyesno(
             "Xử lý nhiều link",
             f"Sẽ xử lý {len(sources)} link THEO THỨ TỰ. Mỗi link tạo một thư mục "
             "(01, 02, ...) trong kịch_bản, chứa bản nhận diện, bản dịch Gemini, "
             "input.txt và seoYoutube.docx.\n\n"
-            "Bước dịch & SEO dùng Firefox — hãy ĐÓNG Firefox đang mở (profile bị "
-            "khoá khi đang chạy) và đảm bảo profile đã đăng nhập Google.\n\nTiếp tục?",
+            f"Bước dịch & SEO dùng {browser_label()}. {browser_hint()}\n\nTiếp tục?",
         ):
             return
 

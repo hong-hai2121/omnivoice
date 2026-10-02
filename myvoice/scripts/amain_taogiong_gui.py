@@ -2763,6 +2763,9 @@ class App(tk.Tk):
         self._upload_done = 0                  # số tập đã đăng xong trong mẻ hiện tại
         self._setup_logging()
         self._build_ui()
+        # Cách dịch Gemini dùng chung với web / cửa sổ Nhận diện: quay lại cửa sổ này là
+        # đọc lại lựa chọn đã lưu, khỏi hiện (và chạy theo) lựa chọn cũ trong bộ nhớ.
+        self.bind("<FocusIn>", self._sync_backend_from_file, add="+")
         self._poll_log()
         self._start_web_log_mirror()   # nhật ký đăng bên bảng web → ô Nhật ký ở đây
         self.update_idletasks()
@@ -4023,7 +4026,7 @@ class App(tk.Tk):
             style="Accent.TButton", command=self._recog_tab_run)
         self.recog_tab_btn.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(0, 8))
         from gemini_backend import backend_picker
-        picker, buttons = backend_picker(s1, self.var_gemini_backend, self._save_pipe_settings)
+        picker, buttons = backend_picker(s1, self.var_gemini_backend, self._save_backend_choice)
         picker.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
         self._backend_buttons.extend(buttons)
 
@@ -5835,7 +5838,7 @@ class App(tk.Tk):
                         variable=self.var_auto3).grid(row=4, column=0, sticky="w", pady=(6, 0))
         from gemini_backend import backend_picker
         self.var_gemini_backend = tk.StringVar(value=self._pipe_settings.get("gemini_backend", "extension"))
-        picker, self._backend_buttons = backend_picker(s2, self.var_gemini_backend, self._save_pipe_settings)
+        picker, self._backend_buttons = backend_picker(s2, self.var_gemini_backend, self._save_backend_choice)
         picker.grid(row=5, column=0, sticky="w", pady=(6, 0))
 
         # ③ Chuẩn bị input.txt
@@ -6126,11 +6129,27 @@ class App(tk.Tk):
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
-            gemini_backend=self.var_gemini_backend.get(),
+            # KHÔNG lấy từ biến trong bộ nhớ: web có thể vừa đổi (02/10/2026). Lựa chọn
+            # chỉ đổi qua ô chọn (_save_backend_choice) hoặc nút reset.
+            gemini_backend=self._sync_backend_from_file(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
             sleep=getattr(self, "var_sleep", tk.BooleanVar()).get(),
             upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
         ))
+
+    def _save_backend_choice(self):
+        """Ô chọn cách dịch: ghi RIÊNG khoá gemini_backend (giữ mọi cài đặt khác)."""
+        from gemini_backend import set_backend
+        self.var_gemini_backend.set(set_backend(self.var_gemini_backend.get()))
+
+    def _sync_backend_from_file(self, event=None):
+        """Đưa ô chọn về lựa chọn đã lưu (web có thể vừa đổi). → giá trị đã lưu."""
+        from gemini_backend import saved_backend
+        value = saved_backend()
+        var = getattr(self, "var_gemini_backend", None)
+        if var is not None and var.get() != value:
+            var.set(value)
+        return value
 
     def _reset_pipe_settings(self):
         """Đưa các tùy chọn quy trình về mặc định gốc và lưu lại."""
@@ -6139,6 +6158,8 @@ class App(tk.Tk):
         self.var_auto_tts.set(PIPE_DEFAULTS["auto_tts"])
         self.var_seo.set(PIPE_DEFAULTS["seo"])
         self.var_gemini_backend.set(PIPE_DEFAULTS["gemini_backend"])
+        from gemini_backend import set_backend
+        set_backend(PIPE_DEFAULTS["gemini_backend"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
         if hasattr(self, "var_sleep"):
