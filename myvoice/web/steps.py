@@ -35,8 +35,9 @@ SEO_SOFT_CODE = 78
 # Bước hiện trên giao diện → (nhãn, danh sách bước của runner)
 STEP_CHOICES = [
     ("recognize", "① Nhận diện tiếng Trung"),
-    ("script",    "② Dịch + input.docx + SEO + thumbnail"),
-    ("tts",       "③ Tạo giọng + video"),
+    # Số khớp khối nút hàng loạt (04/10/2026): ② dịch + SEO → ③ thumbnail → ④ giọng + video.
+    ("script",    "②③ Dịch + input.docx + SEO + thumbnail"),
+    ("tts",       "④ Tạo giọng + video"),
 ]
 # Bước lẻ, dùng cho nút “chạy lại” của từng ô trong bảng tiến độ.
 SINGLE_STEPS = {
