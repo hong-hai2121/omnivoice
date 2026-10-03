@@ -1,0 +1,18 @@
+{# Khối "Chọn tập trong kịch_bản/" (bảng tập) — DÙNG CHUNG trang Nhận diện và Home.
+   Cần: rows, step_labels. bform: xem _batch_chay.html — truyền sang cả bản vẽ lại của
+   bảng (/partials/recog-table?form=…) để ô tick tập vẫn thuộc đúng form.
+   Ô tick tập đồng bộ giữa hai trang và mọi tab (app.js, khối "Ô tick tập"). #}
+<div class="panel">
+  <div class="phead">
+    <h2>Chọn tập trong kịch_bản/</h2>
+    <span class="spacer"></span>
+    <button class="ghost" type="button" onclick="tickAll(true)">Chọn tất cả</button>
+    <button class="ghost" type="button" onclick="tickAll(false)">Bỏ chọn</button>
+    <button class="ghost" type="button"
+            onclick="htmx.trigger('#recogtable', 'refresh')">🔄 Làm mới</button>
+  </div>
+  <div id="recogtable" hx-get="/partials/recog-table{{ '?form=' ~ bform if bform }}"
+       hx-trigger="refresh, every 15s" hx-swap="innerHTML">
+    {% include "_recog_table.html" %}
+  </div>
+</div>

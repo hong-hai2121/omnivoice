@@ -1,7 +1,9 @@
 {# Khối quy trình ①②③ — dùng chung cho trang Tạo kịch bản và trang Home.
    Cần: pipe, tts_error. #}
 {# Một form chạy chung: bấm nút của bước nào thì chạy từ bước đó trở đi. #}
-<form class="form-grid" method="post" action="/kichban/chay">
+{# data-tuluu: đổi ô nào (tick ⛓, model, tốc độ…) là app.js tự gửi đường 💾 đó — không
+   tải lại trang. Ô mang data-khongluu (và ô Nguồn, ô "Làm lại") không kích lưu. #}
+<form class="form-grid" method="post" action="/kichban/chay" data-tuluu="/kichban/luu">
 
   {# span-all: khối này rộng hết bề ngang kể cả ở Home (nơi form xếp 2–3 cột) —
      ô nguồn là chỗ gõ nhiều nhất, để hẹp thì link dài bị xuống dòng lung tung. #}
@@ -14,7 +16,11 @@
     </div>
     <label class="field">
       <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
-      <textarea id="srcBox" name="sources" rows="6" placeholder="https://www.bilibili.com/video/…&#10;C:\Users\PC\Downloads\93.mp3"></textarea>
+      {# Ô Nguồn DÙNG CHUNG với trang Nhận diện (và mọi tab): nội dung lưu ở server
+         (core.load_src_draft), gõ ở đâu các chỗ khác cũng có — xem app.js. #}
+      <textarea id="srcBox" name="sources" rows="6" data-ver="{{ src_draft.ver }}"
+                placeholder="https://www.bilibili.com/video/…&#10;C:\Users\PC\Downloads\93.mp3">
+{{ src_draft.text }}</textarea>
     </label>
     {% if src_history %}
       <div class="chiprow">
@@ -56,7 +62,7 @@
     </div>
     <label class="field">
       <span>Số tập bắt đầu (làm bù)</span>
-      <input id="firstepisode" name="episode" value="" inputmode="numeric"
+      <input id="firstepisode" name="episode" value="" inputmode="numeric" data-khongluu
              placeholder="để trống = tự cấp số kế tiếp">
     </label>
     {# Chế độ đánh số do radio ở khối Thumbnail quyết định; JS chép giá trị sang đây
@@ -70,6 +76,18 @@
       <label class="chk"><input type="checkbox" name="force"> Làm lại cả bước đã có kết quả</label>
     </div>
   </div>
+
+  {% if on_home %}
+    {# Home (03/10/2026): khối "Chạy cho những tập đã tick" + bảng tập của trang Nhận
+       diện, ngay dưới ô Nguồn — CÙNG template với trang đó (_batch_chay/_batch_bang).
+       Nút/ô thuộc form #homebatch (home.html), không thuộc form này. #}
+    {% with bform = 'homebatch' %}
+      <div class="batch-grid span-all">
+        <div class="batch-side">{% include "_batch_chay.html" %}</div>
+        {% include "_batch_bang.html" %}
+      </div>
+    {% endwith %}
+  {% endif %}
 
   <div class="panel">
     <div class="phead">

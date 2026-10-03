@@ -19,6 +19,9 @@
 
 <p class="colhead later"><span class="num">1</span> Tạo kịch bản — từ link/file</p>
 {% include "_form_script.html" %}
+{# Form RỖNG của khối chạy theo tập: nút/ô của nó nằm trong khối 1 (ngay dưới ô Nguồn,
+   xem _form_script.html) và gắn form="homebatch". Gửi/tự lưu y như trang Nhận diện. #}
+<form id="homebatch" method="post" action="/nhandien" data-tuluu="/nhandien/luu" hidden></form>
 
 <p class="colhead later"><span class="num">2</span> Giọng nói &amp; video</p>
 {% include "_form_voice.html" %}
@@ -37,7 +40,7 @@
    cũng là một việc.</p>
 
 <p class="hint">Ít dùng hơn nên để ở trang riêng:
-   <a href="/nhandien">chạy hàng loạt theo tập · bảng trạng thái các tập</a> ·
+   <a href="/nhandien">nhận diện hàng loạt</a> ·
    <a href="/kichban">tập bỏ qua · câu mở đầu Gemini · reset quy trình</a> ·
    <a href="/giongnoi">xóa output</a> ·
    <a href="/thumbnail">xem trước thumbnail</a> ·

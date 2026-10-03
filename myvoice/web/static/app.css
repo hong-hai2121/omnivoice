@@ -350,6 +350,43 @@ button.small { padding: 2px 8px; min-height: 26px; font-size: 12.5px; }
 }
 @keyframes savenote-fade { 0%, 65% { opacity: 1; } 100% { opacity: 0; } }
 
+/* ── Trang không tải lại sau mỗi cú bấm (03/10/2026, xem cuối app.js) ──────── */
+/* Thuộc tính hidden phải thắng các luật display của lớp (vd .previews là flex). */
+[hidden] { display: none !important; }
+/* Thông báo nổi: các dòng server báo cho lượt bấm vừa rồi. */
+#toasts {
+  position: fixed; right: 16px; bottom: 16px; z-index: 80;
+  display: flex; flex-direction: column; gap: 8px;
+  max-width: min(460px, calc(100vw - 32px));
+}
+.toast {
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-left: 4px solid var(--ok);
+  border-radius: var(--r-sm); box-shadow: var(--shadow-lg);
+  padding: 10px 14px; font-size: 13px; line-height: 1.45;
+  overflow-wrap: anywhere; cursor: pointer;
+  transition: opacity .5s ease, transform .5s ease;
+}
+.toast-canh { border-left-color: var(--warn); }
+.toast-loi  { border-left-color: var(--danger); }
+.toast-mo   { opacity: 0; transform: translateY(6px); }
+.toast-them { color: var(--muted); }
+/* Dấu "✓ đã lưu" hiện ngay cạnh ô vừa đổi (tự lưu cài đặt). */
+.tuluu-dau {
+  position: fixed; z-index: 80; pointer-events: none;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  color: var(--ok); background: var(--ok-bg);
+  border-radius: 999px; padding: 2px 8px;
+  animation: savenote-fade 1.5s ease forwards;
+}
+/* Nút vừa bấm, đang chờ server trả lời. */
+button.dang-gui { opacity: .6; cursor: progress; }
+/* Đoạn giải thích dài thu gọn (khối chạy theo tập trên Home). */
+.hintmore { margin-top: 10px; }
+.hintmore > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+.hintmore > summary:hover { color: var(--accent); }
+.hintmore[open] > summary { margin-bottom: 6px; }
+
 /* Trang riêng (một cột): bảng tập phải nằm TRƯỚC cụm nút hàng loạt — tick xong
    là bấm ngay bên dưới, khỏi cuộn ngược lên. Ở Home hai bên nằm cạnh nhau nên
    không cần đảo. */

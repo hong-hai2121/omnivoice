@@ -14,6 +14,7 @@ vài dòng cuối ngay trong khối hàng đợi trên trang, và /api/nhatky-da
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import subprocess
@@ -34,8 +35,8 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, gemini_test, power, steps as steps_mod  # noqa: E402
-from .jobs import (fb_log, fb_runner, log, runner,          # noqa: E402
-                   upload_log, upload_runner)
+from .jobs import (capture as log_capture, fb_log, fb_runner,  # noqa: E402
+                   log, runner, upload_log, upload_runner)
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -90,10 +91,34 @@ async def require_token(request: Request, call_next):
         return HTMLResponse(
             "<h1>Cần token</h1><p>Mở bằng đường dẫn có <code>?token=…</code> "
             "in ở cửa sổ console lúc khởi động server.</p>", status_code=401)
-    response = await call_next(request)
+    if request.headers.get("x-ajax"):
+        response = await _ajax(request, call_next)
+    else:
+        response = await call_next(request)
     if request.query_params.get("token"):     # ghi nhớ để lần sau khỏi kèm token
         response.set_cookie(COOKIE, TOKEN, max_age=30 * 86400, httponly=True,
                             samesite="lax")
+    return response
+
+
+async def _ajax(request: Request, call_next):
+    """Lượt bấm gửi bằng fetch (app.js, header X-Ajax) — trang KHÔNG tải lại (03/10/2026).
+
+    Các route POST vẫn viết theo kiểu cũ (làm việc → chuyển hướng về trang vừa bấm)
+    để còn đường lui khi không có JS. Ở đây đổi cú chuyển hướng đó thành JSON
+    {"ok", "notes", "location"}: notes là các dòng log() của chính request này —
+    trang hiện thành thông báo nổi thay cho việc phải nhìn cửa sổ console."""
+    notes: list[str] = []
+    tok = log_capture.set(notes)
+    try:
+        response = await call_next(request)
+    finally:
+        log_capture.reset(tok)
+    if response.status_code in (301, 302, 303, 307, 308):
+        return JSONResponse({"ok": True, "notes": notes,
+                             "location": response.headers.get("location", "")})
+    if notes:          # route trả JSON/HTML riêng: dòng nhật ký đi kèm qua header
+        response.headers["X-Notes"] = quote(json.dumps(notes, ensure_ascii=False))
     return response
 
 
@@ -114,6 +139,8 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     # Đồng hồ 📊 VRAM cũng nằm trong khối hàng đợi — đưa vào từ lượt tải đầu,
     # khỏi đợi htmx làm mới 2 giây sau mới hiện (có cache 5s nên không tốn gì).
     ctx.setdefault("vram", _vram())
+    # Ô Nguồn dùng chung mọi trang: vẽ sẵn nội dung đang nhập dở (core.load_src_draft).
+    ctx.setdefault("src_draft", core.load_src_draft())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -260,11 +287,13 @@ def _thumb_ctx(tap: str = "") -> dict:
 @app.get("/", response_class=HTMLResponse)
 def page_home(request: Request):
     # Gộp bằng dict (không phải **a, **b) vì các phần dùng chung khoá "rows".
-    # KHÔNG gọi _recog_ctx: khối "chạy hàng loạt theo tập" đã chuyển hẳn sang trang
-    # /nhandien, mà gọi thừa thì episode_rows() bị quét hai lần mỗi lần mở Home.
+    # KHÔNG gọi _recog_ctx: bảng tập + khối "chạy cho những tập đã tick" (đưa lại về
+    # Home 03/10/2026, ngay dưới ô Nguồn) dùng chung "rows" mà _thumb_ctx đã quét —
+    # gọi thêm thì episode_rows() bị quét hai lần mỗi lần mở Home.
     # on_home=True: ô "Số tập (chữ trên video)" hiện ở khối Thumbnail thay vì trong
     # khối Giọng nói (xem _field_tiktok_episode.html).
-    ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx(), **_upload_ctx()}
+    ctx = {**_script_ctx(), **_voice_ctx(), **_thumb_ctx(), **_upload_ctx(),
+           "step_labels": core.STEP_LABELS}
     # Khối Đăng Facebook: danh sách tập chưa đăng Page + lịch đang chờ (đọc đĩa +
     # cache, không gọi mạng).
     ctx["fb"] = _fb_ctx()
@@ -414,6 +443,7 @@ async def run_script(request: Request):
             for i, ep in enumerate(plan)))
 
     steps_mod.cleanup_tmp()
+    queued: list[str] = []
     for src, ep in zip(lines, plan):
         built, err = steps_mod.build_steps(chain, source=src, episode=ep,
                                            force=force, upload=upload)
@@ -421,6 +451,8 @@ async def run_script(request: Request):
             log(f"⛔ {err}")
             break
         runner.enqueue(steps_mod.title_for(src, ep, chain), built)
+        queued.append(src)
+    core.drop_from_src_draft(queued)      # đã xếp hàng → rời ô Nguồn, khỏi chạy trùng
     return _back(request, "/kichban")
 
 
@@ -532,6 +564,19 @@ async def api_review_red_paragraph(request: Request):
     else:
         log(f"⛔ Tập {tap.zfill(2)}: không ghi được đoạn đỏ — {r.get('loi', '')}")
     return JSONResponse(r, status_code=200 if r.get("ok") else 400)
+
+
+@app.get("/api/nguon")
+def api_src_draft():
+    """Nội dung ô Nguồn dùng chung (core.load_src_draft) — trang/tab vừa được mở lên
+    hỏi lại để khớp với chỗ khác vừa gõ."""
+    return JSONResponse(core.load_src_draft(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/nguon")
+def api_src_draft_save(text: str = Form("")):
+    """app.js gửi nội dung ô Nguồn về mỗi lần gõ (gom lại sau ~0,4 s)."""
+    return JSONResponse(core.save_src_draft(text))
 
 
 @app.post("/kichban/xoalichsu")
@@ -717,7 +762,9 @@ def clear_output(confirm: str = Form("")):
 # ── Trang Nhận diện (view "recog" bên GUI: bảng tập + 5 nút hàng loạt) ──────
 _BATCH_BUTTONS = {
     "recognize": ("① Nhận diện các link rồi ngưng", ["recognize"]),
-    "translate": ("② Dịch + tạo input.docx", ["translate", "input"]),
+    # ② gửi luôn SEO (03/10/2026): xong nút này là hết việc cần Gemini/màn hình sáng,
+    # các bước sau (giọng, video) chạy lúc màn hình tắt được. ③ vẫn để làm riêng SEO.
+    "translate": ("② Dịch + tạo input.docx + SEO", ["translate", "input", "seo"]),
     "seo":       ("③ Gửi SEO (Gemini)", ["seo"]),
     "thumbnail": ("④ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
     "tts":       ("⑤ Tạo giọng + video", ["tts"]),
@@ -748,10 +795,12 @@ def page_recog(request: Request):
 
 
 @app.get("/partials/recog-table", response_class=HTMLResponse)
-def partial_recog_table(request: Request):
+def partial_recog_table(request: Request, form: str = ""):
+    """form: id form của ô tick tập — Home truyền "homebatch" (xem _batch_chay.html)."""
     return templates.TemplateResponse(
         request, "_recog_table.html",
-        {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS})
+        {"rows": core.episode_rows(), "step_labels": core.STEP_LABELS,
+         "bform": form if form.isalnum() else ""})
 
 
 def _run_resume(request: Request, form) -> RedirectResponse:
@@ -859,12 +908,15 @@ async def run_recog(request: Request):
         if not lines:
             log("⚠️ Chưa nhập link hoặc file nào để nhận diện.")
             return _back(request, "/nhandien")
+        queued: list[str] = []
         for src in lines:
             built, err = steps_mod.build_steps(chain, source=src, force=force)
             if err:
                 log(f"⛔ {err}")
                 break
             runner.enqueue(steps_mod.title_for(src, "", chain), built)
+            queued.append(src)
+        core.drop_from_src_draft(queued)  # đã xếp hàng → rời ô Nguồn, khỏi chạy trùng
         return _back(request, "/nhandien")
 
     if action == "upload" and not _upload_ready():
@@ -1165,6 +1217,15 @@ async def make_thumbnail(request: Request):
                                       doc=bool(form.get("doc")))
     runner.enqueue(f"Thumbnail tập {episode or '—'}", built)
     return _back(request, f"/thumbnail?tap={episode}")
+
+
+@app.get("/api/tieude")
+def api_episode_title(tap: str = ""):
+    """Tiêu đề SEO của một tập — ô "Tập" của khối Thumbnail đổi là app.js điền sẵn ô
+    Tiêu đề tại chỗ (trước đây chuyển hẳn sang /thumbnail?tap=…, rời cả trang Home)."""
+    folder = core.episode_folder(tap) if tap else None
+    blocks = core.seo_blocks(folder, tap) if folder else None
+    return JSONResponse({"title": (blocks or {}).get("title", "")})
 
 
 @app.get("/tap/{episode}/thumbnail")

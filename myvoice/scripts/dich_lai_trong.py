@@ -61,11 +61,13 @@ for _p in (_REPO_ROOT, _SCRIPTS_DIR, os.path.join(_BASE_DIR, "YOUTUBE"), _BASE_D
         sys.path.insert(0, _p)
 
 import argparse
+import contextlib
 import logging
 import time
 from pathlib import Path
 
 import dich_gemini as g
+from giu_man_hinh import giu_man_hinh
 # Dùng lại cách dò thư mục tập / đọc tiengTrung.docx / câu hướng dẫn dịch của GUI
 # (một nguồn sự thật, xem web/core.py). Import module này không mở cửa sổ nào.
 import amain_taogiong_gui as gui
@@ -293,15 +295,17 @@ def main(argv=None):
     total_sent = 0
     errors = 0
     try:
-        for folder, ep in sorted(targets, key=lambda t: str(t[1])):
-            driver, remaining, sent = run_folder(folder, ep, only=only,
-                                                 dry_run=args.dry_run, driver=driver)
-            if remaining < 0:
-                errors += 1
-            else:
-                still_blank += remaining
-            total_sent += sent
-            log("")
+        # Màn hình tắt thì Chrome bóp tab Gemini → lượt gửi hỏng (giu_man_hinh.py).
+        with giu_man_hinh() if not args.dry_run else contextlib.nullcontext():
+            for folder, ep in sorted(targets, key=lambda t: str(t[1])):
+                driver, remaining, sent = run_folder(folder, ep, only=only,
+                                                     dry_run=args.dry_run, driver=driver)
+                if remaining < 0:
+                    errors += 1
+                else:
+                    still_blank += remaining
+                total_sent += sent
+                log("")
     finally:
         if driver is not None and not args.giu_firefox:
             try:

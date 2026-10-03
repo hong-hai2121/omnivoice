@@ -10,12 +10,16 @@ Cách gọi (jobs.py lo phần này):
         --source "<link|file>" [--episode 07] [--model medium] [--speed 0.7] \
         [--tts-json <file>] [--force]
 
-Mã thoát: 0 = xong · 77 = dừng có chủ ý (bước chặn, vd dịch chưa đủ) · 2 = lỗi.
+Mã thoát: 0 = xong · 77 = dừng có chủ ý (bước chặn, vd dịch chưa đủ) · 2 = lỗi ·
+78 = SEO hỏng nhưng không có bước dựng video trong lần gọi này (chuỗi còn bước dựng
+video phía sau thì hàng đợi đi tiếp). SEO hỏng mà lần gọi CÓ dựng video → chạy hết,
+trả 77 để hàng đợi KHÔNG nối việc đăng YouTube / lên lịch Facebook.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -36,18 +40,28 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
 
 import amain_taogiong_gui as gui                # noqa: E402
+from giu_man_hinh import NHICH_SAU, giu_man_hinh  # noqa: E402
+from myvoice.web import core                    # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
 # main() (vd lỗi import) — dùng chung số là nhầm crash thành chốt an toàn.
 # Đổi số này thì đổi cả STOP_CODE trong web/steps.py.
 STOP = 77       # dừng có chủ ý — không phải sự cố
 ERROR = 2
+# SEO hỏng (03/10/2026): KHÔNG chặn cả tập nữa — mẻ chạy đêm 03/10 mất trọn 4 tập vì
+# Gemini không nhận tin lúc 04:23. Bước SEO/thumbnail trả mã này, main() ghi nhớ rồi
+# đi tiếp; tạo giọng + video ngang vẫn làm, video dọc/TikTok/Short (in tiêu đề SEO)
+# để dành tới khi có SEO, và KHÔNG tự đăng. Khớp SEO_SOFT_CODE trong web/steps.py.
+SEO_SOFT = 78
 
 ALL_STEPS = ["recognize", "translate", "input", "seo", "thumbnail", "tts"]
 # Gộp "script" thành một bước lớn để dịch → SEO dùng CHUNG một phiên Firefox
 # (mở hai lần thì phiên sau vấp profile đang bị khoá).
 STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
                "all": ALL_STEPS}
+# Bước chạy trong lúc giữ màn hình sáng (03/10/2026): màn hình tắt thì Chrome bóp tab
+# Gemini → dịch/SEO hỏng (scripts/giu_man_hinh.py). Các bước khác màn hình tắt thoải mái.
+GIU_MAN_HINH = {"recognize", "translate", "seo"}
 
 
 class _Var:
@@ -216,18 +230,19 @@ def step_seo(app, folder: Path, episode: str, state: dict) -> int:
     if app._seo_docx_valid(seo_docx) and not state.get("force"):
         logging.info("♻ Bỏ qua SEO (đã có seoYoutube.docx hợp lệ).")
     else:
-        driver = state.get("driver")
-        if driver is None:
-            logging.info(f"🌐 Mở {g.browser_label()} cho SEO...")
-            driver = g.init_firefox(on_log=logging.info)
-            state["driver"] = driver
-        logging.info("🔎 Tạo SEO YouTube...")
-        seo.run(str(gemini_docx), str(seo_docx), keep_open=True,
-                log=logging.info, driver=driver)
+        try:
+            driver = state.get("driver")
+            if driver is None:
+                logging.info(f"🌐 Mở {g.browser_label()} cho SEO...")
+                driver = g.init_firefox(on_log=logging.info)
+                state["driver"] = driver
+            logging.info("🔎 Tạo SEO YouTube...")
+            seo.run(str(gemini_docx), str(seo_docx), keep_open=True,
+                    log=logging.info, driver=driver)
+        except Exception as e:      # trình duyệt/Gemini hỏng = SEO hỏng, không phải lỗi tập
+            logging.error(f"❌ Lỗi khi làm SEO: {e}")
         if not app._seo_docx_valid(seo_docx):
-            logging.error("⛔ Không có SEO hợp lệ cho tập này → DỪNG, không tạo "
-                          "thumbnail/audio/video (tiêu đề thumbnail lấy từ SEO).")
-            return STOP
+            return _seo_hong(episode, "không có SEO hợp lệ")
         logging.info(f"💾 Đã tạo: {seo_docx}")
 
     # Nội dung 3 nút Copy — luôn dựng lại (nhẹ) để áp logic cắt thẻ tag mới nhất.
@@ -241,7 +256,7 @@ def step_seo(app, folder: Path, episode: str, state: dict) -> int:
     trung = app._seo_title_duplicate(folder, episode, blocks.get("title") or "")
     if trung:
         logging.error(f"⛔ Tập {episode}: tiêu đề SEO trùng — {trung}. Gần như chắc "
-                      "chắn Gemini trả về kết quả của tập khác → DỪNG tập này "
+                      "chắn Gemini trả về kết quả của tập khác → bỏ bản SEO này "
                       "(chạy lại để làm SEO mới).")
         try:
             parked = seo.park_docx(seo_docx)
@@ -249,8 +264,15 @@ def step_seo(app, folder: Path, episode: str, state: dict) -> int:
                 logging.info(f"📦 Đã cất bản SEO nghi sai → {parked.name}")
         except Exception as e:
             logging.warning(f"⚠️ Không cất được {seo_docx.name}: {e}")
-        return STOP
+        return _seo_hong(episode, "tiêu đề SEO trùng tập khác")
     return 0
+
+
+def _seo_hong(episode: str, why: str) -> int:
+    logging.warning(f"⚠️ Tập {episode}: {why} → VẪN CHẠY TIẾP (bỏ thumbnail, vẫn tạo giọng + "
+                    "video ngang). Chưa có SEO thì KHÔNG tự đăng YouTube / không lên lịch "
+                    "Facebook.")
+    return SEO_SOFT
 
 
 def step_thumbnail(app, folder: Path, episode: str, state: dict) -> int:
@@ -259,6 +281,10 @@ def step_thumbnail(app, folder: Path, episode: str, state: dict) -> int:
     if ngang.exists() and doc.exists() and not state.get("force"):
         logging.info("♻ Bỏ qua thumbnail (đã có cả ngang & dọc).")
         return 0
+    if not app._seo_docx_valid(folder / "seoYoutube.docx"):
+        logging.warning("⚠️ Chưa có SEO hợp lệ → bỏ qua thumbnail (tiêu đề thumbnail lấy "
+                        "từ SEO).")
+        return SEO_SOFT
     if not app._make_thumbnail_for_folder(folder, episode):
         logging.error("❌ Không tạo được thumbnail.")
         return ERROR
@@ -274,10 +300,40 @@ def step_tts(app, folder: Path, episode: str, state: dict) -> int:
     if not ts:
         logging.error("❌ Thiếu cài đặt tạo giọng (--tts-json).")
         return ERROR
+    marker = folder / core.DOC_CHO_SEO
+    seo_ok = app._seo_docx_valid(folder / "seoYoutube.docx")
+    hoan = []                     # phần để dành tới khi có SEO
+    if not seo_ok:
+        # Khung dọc in tiêu đề SEO lên hình + lấy thumbnail dọc làm ảnh bìa, TikTok/
+        # Short cắt từ chính bản dọc đó → không có SEO thì để dành, khỏi dựng bản tạm.
+        hoan = [k for k in ("make_video_doc", "make_tiktok", "make_short", "make_sub_doc")
+                if ts.get(k)]
+        ts = dict(ts, make_video_doc=False, make_tiktok=False, make_short=False,
+                  make_sub_doc=False)
+        if hoan:
+            logging.warning("⚠️ Chưa có SEO → chỉ tạo giọng + video ngang; video dọc/"
+                            "TikTok/Short (in tiêu đề SEO) để dành tới khi có SEO.")
     _close_driver(state)          # nhả RAM Firefox trước khi render video
     if not app._batch_run_tts(folder, ts, episode):
         logging.error("❌ Tạo giọng/video không hoàn tất.")
         return ERROR
+    if not seo_ok:
+        if hoan and not core._doc_video_exists(folder):
+            try:
+                marker.write_text(
+                    "Giọng + video ngang dựng lúc CHƯA có SEO → video dọc/TikTok/Short còn "
+                    "chờ. ⏩ Chạy tiếp sẽ làm SEO → thumbnail → dựng nốt rồi mới tự đăng.\n",
+                    encoding="utf-8")
+            except OSError as e:
+                logging.warning(f"⚠️ Không ghi được {marker.name}: {e}")
+        return SEO_SOFT
+    # Đã dựng nốt phần chờ SEO (hoặc đang tắt video dọc) → bỏ dấu, ⏩ thôi chạy lại.
+    if marker.exists() and (not ts.get("make_video_doc") or core._doc_video_exists(folder)):
+        try:
+            marker.unlink()
+            logging.info("✅ Đã dựng nốt video dọc/TikTok/Short sau khi có SEO.")
+        except OSError as e:
+            logging.warning(f"⚠️ Không xoá được {marker.name}: {e}")
     return 0
 
 
@@ -345,22 +401,27 @@ def main(argv=None) -> int:
             return ERROR
 
     code = 0
+    seo_hong = False
+    if GIU_MAN_HINH.intersection(steps):
+        logging.info(f"🖱 Nhận diện/dịch/SEO: máy rảnh {NHICH_SAU // 60} phút thì tự nhích "
+                     "chuột 1 px để màn hình không tắt.")
     try:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
-            if name == "recognize":
-                code = step_recognize(app, folder, episode, args.source.strip(),
-                                      args.model, args.speed, args.force)
-            elif name == "translate":
-                code = step_translate(app, folder, episode, state)
-            elif name == "input":
-                code = step_input(app, folder, episode, state)
-            elif name == "seo":
-                code = step_seo(app, folder, episode, state)
-            elif name == "thumbnail":
-                code = step_thumbnail(app, folder, episode, state)
-            elif name == "tts":
-                code = step_tts(app, folder, episode, state)
+            with giu_man_hinh() if name in GIU_MAN_HINH else contextlib.nullcontext():
+                if name == "recognize":
+                    code = step_recognize(app, folder, episode, args.source.strip(),
+                                          args.model, args.speed, args.force)
+                elif name == "translate":
+                    code = step_translate(app, folder, episode, state)
+                elif name == "input":
+                    code = step_input(app, folder, episode, state)
+                elif name == "seo":
+                    code = step_seo(app, folder, episode, state)
+                elif name == "thumbnail":
+                    code = step_thumbnail(app, folder, episode, state)
+                elif name == "tts":
+                    code = step_tts(app, folder, episode, state)
             # Ghi tiến độ vào manifest sau MỖI bước: web tải lại trang là thấy ngay,
             # và lỡ mất điện giữa chừng vẫn biết tập này đã tới đâu.
             if args.source.strip():
@@ -368,6 +429,8 @@ def main(argv=None) -> int:
                     app._manifest_update(args.source.strip(), episode, folder)
                 except Exception as e:
                     logging.warning(f"⚠️ Không ghi được manifest: {e}")
+            if code == SEO_SOFT:            # SEO hỏng: ghi nhớ rồi làm tiếp bước sau
+                seo_hong, code = True, 0
             if code != 0:
                 break
     except Exception as e:
@@ -377,6 +440,17 @@ def main(argv=None) -> int:
     finally:
         _close_driver(state)
 
+    if code == 0 and seo_hong:
+        if "tts" in steps:
+            # Mã DỪNG để hàng đợi web KHÔNG gọi on_success (nối việc đăng YouTube +
+            # lên lịch Facebook) và việc hiện ⛔ cho dễ thấy.
+            logging.error(f"⛔ Tập {episode}: đã tạo giọng + video ngang nhưng CHƯA có SEO "
+                          "→ KHÔNG tự đăng YouTube, KHÔNG lên lịch Facebook. ⏩ Chạy tiếp sẽ "
+                          "làm lại SEO → thumbnail → dựng nốt video dọc/TikTok/Short rồi "
+                          "mới tự đăng.")
+            return STOP
+        logging.warning(f"⚠️ Tập {episode}: chưa có SEO — các bước khác đã chạy xong.")
+        return SEO_SOFT
     if code == 0:
         logging.info(f"✅ Tập {episode}: xong {len(steps)} bước.")
     return code

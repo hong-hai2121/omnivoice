@@ -13,26 +13,26 @@
 
 <div class="panel">
   <div class="phead">
-    <span class="num">2</span><h2>Xem trước tập {{ chosen or '—' }}</h2>
+    <span class="num">2</span><h2>Xem trước tập <span id="xemtap">{{ chosen or '—' }}</span></h2>
     <span class="spacer"></span>
-    <button class="ghost" type="button" onclick="location.reload()">🔄 Tải lại</button>
+    {# Chỉ nạp lại hai ảnh (app.js), không tải lại cả trang. #}
+    <button class="ghost" type="button" onclick="xemTruocThumb()">🔄 Tải lại ảnh</button>
   </div>
-  {% if chosen %}
-    <div class="previews">
-      <figure>
-        <img src="/tap/{{ chosen }}/thumbnail" alt="thumbnail ngang"
-             onerror="this.closest('figure').classList.add('missing')">
-        <figcaption class="muted small">Ngang 1920×1080</figcaption>
-      </figure>
-      <figure class="doc">
-        <img src="/tap/{{ chosen }}/thumbnail-doc" alt="thumbnail dọc"
-             onerror="this.closest('figure').classList.add('missing')">
-        <figcaption class="muted small">Dọc 1080×1920</figcaption>
-      </figure>
-    </div>
-  {% else %}
-    <p class="empty">Chọn một tập để xem ảnh đã tạo.</p>
-  {% endif %}
+  <div class="previews" id="xemtruoc" data-tap="{{ chosen }}" {{ 'hidden' if not chosen }}>
+    <figure>
+      <img data-kieu="thumbnail" alt="thumbnail ngang"
+           {% if chosen %}src="/tap/{{ chosen }}/thumbnail"{% endif %}
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption class="muted small">Ngang 1920×1080</figcaption>
+    </figure>
+    <figure class="doc">
+      <img data-kieu="thumbnail-doc" alt="thumbnail dọc"
+           {% if chosen %}src="/tap/{{ chosen }}/thumbnail-doc"{% endif %}
+           onerror="this.closest('figure').classList.add('missing')">
+      <figcaption class="muted small">Dọc 1080×1920</figcaption>
+    </figure>
+  </div>
+  <p class="empty" id="xemtrong" {{ 'hidden' if chosen }}>Chọn một tập để xem ảnh đã tạo.</p>
 </div>
 
 {% include "_queuepanel.html" %}

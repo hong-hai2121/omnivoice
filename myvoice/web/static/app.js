@@ -89,6 +89,9 @@
     lines.push(text);
     el.value = lines.join('\n') + '\n';
     el.scrollTop = el.scrollHeight;
+    // Báo như người gõ: khối "Ô Nguồn dùng chung" bên dưới bắt sự kiện này để lưu
+    // lên server + chép sang các ô Nguồn khác (trang Nhận diện, tab khác).
+    el.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   }
 
@@ -104,6 +107,7 @@
       // Đã gõ gì đó mới hỏi — ô trống mà cũng bật hộp thoại thì phiền.
       if (el && el.value.trim() && confirm('Xoá hết nội dung ô Nguồn?')) {
         el.value = '';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
         el.focus();
       }
       return;
@@ -271,6 +275,46 @@
     const ticked = new Set(JSON.parse(t.dataset.ticked));
     t.querySelectorAll('input[name="tap"]').forEach((i) => { if (ticked.has(i.value)) i.checked = true; });
   });
+})();
+
+
+// ── Ô tick tập dùng chung trang Nhận diện ↔ Home (+ mọi tab) (03/10/2026) ─────
+// Bảng tập có ở cả hai trang (Home: ngay dưới ô Nguồn). Tick ở trang này thì sang
+// trang kia, hay tab khác, vẫn thấy đúng các tập đã tick. Lưu ở localStorage của
+// trình duyệt — chỉ là lựa chọn tạm trên giao diện, không phải cài đặt. Bảng tự vẽ
+// lại (15 s/lần, sau mỗi lần bấm chạy) cũng tick lại theo đây. Không đọc/ghi được
+// localStorage thì vẫn như cũ: khối ở trên giữ ô tick qua mỗi lần vẽ lại.
+(function () {
+  const KEY = 'mvTapTick';
+  const SEL = '#recogtable input[name="tap"]';
+  function doc() {
+    try {
+      const v = JSON.parse(localStorage.getItem(KEY) || 'null');
+      return Array.isArray(v) ? v : null;
+    } catch (_) { return null; }
+  }
+  function ghi() {
+    const v = [...document.querySelectorAll(SEL + ':checked')].map((i) => i.value);
+    try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (_) { /* chế độ riêng tư… */ }
+  }
+  function apDung() {
+    const v = doc();
+    if (!v) return;
+    const s = new Set(v);
+    document.querySelectorAll(SEL).forEach((i) => { i.checked = s.has(i.value); });
+  }
+  // Nút "Chọn tất cả" / "Bỏ chọn" của bảng (_batch_bang.html).
+  window.tickAll = function (on) {
+    document.querySelectorAll(SEL).forEach((c) => { c.checked = on; });
+    ghi();
+  };
+  document.addEventListener('change', (e) => { if (e.target.matches && e.target.matches(SEL)) ghi(); });
+  document.addEventListener('htmx:afterSwap', (e) => {
+    if (e.detail.target && e.detail.target.id === 'recogtable') apDung();
+  });
+  window.addEventListener('storage', (e) => { if (e.key === KEY) apDung(); });   // tab khác vừa tick
+  window.addEventListener('pageshow', apDung);                                   // quay lại bằng Back
+  apDung();
 })();
 
 
@@ -722,3 +766,312 @@ document.addEventListener("change", event => {
   $('ext-send').addEventListener('click', () => start('send'));
   refresh();
 })();
+
+
+// ── Thông báo nổi (03/10/2026) ──────────────────────────────────────────────
+// Trang không tải lại sau mỗi cú bấm nữa, nên các dòng server báo cho CHÍNH lượt
+// bấm đó (“➕ Xếp hàng…”, “⚠️ Chưa nhập link…”, xem _ajax trong server.py) hiện
+// thành ô nổi góc dưới phải — trước đây chỉ nằm trong cửa sổ console. Bấm để đóng.
+window.mvToast = (function () {
+  const MAX = 8;
+  function hop() {
+    let el = document.getElementById('toasts');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'toasts';
+      el.setAttribute('aria-live', 'polite');
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  return function (lines) {
+    lines = (lines || []).map(String).filter((s) => s.trim());
+    if (!lines.length) return;
+    const loi = lines.some((s) => /^\s*(⛔|❌)/.test(s));
+    const canh = !loi && lines.some((s) => /^\s*⚠/.test(s));
+    const t = document.createElement('div');
+    t.className = 'toast' + (loi ? ' toast-loi' : canh ? ' toast-canh' : '');
+    t.title = 'Bấm để đóng';
+    t.innerHTML = lines.slice(0, MAX).map((s) => `<div>${esc(s)}</div>`).join('') +
+      (lines.length > MAX
+        ? `<div class="toast-them">…và ${lines.length - MAX} dòng nữa (xem cửa sổ console)</div>` : '');
+    t.addEventListener('click', () => t.remove());
+    hop().appendChild(t);
+    const ms = loi || canh ? 9000 : 4500;          // lỗi/cảnh báo để lâu hơn cho kịp đọc
+    setTimeout(() => t.classList.add('toast-mo'), ms);
+    setTimeout(() => t.remove(), ms + 600);
+  };
+})();
+
+
+// ── Ô Nguồn dùng chung mọi trang + mọi tab (03/10/2026) ───────────────────────
+// Trang Tạo kịch bản, Nhận diện và Home đều có ô Nguồn (textarea name=sources);
+// trước đây mỗi ô một nội dung, chuyển trang là mất. Nay:
+//   • gõ/dán/📂 thêm ở ô nào thì các ô Nguồn khác trên cùng trang khớp ngay, và nội
+//     dung gửi về server (/api/nguon) sau ~0,4 s — trang nào vẽ ra cũng điền sẵn;
+//   • tab khác của cùng trình duyệt nhận ngay qua BroadcastChannel; tab bị ẩn rồi mở
+//     lại (hay quay lại bằng nút Back) thì hỏi lại server;
+//   • bấm ▶ chạy: server bỏ các dòng vừa xếp hàng khỏi ô (khỏi chạy trùng), trang
+//     hỏi lại (pull) để ô hiện đúng phần còn lại.
+window.mvNguon = (function () {
+  const SEL = 'textarea[name="sources"]';
+  const cacO = () => [...document.querySelectorAll(SEL)];
+  let ver = Math.max(0, ...cacO().map((t) => Number(t.dataset.ver) || 0));
+  let ban = false;              // có thay đổi chưa gửi
+  let hen = null;               // hẹn giờ gửi
+  let dangGui = Promise.resolve();
+  let tuMay = false;            // đang tự điền (không phải người gõ) → bỏ qua sự kiện input
+  const kenh = 'BroadcastChannel' in window ? new BroadcastChannel('myvoice-nguon') : null;
+
+  function dien(text, tru) {
+    tuMay = true;
+    try {
+      cacO().forEach((t) => {
+        if (t === tru || t.value === text) return;
+        t.value = text;
+        // Cho các bộ nghe khác (vd bản xem trước cách chia số tập) cập nhật theo.
+        t.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    } finally {
+      tuMay = false;
+    }
+  }
+
+  /** Gửi ngay phần đang chờ (nếu có) → Promise xong khi server đã nhận. */
+  function gui() {
+    clearTimeout(hen);
+    hen = null;
+    if (!ban) return dangGui;
+    ban = false;
+    const o = cacO()[0];
+    const fd = new FormData();
+    fd.set('text', o ? o.value : '');
+    // keepalive: bấm sang trang khác ngay sau khi gõ thì lượt gửi vẫn đi tới nơi.
+    dangGui = dangGui
+      .then(() => fetch('/api/nguon', { method: 'POST', body: fd,
+                                        credentials: 'same-origin', keepalive: true }))
+      .then((r) => r.json())
+      .then((d) => { ver = d.ver; if (kenh) kenh.postMessage(d); })
+      .catch(() => { ban = true; hen = setTimeout(gui, 3000); });
+    return dangGui;
+  }
+
+  /** Hỏi server bản mới nhất — bỏ qua nếu ở đây đang gõ dở (bản của mình thắng). */
+  async function hoiLai() {
+    if (ban || hen) return;
+    try {
+      const r = await fetch('/api/nguon', { credentials: 'same-origin', cache: 'no-store' });
+      const d = await r.json();
+      if (ban || hen || d.ver === ver) return;
+      ver = d.ver;
+      dien(d.text);
+    } catch (_) { /* server tắt: giữ nguyên */ }
+  }
+
+  document.addEventListener('input', (e) => {
+    if (tuMay || !e.target.matches || !e.target.matches(SEL)) return;
+    dien(e.target.value, e.target);
+    ban = true;
+    clearTimeout(hen);
+    hen = setTimeout(gui, 400);
+  });
+  if (kenh) {
+    kenh.onmessage = (e) => {
+      const d = e.data || {};
+      if (ban || hen || typeof d.text !== 'string') return;
+      ver = d.ver;
+      dien(d.text);
+    };
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) hoiLai(); });
+  window.addEventListener('pageshow', (e) => { if (e.persisted) hoiLai(); });
+  window.addEventListener('pagehide', () => { gui(); });
+  // Trang vừa mở có thể được vẽ TRƯỚC khi lượt gửi keepalive của trang trước tới
+  // server (gõ xong bấm menu ngay) → hỏi lại một lần sau khi mở.
+  setTimeout(hoiLai, 900);
+  return { flush: gui, pull: hoiLai };
+})();
+
+
+// ── Bấm nút chạy / hàng đợi KHÔNG tải lại trang (03/10/2026) ─────────────────
+// Mọi form POST (trừ form/nút đã có hx-post riêng) được gửi ngầm bằng fetch kèm
+// header X-Ajax: server làm việc như cũ rồi trả JSON {notes} thay cho cú chuyển
+// hướng (xem _ajax trong server.py). Trang đứng yên — chỗ đang cuộn, ô đang gõ, ô
+// tập đang tick vẫn nguyên; khối hàng đợi + bảng tập tự làm mới tại chỗ, các dòng
+// server báo hiện thành thông báo nổi. Form data-ajax="tailai" (Reset, Xoá output)
+// vẫn gửi ngầm nhưng xong thì tải lại trang, vì nội dung trang vừa đổi hẳn.
+// Đăng ký SAU khối "Home: lưu hết các khối" ở đầu file: khối đó chặn lượt submit
+// đầu (e.defaultPrevented) rồi tự gửi lại — tới lượt đó mới vào đây.
+(function () {
+  function lamMoi() {
+    if (window.htmx) {
+      if (document.getElementById('queue')) {
+        htmx.ajax('GET', '/partials/queue', { target: '#queue', swap: 'innerHTML' });
+      }
+      if (document.getElementById('recogtable')) htmx.trigger('#recogtable', 'refresh');
+    }
+    if (window.mvNguon) window.mvNguon.pull();
+  }
+
+  document.addEventListener('submit', async (e) => {
+    if (e.defaultPrevented) return;
+    const form = e.target;
+    const nut = e.submitter;
+    const method = ((nut && nut.getAttribute('formmethod')) || form.getAttribute('method') || 'get')
+      .toLowerCase();
+    if (method !== 'post') return;                     // form GET (chọn tập ở trang SEO…) = điều hướng
+    if (form.hasAttribute('hx-post') || (nut && nut.hasAttribute('hx-post'))) return;   // htmx lo
+    e.preventDefault();
+
+    const url = (nut && nut.getAttribute('formaction')) || form.getAttribute('action')
+      || location.pathname;
+    const fd = new FormData(form);
+    if (nut && nut.name) fd.append(nut.name, nut.value);   // start=… / action=…
+    if (nut) { nut.disabled = true; nut.classList.add('dang-gui'); }
+    try {
+      // Ô Nguồn đang chờ gửi phải tới server TRƯỚC: không thì lượt gửi muộn đó đè
+      // lại các dòng server vừa bỏ khỏi ô sau khi xếp hàng.
+      if (window.mvNguon) await window.mvNguon.flush();
+      const r = await fetch(url, { method: 'POST', body: fd, credentials: 'same-origin',
+                                   headers: { 'X-Ajax': '1' } });
+      let notes = [];
+      if ((r.headers.get('content-type') || '').includes('json')) {
+        const d = await r.json().catch(() => ({}));
+        notes = d.notes || [];
+        if (!r.ok && d.error) notes.push('⛔ ' + d.error);
+      }
+      const kem = r.headers.get('X-Notes');
+      if (kem) { try { notes = notes.concat(JSON.parse(decodeURIComponent(kem))); } catch (_) {} }
+      if (!r.ok) {
+        notes.push(r.status === 401 ? '⛔ Hết phiên — mở lại link có ?token=… in ở cửa sổ server.'
+                                    : `⛔ Server báo lỗi ${r.status}.`);
+      }
+      window.mvToast(notes.length ? notes : ['✓ Đã gửi']);
+      if (r.ok && form.dataset.ajax === 'tailai') { location.reload(); return; }
+      lamMoi();
+    } catch (_) {
+      window.mvToast(['⛔ Không gửi được — server còn chạy không?']);
+    } finally {
+      if (nut) { nut.disabled = false; nut.classList.remove('dang-gui'); }
+    }
+  });
+})();
+
+
+// ── Đổi cài đặt là TỰ LƯU, không tải lại trang (03/10/2026) ───────────────────
+// Form mang data-tuluu="<đường 💾 của khối>": tick/chọn/gõ ở ô nào là gửi CẢ form
+// vào đúng đường 💾 đó (ngữ nghĩa y hệt tự tay bấm 💾 — "ô tick vắng mặt = tắt"
+// vẫn đúng vì gửi đủ form). Ô chọn/tick lưu ngay; ô gõ chữ/số lưu sau khi ngừng gõ
+// ~1 s (hoặc khi rời ô). Không kích lưu: ô Nguồn (đã có đường riêng), ô tick tập
+// trong bảng, ô "Làm lại…" (chỉ dùng cho một lần chạy) và ô mang data-khongluu.
+(function () {
+  const BO = new Set(['sources', 'tap', 'force', 'fbtap']);
+  const GO_CHU = new Set(['text', 'number', 'search', 'url', 'email', 'tel', 'range']);
+  const cho = new Map();        // form → {hen, el}: lượt lưu đang hẹn
+  const dang = new Map();       // form → Promise của lượt lưu đang chạy
+
+  function formCanLuu(el) {
+    const form = el && el.form;
+    if (!form || !form.dataset.tuluu) return null;
+    if (!el.name || BO.has(el.name) || el.closest('[data-khongluu]')) return null;
+    return form;
+  }
+
+  function henLuu(form, el, ms) {
+    const c = cho.get(form);
+    if (c) clearTimeout(c.hen);
+    cho.set(form, { el, hen: setTimeout(() => { cho.delete(form); luu(form, el); }, ms) });
+  }
+
+  function luu(form, el) {
+    // Nối đuôi lượt trước: hai lượt chạy song song có thể tới server lệch thứ tự,
+    // lượt cũ tới sau đè mất giá trị mới.
+    const p = (dang.get(form) || Promise.resolve()).then(async () => {
+      const r = await fetch(form.dataset.tuluu, {
+        method: 'POST', body: new FormData(form), credentials: 'same-origin',
+        headers: { 'HX-Request': 'true' }, keepalive: true });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      daLuu(el, await r.text());
+    }).catch((err) => window.mvToast(['⚠️ Chưa lưu được cài đặt: ' + err.message]));
+    dang.set(form, p);
+    return p;
+  }
+
+  function daLuu(el, html) {
+    // Mẩu "✓ đã lưu" của server → ô .luunote cùng khối (nếu khối đó có).
+    const khoi = el.closest('.panel, .savebar, form');
+    const note = khoi && khoi.querySelector('.luunote');
+    if (note) note.innerHTML = html;
+    // Thêm dấu nhỏ ngay cạnh ô vừa đổi — nút 💾 và ô .luunote có khi nằm tít cuối form.
+    const r = (el.closest('label') || el).getBoundingClientRect();
+    if (!r.width && !r.height) return;
+    const b = document.createElement('span');
+    b.className = 'tuluu-dau';
+    b.textContent = '✓ đã lưu';
+    b.style.top = Math.max(4, r.top - 8) + 'px';
+    b.style.left = Math.max(4, Math.min(window.innerWidth - 84, r.right - 76)) + 'px';
+    document.body.appendChild(b);
+    setTimeout(() => b.remove(), 1500);
+  }
+
+  document.addEventListener('change', (e) => {
+    const form = formCanLuu(e.target);
+    if (form) henLuu(form, e.target, 150);
+  });
+  document.addEventListener('input', (e) => {
+    const el = e.target;
+    const chu = el instanceof HTMLTextAreaElement
+      || (el instanceof HTMLInputElement && GO_CHU.has(el.type));
+    if (!chu) return;
+    const form = formCanLuu(el);
+    if (form) henLuu(form, el, 1000);
+  });
+  // Đổi xong bấm sang trang khác ngay: lưu nốt lượt đang hẹn (keepalive giữ cho tới nơi).
+  window.addEventListener('pagehide', () => {
+    cho.forEach((c, form) => { clearTimeout(c.hen); luu(form, c.el); });
+    cho.clear();
+  });
+})();
+
+
+// ── Khối Thumbnail: đổi "Tập" là điền tiêu đề SEO + đổi ảnh xem trước tại chỗ ──
+// Trước đây ô này chuyển hẳn sang /thumbnail?tap=… (đang ở Home cũng bị kéo đi).
+window.chonTapThumb = async function (sel) {
+  const tap = sel.value;
+  const ta = sel.form && sel.form.querySelector('textarea[name="title"]');
+  if (tap && ta) {
+    try {
+      const r = await fetch('/api/tieude?tap=' + encodeURIComponent(tap), { credentials: 'same-origin' });
+      ta.value = (await r.json()).title || '';
+    } catch (_) {
+      window.mvToast(['⚠️ Không lấy được tiêu đề SEO của tập ' + tap]);
+    }
+  }
+  const xem = document.getElementById('xemtruoc');
+  if (!xem) return;
+  xem.dataset.tap = tap;
+  window.xemTruocThumb();
+  history.replaceState(null, '', tap ? '/thumbnail?tap=' + encodeURIComponent(tap) : '/thumbnail');
+};
+
+/** Nạp lại hai ảnh xem trước của tập đang chọn (trang Thumbnail) — không tải lại trang. */
+window.xemTruocThumb = function () {
+  const xem = document.getElementById('xemtruoc');
+  if (!xem) return;
+  const tap = xem.dataset.tap || '';
+  const so = document.getElementById('xemtap');
+  if (so) so.textContent = tap || '—';
+  const trong = document.getElementById('xemtrong');
+  xem.hidden = !tap;
+  if (trong) trong.hidden = Boolean(tap);
+  if (!tap) return;
+  const t = Date.now();          // tránh trình duyệt lấy ảnh cũ trong cache
+  xem.querySelectorAll('img[data-kieu]').forEach((img) => {
+    img.closest('figure').classList.remove('missing');
+    img.src = `/tap/${encodeURIComponent(tap)}/${img.dataset.kieu}?t=${t}`;
+  });
+};

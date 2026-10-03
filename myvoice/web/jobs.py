@@ -12,6 +12,7 @@ bảng điều khiển.
 
 from __future__ import annotations
 
+import contextvars
 import itertools
 import re
 import subprocess
@@ -37,7 +38,18 @@ except Exception:
     pass
 
 
+# Lượt bấm AJAX (03/10/2026): middleware của server đặt một list vào đây trong lúc xử
+# lý request; mọi dòng log() của CHÍNH request đó được chép thêm vào list để trả về
+# trình duyệt làm thông báo nổi — trang không tải lại nên đây là chỗ thấy “⚠️ Chưa
+# nhập link…”, “➕ Xếp hàng…”. Luồng worker của hàng đợi không mang context này.
+capture: contextvars.ContextVar[list | None] = contextvars.ContextVar("log_capture",
+                                                                     default=None)
+
+
 def log(text: str) -> None:
+    got = capture.get()
+    if got is not None:
+        got.extend(line for line in str(text).splitlines() if line.strip())
     with _print_lock:                       # nhiều luồng cùng in → khỏi lẫn dòng
         for line in str(text).splitlines() or [""]:
             try:
@@ -124,6 +136,9 @@ class Step:
     # Mã thoát được coi là "bỏ qua có chủ ý" chứ không phải lỗi (vd bước chuẩn bị
     # input.txt trả mã dừng khi bản dịch còn thiếu đoạn → dừng tập này, không phải hỏng).
     soft_fail_codes: tuple[int, ...] = ()
+    # Mã thoát nghĩa là "bước này chưa xong nhưng các bước SAU vẫn chạy được" (03/10/2026:
+    # SEO hỏng thì vẫn tạo giọng + video, chỉ không tự đăng). Không gọi on_success.
+    continue_codes: tuple[int, ...] = ()
     # Gọi sau khi bước này CHẠY XONG KHÔNG LỖI. Dùng để nối việc sang hàng đợi khác
     # (dựng video xong → xếp việc đăng YouTube vào upload_runner) mà không bắt hàng
     # đợi chính đứng chờ. Lỗi trong callback không được làm hỏng công việc.
@@ -308,6 +323,10 @@ class JobRunner:
                 job.status = "stopped"
                 job.message = f"Đã dừng ở bước “{step.label}”."
                 return
+            if code in step.continue_codes:
+                self.note(f"⚠️ {job.title}: “{step.label}” chưa xong (mã {code}) — "
+                          "vẫn chạy tiếp bước sau.")
+                continue
             if code in step.soft_fail_codes:
                 job.status = "stopped"
                 job.message = f"Dừng ở bước “{step.label}” (mã {code}) — xem nhật ký."

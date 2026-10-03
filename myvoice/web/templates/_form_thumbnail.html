@@ -1,11 +1,12 @@
 {# Form tạo thumbnail — dùng chung cho trang Thumbnail và trang Home.
    Cần: rows, chosen, suggested, photos. #}
-<form class="panel" method="post" action="/thumbnail">
+<form class="panel" method="post" action="/thumbnail" data-tuluu="/thumbnail/luu">
   <div class="phead"><span class="num">1</span><h2>Tạo ảnh</h2></div>
   <div class="grid">
     <label class="field">
       <span>Tập {% if on_home %}(lấy sẵn tiêu đề SEO){% endif %}</span>
-      <select name="episode" onchange="location.href='/thumbnail?tap=' + this.value">
+      {# Đổi tập: app.js (chonTapThumb) điền tiêu đề SEO + đổi ảnh xem trước tại chỗ. #}
+      <select name="episode" data-khongluu onchange="chonTapThumb(this)">
         <option value="">— không gắn tập —</option>
         {% for r in rows %}
           <option value="{{ r.episode }}" {{ 'selected' if r.episode == chosen }}>
@@ -54,7 +55,7 @@
 
   <label class="field">
     <span>Tiêu đề</span>
-    <textarea name="title" rows="3">{{ suggested }}</textarea>
+    <textarea name="title" rows="3" data-khongluu>{{ suggested }}</textarea>
   </label>
 
   <div class="chks">

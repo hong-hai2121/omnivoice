@@ -12,7 +12,7 @@
     <tbody>
       {% for r in rows %}
         <tr class="{{ 'done' if r.done_count == r.total_steps else 'need' }}">
-          <td><input type="checkbox" name="tap" value="{{ r.episode }}"></td>
+          <td><input type="checkbox" name="tap" value="{{ r.episode }}"{% if bform %} form="{{ bform }}"{% endif %}></td>
           <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
           {% for key, label in step_labels %}
             {% if key == 'translate' and (r.trong or r.do) %}

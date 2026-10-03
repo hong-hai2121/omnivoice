@@ -14,7 +14,7 @@
 
 {# hx-post trên FORM: cả nút 💾 lẫn phím Enter đều lưu tại chỗ, không tải lại
    trang — server trả mẩu "✓ đã lưu" vào ô .luunote cạnh nút. #}
-<form class="panel" method="post" action="/kichban/tapboqua"
+<form class="panel" method="post" action="/kichban/tapboqua" data-tuluu="/kichban/tapboqua"
       hx-post="/kichban/tapboqua" hx-target="#luunote-tapboqua" hx-swap="innerHTML">
   <div class="phead"><h2>Tập bỏ qua</h2></div>
   <label class="field">
@@ -35,7 +35,9 @@
   </label>
 </div>
 
-<form class="panel" method="post" action="/kichban/reset">
+{# data-ajax="tailai": gửi ngầm như mọi nút khác, xong thì tải lại trang — mọi ô cài
+   đặt trên trang vừa đổi về mặc định, không tải lại thì trang hiện số cũ. #}
+<form class="panel" method="post" action="/kichban/reset" data-ajax="tailai">
   <div class="phead"><h2>Đặt lại quy trình</h2></div>
   <p class="hint">Đưa model, tốc độ và các ô ⛓ về mặc định.</p>
   <div class="actions"><button>↺ Reset cài đặt quy trình</button></div>

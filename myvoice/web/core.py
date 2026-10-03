@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -99,7 +100,12 @@ STEP_LABELS = [
 # (mặc định tắt), tính vào sẽ làm mọi tập đã dựng xong từ trước hoá "còn việc".
 # Vẫn hiện thành cột riêng trong bảng để nhìn ra tập nào chưa lên Short/Facebook
 # (tập 85, 04/09/2026: bảng tick đủ mà Short chưa đăng vì lượt đăng đổ giữa chừng).
-DONE_EXCLUDE = {"upload", "short", "facebook"}
+DONE_EXCLUDE = {"upload", "short", "facebook", "doc_cho_seo"}
+# Tập đã tạo giọng + video ngang khi CHƯA có SEO (03/10/2026): SEO hỏng không còn
+# chặn cả tập, nhưng video dọc/TikTok/Short in tiêu đề SEO lên hình (khung dọc) và
+# lấy thumbnail dọc làm ảnh bìa → để dành tới khi có SEO. File đánh dấu này (runner
+# run_episode ghi/xoá) bảo ⏩ Chạy tiếp chạy lại bước "tts" để dựng nốt phần đó.
+DOC_CHO_SEO = "doc_cho_seo.txt"
 # Bước ĐĂNG LẺ có thể chạy riêng sau khi tập đã dựng + đăng xong (nút ⏩ Chạy tiếp
 # xếp vào hàng đợi đăng, không đi qua run_episode.py như các bước dựng).
 POST_STEPS = ("short", "facebook")
@@ -212,6 +218,49 @@ def remember_sources(lines: list[str]) -> None:
 
 def clear_source_history() -> None:
     save_web_settings({"src_history": []})
+
+
+# ── Nháp ô Nguồn — MỘT ô cho mọi trang/tab (03/10/2026) ─────────────────────
+# Trang Tạo kịch bản, trang Nhận diện và Home đều có ô Nguồn; trước đây mỗi ô một
+# nội dung và chuyển trang là mất sạch. Nay trình duyệt gửi nội dung ô về đây mỗi
+# lần gõ, trang nào vẽ ra cũng điền sẵn từ đây, tab khác hỏi lại khi được mở lên.
+# File riêng, không nằm trong web_settings.json: ghi mỗi lần gõ, gộp chung thì một
+# lượt lưu cài đặt chạy song song có thể đè mất.
+SRC_DRAFT_FILE = WEB_DIR / "nguon_nhap.json"
+_src_draft_lock = threading.Lock()
+
+
+def load_src_draft() -> dict:
+    """{"text": nội dung ô Nguồn, "ver": số phiên bản tăng dần mỗi lần ghi}."""
+    try:
+        d = json.loads(SRC_DRAFT_FILE.read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            return {"text": str(d.get("text") or ""), "ver": int(d.get("ver") or 0)}
+    except Exception:
+        pass
+    return {"text": "", "ver": 0}
+
+
+def save_src_draft(text: str) -> dict:
+    """Ghi nội dung ô Nguồn (ghi qua file tạm rồi thay, đọc dở không bao giờ thấy
+    file cụt). → bản vừa ghi, kèm số phiên bản mới."""
+    with _src_draft_lock:
+        d = {"text": str(text or ""), "ver": load_src_draft()["ver"] + 1}
+        tmp = SRC_DRAFT_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, SRC_DRAFT_FILE)
+        return d
+
+
+def drop_from_src_draft(done: list[str]) -> None:
+    """Bỏ khỏi ô Nguồn các dòng vừa xếp hàng chạy — để bấm ▶ lần nữa không chạy
+    trùng. Chỉ bỏ ĐÚNG các dòng đó, dòng khác (vd vừa dán thêm ở tab khác) giữ nguyên."""
+    xong = {s.strip() for s in done if s.strip()}
+    if not xong:
+        return
+    lines = load_src_draft()["text"].splitlines()
+    con = [l for l in lines if l.strip() and l.strip() not in xong]
+    save_src_draft("\n".join(con) + ("\n" if con else ""))
 
 
 def list_download_files() -> list[dict]:
@@ -698,6 +747,9 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # đăng lại sau khi dựng lại (85, 04/09/2026) hiện "—" trong khi script bảo
         # "đã đăng, không xếp" — hai nơi nói hai đằng.
         "facebook": _facebook_posted(folder, episode, source),
+        # Không phải một bước (nằm trong DONE_EXCLUDE): True = video dọc/TikTok/Short
+        # còn chờ SEO (xem DOC_CHO_SEO) → missing_steps thêm "tts".
+        "doc_cho_seo": (folder / DOC_CHO_SEO).exists(),
     }
 
 
@@ -798,7 +850,9 @@ def missing_steps(steps: dict, fb_ban: str | None = None) -> list[str]:
     """
     out = [k for k in ("recognize", "translate", "input", "seo", "thumbnail")
            if not steps.get(k)]
-    if not (steps.get("audio") and steps.get("video_ngang")):
+    # doc_cho_seo: giọng + video ngang dựng lúc chưa có SEO → chạy lại "tts" để dựng
+    # nốt video dọc/TikTok/Short (phần đã có được dùng lại) rồi mới tự đăng.
+    if not (steps.get("audio") and steps.get("video_ngang")) or steps.get("doc_cho_seo"):
         out.append("tts")
     # Chỉ khi KHÔNG còn bước dựng nào: việc đăng lẻ còn thiếu. Còn bước dựng thì
     # chuỗi dựng tự nối việc đăng (queue_after_build) nên không liệt vào đây.

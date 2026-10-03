@@ -272,23 +272,50 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) — KÈM TRỌN YÊU CẦU SEO — lên Gemini...")
 
     own_driver = driver is None
+    fallback = None     # Firefox dự phòng mở GIỮA CHỪNG — của riêng hàm này, luôn đóng
     try:
         if driver is None:
             driver = g.init_firefox(url=NEW_CHAT_URL if SEO_NEW_CHAT else SEO_GEMINI_URL, on_log=log)
 
         ans = ""
-        for lan in range(1, max(1, attempts) + 1):
+        total = max(1, attempts)
+        lan = 0
+        while lan < total:
+            lan += 1
             if lan > 1:
-                log(f"🔁 Gửi lại SEO lần {lan}/{attempts} (cuộc trò chuyện khác)...")
-            _open_chat(driver, log)
-            # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
-            ans = (g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log) or "").strip()
+                log(f"🔁 Gửi lại SEO lần {lan}/{total} (cuộc trò chuyện khác)...")
+            try:
+                _open_chat(driver, log)
+                # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
+                ans = (g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log) or "").strip()
+            except Exception as e:
+                # 03/10/2026: extension báo "Gemini chưa xác nhận nhận tin nhắn" lúc 04:23
+                # cho cả 5 tập 119, 125–128 → lỗi ném thẳng ra ngoài, mỗi tập chết sau
+                # ~5 giây, không dùng tới lượt gửi lại lẫn Firefox dự phòng. Nay: lỗi của
+                # extension → chuyển Firefox (dự phòng) và cho Firefox trọn số lượt. Gửi
+                # trùng (nếu tin kia thật ra đã đi) chỉ là thêm một chat SEO, vô hại.
+                log(f"⚠️ Gửi SEO lỗi: {e}")
+                ans = ""
+                if (fallback is None and getattr(driver, "is_chrome_extension", False)
+                        and g.fallback_enabled()):
+                    log("🦊 DỰ PHÒNG: chuyển sang Firefox (Selenium) để làm SEO tập này.")
+                    if own_driver:      # phiên extension do hàm này mở → nhả cổng bridge
+                        try:
+                            driver.quit()
+                        except Exception:
+                            pass
+                    fallback = driver = g.init_firefox(
+                        url=NEW_CHAT_URL if SEO_NEW_CHAT else SEO_GEMINI_URL,
+                        backend="firefox", on_log=log)
+                    lan, total = 0, max(1, attempts)
+                continue
             if not ans:
                 log("⚠️ Gemini không trả về kết quả SEO.")
                 continue
             if not _looks_like_seo(ans):
                 log("⚠️ Nội dung nhận được KHÔNG đúng dạng kết quả SEO (thiếu phần "
                     "TIÊU ĐỀ/MÔ TẢ) → bỏ, không lưu.")
+                log(f"   ↳ Gemini trả lời: {' '.join(ans.split())[:200]}")
                 ans = ""
                 continue
             break
@@ -305,7 +332,14 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
         log(f"✅ XONG: đã lưu SEO → {output_path}")
         return ans
     finally:
-        if own_driver and not keep_open and driver is not None:
+        if fallback is not None:
+            # Bên gọi không biết có Firefox này → luôn đóng, kẻo profile còn khoá làm
+            # hỏng lần dự phòng của tập sau.
+            try:
+                fallback.quit()
+            except Exception:
+                pass
+        elif own_driver and not keep_open and driver is not None:
             try:
                 driver.quit()
             except Exception:

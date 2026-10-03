@@ -27,6 +27,10 @@ TMP_DIR = core.WEB_DIR / ".tmp"
 # Không import từ đó được: module runner khởi tạo nặng (kéo cả amain_taogiong_gui),
 # nó sinh ra để chạy làm tiến trình riêng chứ không phải để import.
 STOP_CODE = 77
+# Mã "SEO hỏng" của runner (SEO_SOFT trong run_episode.py, 03/10/2026): SEO/thumbnail
+# chưa xong nhưng KHÔNG chặn cả tập — chuỗi có bước dựng video phía sau thì đi tiếp
+# (giọng + video ngang vẫn làm, chỉ không tự đăng); việc chỉ có SEO thì dừng ⛔.
+SEO_SOFT_CODE = 78
 
 # Bước hiện trên giao diện → (nhãn, danh sách bước của runner)
 STEP_CHOICES = [
@@ -171,6 +175,14 @@ def queue_after_build(episode: str, upload: bool) -> None:
     Facebook đọc cài đặt NGAY LÚC NÀY: mẻ chạy hàng giờ, đổi ý giữa chừng thì lần
     tới có hiệu lực luôn, khỏi phải dừng cả mẻ.
     """
+    # Lưới an toàn (03/10/2026): tập dựng lúc SEO hỏng thì runner đã trả mã dừng nên
+    # không tới được đây — vẫn kiểm lại, vì script Facebook THIẾU SEO vẫn đăng với
+    # caption tối thiểu (YouTube thì tự từ chối).
+    folder = core.episode_folder(episode)
+    if folder is None or not core.seo_docx_valid(Path(folder) / "seoYoutube.docx"):
+        log(f"⚠️ Tập {episode}: chưa có SEO hợp lệ → KHÔNG tự đăng YouTube, KHÔNG lên "
+            "lịch Facebook.")
+        return
     if upload:
         queue_upload(episode)
     if core.facebook_auto():
@@ -206,7 +218,7 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
     env = core.subprocess_env()
     cwd = str(core.SCRIPTS_DIR)
 
-    for key in step_keys:
+    for i, key in enumerate(step_keys):
         # "upload" chạy runner KHÁC (run_upload.py), không phải run_episode.py.
         # Thường thì bên gọi xếp thẳng vào upload_runner cho chạy song song; nhánh
         # này để build_steps(["upload"]) vẫn ra đúng bước chứ không tạo lệnh sai.
@@ -230,10 +242,15 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
             ep_file = TMP_DIR / f"ep_{int(time.time() * 1000)}.txt"
             argv += ["--episode-out", str(ep_file)]
             on_success = lambda f=ep_file, u=upload: _queue_after_build_from_file(f, u)   # noqa: E731
+        # SEO hỏng (SEO_SOFT_CODE) ở bước SEO/thumbnail mà phía sau còn bước dựng video
+        # → đi tiếp; không còn gì phía sau → dừng ⛔ như một chốt an toàn.
+        go_on = key in ("seo", "thumbnail", "script") and "tts" in step_keys[i + 1:]
         steps.append(Step(label=label, argv=argv, cwd=cwd, env=env,
                           # runner trả STOP_CODE khi CHỦ ĐỘNG dừng (vd dịch còn thiếu
                           # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
-                          soft_fail_codes=(STOP_CODE,), on_success=on_success))
+                          soft_fail_codes=(STOP_CODE,) if go_on else (STOP_CODE, SEO_SOFT_CODE),
+                          continue_codes=(SEO_SOFT_CODE,) if go_on else (),
+                          on_success=on_success))
     return steps, ""
 
 
@@ -261,8 +278,10 @@ def resume_steps(missing: list[str], source: str, episode: str,
         # không cần đi vòng qua file --episode-out như lúc nguồn là link mới.
         on_success = lambda ep=episode, u=upload: queue_after_build(ep, u)   # noqa: E731
     label = "⏩ " + " → ".join(SINGLE_STEPS.get(k, k) for k in missing)
+    # Cả chuỗi là MỘT lần gọi runner: SEO hỏng thì runner tự đi tiếp bên trong, xong
+    # mới trả STOP_CODE (có dựng video) hoặc SEO_SOFT_CODE (chỉ SEO/thumbnail).
     return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
-                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,),
+                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE, SEO_SOFT_CODE),
                  on_success=on_success)], ""
 
 

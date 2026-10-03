@@ -1,12 +1,16 @@
+{# bform: xem _batch_chay.html (Home: ô thuộc form #homebatch dù nằm trong form khác). #}
 <div class="gemini-backend">
   <div class="chks">
-    <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"
+    <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"{% if bform %} form="{{ bform }}"{% endif %}
       {{ 'checked' if pipe.get('gemini_backend', 'extension') != 'firefox' }}> Dịch bằng Chrome Extension (mặc định)</label>
-    <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"
+    <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"{% if bform %} form="{{ bform }}"{% endif %}
       {{ 'checked' if pipe.get('gemini_backend') == 'firefox' }}> Dịch bằng Firefox / Selenium (dự phòng)</label>
   </div>
+  {# Home: bỏ đoạn giải thích (user yêu cầu 03/10/2026) — trang riêng vẫn giữ. #}
+  {% if not on_home %}
   <p class="hint">Áp dụng cho dịch, dịch lại đoạn trống và SEO.
     Extension: giữ Chrome đã cài extension và đăng nhập Gemini mở; không kết nối được thì
     tự mở Firefox thay. Firefox: đóng Firefox trước khi chạy.
     <a href="/gemini-extension" target="_blank" rel="noopener">Hướng dẫn cài extension</a>.</p>
+  {% endif %}
 </div>
