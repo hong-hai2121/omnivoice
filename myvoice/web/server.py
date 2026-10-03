@@ -346,7 +346,7 @@ def _save_model_speed(form) -> dict:
 def _upload_ready() -> bool:
     """Kiểm tra TRƯỚC khi xếp việc: đủ thư viện + đã đăng nhập YouTube.
 
-    Dùng cho các nút ĐĂNG NGAY (⑥ và “⬆ Đăng ngay các tập chưa đăng”): người dùng
+    Dùng cho các nút ĐĂNG NGAY (⑤ và “⬆ Đăng ngay các tập chưa đăng”): người dùng
     đang ngồi đó bấm, hỏng thì báo liền. Đồng thời đọc lại kênh: vừa nói rõ sẽ đăng
     lên kênh nào (một Gmail có thể nhiều kênh), vừa nạp cache các giờ đã hẹn để xếp
     khung 08:00/18:00 không bị trùng.
@@ -760,20 +760,20 @@ def clear_output(confirm: str = Form("")):
 
 
 # ── Trang Nhận diện (view "recog" bên GUI: bảng tập + 5 nút hàng loạt) ──────
+# Số ①–⑤ theo thứ tự quy trình (04/10/2026, SEO gộp vào ②): ① nhận diện → ② dịch +
+# SEO → ③ thumbnail → ④ giọng + video → ⑤ đăng.
 _BATCH_BUTTONS = {
     "recognize": ("① Nhận diện các link rồi ngưng", ["recognize"]),
     # ② gửi luôn SEO (03/10/2026): xong nút này là hết việc cần Gemini/màn hình sáng,
-    # các bước sau (giọng, video) chạy lúc màn hình tắt được. ③ vẫn để làm riêng SEO.
-    "translate": ("② Dịch + tạo input.docx + SEO", ["translate", "input", "seo"]),
-    "seo":       ("③ Gửi SEO (Gemini)", ["seo"]),
-    "thumbnail": ("④ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
-    "tts":       ("⑤ Tạo giọng + video", ["tts"]),
-    "upload":    ("⑥ Đăng YouTube", ["upload"]),
+    # các bước sau (giọng, video) chạy lúc màn hình tắt được.
+    "translate": ("② Dịch + input.docx + SEO", ["translate", "input", "seo"]),
+    "thumbnail": ("③ Tạo thumbnail (ngang + dọc)", ["thumbnail"]),
+    "tts":       ("④ Tạo giọng + video", ["tts"]),
+    "upload":    ("⑤ Đăng YouTube", ["upload"]),
 }
 # Tập "đủ điều kiện" cho từng nút khi KHÔNG tick tập nào — giống cách GUI lọc.
 _BATCH_READY = {
     "translate": lambda s: s["recognize"] and not s["input"],
-    "seo":       lambda s: s["translate"] and not s["seo"],
     "thumbnail": lambda s: s["seo"] and not s["thumbnail"],
     "tts":       lambda s: s["input"] and not s["video_ngang"],
     "upload":    lambda s: s["video_ngang"] and s["seo"] and not s["upload"],
@@ -896,6 +896,9 @@ async def run_recog(request: Request):
         steps_mod.cleanup_tmp()
         return _run_retranslate(request, form)
     if action not in _BATCH_BUTTONS:
+        # vd nút "③ Gửi SEO" (action=seo) / "🚀 ②→④" (action=full) đã bỏ 04/10/2026,
+        # còn trên trang mở từ trước
+        log("⚠️ Nút này đã đổi — tải lại trang (F5) rồi bấm lại.")
         return _back(request, "/nhandien")
 
     _save_model_speed(form)
@@ -944,8 +947,8 @@ async def run_recog(request: Request):
         log(f"⚠️ Không có tập nào để chạy “{label}”.")
         return _back(request, "/nhandien")
 
-    # Nút ⑤ dựng video hàng loạt cũng phải TÔN TRỌNG ô '⬆ tự động đăng', y như chuỗi
-    # ①→③ và nút ⏩ chạy tiếp. Trước đây chỗ này quên truyền upload= nên bấm ⑤ là mẻ
+    # Nút ④ dựng video hàng loạt cũng phải TÔN TRỌNG ô '⬆ tự động đăng', y như chuỗi
+    # ①→③ và nút ⏩ chạy tiếp. Trước đây chỗ này quên truyền upload= nên bấm ④ là mẻ
     # đó KHÔNG BAO GIỜ tự đăng dù ô tick đang bật — dựng xong, hàng đợi rỗng, máy ngủ.
     upload = _auto_upload_wanted(chain)
 

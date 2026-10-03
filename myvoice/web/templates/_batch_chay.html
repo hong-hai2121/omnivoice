@@ -1,4 +1,6 @@
-{# Khối "Chạy cho những tập đã tick" (⏩ + ②–⑥) — DÙNG CHUNG trang Nhận diện và Home.
+{# Khối "Chạy cho những tập đã tick" — DÙNG CHUNG trang Nhận diện và Home. Trên: ⏩ chạy
+   cả chuỗi; dưới: từng bước theo thứ tự quy trình ② dịch + SEO → ③ thumbnail → ④ giọng
+   + video → ⑤ đăng (① nhận diện là nút của khối ô Nguồn).
    Cần: pipe, slots.
    bform (tuỳ chọn): id form mà nút/ô của khối thuộc về. Home đặt khối này NGAY DƯỚI
    ô Nguồn, tức là nằm TRONG form Tạo kịch bản — mà form không lồng được, nên mọi
@@ -9,12 +11,12 @@
   {% include "_gemini_backend.html" %}
   <div class="actions col">
     <button class="primary" name="action" value="resume"{{ fa | safe }}>⏩ Chạy tiếp các bước còn thiếu</button>
-    <button name="action" value="translate"{{ fa | safe }} title="Dịch → tạo input.docx → gửi SEO; trong lúc chạy, máy rảnh 4 phút thì tự nhích chuột 1 px để màn hình không tắt">🌐 ② Dịch + tạo input.docx + SEO</button>
+    <span class="hint">Từng bước:</span>
+    <button name="action" value="translate"{{ fa | safe }} title="Dịch → tạo input.docx → gửi SEO rồi dừng; trong lúc chạy, máy rảnh 4 phút thì tự nhích chuột 1 px để màn hình không tắt">🌐 ② Dịch + input.docx + SEO</button>
     <button name="action" value="retranslate"{{ fa | safe }} title="Gửi từng đoạn (trống) của gemini_result.docx lên Gemini đúng một lần, ghi lại để kiểm">🔁 Dịch lại đoạn (Trống)</button>
-    <button name="action" value="seo"{{ fa | safe }}>🔎 ③ Gửi SEO (Gemini)</button>
-    <button name="action" value="thumbnail"{{ fa | safe }}>🖼 ④ Tạo thumbnail (ngang + dọc)</button>
-    <button name="action" value="tts"{{ fa | safe }}>🎬 ⑤ Tạo giọng + video</button>
-    <button name="action" value="upload"{{ fa | safe }}>⬆ ⑥ Đăng YouTube (hẹn {{ slots }})</button>
+    <button name="action" value="thumbnail"{{ fa | safe }}>🖼 ③ Tạo thumbnail (ngang + dọc)</button>
+    <button name="action" value="tts"{{ fa | safe }}>🎬 ④ Tạo giọng + video</button>
+    <button name="action" value="upload"{{ fa | safe }}>⬆ ⑤ Đăng YouTube (hẹn {{ slots }})</button>
   </div>
   <div class="chks">
     <label class="chk"><input type="checkbox" name="force"{{ fa | safe }}> Làm lại cả bước đã có kết quả</label>
@@ -24,8 +26,8 @@
   {% if bform %}<details class="hintmore"><summary>ℹ️ Các nút này chạy thế nào</summary>{% endif %}
   <p class="hint">⏩ tự dò tập đang dở (vd đã dịch xong) rồi chạy nốt các bước
      còn thiếu theo đúng thứ tự, mỗi tập một việc — không tick thì chạy mọi tập
-     còn việc. Các nút ③–⑥ chạy đúng một bước, ② chạy dịch → input.docx → SEO;
-     không tick = chạy hết tập đủ điều kiện. Trong lúc nhận diện/dịch/SEO/🔁, máy
+     còn việc. Các nút ②–⑤ bên dưới chạy đúng một bước (② gồm dịch →
+     input.docx → SEO); không tick = chạy hết tập đủ điều kiện. Trong lúc nhận diện/dịch/SEO/🔁, máy
      rảnh 4 phút thì tự nhích chuột 1 px cho màn hình khỏi tắt (màn hình tắt thì
      Chrome làm chậm tab Gemini → đoạn dịch thành trống). Bước dịch gửi mỗi đoạn Gemini đúng một lần: đoạn trống thì ghi
      “(trống)” rồi sang đoạn kế; gửi hết tập, các đoạn vừa trống được gửi lại

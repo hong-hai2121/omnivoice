@@ -1485,7 +1485,7 @@ def missing_episodes() -> dict:
 
       todo  — chưa có thư mục ở máy → cấp được cho link mới (làm bù thật sự).
       built — ĐÃ có thư mục (dựng xong rồi, chỉ chưa đăng) → không cấp cho link mới
-              vì sẽ đụng thư mục đã có; việc cần làm với chúng là bấm ⑥ Đăng YouTube.
+              vì sẽ đụng thư mục đã có; việc cần làm với chúng là bấm ⑤ Đăng YouTube.
 
     Số tập lấy bằng cách đọc 'Số N' trong tiêu đề video trên kênh, nên chỉ mới tới
     lần đọc kênh gần nhất. Đọc kênh mặc định chỉ lấy 50 video mới nhất, và chỉ soát
