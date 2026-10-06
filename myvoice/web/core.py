@@ -109,6 +109,9 @@ DOC_CHO_SEO = "doc_cho_seo.txt"
 # Bước ĐĂNG LẺ có thể chạy riêng sau khi tập đã dựng + đăng xong (nút ⏩ Chạy tiếp
 # xếp vào hàng đợi đăng, không đi qua run_episode.py như các bước dựng).
 POST_STEPS = ("short", "facebook")
+# ⏩ Chạy tiếp đi HAI LƯỢT (04/10/2026): lượt 1 làm các bước này cho MỌI tập (việc cần
+# Gemini/màn hình sáng), xong hết mới tới lượt 2 — thumbnail → giọng + video → đăng.
+FRONT_STEPS = ("recognize", "translate", "input", "seo")
 
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────

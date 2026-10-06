@@ -364,6 +364,9 @@ def main(argv=None) -> int:
                         help="Ghi SỐ TẬP đã cấp ra file này (để bên gọi nối việc "
                              "đăng YouTube — với nguồn là link thì số tập chỉ biết "
                              "được ở đây, lúc chạy).")
+    parser.add_argument("--require", default="",
+                        help="Các bước phải ĐÃ XONG trước khi chạy (vd translate,input), "
+                             "thiếu thì dừng mã 77 — lượt 2 của ⏩ Chạy tiếp.")
     args = parser.parse_args(argv)
 
     _setup_logging()
@@ -391,6 +394,18 @@ def main(argv=None) -> int:
             Path(args.episode_out).write_text(episode, encoding="utf-8")
         except OSError as e:
             logging.warning(f"⚠️ Không ghi được số tập ra {args.episode_out}: {e}")
+
+    # Lượt 2 của ⏩ (04/10/2026): lượt 1 dừng ⛔ ở bước dịch/input (đoạn trống, tô đỏ
+    # chưa kiểm…) thì tới đây vẫn chưa xong → không tạo giọng/video từ bản dịch dở,
+    # y như chuỗi một-lần-gọi cũ dừng ngay ở bước dịch.
+    need = [k.strip() for k in args.require.split(",") if k.strip()]
+    if need:
+        st = core.folder_steps(folder, episode)
+        thieu = [k for k in need if not st.get(k)]
+        if thieu:
+            logging.error(f"⛔ Tập {episode}: chưa xong {', '.join(thieu)} (lượt trước dừng) "
+                          f"→ không chạy {', '.join(steps)}.")
+            return STOP
 
     state: dict = {"force": args.force}
     if args.tts_json:

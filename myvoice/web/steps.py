@@ -256,12 +256,17 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
 
 
 def resume_steps(missing: list[str], source: str, episode: str,
-                 upload: bool = False) -> tuple[list[Step], str]:
+                 upload: bool = False,
+                 require: list[str] | None = None) -> tuple[list[Step], str]:
     """MỘT bước chạy LIỀN MẠCH các bước còn thiếu của một tập → (Step, lỗi).
 
     Gộp cả chuỗi vào một lần gọi runner (--steps "a,b,c") thay vì mỗi bước một
     tiến trình: dịch → SEO dùng chung một phiên Firefox (mở hai lần thì phiên sau
     vấp profile đang khoá), và tập chạy trọn vẹn không bị việc khác chen ngang.
+
+    require: các bước phải ĐÃ XONG lúc runner bắt đầu chạy, không thì dừng ⛔ (mã
+    STOP_CODE). Dùng cho lượt 2 của ⏩: lượt 1 (dịch/input) xếp trước nhưng chạy
+    trước bao lâu, kết quả ra sao thì lúc xếp chưa biết.
     """
     # Bước đăng lẻ (Short / Facebook) không phải việc của run_episode.py — bên gọi
     # (_run_resume) xếp chúng vào hàng đợi đăng; lọc ở đây để không tạo lệnh sai.
@@ -269,6 +274,8 @@ def resume_steps(missing: list[str], source: str, episode: str,
     if not missing:
         return [], f"Tập {episode}: không còn bước nào thiếu."
     argv = _base_argv(",".join(missing), source, episode, force=False)
+    if require:
+        argv += ["--require", ",".join(require)]
     on_success = None
     if "tts" in missing:
         tts_json, err = _write_tts_json()

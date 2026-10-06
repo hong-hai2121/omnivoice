@@ -804,9 +804,13 @@ def partial_recog_table(request: Request, form: str = ""):
 
 
 def _run_resume(request: Request, form) -> RedirectResponse:
-    """Nút ⏩ Chạy tiếp: mỗi tập MỘT việc chạy liền mạch ĐÚNG các bước còn thiếu
-    (vd tập dịch xong rồi thì chỉ chạy input → SEO → thumbnail → giọng + video).
-    Bản web của '▶ Chạy tiếp tập đang chọn' bên GUI, nhưng chạy được nhiều tập."""
+    """Nút ⏩ Chạy tiếp: chạy ĐÚNG các bước còn thiếu của từng tập, HAI LƯỢT
+    (04/10/2026, giống nút ⚡ bên GUI):
+      lượt 1 — nhận diện → dịch → input.docx → SEO của MỌI tập (mỗi tập một việc);
+      lượt 2 — thumbnail → giọng + video (→ đăng) của từng tập.
+    Hàng đợi chạy lần lượt theo thứ tự xếp, nên việc cần Gemini/màn hình sáng xong
+    hết rồi mới tới GPU. Trước đây mỗi tập một việc trọn gói: tập đầu dựng video xong
+    tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO)."""
     picked = [str(e) for e in form.getlist("tap")]
     rows = core.episode_rows()
     if picked:
@@ -823,6 +827,7 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     steps_mod.cleanup_tmp()
     queued = 0
     fb_ban = core.facebook_ban()        # đọc một lần cho cả vòng
+    later = []                          # (dòng tập, bước lượt 2, lượt 1 có việc không)
     for r in sorted(targets, key=lambda r: int(r["episode"])):
         missing = core.missing_steps(r["steps"], fb_ban)
         if not missing:
@@ -846,13 +851,30 @@ def _run_resume(request: Request, form) -> RedirectResponse:
             log(f"⚠️ Tập {r['episode']}: chưa có bản nhận diện mà không rõ link gốc "
                 "→ dán lại link vào ô nhận diện để chạy tập này.")
             continue
-        built, err = steps_mod.resume_steps(missing, r["source"], r["episode"],
-                                            upload=upload_on)
+        front = [k for k in missing if k in core.FRONT_STEPS]
+        back = [k for k in missing if k not in core.FRONT_STEPS]
+        if front:
+            built, err = steps_mod.resume_steps(front, r["source"], r["episode"])
+            if err:
+                log(f"⛔ {err}")
+                continue
+            runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 1 "
+                           f"({len(front)} bước thiếu)", built)
+            queued += 1
+        if back:
+            later.append((r, back, bool(front)))
+    for r, back, had_front in later:
+        # Lượt 1 có việc cho tập này → runner kiểm lại lúc tới lượt: dịch/input dừng ⛔
+        # ở lượt 1 (đoạn trống, tô đỏ chưa kiểm…) thì không tạo giọng/video. SEO hỏng
+        # vẫn cho đi tiếp như trước (dựng giọng + video ngang, không tự đăng).
+        built, err = steps_mod.resume_steps(
+            back, r["source"], r["episode"], upload=upload_on,
+            require=["translate", "input"] if had_front else None)
         if err:
             log(f"⛔ {err}")
             continue
-        runner.enqueue(f"Tập {r['episode']} — ⏩ chạy tiếp "
-                       f"({len(missing)} bước thiếu)", built)
+        runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 2 "
+                       f"({len(back)} bước thiếu)", built)
         queued += 1
     if not queued:
         log("✅ Không có tập nào cần chạy tiếp — các tập đã đủ bước.")
