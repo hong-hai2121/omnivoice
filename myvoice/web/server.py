@@ -407,6 +407,24 @@ def _chain_from(start: str, pipe: dict) -> list[str]:
     return steps
 
 
+def _plan_source_episodes(form, lines: list[str]) -> list[str]:
+    """Dùng cùng cách cấp số cho các nút chạy từ ô Nguồn."""
+    start_ep = str(form.get("episode", "")).strip()
+    if start_ep and not start_ep.isdecimal():
+        log(f"⚠️ Số tập '{start_ep}' không phải số → bỏ qua, để tự cấp số.")
+        start_ep = ""
+    mode = "auto" if str(form.get("epsrc", "manual")) == "auto" else "manual"
+    plan = core.plan_episodes(lines, start_ep, mode=mode)
+    if mode == "auto":
+        log("🔖 Tự làm bù: lấy tập kênh còn thiếu từ số bé nhất, hết thì nối sau "
+            f"tập mới nhất kênh đã có ({core.latest_channel_episode()}).")
+    if start_ep or mode == "auto":
+        log("🔖 Cấp số tập: " + " · ".join(
+            f"link {i + 1} → " + (f"tập {ep}" if ep else "tập cũ (nguồn đã chạy)")
+            for i, ep in enumerate(plan)))
+    return plan
+
+
 @app.post("/kichban/chay")
 async def run_script(request: Request):
     form = await request.form()
@@ -428,19 +446,7 @@ async def run_script(request: Request):
     upload = _auto_upload_wanted(chain)
     # LÀM BÙ: bắt đầu từ số tập đã chọn rồi vét tiếp các số kênh còn thiếu; hết thì
     # cấp số mới. Tính TRƯỚC cho cả mẻ để ghi ra nhật ký, khỏi phải đoán.
-    start_ep = str(form.get("episode", "")).strip()
-    if start_ep and not start_ep.isdecimal():
-        log(f"⚠️ Số tập '{start_ep}' không phải số → bỏ qua, để tự cấp số.")
-        start_ep = ""
-    mode = "auto" if str(form.get("epsrc", "manual")) == "auto" else "manual"
-    plan = core.plan_episodes(lines, start_ep, mode=mode)
-    if mode == "auto":
-        log("🔖 Tự làm bù: lấy tập kênh còn thiếu từ số bé nhất, hết thì nối sau "
-            f"tập mới nhất kênh đã có ({core.latest_channel_episode()}).")
-    if start_ep or mode == "auto":
-        log("🔖 Cấp số tập: " + " · ".join(
-            f"link {i + 1} → " + (f"tập {ep}" if ep else "tập cũ (nguồn đã chạy)")
-            for i, ep in enumerate(plan)))
+    plan = _plan_source_episodes(form, lines)
 
     steps_mod.cleanup_tmp()
     queued: list[str] = []
@@ -773,7 +779,8 @@ _BATCH_BUTTONS = {
 }
 # Tập "đủ điều kiện" cho từng nút khi KHÔNG tick tập nào — giống cách GUI lọc.
 _BATCH_READY = {
-    "translate": lambda s: s["recognize"] and not s["input"],
+    "translate": lambda s: s["recognize"] and not all(
+        s[k] for k in ("translate", "input", "seo")),
     "thumbnail": lambda s: s["seo"] and not s["thumbnail"],
     "tts":       lambda s: s["input"] and not s["video_ngang"],
     "upload":    lambda s: s["video_ngang"] and s["seo"] and not s["upload"],
@@ -815,9 +822,12 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     rows = core.episode_rows()
     if picked:
         targets = [r for r in rows if r["episode"] in picked]
+        if not targets:
+            log("⚠️ Không tìm thấy các tập đã chọn — làm mới bảng tập rồi chọn lại.")
+            return _back(request, "/nhandien")
     else:
-        targets = [r for r in rows if r["done_count"] < r["total_steps"]]
-        log(f"ℹ️ Không tick tập nào → chạy tiếp {len(targets)} tập còn việc.")
+        # Dò cả tập đã dựng đủ video: lượt đăng có thể bị dừng trước khi có biên nhận.
+        targets = rows
 
     # Tôn trọng ô '⬆ tự động đăng' của quy trình: bật thì dựng xong video là nối
     # việc đăng, y như chuỗi ①→③. (Mỗi tập thiếu một kiểu nên chốt 'tts' xét lại
@@ -826,30 +836,42 @@ def _run_resume(request: Request, form) -> RedirectResponse:
 
     steps_mod.cleanup_tmp()
     queued = 0
+    blocked = 0
+    deferred_posts = 0
     fb_ban = core.facebook_ban()        # đọc một lần cho cả vòng
+    fb_auto = core.facebook_auto()
+    options = core.load_options()
+    on_channel = core.episodes_on_channel() if upload_on else set()
     later = []                          # (dòng tập, bước lượt 2, lượt 1 có việc không)
     for r in sorted(targets, key=lambda r: int(r["episode"])):
-        missing = core.missing_steps(r["steps"], fb_ban)
+        missing = core.missing_steps(
+            r["steps"], fb_ban, options=options,
+            upload=upload_on and int(r["episode"]) not in on_channel)
         if not missing:
             continue
         post = [k for k in missing if k in core.POST_STEPS]
         if post and len(post) == len(missing):
-            # Chỉ còn việc ĐĂNG LẺ (Short / Facebook). Chỉ làm cho tập được TICK rõ
-            # ràng: "chạy tiếp tất cả" mà tự đăng Short cho mọi tập cũ thì vừa đốt
-            # quota vừa rải Short cũ lên kênh. Hai việc đi hai hàng đợi riêng như
-            # sau khi dựng video (queue_after_build).
-            if not picked:
+            # Không tick tập: tiếp tục đăng chính/Facebook theo ô tự động đăng.
+            # Short lẻ của tập cũ vẫn cần chọn tập rõ ràng để tránh đăng hàng loạt.
+            allowed_post = [k for k in post if picked or k == "upload"
+                            or (k == "facebook" and fb_auto)]
+            if not allowed_post:
+                deferred_posts += 1
                 continue
-            if "short" in post:
+            if "upload" in allowed_post:
+                steps_mod.queue_upload(r["episode"])
+                queued += 1
+            if "short" in allowed_post:
                 steps_mod.queue_short(r["episode"])
                 queued += 1
-            if "facebook" in post:
+            if "facebook" in allowed_post:
                 steps_mod.queue_facebook(r["episode"])
                 queued += 1
             continue
         if "recognize" in missing and not r["source"]:
             log(f"⚠️ Tập {r['episode']}: chưa có bản nhận diện mà không rõ link gốc "
                 "→ dán lại link vào ô nhận diện để chạy tập này.")
+            blocked += 1
             continue
         front = [k for k in missing if k in core.FRONT_STEPS]
         back = [k for k in missing if k not in core.FRONT_STEPS]
@@ -857,6 +879,7 @@ def _run_resume(request: Request, form) -> RedirectResponse:
             built, err = steps_mod.resume_steps(front, r["source"], r["episode"])
             if err:
                 log(f"⛔ {err}")
+                blocked += 1
                 continue
             runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 1 "
                            f"({len(front)} bước thiếu)", built)
@@ -872,12 +895,19 @@ def _run_resume(request: Request, form) -> RedirectResponse:
             require=["translate", "input"] if had_front else None)
         if err:
             log(f"⛔ {err}")
+            blocked += 1
             continue
         runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 2 "
                        f"({len(back)} bước thiếu)", built)
         queued += 1
     if not queued:
-        log("✅ Không có tập nào cần chạy tiếp — các tập đã đủ bước.")
+        if blocked:
+            log("⚠️ Có tập còn thiếu bước nhưng chưa xếp chạy được — xem lý do ở trên.")
+        elif deferred_posts:
+            log(f"ℹ️ Còn {deferred_posts} tập chỉ thiếu bước đăng Short/Facebook "
+                "— tick các tập muốn đăng rồi bấm Chạy tiếp.")
+        else:
+            log("✅ Không còn bước nào cần chạy theo cài đặt hiện tại.")
     return _back(request, "/nhandien")
 
 
@@ -948,6 +978,29 @@ async def run_recog(request: Request):
         return _back(request, "/nhandien")
 
     picked = [str(e) for e in form.getlist("tap")]
+    lines = list(dict.fromkeys(s.strip() for s in str(form.get("sources", "")).splitlines()
+                               if s.strip()))
+    if action == "translate" and not picked and lines:
+        # ② ngay dưới ô Nguồn ở Home: ưu tiên nguồn vừa nhập khi chưa tick tập.
+        # Nhận diện là điều kiện để dịch; dùng lại bản đã có, kể cả khi yêu cầu
+        # làm lại bước ②. Runner tự tìm tập cũ theo manifest lúc đến lượt chạy.
+        core.remember_sources(lines)
+        plan = _plan_source_episodes(form, lines)
+        log(f"ℹ️ Chạy {len(lines)} nguồn trong ô Nguồn cho “{label}” "
+            "— tự nhận diện nếu chưa có bản tiếng Trung.")
+        queued: list[str] = []
+        for src, ep in zip(lines, plan):
+            prereq, err = steps_mod.build_steps(["recognize"], source=src, episode=ep)
+            if not err:
+                built, err = steps_mod.build_steps(chain, source=src, episode=ep, force=force)
+            if err:
+                log(f"⛔ {err}")
+                break
+            runner.enqueue(steps_mod.title_for(src, ep, chain), prereq + built)
+            queued.append(src)
+        core.drop_from_src_draft(queued)
+        return _back(request, "/nhandien")
+
     rows = core.episode_rows()
     if picked:
         targets = [r for r in rows if r["episode"] in picked]

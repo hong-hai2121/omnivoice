@@ -12,7 +12,9 @@
   <div class="actions col">
     <button class="primary" name="action" value="resume"{{ fa | safe }}>⏩ Chạy tiếp các bước còn thiếu</button>
     <span class="hint">Từng bước:</span>
-    <button name="action" value="translate"{{ fa | safe }} title="Dịch → tạo input.docx → gửi SEO rồi dừng; trong lúc chạy, máy rảnh 4 phút thì tự nhích chuột 1 px để màn hình không tắt">🌐 ② Dịch + input.docx + SEO</button>
+    <button name="action" value="translate"{{ fa | safe }} title="Chạy tập đã tick; chưa tick thì lấy ô Nguồn (tự nhận diện nếu cần), ô trống thì lấy tập đủ điều kiện. Dịch → input.docx → SEO rồi dừng.">🌐 ② Dịch + input.docx + SEO</button>
+    <span class="hint">②: ưu tiên tập đã tick; chưa tick thì chạy các link/file trong ô Nguồn,
+      tự nhận diện nếu cần. Ô Nguồn trống thì chạy các tập còn thiếu dịch/input.docx/SEO.</span>
     <button name="action" value="retranslate"{{ fa | safe }} title="Gửi từng đoạn (trống) của gemini_result.docx lên Gemini đúng một lần, ghi lại để kiểm">🔁 Dịch lại đoạn (Trống)</button>
     <button name="action" value="thumbnail"{{ fa | safe }}>🖼 ③ Tạo thumbnail (ngang + dọc)</button>
     <button name="action" value="tts"{{ fa | safe }}>🎬 ④ Tạo giọng + video</button>
@@ -28,8 +30,13 @@
      còn thiếu, hai lượt: lượt 1 nhận diện → dịch → input.docx → SEO cho MỌI tập,
      xong hết mới tới lượt 2 thumbnail → giọng + video (→ đăng); tập nào lượt 1 dịch
      chưa xong thì lượt 2 bỏ qua — không tick thì chạy mọi tập
-     còn việc. Các nút ②–⑤ bên dưới chạy đúng một bước (② gồm dịch →
-     input.docx → SEO); không tick = chạy hết tập đủ điều kiện. Trong lúc nhận diện/dịch/SEO/🔁, máy
+     còn việc. Kiểm cả video dọc, TikTok và Short theo các ô tạo video đang bật;
+     đã dựng đủ mà chưa đăng YouTube thì tiếp tục đăng khi bật “tự động đăng”.
+     Facebook còn thiếu cũng chạy tiếp khi bật tự động đăng Facebook;
+     đăng bù Short riêng thì cần tick tập.
+     Nút ② chạy dịch → input.docx → SEO; chưa tick thì dùng ô Nguồn và tự nhận diện
+     nếu cần, ô trống thì chạy hết tập đủ điều kiện. Các nút ③–⑤ chạy đúng bước
+     đã chọn; không tick = chạy hết tập đủ điều kiện. Trong lúc nhận diện/dịch/SEO/🔁, máy
      rảnh 4 phút thì tự nhích chuột 1 px cho màn hình khỏi tắt (màn hình tắt thì
      Chrome làm chậm tab Gemini → đoạn dịch thành trống). Bước dịch gửi mỗi đoạn Gemini đúng một lần: đoạn trống thì ghi
      “(trống)” rồi sang đoạn kế; gửi hết tập, các đoạn vừa trống được gửi lại

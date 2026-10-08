@@ -106,9 +106,9 @@ DONE_EXCLUDE = {"upload", "short", "facebook", "doc_cho_seo"}
 # lấy thumbnail dọc làm ảnh bìa → để dành tới khi có SEO. File đánh dấu này (runner
 # run_episode ghi/xoá) bảo ⏩ Chạy tiếp chạy lại bước "tts" để dựng nốt phần đó.
 DOC_CHO_SEO = "doc_cho_seo.txt"
-# Bước ĐĂNG LẺ có thể chạy riêng sau khi tập đã dựng + đăng xong (nút ⏩ Chạy tiếp
+# Bước ĐĂNG có thể chạy riêng sau khi tập đã dựng xong (nút ⏩ Chạy tiếp
 # xếp vào hàng đợi đăng, không đi qua run_episode.py như các bước dựng).
-POST_STEPS = ("short", "facebook")
+POST_STEPS = ("upload", "short", "facebook")
 # ⏩ Chạy tiếp đi HAI LƯỢT (04/10/2026): lượt 1 làm các bước này cho MỌI tập (việc cần
 # Gemini/màn hình sáng), xong hết mới tới lượt 2 — thumbnail → giọng + video → đăng.
 FRONT_STEPS = ("recognize", "translate", "input", "seo")
@@ -739,6 +739,8 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # cột trong bảng (STEP_LABELS), chỉ để missing_steps biết tập có gì để đăng
         # Page khi ô radio chọn "bản cắt ngắn" (fb_ban = ngan).
         "video_tiktok": _tiktok_video_exists(folder),
+        # File Short khác với cột "short" (biên nhận ĐÃ ĐĂNG Short).
+        "video_short": (folder / "short.mp4").is_file(),
         # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
         "upload": (folder / "youtube_upload.json").exists(),
         # Short: cùng bản ghi đó, chỉ khi có short_video_id (upload_short thành công;
@@ -844,18 +846,34 @@ def _facebook_posted(folder: Path, episode: str, source: str = "") -> bool:
         return (folder / "facebook_upload.json").exists()
 
 
-def missing_steps(steps: dict, fb_ban: str | None = None) -> list[str]:
+def tts_output_steps(options: dict | None = None) -> list[str]:
+    """Các đầu ra cần có theo đúng những tuỳ chọn dựng đang bật."""
+    opts = {**OPTS_DEFAULTS, **(load_options() if options is None else options)}
+    keys = ["audio"]
+    for option, key in (("make_video", "video_ngang"),
+                        ("make_video_doc", "video_doc"),
+                        ("make_tiktok", "video_tiktok")):
+        if opts.get(option):
+            keys.append(key)
+    # run_tts chỉ cắt Short bên trong bước dựng TikTok.
+    if opts.get("make_tiktok") and opts.get("make_short"):
+        keys.append("video_short")
+    return keys
+
+
+def missing_steps(steps: dict, fb_ban: str | None = None, *,
+                  options: dict | None = None, upload: bool = False) -> list[str]:
     """Các bước runner CÒN THIẾU của 1 tập, đúng thứ tự chạy — cho nút ⏩ Chạy tiếp
     (bản web của '▶ Chạy tiếp tập đang chọn' bên GUI). Nhận dict của folder_steps.
 
-    "tts" gộp giọng + video: chỉ cần thiếu audio HOẶC video ngang là phải chạy lại
-    bước đó — _batch_run_tts tự dùng lại phần đã có, chỉ render phần thiếu.
+    "tts" gộp giọng + các bản video đang bật — _batch_run_tts tự dùng lại phần đã
+    có, chỉ render phần thiếu. upload=True: tiếp tục cả lượt đăng chính còn dở.
     """
     out = [k for k in ("recognize", "translate", "input", "seo", "thumbnail")
            if not steps.get(k)]
     # doc_cho_seo: giọng + video ngang dựng lúc chưa có SEO → chạy lại "tts" để dựng
     # nốt video dọc/TikTok/Short (phần đã có được dùng lại) rồi mới tự đăng.
-    if not (steps.get("audio") and steps.get("video_ngang")) or steps.get("doc_cho_seo"):
+    if any(not steps.get(k) for k in tts_output_steps(options)) or steps.get("doc_cho_seo"):
         out.append("tts")
     # Chỉ khi KHÔNG còn bước dựng nào: việc đăng lẻ còn thiếu. Còn bước dựng thì
     # chuỗi dựng tự nối việc đăng (queue_after_build) nên không liệt vào đây.
@@ -866,7 +884,9 @@ def missing_steps(steps: dict, fb_ban: str | None = None) -> list[str]:
     #              nhiều tập thì truyền fb_ban đọc một lần, khỏi đọc file mỗi vòng.
     # Tập chưa đăng video chính thì Short đi kèm lượt đăng chính, không tách.
     if not out:
-        if steps.get("upload") and not steps.get("short"):
+        if upload and steps.get("video_ngang") and not steps.get("upload"):
+            out.append("upload")
+        elif steps.get("upload") and steps.get("video_short") and not steps.get("short"):
             out.append("short")
         ban = fb_ban if fb_ban is not None else facebook_ban()
         has_fb_video = steps.get("video_tiktok") if ban == "ngan" else steps.get("video_doc")
@@ -885,13 +905,16 @@ def episode_rows() -> list[dict]:
             by_episode[ep.zfill(2)] = {"source": entry.get("source", key),
                                        "updated": entry.get("updated", "")}
 
+    build_keys = ["recognize", "translate", "input", "seo", "thumbnail", *tts_output_steps()]
     rows = []
     for folder in gui.episode_dirs():
         ep = gui.episode_of(folder.name)
         info = by_episode.get(ep, {})
         pairs = translation_pairs(folder)
         steps = folder_steps(folder, ep, pairs, info.get("source", ""))
-        core_steps = {k: v for k, v in steps.items() if k not in DONE_EXCLUDE}
+        core_steps = {k: bool(steps.get(k)) for k in build_keys}
+        if steps.get("doc_cho_seo"):
+            core_steps["doc_cho_seo"] = False
         rows.append({
             "episode": ep,
             "name": folder.name,

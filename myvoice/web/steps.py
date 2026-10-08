@@ -268,7 +268,7 @@ def resume_steps(missing: list[str], source: str, episode: str,
     STOP_CODE). Dùng cho lượt 2 của ⏩: lượt 1 (dịch/input) xếp trước nhưng chạy
     trước bao lâu, kết quả ra sao thì lúc xếp chưa biết.
     """
-    # Bước đăng lẻ (Short / Facebook) không phải việc của run_episode.py — bên gọi
+    # Bước đăng (YouTube / Short / Facebook) không phải việc của run_episode.py — bên gọi
     # (_run_resume) xếp chúng vào hàng đợi đăng; lọc ở đây để không tạo lệnh sai.
     missing = [k for k in missing if k not in core.POST_STEPS]
     if not missing:

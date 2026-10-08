@@ -28,6 +28,23 @@
 })();
 
 
+// ── Home: gửi ô Nguồn cùng các nút chạy theo tập ───────────────────────────
+// Nút chạy theo tập thuộc #homebatch, còn ô Nguồn thuộc form Tạo kịch bản.
+// Chép giá trị đang hiển thị lúc tạo FormData (cả fetch lẫn submit thường),
+// không chờ bản nháp tự lưu và không dùng nguồn cũ khi người dùng vừa xoá ô.
+(function () {
+  const batch = document.getElementById('homebatch');
+  const sourceForm = document.querySelector('form[action="/kichban/chay"]');
+  if (!batch || !sourceForm) return;
+  batch.addEventListener('formdata', (e) => {
+    for (const name of ['sources', 'episode', 'epsrc', 'model', 'speed']) {
+      const field = sourceForm.elements.namedItem(name);
+      if (field) e.formData.set(name, field.value);
+    }
+  });
+})();
+
+
 // ── Home: bấm BẤT KỲ nút chạy nào là LƯU HẾT các khối cài đặt trên trang ─────
 // Home ghép 4 form riêng (quy trình · giọng nói & video · thumbnail · đăng), mà
 // trình duyệt chỉ gửi form chứa nút vừa bấm: sửa "Tăng tốc" bên khối Giọng nói
