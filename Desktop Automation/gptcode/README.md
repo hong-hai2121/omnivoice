@@ -24,7 +24,7 @@ Chrome sẽ báo quyền debugger và hiển thị thanh thông báo khi extensi
 với tab. Đó là cơ chế chính thức của Chrome. Không mở DevTools trên tab đang chạy
 vì có thể ngắt kết nối debugger. Khi nâng cấp mã, bấm Reload ở `chrome://extensions`
 rồi tải lại bảng điều khiển.
-Số phiên bản nằm cạnh tên bảng (hiện tại `v0.6.2`). Nhật ký khôi phục khi mở lại
+Số phiên bản nằm cạnh tên bảng (hiện tại `v0.6.4`). Nhật ký khôi phục khi mở lại
 được ghi rõ **Lần chạy trước**, không phải lỗi vừa phát sinh. Lần chạy mới thay
 nhật ký cũ và lưu thời điểm cùng phiên bản đã xử lý. Nếu vẫn thấy giao diện cũ,
 đóng bảng/cửa sổ tiện ích, Reload chính tiện ích rồi mở lại; F5 TikTok không cập nhật tiện ích.
@@ -275,6 +275,14 @@ Bạn có thể làm việc ở tab hoặc ứng dụng khác; giữ Chrome và 
 không để máy ngủ. Nút **Dừng** ngừng các thao tác tiếp theo, không hủy upload đã gửi
 hoặc xóa bản nháp trên TikTok.
 
+Bản 0.6.4 giữ trạng thái hoạt động ảo cho trang TikTok trong lúc điền bằng
+[`Emulation.setFocusEmulationEnabled`](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setFocusEmulationEnabled).
+Không chuyển tab/cửa sổ Chrome lên trước hoặc chiếm chuột, bàn phím Windows.
+Trạng thái này được gỡ khi hoàn tất, lỗi hoặc bấm Dừng. Nếu bấm vùng trống hay
+đổi vùng chọn ngay trong ô mô tả lúc chọn tiêu đề, tiện ích kiểm tra lại vùng chọn
+và thử điền lại một lần trên cùng video. Bấm vào nút/ô khác trong trang TikTok
+hoặc mở hộp thoại vẫn làm tiện ích dừng để không gửi phím vào sai chỗ.
+
 ## Khả năng và giới hạn
 
 - Đọc file qua đường dẫn tuyệt đối Windows, không sao chép video lớn qua bộ nhớ
@@ -284,8 +292,10 @@ hoặc xóa bản nháp trên TikTok.
   Mỗi hashtag được nhập sau một dấu cách (kể cả hashtag đầu), chờ ít nhất 1 giây
   rồi gửi Enter trong tab qua CDP. Lần lượt làm hết hashtag rồi mới bật lịch.
   Con trỏ được chuyển bằng Ctrl+End và phím mũi tên trong chính tab để trình soạn
-  thảo cập nhật vị trí, không đặt DOM Range vào token hashtag. Sau Enter chờ thêm
-  để token ổn định, đọc lại toàn bộ hashtag đã nhập; hashtag mất được thử bổ sung
+  thảo cập nhật vị trí, không đặt DOM Range vào token hashtag. Bản 0.6.3 chờ xử lý
+  phím di chuyển con trỏ và dấu cách trước khi nhập hashtag; trước/sau Enter đọc
+  liên tục đến khi nội dung và HTML token ổn định ít nhất 1 giây (tối đa 8 giây).
+  Đọc lại toàn bộ hashtag đã nhập; hashtag mất được thử bổ sung
   một lượt trước khi chuyển tiếp. Không lặp sửa vô hạn hoặc bỏ qua hashtag còn thiếu.
   Bản 0.5.9 chờ ô mô tả và nội dung ổn định ít nhất 1 giây trước khi điền.
   Theo dõi cả phần tử nhập và mã `data-editor` của Draft: nếu TikTok tạo lại ô
@@ -294,16 +304,16 @@ hoặc xóa bản nháp trên TikTok.
   Nếu focus chuyển sang nút/ô khác, có hộp thoại, video đổi hoặc ô tiếp tục bị
   tạo lại, dừng. Không gửi Enter khi chưa xác nhận focus ở ô mô tả. Nội dung vẫn
   được đọc lại; nếu Enter chọn sai gợi ý làm đổi hashtag, dừng trước khi đăng.
-- Kiểm tra riêng tiêu đề và hashtag, bỏ qua khác biệt khoảng trắng/ký tự zero-width
-  do token tạo ra. Theo lựa chọn của người dùng, khi **cả Đặt ngày giờ và Bấm Đăng /
-  Lên lịch đều bật**, tiêu đề chỉ lệch chút ít (khoảng trắng, dấu câu, bị cắt dưới 20%)
-  chỉ ghi cảnh báo và vẫn tiếp tục lên lịch/đăng. Từ bản 0.6.2, tiêu đề **trống hoặc
-  khác hẳn luôn dừng** trước nút Đăng (lỗi 2/10/2026: tập 117 suýt lên lịch chỉ có hashtag).
-  Thiếu/sai hashtag, bản nháp không xác định, ngày giờ sai hoặc tải chưa đủ 100%
-  vẫn dừng. Nhật ký hoàn tất giữ lại cảnh báo tiêu đề, không báo đã xác minh khớp.
-- Bản 0.6.2 đọc lại tiêu đề ngay sau khi nhập: chưa thấy thì xóa ô (Ctrl+A, Backspace)
-  và nhập lại, tối đa 3 lần, rồi mới nhập hashtag. Sau hashtag, nếu tiêu đề lại mất thì
-  xóa và điền lại toàn bộ tiêu đề + hashtag một lần; mất tiếp thì dừng, không bấm đăng.
+- Kiểm tra riêng tiêu đề và hashtag, chuẩn hóa Unicode và bỏ qua khác biệt khoảng
+  trắng/ký tự zero-width do token tạo ra. Bản 0.6.3 yêu cầu **đủ và đúng tiêu đề** ở
+  cả bước nhập lẫn bước trước đăng, kể cả khi bật Đặt ngày giờ + Bấm Đăng / Lên lịch.
+  Không chấp nhận tiêu đề bị cắt hoặc đổi dấu câu chỉ vì gần giống. Thiếu/sai hashtag,
+  bản nháp không xác định, ngày giờ sai hoặc tải chưa đủ 100% vẫn dừng.
+- Bản 0.6.3 luôn xóa ô bằng Ctrl+A, Backspace, chờ nội dung trống ổn định trước
+  khi nhập tiêu đề (kể cả lần đầu). Sau nhập chờ nội dung ổn định ít nhất 1 giây,
+  đọc lại đúng tiêu đề rồi mới nhập hashtag; chưa khớp thì thử lại, tối đa 3 lần.
+  Sau mỗi hashtag, nếu tiêu đề mất hoặc thay đổi thì xóa và điền lại toàn bộ
+  tiêu đề + hashtag một lần; vẫn sai thì dừng, không bấm đăng.
   Bật **Bấm Đăng / Lên lịch** mà dòng chưa có tiêu đề thì không chạy.
   Mỗi lần chạy (xong, lỗi hay bấm Dừng) lưu từng bước của ô mô tả vào `lastCaptionTrace`
   trong kho extension để tìm lúc TikTok làm mất tiêu đề.
@@ -342,7 +352,8 @@ hoặc xóa bản nháp trên TikTok.
   dung trước khi chia sẻ. Không có cookie, mật khẩu hoặc nội dung lưu trữ tài khoản.
   Khi lỗi xảy ra, extension cũng cố lưu chẩn đoán ngay tại thời điểm lỗi. Bấm
   **Tải chẩn đoán lỗi gần nhất** trong nhật ký để lấy `tiktok-dom-error.json`.
-  Chẩn đoán mô tả gồm nội dung/HTML, định danh ô, focus ở từng bước hashtag và ảnh chụp tab
+  Chẩn đoán mô tả gồm nội dung/HTML, định danh ô, focus của ô và trang, vùng chọn,
+  trạng thái hiển thị ở từng bước hashtag và ảnh chụp tab
   cùng phiên bản extension và các CSS selector tùy chỉnh của lần chạy lỗi.
   Ảnh chỉ được lưu khi Chrome cho phép, lấy tab TikTok được chọn qua CDP, không chụp màn hình
   ứng dụng khác. Kiểm tra nội dung trước khi chia sẻ file chẩn đoán.

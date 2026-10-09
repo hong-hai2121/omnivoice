@@ -133,6 +133,22 @@ test("finds upload and editor in open shadow DOM", async () => {
   assert.equal(await task("captionCheck", { text: "Test" }), true);
 });
 
+test('caption focus emulation also supports an upload editor in a cross-origin iframe', async () => {
+  const url = 'https://tiktok.com/focus-frame';
+  await context.route(url, route => route.fulfill({ contentType: 'text/html', body: fixture }));
+  try {
+    await tab.setContent(`<iframe src="${url}" style="width:600px;height:400px"></iframe>`);
+    await expect.poll(() => tab.frames().some(frame => frame.url() === url), { timeout: 8000 }).toBe(true);
+    const frame = tab.frames().find(frame => frame.url() === url);
+    await frame.locator('[role="textbox"]').waitFor();
+    const request = job(); request.row.hashtag = '#first';
+    const result = await message(request);
+    assert.equal(result.ok, true, result.error);
+    assert.match(await frame.locator('[role="textbox"]').innerText(), /^Test #first/);
+    assert.equal(await frame.locator('[type="file"]').evaluate(el => el.files.length), 1);
+  } finally { await context.unroute(url); }
+});
+
 test("opens a lazy upload control without a native file dialog", async () => {
   await tab.setContent(editor + `<button id="select">Select video</button><script>
     document.querySelector('#select').onclick=()=>{const f=document.createElement('input');f.type='file';f.accept='video/*';document.body.append(f);f.click()};
@@ -210,6 +226,104 @@ test("Enter is not sent when focus moves from the caption to a publish button", 
   const result = await message(request);
   assert.equal(result.ok, false); assert.match(result.error, /mất focus/);
   assert.equal(await tab.evaluate(() => window.clicks), 0);
+});
+
+test('caption input keeps page focus when the user switches tabs during title selection', async () => {
+  const probe = await context.newCDPSession(tab);
+  try {
+    // Remove focus emulation inherited from the browser test harness.
+    await probe.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+    await tab.evaluate(() => {
+      const editor = document.querySelector('[role="textbox"]');
+      editor.textContent = 'Old title';
+      window.selectAllCount = 0; window.inputFocus = [];
+      editor.onkeydown = event => { if (event.ctrlKey && event.key === 'a') window.selectAllCount++; };
+      editor.oninput = () => window.inputFocus.push(document.hasFocus());
+    });
+    await dashboard.evaluate(id => chrome.tabs.update(id, { active: true }), tabId);
+    const request = job(); request.row.hashtag = '#first #second';
+    const pending = message(request);
+    try {
+      await expect.poll(() => tab.evaluate(() => window.selectAllCount), { timeout: 8000, intervals: [20] }).toBeGreaterThan(0);
+      const otherId = await dashboard.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+      await dashboard.evaluate(id => chrome.tabs.update(id, { active: true }), otherId);
+      const result = await pending;
+      assert.equal(result.ok, true, result.error);
+      assert.equal(await task('captionCheck', { text: 'Test #first #second' }), true);
+      const focusSamples = await tab.evaluate(() => window.inputFocus);
+      assert.ok(focusSamples.length > 2);
+      assert.ok(focusSamples.every(Boolean), 'input must retain virtual page focus while another tab is active');
+      assert.equal(await dashboard.evaluate(async () => (await chrome.tabs.query({ active: true }))[0].id), otherId);
+    } finally { await message({ type: 'stop' }); await pending; }
+  } finally { await probe.detach(); }
+});
+
+test('clicking a blank area during title selection restarts caption entry on the same draft', async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.textContent = 'Old title';
+    let clicked = false;
+    editor.onkeydown = event => {
+      if (event.ctrlKey && event.key === 'a' && !clicked) {
+        clicked = true;
+        setTimeout(() => { editor.blur(); getSelection().removeAllRanges(); }, 30);
+      }
+    };
+  });
+  const request = job(); request.row.hashtag = '#first';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await task('captionCheck', { text: 'Test #first' }), true);
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+});
+
+test('a click changing the title selection is detected before Backspace can delete only part of it', async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.textContent = 'Old title';
+    let clicked = false;
+    window.partialDeletes = 0;
+    editor.onkeydown = event => {
+      if (event.key === 'Backspace' && getSelection().isCollapsed && editor.textContent) window.partialDeletes++;
+      if (event.ctrlKey && event.key === 'a' && !clicked) {
+        clicked = true;
+        setTimeout(() => getSelection().collapse(editor.firstChild, 4), 30);
+      }
+    };
+  });
+  const result = await message(job());
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await task('captionCheck', { text: 'Test' }), true);
+  assert.equal(await tab.evaluate(() => window.partialDeletes), 0);
+});
+
+test('stopping during caption entry releases focus emulation without activating the upload tab', async () => {
+  const otherId = await dashboard.evaluate(async () => (await chrome.tabs.getCurrent()).id);
+  await dashboard.evaluate(id => chrome.tabs.update(id, { active: true }), otherId);
+  const worker = context.serviceWorkers().find(worker => worker.url().includes(extensionId));
+  await worker.evaluate(() => {
+    globalThis.focusCommands = [];
+    globalThis.originalDebuggerCommand = chrome.debugger.sendCommand;
+    chrome.debugger.sendCommand = async function(target, method, params) {
+      const value = await globalThis.originalDebuggerCommand.call(this, target, method, params);
+      if (method === 'Emulation.setFocusEmulationEnabled') globalThis.focusCommands.push(params.enabled);
+      return value;
+    };
+  });
+  const request = job({ publish: true }); request.row.hashtag = '#first';
+  const pending = message(request);
+  try {
+    await expect.poll(() => worker.evaluate(() => globalThis.focusCommands.includes(true)), { timeout: 8000 }).toBe(true);
+    await message({ type: 'stop' });
+    const result = await pending;
+    assert.equal(result.ok, false); assert.match(result.error, /Da dung/);
+    assert.deepEqual(await worker.evaluate(() => globalThis.focusCommands), [true, false]);
+    assert.equal(await dashboard.evaluate(async () => (await chrome.tabs.query({ active: true }))[0].id), otherId);
+    assert.equal(await tab.evaluate(() => window.clicks), 0);
+  } finally {
+    await message({ type: 'stop' }); await pending;
+    await worker.evaluate(() => { chrome.debugger.sendCommand = globalThis.originalDebuggerCommand; delete globalThis.originalDebuggerCommand; delete globalThis.focusCommands; });
+  }
 });
 
 test('caption replacement while waiting for Enter is retried once on the same draft', async () => {
@@ -349,17 +463,129 @@ test("a lost hashtag gets one repair pass before advancing to the next hashtag",
   assert.equal(await task('captionCheck', { text: 'Test #first #second' }), true);
 });
 
-test("a near-identical title warns but still schedules and publishes when both options are selected", async () => {
+test("a near-identical title is retyped before adding hashtags", async () => {
   await tab.evaluate(() => {
     const editor = document.querySelector('[role="textbox"]');
-    editor.addEventListener('input', () => { if (editor.textContent === 'Test') editor.textContent = 'Test.'; });
+    let changed = false;
+    editor.addEventListener('input', () => {
+      if (!changed && editor.textContent === 'Test') { changed = true; editor.textContent = 'Test.'; }
+    });
+  });
+  const request = job(); request.row.hashtag = '#first';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await task('captionCheck', { text: 'Test #first' }), true);
+});
+
+test("a persistently truncated title cannot publish even when scheduling is enabled", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.oninput = () => {
+      if (editor.textContent === 'Full ở Mimi audio Số 117 | Tiêu đề cần giữ nguyên') {
+        editor.textContent = 'Full ở Mimi audio Số 117 | Tiêu đề cần giữ';
+      }
+    };
+  });
+  const request = job({ publish: true });
+  request.row.tieu_de = 'Full ở Mimi audio Số 117 | Tiêu đề cần giữ nguyên';
+  const result = await message(request);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Tiêu đề chưa khớp/);
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+});
+
+test("clears the old title and waits for the editor state before inserting its replacement", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.textContent = '[Full] fixture';
+    let cleared = false, ready = false;
+    editor.oninput = () => {
+      if (!editor.textContent.trim() && !cleared) {
+        cleared = true; setTimeout(() => { ready = true; }, 350);
+      } else if (editor.textContent.includes('Test') && !ready) {
+        editor.textContent = '[Full] fixture';
+      }
+    };
+  });
+  const result = await message(job());
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await task('captionCheck', { text: 'Test' }), true);
+  const { lastCaptionTrace } = await dashboard.evaluate(() => chrome.storage.local.get('lastCaptionTrace'));
+  assert.equal(lastCaptionTrace.trace.filter(step => /nhập tiêu đề|Đọc lại tiêu đề/.test(step.step)).length, 1);
+});
+
+test("waits for delayed title initialization before entering the first hashtag", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    let changed = false;
+    window.titlesBeforeTags = [];
+    editor.oninput = event => {
+      if (!changed && editor.textContent === 'Test') {
+        changed = true; setTimeout(() => { editor.textContent = '[Full] fixture'; }, 650);
+      }
+      if (event.data === '#first') window.titlesBeforeTags.push(editor.textContent);
+    };
+  });
+  const request = job(); request.row.hashtag = '#first';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.deepEqual(await tab.evaluate(() => window.titlesBeforeTags), ['Test #first']);
+  assert.equal(await task('captionCheck', { text: 'Test #first' }), true);
+});
+
+test("waits for a delayed hashtag commit before sending the next hashtag", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    window.tagCommits = 0;
+    editor.onkeydown = event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const text = editor.textContent;
+      setTimeout(() => { editor.textContent = text; window.tagCommits++; }, 650);
+    };
+  });
+  const request = job(); request.row.hashtag = '#first #second';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await tab.evaluate(() => window.tagCommits), 2);
+  assert.equal(await task('captionCheck', { text: 'Test #first #second' }), true);
+});
+
+test("repairs a title changed by Enter before adding any further hashtag", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    let changed = false;
+    window.tagInputs = [];
+    editor.oninput = event => {
+      if (event.data?.startsWith('#')) window.tagInputs.push(event.data);
+    };
+    editor.onkeydown = event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (!changed) { changed = true; editor.textContent = editor.textContent.replace('Test', 'Test.'); }
+    };
+  });
+  const request = job({ publish: true }); request.row.hashtag = '#first #second';
+  const result = await message(request);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(await task('captionCheck', { text: 'Test #first #second' }), true);
+  assert.deepEqual(await tab.evaluate(() => window.tagInputs), ['#first', '#first', '#second']);
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+});
+
+test("losing focus during title clearing stops before typing into another field", async () => {
+  await tab.evaluate(() => {
+    const editor = document.querySelector('[role="textbox"]');
+    editor.textContent = 'Old title';
+    editor.oninput = () => {
+      if (!editor.textContent) setTimeout(() => document.querySelector('#publish').focus(), 200);
+    };
   });
   const result = await message(job({ publish: true }));
-  assert.equal(result.ok, true, result.error);
-  assert.equal(await tab.evaluate(() => window.clicks), 1);
-  const progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
-  assert.equal(progress.status, 'done');
-  assert.ok(progress.log.some(line => line.includes('Cảnh báo: tiêu đề')));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /mất focus/);
+  assert.equal((await tab.locator('[role="textbox"]').innerText()).trim(), '');
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
 });
 
 test("a wiped or different title never publishes on a warning, even with both options", async () => {

@@ -1,6 +1,6 @@
 import { TabDriver } from "./driver.js";
 import { observeUpload } from "./upload.js";
-import { auditCaption } from "./caption.js";
+import { auditCaption, captionText } from "./caption.js";
 import { matchContentPost, postTitle, postEpisode } from './posts.js';
 import { pageTask } from "./dom.js";
 import { isTikTok, validateJob, episodeKey, statusGroup, TIKTOK_UPLOAD_URL, TIKTOK_CONTENT_URL } from "./model.js";
@@ -26,7 +26,6 @@ chrome.debugger.onDetach.addListener(source => {
 async function run(request, token) {
   const log = [];
   const captionTrace = [];
-  let titleWarning = false;
   let stage = "Kiểm tra dữ liệu";
   const report = async (status, message) => {
     log.push(new Date().toLocaleTimeString("vi-VN") + "  " + message);
@@ -62,13 +61,7 @@ async function run(request, token) {
     const state = auditCaption(value, request.row.tieu_de, tags);
     if (!state.present) throw new Error("Không thấy ô mô tả khi đọc lại.");
     if (!state.tagsMatch) throw new Error(`Hashtag chưa khớp. Thiếu: ${state.missing.join(" ") || "không"}; thừa/sai: ${state.extra.join(" ") || "không"}. Chưa bấm đăng.`);
-    if (!state.titleMatches) {
-      // Only a near-identical title may pass on a warning; a missing or different one never posts.
-      if (!state.titleClose) throw new Error(`Tiêu đề chưa khớp: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa bấm đăng.`);
-      if (!request.schedule || !request.publish) throw new Error("Tiêu đề chưa khớp sau khi điền. Kiểm tra nội dung trên TikTok.");
-      titleWarning = true;
-      await report("running", `Cảnh báo: tiêu đề khác nội dung dự kiến. Vẫn tiếp tục theo lựa chọn Đặt ngày giờ + Bấm Đăng / Lên lịch. Tiêu đề hiện tại: ${state.actualTitle}`);
-    }
+    if (!state.titleMatches) throw new Error(`Tiêu đề chưa khớp: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa bấm đăng.`);
     return value.text;
   };
   const waitFor = async (fn, timeout, message) => {
@@ -151,7 +144,7 @@ async function run(request, token) {
     const confirmation = receipt.postEvidence
       ? `Đã thấy đúng tiêu đề trong Nội dung: ${receipt.postEvidence.kind === 'scheduled' ? 'đã lên lịch' : 'đã đăng'} · ${receipt.postEvidence.stage} · ${receipt.postEvidence.url}`
       : (request.schedule ? 'TikTok da xac nhan len lich thanh cong.' : 'TikTok da xac nhan dang thanh cong.');
-    await report('done', confirmation + (titleWarning ? ' Có cảnh báo tiêu đề khác nội dung dự kiến.' : ''));
+    await report('done', confirmation);
   };
   try {
     await check();
@@ -238,6 +231,7 @@ async function run(request, token) {
       await report("running", "Da nap file. Dang cho o mo ta...");
     }
     stage = "Điền mô tả / hashtag";
+    await driver.keepPageActive();
     await waitFor(() => driver.findEditor(), 120_000, "Chua thay o mo ta. Kiem tra tai video / dang nhap, roi bam Dien tiep.");
     if (request.type === "prepare") await dom("draftMark", { video: request.row.video });
     if (request.publish && !await dom("draftCheck", { video: request.row.video })) throw new Error("Chua xac nhan ban nhap nay duoc nap tu video da chon. Khong tu dong dang; kiem tra video tren TikTok.");
@@ -246,6 +240,7 @@ async function run(request, token) {
     const sameEditor = (a, b) => a?.present && b?.present && a.editorId === b.editorId && a.editorKey === b.editorKey;
     const neutralFocus = state => !state.dialogOpen && (state.focused || ['BODY', 'HTML'].includes(state.active?.tag));
     const focusError = () => new Error("Ô mô tả đã mất focus hoặc có hộp thoại. Dừng để không gửi phím nhầm vào nút đăng / ô khác.");
+    const interruptedCaption = () => Object.assign(new Error("Vị trí nhập trong ô mô tả đã thay đổi do thao tác trên trang."), { code: 'CAPTION_INTERRUPTED' });
     let expectedEditor;
     const verifyEditor = async (focused = true) => {
       const state = await dom("captionSnapshot");
@@ -254,7 +249,11 @@ async function run(request, token) {
         const error = new Error("TikTok vừa tạo lại ô mô tả trong lúc điền.");
         error.code = 'CAPTION_REPLACED'; throw error;
       }
-      if (!state.editable || state.dialogOpen || (focused && !state.focused)) throw focusError();
+      if (!state.editable || state.dialogOpen) throw focusError();
+      if (focused && (!state.focused || !state.selection?.inside)) {
+        if (neutralFocus(state)) throw interruptedCaption();
+        throw focusError();
+      }
       return state;
     };
     const focusCaption = async (initial = false) => {
@@ -262,6 +261,20 @@ async function run(request, token) {
       if (!initial && !neutralFocus(state)) throw focusError();
       await dom("captionFocusOnly");
       await verifyEditor();
+    };
+    // React/Draft can commit an older value after a native key event. Read until
+    // the text AND token markup settle before sending the next edit.
+    const settleCaption = async (quietMs = 1000) => {
+      let previous = await verifyEditor(), stableSince = Date.now();
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        await sleep(150);
+        const state = await verifyEditor();
+        if (state.text !== previous.text || state.html !== previous.html) stableSince = Date.now();
+        previous = state;
+        if (Date.now() - stableSince >= quietMs) return state;
+      }
+      throw new Error("Ô mô tả vẫn đang cập nhật. Chưa nhập thêm nội dung; chờ TikTok ổn định rồi Điền tiếp.");
     };
     const stableCaption = async () => {
       let previous, stableSince = 0;
@@ -280,39 +293,53 @@ async function run(request, token) {
       await focusCaption();
       // Native selection events keep the editor's internal caret outside hashtag entities.
       await key("End", "End", 35, 2);
+      await sleep(150);
       await verifyEditor();
       await key("ArrowRight", "ArrowRight", 39);
+      await sleep(150);
       await verifyEditor();
       await key(" ", "Space", 32, 0, " ");
+      await sleep(150);
       await verifyEditor();
       await command("Input.insertText", { text: tag });
       await snapshot("Đã nhập " + tag);
-      await sleep(1000);
+      await settleCaption();
       await snapshot("Trước Enter " + tag);
       await verifyEditor();
       await key("Enter", "Enter", 13, 0, "\r");
-      await sleep(350);
+      await settleCaption();
       const value = await snapshot("Sau Enter " + tag);
       await verifyEditor(false);
       return value;
     };
-    // TikTok has wiped a freshly typed title (2/10, tập 117): read it back and retype it
-    // before any hashtag, instead of finding out only at the final check.
+    // Always clear first, including the initial attempt: replacing a selection in
+    // one insertText can leave Draft's previous title/entity state behind.
     const typeTitle = async () => {
-      const title = request.row.tieu_de.trim();
+      const title = request.row.tieu_de.normalize("NFC").trim();
       for (let tries = 0; ; tries++) {
+        await focusCaption();
         await key("a", "KeyA", 65, 2);
-        await verifyEditor();
-        if (tries) { await key("Backspace", "Backspace", 8); await verifyEditor(); }
-        await command("Input.insertText", { text: title });
-        await verifyEditor();
-        await sleep(500);
+        await sleep(150);
+        const selected = await verifyEditor();
+        if (captionText(selected.text) !== captionText(selected.selection.text)) throw interruptedCaption();
+        await key("Backspace", "Backspace", 8);
+        const cleared = await settleCaption(500);
+        // Never append a title to text that the editor failed to delete.
+        if (!captionText(cleared.text)) {
+          await command("Input.insertText", { text: title });
+          await settleCaption();
+        }
         const state = auditCaption(await snapshot(tries ? `Đọc lại tiêu đề (lần ${tries + 1})` : "Sau khi nhập tiêu đề"), title, []);
-        if (state.titleClose && !state.actualTags.length) return;
+        if (state.titleMatches && !state.actualTags.length) return;
         if (tries >= 2) throw new Error(`Tiêu đề chưa khớp sau ${tries + 1} lần nhập: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa nhập hashtag, chưa bấm đăng.`);
         await report("running", `Tiêu đề chưa vào ô mô tả (đang có "${state.actualTitle || "trống"}"). Xóa và nhập lại lần ${tries + 2}.`);
         await focusCaption();
       }
+    };
+    const verifyTitle = state => {
+      if (state.titleMatches) return;
+      const error = new Error(`Tiêu đề bị mất sau khi nhập hashtag hoặc đã thay đổi: ô mô tả đang có "${state.actualTitle || "(trống)"}".`);
+      error.code = 'TITLE_LOST'; throw error;
     };
     for (let attempt = 0; attempt < 2; attempt++) {
       expectedEditor = await stableCaption();
@@ -326,33 +353,36 @@ async function run(request, token) {
           completed.push(tag);
           let value = await appendTag(tag);
           let state = auditCaption(value, request.row.tieu_de, completed);
+          verifyTitle(state);
           // One bounded repair pass; never keep appending duplicates to a broken editor.
           if (state.missing.length && !state.extra.length) {
             await report("running", "Nhập lại hashtag bị mất: " + state.missing.join(" "));
             for (const missing of state.missing) value = await appendTag(missing);
             state = auditCaption(value, request.row.tieu_de, completed);
+            verifyTitle(state);
           }
           if (!state.tagsMatch) throw new Error(`Sau Enter ${tag}, hashtag chưa được giữ đủ. Thiếu: ${state.missing.join(" ")}; thừa/sai: ${state.extra.join(" ")}. Đã lưu từng bước để kiểm tra.`);
         }
         await verifyEditor(false);
         const filled = auditCaption(await snapshot("Kiểm tra tiêu đề sau hashtag"), request.row.tieu_de, tags);
-        if (!filled.titleClose) {
-          const error = new Error(`Tiêu đề bị mất sau khi nhập hashtag: ô mô tả đang có "${filled.actualTitle || "(trống)"}".`);
-          error.code = 'TITLE_LOST'; throw error;
-        }
+        verifyTitle(filled);
         await checkCaption("Sau khi điền", tags);
         break;
       } catch (error) {
-        if (!['CAPTION_REPLACED', 'TITLE_LOST'].includes(error.code)) throw error;
+        if (!['CAPTION_REPLACED', 'TITLE_LOST', 'CAPTION_INTERRUPTED'].includes(error.code)) throw error;
         const lost = error.code === 'TITLE_LOST';
-        await snapshot(lost ? "Tiêu đề bị mất" : "Ô mô tả bị tạo lại");
-        if (attempt) throw new Error(lost ? `${error.message} Đã điền lại một lần vẫn mất. Chưa bấm đăng.` : "TikTok tiếp tục tạo lại ô mô tả sau một lần thử lại. Chưa bấm đăng; chờ trang ổn định rồi Điền tiếp.");
+        const interrupted = error.code === 'CAPTION_INTERRUPTED';
+        await snapshot(lost ? "Tiêu đề bị mất" : interrupted ? "Vị trí nhập bị thay đổi" : "Ô mô tả bị tạo lại");
+        if (attempt) throw new Error(lost ? `${error.message} Đã điền lại một lần vẫn mất. Chưa bấm đăng.` : interrupted
+          ? "Vị trí nhập tiếp tục bị thay đổi trong tab TikTok. Giữ bản nháp; bấm Điền tiếp khi xong thao tác trên trang."
+          : "TikTok tiếp tục tạo lại ô mô tả sau một lần thử lại. Chưa bấm đăng; chờ trang ổn định rồi Điền tiếp.");
         if (!lost && (!knownDraft || !await dom("draftCheck", { video: request.row.video }))) throw new Error("Video trong bản nháp đã đổi hoặc chưa được xác nhận. Không tự điền lại mô tả.");
         await report("running", lost ? "Tiêu đề bị mất sau khi nhập hashtag. Xóa ô mô tả, điền lại tiêu đề và hashtag một lần."
+          : interrupted ? "Thao tác trên trang vừa đổi vị trí nhập. Điền lại tiêu đề và hashtag một lần trên cùng video."
           : "TikTok vừa tạo lại ô mô tả. Chờ ổn định rồi điền lại tiêu đề và hashtag một lần trên cùng video.");
       }
     }
-    await report("running", "Đã điền và đọc lại mô tả/hashtag." + (titleWarning ? " Có cảnh báo tiêu đề." : ""));
+    await report("running", "Đã điền và đọc lại đúng tiêu đề/hashtag.");
     if (tags.length) await report("running", `Hashtag: đã nhập ${tags.length} mục, mỗi mục cách trước, chờ 1 giây rồi Enter; đã đọc lại nội dung.`);
     if (request.schedule) {
       stage = "Bật lên lịch";

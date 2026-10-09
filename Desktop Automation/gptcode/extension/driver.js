@@ -7,6 +7,7 @@ export class TabDriver {
   constructor(tabId, check, selectors = {}) {
     this.tabId = tabId; this.check = check; this.selectors = selectors;
     this.contexts = new Map(); this.sessions = new Set([""]); this.current = null;
+    this.focusSessions = new Set(); this.keepFocus = false;
     this.listener = (source, method, params) => {
       if (source.tabId !== this.tabId) return;
       const sessionId = source.sessionId || "";
@@ -41,8 +42,25 @@ export class TabDriver {
   }
   async close() {
     chrome.debugger.onEvent.removeListener(this.listener);
+    // Cleanup must bypass command()/check(): Stop and navigation also release focus.
+    for (const sessionId of this.focusSessions) {
+      await chrome.debugger.sendCommand({ tabId: this.tabId, ...(sessionId ? { sessionId } : {}) },
+        "Emulation.setFocusEmulationEnabled", { enabled: false }).catch(() => {});
+    }
+    this.focusSessions.clear(); this.keepFocus = false;
     if (this.attached) await chrome.debugger.detach({ tabId: this.tabId }).catch(() => {});
     this.attached = false;
+  }
+  async emulateFocus(sessionId = "") {
+    if (this.focusSessions.has(sessionId)) return;
+    await this.command("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
+    this.focusSessions.add(sessionId);
+  }
+  async keepPageActive() {
+    // Virtual page focus; never activate a Chrome tab/window or move the OS focus.
+    this.keepFocus = true;
+    await this.emulateFocus();
+    if (this.current?.sessionId) await this.emulateFocus(this.current.sessionId);
   }
   async command(method, params = {}, sessionId = "") {
     await this.check();
@@ -79,7 +97,9 @@ export class TabDriver {
     const candidates = (await this.probes()).filter(item => item.info.caption);
     if (candidates.length > 1) throw new Error("Có nhiều khung mô tả. Chỉ giữ một bản nháp TikTok đang mở.");
     if (!candidates.length) return false;
-    this.current = candidates[0].context; return true;
+    this.current = candidates[0].context;
+    if (this.keepFocus) await this.emulateFocus(this.current.sessionId);
+    return true;
   }
   async fileInput() {
     const probes = await this.probes();

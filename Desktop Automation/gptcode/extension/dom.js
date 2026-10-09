@@ -31,15 +31,22 @@ export function pageTask(action, data = {}) {
     const active = activeElement();
     const state = { present: !!el, text: "", focused: captionFocused(el),
       active: active ? { tag: active.tagName, role: active.getAttribute('role'), id: active.id } : null,
+      pageFocused: document.hasFocus(), visibility: document.visibilityState,
       dialogOpen: all('[role="dialog"], [aria-modal="true"], dialog[open]').some(visible) };
     if (!el) return state;
     const identities = globalThis.__omniVoiceCaptionNodes ||= new WeakMap();
     if (!identities.has(el)) identities.set(el, crypto.randomUUID());
-    const selection = getSelection();
+    const selection = el.getRootNode().getSelection?.() || getSelection();
+    const nativeInput = el.matches('textarea, input');
+    const selectionInside = nativeInput || (!!selection?.rangeCount &&
+      el.contains(selection.anchorNode) && el.contains(selection.focusNode));
     return { ...state, text: el.value ?? el.innerText, html: el.isContentEditable ? el.innerHTML.slice(0, 30_000) : undefined,
       editorId: identities.get(el), editorKey: el.getAttribute('data-editor') || el.querySelector('[data-editor]')?.getAttribute('data-editor') || null,
       editable: el.isContentEditable || (el.matches('textarea, input') && !el.disabled && !el.readOnly),
-      selection: { collapsed: selection?.isCollapsed, anchorOffset: selection?.anchorOffset, focusOffset: selection?.focusOffset } };
+      selection: { inside: selectionInside, text: nativeInput ? el.value.slice(el.selectionStart, el.selectionEnd) : selection?.toString(),
+        collapsed: nativeInput ? el.selectionStart === el.selectionEnd : selection?.isCollapsed,
+        anchorOffset: nativeInput ? el.selectionStart : selection?.anchorOffset,
+        focusOffset: nativeInput ? el.selectionEnd : selection?.focusOffset } };
   };
   // "Bay gio" is a radio label, not a time input.
   const fields = () => all('input').filter(el => ['text', 'date', 'time'].includes(el.type) &&
