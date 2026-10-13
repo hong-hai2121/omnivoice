@@ -4,7 +4,8 @@
 Quy trình 4 bước, mỗi bước là một script CLI có sẵn trong myvideo/ — web chỉ
 xếp lệnh vào hàng đợi, không import logic nặng nào:
   ① video_chamlai_srt.py  chậm video + SRT tiếng gốc (luôn kèm --no-dich: dịch là bước ②)
-  ② dich_srt.py           SRT gốc → SRT Việt qua Gemini (Firefox phải ĐÓNG)
+  ② dich_srt.py           SRT gốc → SRT Việt qua Gemini (Chrome Extension,
+                          Firefox dự phòng — gemini_backend dùng chung myvoice)
   ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
                           — cả vẽ sub, che mờ lẫn thay tiếng đều bỏ được
@@ -41,7 +42,10 @@ if str(BASE_DIR) not in sys.path:
 import kenh_hoso  # noqa: E402
 
 ORDER = ["cham", "dich", "giong", "gan"]
-NUM = {"cham": "①", "dich": "②", "giong": "③", "gan": "④"}
+# seo/thumb không nằm trong chuỗi ①→④ (ORDER) nhưng CÓ trong danh sách "còn
+# thiếu" của nút ⏩ — giống bảng tập bên myvoice tính cả SEO + thumbnail.
+NUM = {"cham": "①", "dich": "②", "giong": "③", "gan": "④",
+       "seo": "📑", "thumb": "🖼"}
 # Tiếng GỐC của video (ô chọn trên trang) — quyết định Whisper nhận diện tiếng gì
 # ở bước ① và số chữ/dòng SRT. Bước ② KHÔNG cần biết: dich_srt.py tự đoán từ
 # chính file SRT nó đọc — chạy lẻ bước ② cho video cũ vẫn đúng tiếng của nó.
@@ -51,6 +55,8 @@ LABELS = {
     "dich": "② Dịch Gemini → SRT tiếng Việt",
     "giong": "③ Giọng OmniVoice + xếp timeline",
     "gan": "④ Vẽ sub cứng + thay tiếng",
+    "seo": "📑 Sinh SEO (Gemini)",
+    "thumb": "🖼 Vẽ thumbnail",
 }
 
 _XTAG = re.compile(r"_x\d+(?:\.\d+)?")
@@ -154,21 +160,32 @@ def _flags(base: str) -> dict:
 
 
 def missing_steps(r: dict, thaytieng: bool, vesub: bool = True) -> tuple[list[str], str]:
-    """→ (các bước còn thiếu theo thứ tự chạy, lý do nếu KHÔNG chạy tiếp được)."""
+    """→ (các bước còn thiếu theo thứ tự chạy, lý do nếu KHÔNG chạy tiếp được).
+
+    13/10/2026 — giống bảng tập bên myvoice: tính cả 📑 SEO và 🖼 thumbnail vào
+    danh sách còn thiếu, và xếp việc cần Gemini/màn hình sáng (dịch, SEO) lên
+    TRƯỚC việc GPU (giọng, video) như ⏩ hai lượt bên đó. Đăng YouTube/Facebook
+    vẫn KHÔNG vào ⏩ — tự đăng có ô bật/tắt riêng (mặc định TẮT)."""
     miss = []
     if not r["vi"]:
         miss.append("dich")
+    if not r["seo"]:
+        miss.append("seo")
+    if not r["thumb"]:
+        miss.append("thumb")
     if thaytieng and not r["audio"]:
         miss.append("giong")
     if not r["sub"]:
         miss.append("gan")
     if not miss:
         return [], ""
-    # Bước đầu chuỗi phải có sẵn đầu vào; các bước sau do bước trước sinh ra.
-    if miss[0] == "dich" and not r["srt"]:
+    # Bước đầu chuỗi phải có sẵn đầu vào; các bước sau do bước trước sinh ra
+    # (SEO cần _vi.srt — bước dịch đứng trước trong cùng chuỗi sinh ra nó).
+    if "dich" in miss and not r["srt"]:
         return [], "thiếu SRT tiếng gốc — chạy lại bước ① từ file nguồn"
-    if "gan" in miss and not r["video"]:
-        miss.remove("gan")
+    if not r["video"]:
+        # Thumbnail bắt khung hình từ video ① — thiếu video thì bước ④ cũng chịu.
+        miss = [k for k in miss if k not in ("thumb", "gan")]
         if not miss:
             return [], "thiếu video _x….mp4 — chạy lại bước ① từ file nguồn"
     if "gan" in miss and not (vesub or thaytieng):
@@ -277,6 +294,14 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                 argv += ["--voice", s["voice"]]
             if s.get("redotts"):
                 argv.append("--redo-tts")
+        elif k == "seo":
+            # Trong chuỗi ⏩: SEO đứng ngay sau dịch (cùng cần Gemini/màn hình
+            # sáng), script tự bỏ qua video đã có SEO nên chạy lại vô hại.
+            argv = [_python(), "-u", str(BASE_DIR / "seo_video.py"),
+                    "--base", _base_rel(base)]
+        elif k == "thumb":
+            argv = [_python(), "-u", str(BASE_DIR / "thumbnail_video.py"),
+                    "--base", _base_rel(base)]
         else:                                   # gan
             # Ba việc của bước ④ bỏ được từng cái: vẽ sub · che mờ sub gốc ·
             # thay tiếng. Bỏ cả vẽ sub lẫn che mờ thì script giữ nguyên hình
@@ -432,9 +457,11 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
 
 
 def resume(base: str, s: dict) -> tuple[str, list[Step], str]:
-    """Nút ⏩ của bảng: chạy liền mạch các bước còn thiếu của một gốc."""
+    """Nút ⏩ của bảng: chạy liền mạch các bước còn thiếu của một gốc
+    (kể cả 📑 SEO + 🖼 thumbnail — như ⏩ Chạy tiếp bên myvoice)."""
     r = _flags(base)
-    miss, err = missing_steps(r, s.get("thaytieng", True))
+    miss, err = missing_steps(r, s.get("thaytieng", True),
+                              vesub=bool(s.get("vesub", True)))
     if err:
         return "", [], f"{base}: {err}."
     if not miss:
@@ -454,9 +481,10 @@ def single(base: str, key: str, s: dict) -> tuple[str, list[Step], str]:
 
 
 # ── Khâu SAU DỰNG: SEO · thumbnail · đăng YouTube · lên lịch Facebook ────────
-# SEO đi HÀNG ĐỢI CHÍNH (dùng Firefox — chạy song song với bước ② là giẫm
-# profile); thumbnail cũng hàng chính (ffmpeg). Đăng YouTube/Facebook đi hai
-# hàng đợi riêng (jobs.q_dang / jobs.q_fb) vì chỉ tốn băng thông.
+# SEO đi HÀNG ĐỢI CHÍNH (dùng chung phiên Gemini — extension/Firefox — với
+# bước ②, chạy song song là giẫm nhau); thumbnail cũng hàng chính (ffmpeg).
+# Đăng YouTube/Facebook đi hai hàng đợi riêng (jobs.q_dang / jobs.q_fb) vì chỉ
+# tốn băng thông.
 def seo_steps(bases: list[str], force: bool = False) -> tuple[str, list[Step]]:
     argv = [_python(), "-u", str(BASE_DIR / "seo_video.py")]
     for b in bases:

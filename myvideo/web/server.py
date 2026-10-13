@@ -4,12 +4,13 @@
 Chạy:  myvideo\\chay.bat      (hoặc)
        venv\\Scripts\\python.exe -m myvideo.web.server
 
-Một trang, xếp theo thứ tự làm việc: hàng đợi → nguồn & tuỳ chọn → bốn khối
-bước ①②③④ (bấm nút bước nào chạy từ bước đó, ô ⛓ quyết định nối tiếp) →
-bảng trạng thái từng video với nút ⏩ chạy tiếp các bước còn thiếu.
+Một trang, xếp theo thứ tự làm việc: hàng đợi → nguồn & tuỳ chọn → bảng trạng
+thái từng video (nút ⏩ chạy tiếp các bước còn thiếu, 🗑 xoá cả video trong
+output) → bốn khối bước ①②③④ (bấm nút bước nào chạy từ bước đó, ô ⛓ quyết
+định nối tiếp).
 
-Hàng đợi tái dùng JobRunner của myvoice (một worker — GPU/Firefox/ffmpeg đều
-độc quyền, chạy song song chỉ giẫm chân nhau). Server điều khiển máy thật nên
+Hàng đợi tái dùng JobRunner của myvoice (một worker — GPU/phiên Gemini/ffmpeg
+đều độc quyền, chạy song song chỉ giẫm chân nhau). Server điều khiển máy thật nên
 CHỈ nghe 127.0.0.1, kèm token trong cookie — giống hệt myvoice/web/server.py.
 """
 
@@ -56,6 +57,10 @@ _MYVOICE_SCRIPTS = str(REPO_ROOT / "myvoice" / "scripts")
 if _MYVOICE_SCRIPTS not in sys.path:
     sys.path.insert(0, _MYVOICE_SCRIPTS)
 import kieusub                       # noqa: E402
+# Cách dịch Gemini (Chrome Extension mặc định · Firefox dự phòng) DÙNG CHUNG
+# với myvoice: một lựa chọn trong myvoice/taogiong_pipeline.json cho cả hai
+# bảng — dich_gemini (bước ② + SEO) tự đọc từ đó, đổi ở web nào cũng là một.
+import gemini_backend                # noqa: E402
 OUTPUT_DIR = st.OUTPUT_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
 SETTINGS_FILE = WEB_DIR / "web_settings.json"
@@ -527,6 +532,8 @@ async def index(request: Request):
     tt = {v: i for i, v in enumerate(vs)}
     return templates.TemplateResponse(request, "index.html", {
         "settings": s,
+        # Cách dịch Gemini đã lưu (dùng chung với myvoice) — cho hai ô ở khối ②.
+        "gemini_backend": gemini_backend.saved_backend(),
         "voices": [{"ten": v, "i": tt[v], "sao": v in stars}
                    for v in stars + [v for v in vs if v not in stars]],
         "voice_stars": stars,
@@ -824,6 +831,11 @@ def _settings_from_form(form) -> dict:
     if "voice_stars" in form:
         s["voice_stars"] = [x.strip() for x in (g("voice_stars") or "").splitlines()
                             if x.strip()]
+    # Cách dịch Gemini KHÔNG nằm trong web_settings.json của myvideo: nó là lựa
+    # chọn dùng chung hai bảng, ghi thẳng vào myvoice/taogiong_pipeline.json
+    # (set_backend chỉ đụng đúng khoá này, giữ nguyên cài đặt khác của myvoice).
+    if g("gemini_backend") in ("extension", "firefox"):
+        gemini_backend.set_backend(g("gemini_backend"))
     return s
 
 
@@ -1175,9 +1187,10 @@ async def seo_chay(request: Request):
     if not chon:
         return _tra(request, "Chưa chọn video nào để sinh SEO.")
     title, job_steps = st.seo_steps(chon, force=bool(form.get("force")))
-    # Hàng đợi CHÍNH: SEO dùng Firefox, chạy song song bước ② là giẫm profile.
+    # Hàng đợi CHÍNH: SEO dùng chung phiên Gemini (extension/Firefox) với bước ②
+    # — chạy song song là giẫm nhau nên phải xếp nối tiếp.
     q.enqueue(title, job_steps)
-    return _tra(request, ok=f"Đã xếp: {title} — dùng Firefox nên xếp ở hàng đợi chính")
+    return _tra(request, ok=f"Đã xếp: {title} — dùng Gemini nên xếp ở hàng đợi chính")
 
 
 @app.post("/thumb")

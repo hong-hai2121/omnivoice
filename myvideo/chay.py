@@ -263,7 +263,8 @@ def _run_launcher(port: int) -> int:
         log(f"🌐 Sẵn sàng: {url_var.get()}")
         # Tự mở luôn — khỏi phải bấm nút; nút '🌐 Mở link web' để mở LẠI khi cần.
         _open()
-        log("⚠️ Nhớ ĐÓNG Firefox trước khi chạy video có bước dịch Gemini.")
+        log("🧩 Bước dịch Gemini đi qua Chrome Extension (như myvoice) — giữ Chrome "
+            "đã đăng nhập Gemini mở; không kết nối được thì tự mở Firefox thay.")
 
     def _poll(n: int = 0) -> None:
         if _port_busy(port):

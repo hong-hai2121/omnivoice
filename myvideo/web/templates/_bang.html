@@ -1,16 +1,18 @@
 {# Bảng trạng thái từng video trong output + danh sách file mới — cần rows,
    files, output_dir. Khối này được htmx làm mới 5 giây/lần.
 
-   Mọi nút ở đây đi qua htmx: server trả về khối hàng đợi (vào #queue) kèm bảng
-   này và lời nhắn — bấm nút nào trang cũng KHÔNG tải lại. Thẻ <form> giữ lại
-   làm đường lui khi không có JS; onsubmit=confirm cũng chỉ dành cho đường lui
-   đó, còn htmx hỏi bằng hx-confirm. #}
+   13/10/2026: khối đã DỜI LÊN trước "Các bước" (nằm TRONG #mainform) nên không
+   được chứa <form> con nữa (form lồng form là HTML sai, trình duyệt tự bóc thẻ
+   trong). Mọi nút là type="button" + hx-post/hx-vals (htmx gửi hx-vals như
+   form-urlencoded nên route Form(...) nhận y như cũ); trang xem (/timeline,
+   /vungsub) là GET nên dùng thẳng thẻ <a>. Server trả về khối hàng đợi (vào
+   #queue) kèm bảng này và lời nhắn — bấm nút nào trang cũng KHÔNG tải lại. #}
 <div class="panel">
   <div class="phead">
     <b>📼 Video trong output — bước nào xong, bước nào thiếu</b>
     <span class="spacer"></span>
-    <form method="post" action="/mo-thumuc"><button class="ghost"
-      hx-post="/mo-thumuc" hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button></form>
+    <button type="button" class="ghost"
+      hx-post="/mo-thumuc" hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button>
   </div>
   {% if rows %}
   <div class="tablewrap">
@@ -22,6 +24,8 @@
           <th>② SRT Việt</th>
           <th>③ Giọng + xếp</th>
           <th>④ Video sub</th>
+          <th title="Tiêu đề + mô tả + tag sinh bằng Gemini — nguồn caption khi đăng">📑 SEO</th>
+          <th title="Ảnh bìa từ khung hình video + tiêu đề SEO">🖼 Thumb</th>
           <th title="Soát tự động: câu còn sót chữ Hán trong bản dịch · câu bị xếp lệch mốc quá 3 giây">🚨 Soát</th>
           <th>Làm tiếp</th>
           <th>Chạy lại</th>
@@ -40,16 +44,16 @@
                href="/nghe/ketqua?base={{ r.base | urlencode }}"
                title="Nghe audio tiếng Việt đã xếp — duyệt giọng TRƯỚC khi dựng bước ④">🔊</a>{% endif %}</td>
           <td class="{{ 'okc' if r.sub else 'no' }}">{{ '✔' if r.sub else '—' }}</td>
+          <td class="{{ 'okc' if r.seo else 'no' }}">{{ '✔' if r.seo else '—' }}</td>
+          <td class="{{ 'okc' if r.thumb else 'no' }}">{{ '✔' if r.thumb else '—' }}</td>
           {# 🚨 Soát HAI BẬC: sót Hán / lệch >10s → ⚠️ đỏ; lệch 3-10s → ghi chú
              mờ (bộ xếp chống đè lệch vài giây là thường). Bấm được thì mở
              timeline xếp audio để xem đúng chỗ. #}
           <td>
             {% if r.soat and r.soat.loi %}
               {% if r.tl %}
-                <form method="get" action="/timeline" style="display:inline">
-                  <input type="hidden" name="base" value="{{ r.base }}">
-                  <button class="ghost small" title="{{ (r.soat.loi + r.soat.nhe) | join(' · ') }}">⚠️</button>
-                </form>
+                <a class="ghost small" href="/timeline?base={{ r.base | urlencode }}"
+                   title="{{ (r.soat.loi + r.soat.nhe) | join(' · ') }}">⚠️</a>
               {% else %}
                 <span title="{{ (r.soat.loi + r.soat.nhe) | join(' · ') }}">⚠️</span>
               {% endif %}
@@ -60,52 +64,37 @@
           </td>
           <td>
             {% if r.missing %}
-              <form method="post" action="/tiep">
-                <input type="hidden" name="base" value="{{ r.base }}">
-                <button class="small" hx-post="/tiep" hx-include="closest form"
-                        hx-target="#queue" hx-swap="innerHTML"
-                        hx-disabled-elt="this">⏩ {{ r.missing_label }}</button>
-              </form>
+              <button type="button" class="small" hx-post="/tiep"
+                      hx-vals='{{ {"base": r.base} | tojson }}'
+                      hx-target="#queue" hx-swap="innerHTML"
+                      hx-disabled-elt="this">⏩ {{ r.missing_label }}</button>
             {% elif r.resume_err %}
               <span title="{{ r.resume_err }}">⚠️</span>
             {% else %}✅{% endif %}
           </td>
           <td>
             {% for k in ['dich', 'giong', 'gan'] %}
-              <form method="post" action="/buoc" style="display:inline">
-                <input type="hidden" name="base" value="{{ r.base }}">
-                <input type="hidden" name="key" value="{{ k }}">
-                <button class="ghost small" hx-post="/buoc" hx-include="closest form"
-                        hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
-                        title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
-                  {'dich':'②','giong':'③','gan':'④'}[k] }}</button>
-              </form>
+              <button type="button" class="ghost small" hx-post="/buoc"
+                      hx-vals='{{ {"base": r.base, "key": k} | tojson }}'
+                      hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                      title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
+                {'dich':'②','giong':'③','gan':'④'}[k] }}</button>
             {% endfor %}
             {% if r.tl %}
-              <form method="get" action="/timeline" style="display:inline">
-                <input type="hidden" name="base" value="{{ r.base }}">
-                <button class="ghost small"
-                        title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</button>
-              </form>
+              <a class="ghost small" href="/timeline?base={{ r.base | urlencode }}"
+                 title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</a>
             {% endif %}
             {% if r.video %}
-              <form method="get" action="/vungsub" style="display:inline">
-                <input type="hidden" name="base" value="{{ r.base }}">
-                <button class="ghost small"
-                        title="Sửa VÙNG CHE sub gốc bằng mắt — kéo dải trên khung hình thật thay vì đoán số trong _vungsub.json">🫥</button>
-              </form>
+              <a class="ghost small" href="/vungsub?base={{ r.base | urlencode }}"
+                 title="Sửa VÙNG CHE sub gốc bằng mắt — kéo dải trên khung hình thật thay vì đoán số trong _vungsub.json">🫥</a>
             {% endif %}
           </td>
           <td>
-            <form method="post" action="/xoa"
-                  onsubmit="return confirm('Đưa TOÀN BỘ file của video này vào Thùng rác?\n\n{{ r.base }}\n\n(Khôi phục được từ Thùng rác Windows)')">
-              <input type="hidden" name="base" value="{{ r.base }}">
-              <button class="ghost small danger"
-                      hx-post="/xoa" hx-include="closest form"
-                      hx-target="#queue" hx-swap="innerHTML"
-                      hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
-                      title="Đưa mọi file của gốc này vào Thùng rác (khôi phục được)">🗑</button>
-            </form>
+            <button type="button" class="ghost small danger"
+                    hx-post="/xoa" hx-vals='{{ {"base": r.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML"
+                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+                    title="Xoá video này = xoá MỌI file của nó trong output (chỉ đưa vào Thùng rác, khôi phục được)">🗑</button>
           </td>
         </tr>
         {% endfor %}
@@ -113,7 +102,9 @@
     </table>
   </div>
   <p class="hint">⚠️ = thiếu file mà không tự chạy tiếp được (di chuột lên xem lý do).
-     Nút ⏩ xếp các bước còn thiếu vào hàng đợi, chạy liền một mạch.</p>
+     Nút ⏩ xếp MỌI bước còn thiếu vào hàng đợi — kể cả 📑 SEO và 🖼 thumbnail
+     (như ⏩ Chạy tiếp bên myvoice) — việc Gemini (②📑) chạy trước việc GPU (③④).
+     Nút 🗑 xoá mọi file của video đó trong output (vào Thùng rác Windows, khôi phục được).</p>
   {% else %}
   <p class="empty">Chưa có video nào trong output — chạy bước ① với một video mới.</p>
   {% endif %}
@@ -123,7 +114,7 @@
   <div class="phead">
     <b>📁 File mới trong output</b>
   </div>
-  {# Nút 🗑 Xoá cả output đã dời LÊN khối Nguồn (cạnh nút ▶ Chạy tất cả) — chỗ
+  {# Nút 🗑 Xoá cả output nằm ở khối Nguồn (cạnh nút ▶ Chạy tất cả) — chỗ
      bắt đầu một mẻ mới cũng là chỗ hay muốn dọn sạch mẻ cũ. #}
   <p class="hint">{{ output_dir }} — dọn sạch bằng nút 🗑 ở khối Nguồn trên đầu
      trang; xoá chỉ đưa vào Thùng rác, khôi phục được.</p>

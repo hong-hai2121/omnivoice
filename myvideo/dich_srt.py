@@ -15,21 +15,26 @@ này trào sang dòng kia ("…tiền bạc. Nên nếu bạn từng thấy mìn
 217 câu, mỗi câu dịch trọn nghĩa và đọc trọn hơi. Mốc giờ lấy từ đầu dòng đầu
 tới cuối dòng cuối; bước ④ tự xuống dòng khi vẽ nên hiển thị vẫn gọn.
 
-MẶC ĐỊNH dịch bằng GEMINI (web, Firefox profile đã đăng nhập — tái dùng
-myvoice/scripts/dich_gemini.py). Cách giữ khớp dòng ↔ mốc giờ: gửi từng LÔ
+MẶC ĐỊNH dịch bằng GEMINI (tái dùng myvoice/scripts/dich_gemini.py — bản mới
+01/10/2026: đi qua CHROME EXTENSION OmniVoice Gemini trên hồ sơ Chrome đã đăng
+nhập; extension không kết nối được thì tự mở Firefox/Selenium dự phòng, kể cả
+GIỮA CHỪNG khi một lô gửi lỗi. Lựa chọn extension/Firefox là gemini_backend
+DÙNG CHUNG với myvoice). Cách giữ khớp dòng ↔ mốc giờ: gửi từng LÔ
 dòng gắn mã B[x] (x = số thứ tự trong SRT) và yêu cầu Gemini trả về đúng các
 mã đó — mỗi mã nhận về gắn thẳng vào mốc giờ của câu tương ứng. Tiến độ lưu
 vào <tên>_vi.partial.json sau MỖI lô: lỗi giữa chừng chạy lại là dịch tiếp,
 không mất phần đã xong. Câu thiếu / còn nhiều chữ Hán được tự gửi lại (tối đa
 2 lượt bổ sung); vẫn thiếu thì giữ nguyên tiếng Trung trong file kết quả.
+Trong lúc dịch, giu_man_hinh (myvoice) nhích chuột khi máy rảnh để màn hình
+không tắt — màn hình tắt là Chrome bóp tab Gemini, đoạn dịch thành trống.
 
-LƯU Ý: Firefox dùng profile đã đăng nhập Google phải ĐÓNG trước khi chạy
-(Firefox khoá profile khi đang mở).
+LƯU Ý: dùng đường Firefox (dự phòng hoặc chọn tay) thì Firefox đang mở phải
+ĐÓNG trước (Selenium cần khoá profile).
 
 --offline: dịch bằng opus-mt (dich_hanmt: opus-mt-zh-vi cho tiếng Trung,
-opus-mt-en-vi cho tiếng Anh) — nhanh, không cần Firefox, nhưng chất lượng thô
-hơn hẳn (chỉ nên dùng làm nháp). Model nào chưa có trong scripts/mt_cache thì
-lần đầu tự tải (~300MB).
+opus-mt-en-vi cho tiếng Anh) — nhanh, không cần trình duyệt, nhưng chất lượng
+thô hơn hẳn (chỉ nên dùng làm nháp). Model nào chưa có trong scripts/mt_cache
+thì lần đầu tự tải (~300MB).
 
 Cách dùng:
     python dich_srt.py "duong_dan/phude.srt"
@@ -306,8 +311,10 @@ def _pack_chunks(idxs, texts, max_chars=1200, max_lines=60):
 
 
 def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
-    """Dịch qua Gemini web. Trả list cùng độ dài (câu hỏng giữ nguyên tiếng gốc)."""
+    """Dịch qua Gemini web (Chrome Extension mặc định, Firefox dự phòng).
+    Trả list cùng độ dài (câu hỏng giữ nguyên tiếng gốc)."""
     import dich_gemini as dg
+    from giu_man_hinh import giu_man_hinh
 
     prefix = gemini_prefix(lang)
     ten = TEN_LANG.get(lang, "Trung")
@@ -347,43 +354,78 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
 
     n_total = len(texts)
     driver = None
+    backend_ep = None   # "firefox" sau khi đã dự phòng giữa chừng — không nhảy lại extension
+
+    def _mo():
+        print(f"🌐 Đang mở {('Firefox' if backend_ep == 'firefox' else dg.browser_label())}"
+              " + Gemini...")
+        return dg.init_firefox(backend=backend_ep)
+
+    def _gui(body):
+        """Gửi 1 lô. Lỗi của EXTENSION (chưa kết nối, Gemini chưa xác nhận...) thì
+        chuyển Firefox dự phòng NGAY tại lô này — y khuôn SEO bên myvoice 03/10/2026,
+        thay vì chết cả lượt dịch; gửi trùng (nếu tin kia thật ra đã đi) chỉ là thêm
+        một tin trong chat, parse theo mã B[x] nên vô hại."""
+        nonlocal driver, backend_ep
+        try:
+            return dg.send_to_gemini(driver, body, prefix=prefix)
+        except Exception as e:
+            print(f"⚠️ Gửi lô lỗi: {e}")
+            if (backend_ep is None and getattr(driver, "is_chrome_extension", False)
+                    and dg.fallback_enabled()):
+                print("🦊 DỰ PHÒNG: chuyển sang Firefox (Selenium) để dịch tiếp — "
+                      "ĐỪNG đóng cửa sổ Firefox sắp mở cho tới khi xong.")
+                try:
+                    driver.quit()   # nhả cổng bridge của extension
+                except Exception:
+                    pass
+                backend_ep = "firefox"
+                try:
+                    driver = _mo()
+                    return dg.send_to_gemini(driver, body, prefix=prefix)
+                except Exception as e2:
+                    print(f"⚠️ Firefox dự phòng cũng lỗi: {e2}")
+            return None
+
     try:
-        # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
-        for attempt in range(3):
-            todo = [i for i in range(n_total) if not _ok(i, done.get(i))]
-            if not todo:
-                break
-            if attempt:
-                print(f"🔁 Lượt bổ sung {attempt}: dịch lại {len(todo)} câu "
-                      "thiếu/chưa dịch...")
-            chunks = _pack_chunks(todo, texts, max_chars=batch_chars)
-            for ci, chunk in enumerate(chunks, 1):
-                body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
-                if driver is None or not dg.is_driver_alive(driver):
-                    print("🌐 Đang mở Firefox + Gemini...")
-                    driver = dg.init_firefox()
-                print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu)...")
-                ans = dg.send_to_gemini(driver, body, prefix=prefix)
-                restarts = 0
-                while not ans and restarts < dg.MAX_TIMEOUT_RESTARTS:
-                    restarts += 1
-                    print(f"🔄 Không có kết quả — mở lại Firefox (lần {restarts})...")
-                    driver = dg.restart_firefox(driver)
-                    ans = dg.send_to_gemini(driver, body, prefix=prefix)
-                if not ans:
-                    print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
-                    continue
-                parsed = _parse_numbered(ans)
-                got = 0
-                for i in chunk:
-                    v = (parsed.get(i + 1) or "").strip()
-                    if v:
-                        done[i] = v
-                        got += 1
-                _save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
-                n_ok = sum(1 for k in range(n_total) if _ok(k, done.get(k)))
-                print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
-                      f"— tổng {n_ok}/{n_total}.")
+        # giu_man_hinh (myvoice): máy rảnh là nhích chuột 1 px — màn hình tắt thì
+        # Chrome bóp tab Gemini, lô dịch thành trống (bài học 03/10/2026 bên myvoice).
+        with giu_man_hinh():
+            # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
+            for attempt in range(3):
+                todo = [i for i in range(n_total) if not _ok(i, done.get(i))]
+                if not todo:
+                    break
+                if attempt:
+                    print(f"🔁 Lượt bổ sung {attempt}: dịch lại {len(todo)} câu "
+                          "thiếu/chưa dịch...")
+                chunks = _pack_chunks(todo, texts, max_chars=batch_chars)
+                for ci, chunk in enumerate(chunks, 1):
+                    body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
+                    if driver is None or not dg.is_driver_alive(driver):
+                        driver = _mo()
+                    print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu)...")
+                    ans = _gui(body)
+                    restarts = 0
+                    while not ans and restarts < dg.MAX_TIMEOUT_RESTARTS:
+                        restarts += 1
+                        print(f"🔄 Không có kết quả — mở lại trình duyệt (lần {restarts})...")
+                        driver = dg.restart_firefox(driver)
+                        ans = _gui(body)
+                    if not ans:
+                        print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
+                        continue
+                    parsed = _parse_numbered(ans)
+                    got = 0
+                    for i in chunk:
+                        v = (parsed.get(i + 1) or "").strip()
+                        if v:
+                            done[i] = v
+                            got += 1
+                    _save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
+                    n_ok = sum(1 for k in range(n_total) if _ok(k, done.get(k)))
+                    print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
+                          f"— tổng {n_ok}/{n_total}.")
     finally:
         if driver is not None:
             try:

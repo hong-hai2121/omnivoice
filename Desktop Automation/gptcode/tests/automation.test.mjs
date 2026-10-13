@@ -843,6 +843,27 @@ test('dashboard repost is off by default, cancellation does nothing and confirme
   await dashboard.setViewportSize({ width: 1280, height: 900 });
 });
 
+test('a selected script without its video is left out of the publish queue instead of stopping it', async () => {
+  const ready = { ...job().row, trang_thai: 'cho', ghi_chu: '' };
+  const script = { id: 'nv', video: '', thu_muc: 'D:\\kịch_bản\\G134 - truyện', tieu_de: '', hashtag: '#MimiAudioSo134', gio_dang: date + 'T08:00', trang_thai: 'chưa có video', ghi_chu: 'Chua co ban Full' };
+  await dashboard.evaluate(({ rows, ids }) => chrome.storage.local.set({ rows, checkedIds: ids, selected: ids[0], scanSettings: { auto: false } }), { rows: [script, ready], ids: [script.id, ready.id] });
+  await dashboard.reload(); await expect(dashboard.locator('#prepare')).toBeEnabled();
+  await dashboard.locator('#publish').check();
+  await expect(dashboard.locator('#action-state')).toHaveText('Sẵn sàng chạy 1 video · bỏ qua 1 chưa có video');
+  await dashboard.locator('#prepare').click();
+  await expect.poll(() => dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress?.status)).toBe('done');
+  await expect(dashboard.locator('#prepare')).toBeEnabled();
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+  assert.match(await dashboard.locator('#log').innerText(), /Bỏ qua 1 dòng, chạy 1 video:\nG134 - truyện: chưa có video/);
+  const results = await dashboard.evaluate(async () => (await chrome.storage.local.get('rowResults')).rowResults);
+  assert.equal(results.a.trang_thai, 'done'); assert.equal(results.nv, undefined);
+  // Only scripts selected: nothing to run, and nothing is sent to the page.
+  await dashboard.evaluate(ids => chrome.storage.local.set({ checkedIds: ids }), [script.id]);
+  await dashboard.reload(); await expect(dashboard.locator('#prepare')).toBeDisabled();
+  assert.match(await dashboard.locator('#prepare').getAttribute('title'), /chưa có video/);
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+});
+
 test("queue advances only after success and stores every row result", async () => {
   const folder = path.join(directory, 'episode2'); await mkdir(folder, { recursive: true });
   const secondVideo = path.join(folder, 'second.mp4'); await writeFile(secondVideo, 'second fixture');

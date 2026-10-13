@@ -18,16 +18,19 @@ const displayedDate = `${Number(date.slice(8))} tháng ${Number(date.slice(5, 7)
 const sample = { id: '7691247276173315336', url: 'https://www.tiktok.com/@hh129124/video/7691247276173315336', caption: title + ' #MimiAudioSo124  #truyenaudio  #truyenfull  #audio  #fyp', stage: '2 tháng 10, 8:00 CH', icons: ['Alarm'] };
 let context, directory, tab, dashboard, tabId, video, contentBody, contentPages = [], uploadVisits = [];
 
-function contentPage(posts, delay = 0) {
-  const render = posts => {
+/* layout 'hooked': TikTok's table hooks as of 0.5.13. 'duplicate': a heading carries the table's
+   data-tt too (seen on the real page from 0.6.x). 'bare': rows without any data-tt row/link hook. */
+function contentPage(posts, delay = 0, layout = 'hooked') {
+  const render = (posts, layout) => {
     window.contentClicks = 0;
     const unrelated = document.createElement('button'); unrelated.textContent = 'Đăng'; unrelated.onclick = () => window.contentClicks++;
     document.body.append(unrelated);
+    if (layout === 'duplicate') { const heading = document.createElement('div'); heading.dataset.tt = 'components_PostTable_Container'; heading.textContent = 'Nội dung (Đã tạo vào)'; document.body.append(heading); }
     const table = document.createElement('div'); table.dataset.tt = 'components_PostTable_Container'; document.body.append(table);
     for (const post of posts) {
-      const row = document.createElement('div'); row.dataset.tt = 'components_PostTable_Absolute';
-      const cell = document.createElement('div'); cell.dataset.tt = 'components_PostInfoCell_Container';
-      const link = document.createElement('a'); link.dataset.tt = 'components_PostInfoCell_a';
+      const row = document.createElement('div'); if (layout !== 'bare') row.dataset.tt = 'components_PostTable_Absolute';
+      const cell = document.createElement('div'); if (layout !== 'bare') cell.dataset.tt = 'components_PostInfoCell_Container';
+      const link = document.createElement('a'); if (layout !== 'bare') link.dataset.tt = 'components_PostInfoCell_a';
       link.href = post.url; link.textContent = post.caption; cell.append(link); row.append(cell);
       const stage = document.createElement('span'); stage.dataset.tt = 'components_PublishStageLabel_TUXText';
       for (const name of post.icons) { const icon = document.createElement('span'); icon.dataset.icon = name; stage.append(icon); }
@@ -35,7 +38,7 @@ function contentPage(posts, delay = 0) {
       stage.append(label); row.append(stage); table.append(row);
     }
   };
-  return `<html><head><meta charset="utf-8"></head><body><script>setTimeout(()=>(${render.toString()})(${JSON.stringify(posts)}), ${delay});</script></body></html>`;
+  return `<html><head><meta charset="utf-8"></head><body><script>setTimeout(()=>(${render.toString()})(${JSON.stringify(posts)}, ${JSON.stringify(layout)}), ${delay});</script></body></html>`;
 }
 const upload = `<input type="file" accept="video/mp4"><div contenteditable="true" role="textbox" aria-label="Description" style="width:300px;height:80px"></div>
   <label><input type="checkbox" checked id="schedule">Schedule</label><input type="date" aria-label="Date"><input type="time" aria-label="Time">
@@ -84,11 +87,27 @@ test('content rows distinguish scheduled, published, pending and wrong dates', (
   assert.equal(matchContentPost([sample], { title, schedule: true, date: '2026-10-02T20:00' }).state, 'matched');
   assert.equal(matchContentPost([sample], { title, schedule: true, date: '2026-10-02T08:00' }).state, 'mismatch');
   assert.equal(matchContentPost([sample], { title, schedule: false }).state, 'mismatch');
-  for (const stage of ['Đang kiểm tra', 'Đang xử lý', 'Bản nháp', 'Đăng thất bại', 'Vi phạm', '']) {
+  for (const stage of ['Bản nháp', 'Đăng thất bại', 'Vi phạm', '']) {
     assert.equal(matchContentPost([{ ...sample, stage, icons: [] }], { title }).state, 'pending');
+  }
+  // Processing / under review: the post exists; the click must not be repeated, the date is read later.
+  for (const stage of ['Đang kiểm tra', 'Đang xử lý', 'Processing']) {
+    const match = matchContentPost([{ ...sample, stage, icons: [] }], { title, schedule: true, date: '2026-10-02T20:00' });
+    assert.equal(match.state, 'matched'); assert.equal(match.post.kind, 'processing'); assert.match(match.message, /đang xử lý/);
   }
   assert.equal(postStage({ ...sample, stage: '2 tháng 10, 12:00 SA' }).when.hour, 0);
   assert.equal(postStage({ ...sample, stage: '2 tháng 10, 12:00 CH' }).when.hour, 12);
+  assert.equal(postStage({ ...sample, icons: ['alarm', 'Earth'] }).kind, 'scheduled');
+});
+test('a date still ahead marks a scheduled post even when the alarm icon was not read', () => {
+  const now = new Date('2026-10-10T20:00');
+  const ahead = { ...sample, stage: '11 tháng 10, 8:00 SA', icons: ['Earth', 'Pen'] };
+  assert.equal(matchContentPost([ahead], { title, schedule: true, date: '2026-10-11T08:00', now }).state, 'matched');
+  assert.equal(matchContentPost([ahead], { title, schedule: true, date: '2026-10-11T08:00', now }).post.kind, 'scheduled');
+  assert.equal(matchContentPost([ahead], { title, schedule: false, now }).state, 'mismatch');
+  const past = { ...ahead, stage: '9 tháng 10, 8:00 SA' };
+  assert.equal(matchContentPost([past], { title, schedule: false, now }).post.kind, 'published');
+  assert.equal(matchContentPost([past], { title, schedule: true, date: '2026-10-09T08:00', now }).state, 'mismatch');
 });
 test('duplicate titles stay ambiguous and known old post IDs cannot confirm a repost', () => {
   const second = { ...sample, id: '999', url: 'https://www.tiktok.com/@hh129124/video/999' };
@@ -234,6 +253,35 @@ test('confirmation click followed by a redirect is verified against the content 
   const result = await message(job()); assert.equal(result.ok, true, result.error);
   const receipt = await dashboard.evaluate(async () => Object.values((await chrome.storage.local.get('submissions')).submissions)[0]);
   assert.equal(receipt.confirmation.state, 'attempted'); assert.equal(receipt.postEvidence.id, sample.id);
+});
+test('DOM reads a page whose heading repeats the table hook, and one without row hooks at all', async () => {
+  for (const layout of ['duplicate', 'bare']) {
+    contentBody = contentPage([sample, { ...sample, id: '123', url: '/@hh129124/video/123', caption: title123, icons: [] }], 0, layout);
+    await tab.goto('https://www.tiktok.com/tiktokstudio/content');
+    await tab.locator('a[href*="/video/123"]').waitFor();
+    const content = await task('contentPosts');
+    assert.equal(content.ready, true, layout); assert.equal(content.posts.length, 2, layout);
+    assert.deepEqual(content.posts[0], sample); assert.equal(content.posts[1].caption, title123);
+    assert.equal(matchContentPost(content.posts, { title, schedule: true, date: '2026-10-02T20:00' }).state, 'matched');
+  }
+});
+test('scheduling is confirmed on a content page with a duplicated table hook', async () => {
+  contentBody = contentPage([{ ...sample, stage: displayedDate }], 700, 'duplicate');
+  const result = await message(job()); assert.equal(result.ok, true, result.error);
+  const saved = await dashboard.evaluate(async () => chrome.storage.local.get(['submissions', 'rowResults', 'progress']));
+  const receipt = saved.submissions[episodeKey(video)];
+  assert.equal(receipt.state, 'success'); assert.equal(receipt.postEvidence.id, sample.id); assert.equal(receipt.postEvidence.kind, 'scheduled');
+  assert.equal(saved.rowResults['124'].trang_thai, 'done'); assert.match(saved.progress.log.at(-1), /đã lên lịch/);
+  assert.equal(await tab.evaluate(() => window.contentClicks), 0);
+});
+test('a post TikTok still lists as processing completes the run without a second click', async () => {
+  contentBody = contentPage([{ ...sample, stage: 'Đang xử lý', icons: [] }], 700, 'bare');
+  const result = await message(job()); assert.equal(result.ok, true, result.error);
+  const saved = await dashboard.evaluate(async () => chrome.storage.local.get(['submissions', 'rowResults', 'progress']));
+  const receipt = saved.submissions[episodeKey(video)];
+  assert.equal(receipt.state, 'success'); assert.equal(receipt.postEvidence.kind, 'processing'); assert.match(receipt.postEvidence.note, /đang xử lý/);
+  assert.equal(saved.rowResults['124'].trang_thai, 'done'); assert.match(saved.progress.log.at(-1), /đang xử lý/);
+  assert.equal(await tab.evaluate(() => window.contentClicks), 0);
 });
 test('manual missing and ambiguous rows preserve prior success receipts and never publish', async () => {
   contentBody = contentPage([sample, { ...sample, id: '555', url: '/@hh129124/video/555' }]);

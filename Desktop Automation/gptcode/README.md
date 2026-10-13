@@ -104,6 +104,11 @@ cần tìm hoặc đã qua số tập cũ nhất cần kiểm tra (tối đa 40 
   cập nhật thư mục và báo *Chưa đối chiếu được TikTok* (kèm địa chỉ trang đang mở) ngay
   dưới nút. Mỗi lần đọc lưu `lastPostRead` trong kho extension (lỗi, số link video,
   nhãn ngày, đoạn chữ đầu trang) để chẩn đoán khi TikTok đổi giao diện.
+- Kho extension (`progress`, `rowResults`, `submissions`, `lastDiagnostic` kèm ảnh chụp,
+  `lastPostRead`, `lastCaptionTrace`, `rows`) đọc được không cần mở Chrome bằng
+  `python doc_kho_extension.py <thư mục đã chép> --keys` rồi `... <khóa> [ra.json]`;
+  chép thư mục `Local Extension Settings\<ID extension>` của profile ra trước vì file
+  LOCK đang bận khi Chrome mở.
 
 ## Đồng bộ giữa side panel và cửa sổ riêng
 
@@ -208,6 +213,17 @@ theo số tập hoặc một phần tên. Biểu tượng `Alarm` xác định b
 ngày/giờ hiển thị phải khớp lịch đã chọn khi xác nhận sau lần đăng tự động.
 Lưu ID, URL, tiêu đề và trạng thái bài vào `postEvidence` trong biên nhận.
 
+Bản 0.6.5 sửa lỗi "Đối chiếu danh sách bài đăng … chưa xác nhận thành công" dù bài đã
+lên lịch: trang TikTok có hơn một phần tử mang `components_PostTable_Container` (tiêu đề
+cột cũng mang móc này) nên bộ đọc cũ đòi "đúng một bảng" luôn trả về rỗng. Nay đọc mọi
+bảng, và nếu TikTok đổi tên móc dòng thì dò theo chính link `/@tài-khoản/video/ID` như
+nút **Cập nhật kịch bản**. Ngày còn ở tương lai cũng được tính là đã lên lịch kể cả khi
+không đọc được biểu tượng chuông. Bài TikTok còn ghi **Đang xử lý / Đang kiểm tra** được
+coi là đã tạo (biên nhận `success`, `postEvidence.kind = processing`, ghi chú trong nhật
+ký) để không bấm lại; **Cập nhật kịch bản** sau đó đọc lại trạng thái thật. Sau khi sang
+trang Nội dung, extension chờ thêm tối đa 60 giây cho bảng hiện, thay vì phần còn lại
+của 45 giây.
+
 Để kiểm tra các lần đã chạy trước đó: mở trang **Nội dung** TikTok, chọn tab đó
 trong bảng extension (bấm làm mới danh sách tab nếu cần), chọn các video rồi bấm
 **Kiểm tra bài đăng**. Bước này chỉ đọc, không tải video hay bấm đăng; bỏ qua việc
@@ -241,6 +257,11 @@ bản nháp vẫn được nhận diện. Không nạp video hoặc bấm Lên l
 
 Khi chọn nhiều dòng và bật bấm nút cuối, hàng đợi chạy theo thứ tự trong danh sách.
 Chỉ mở trang tải mới cho video kế tiếp sau khi video trước được xác nhận thành công.
+Từ bản 0.6.5, dòng đã chọn mà **chưa có video** (kịch bản mới chưa dựng), dòng TikTok đã
+liệt kê là đã đăng / đã lên lịch, hoặc dòng đã có biên nhận bấm Đăng (khi chưa bật
+**Cho phép đăng lại**) được bỏ qua chứ không làm hỏng cả hàng đợi; nhật ký ghi
+"Bỏ qua N dòng" cùng lý do, ô trạng thái nút ghi "bỏ qua N chưa có video". Chỉ chọn
+toàn dòng chưa có video thì nút **Nạp & điền** bị khóa.
 Từ bản 0.5.14, nếu tab đang ở **Nội dung**, bấm **Nạp & điền** cho video mới sẽ
 tự chuyển cùng tab về `https://www.tiktok.com/tiktokstudio/upload?from=creator_center&tab=video`,
 chờ trang tải xong rồi mới nạp file. Video tiếp theo trong hàng đợi và nút **Mở Studio**
@@ -250,8 +271,8 @@ trang để tránh mất bản nháp. **Điền tiếp** và **Kiểm tra bài �
 Kết quả từng dòng và biên nhận lần bấm được lưu trong extension; không ghi ngược
 `danh_sach.json` hoặc `tiktok_upload.json` của công cụ cũ.
 
-Nếu có hộp thoại xác nhận chưa nhận diện hoặc không đọc được kết quả sau 45 giây,
-hàng đợi dừng. Video có thể đã được đăng: kiểm tra trực tiếp TikTok trước khi thao tác
+Nếu có hộp thoại xác nhận chưa nhận diện hoặc không đọc được kết quả sau 45 giây
+(cộng thêm tối đa 60 giây kể từ lúc sang trang Nội dung), hàng đợi dừng. Video có thể đã được đăng: kiểm tra trực tiếp TikTok trước khi thao tác
 tiếp. Không tự bấm lần hai cho cùng thư mục tập, kể cả sau khi mở lại Chrome hoặc đổi
 full/nửa video. Nút **Xuất biên nhận đăng** trong nhật ký tải thông tin lần bấm;
 biên nhận `uncertain` không có nghĩa là đăng thất bại.

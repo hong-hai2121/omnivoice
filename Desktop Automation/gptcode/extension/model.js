@@ -171,3 +171,16 @@ export function statusGroup(row) {
   if (row.gio_dang || value === "đã hẹn giờ") return "scheduled";
   return "waiting";
 }
+
+/* Why a selected row is left out of a publish queue ("" = it runs). A script without its
+   video, a row TikTok already lists, or one with a click receipt would otherwise stop the
+   whole queue before the first upload; skipped rows keep their place and their schedule. */
+export function queueSkipReason(row, { repost = false, submissions = {} } = {}) {
+  const group = statusGroup(row);
+  if (!row.video || group === "novideo") return "chưa có video";
+  if (group === "running") return "đang chạy";
+  if (repost) return "";
+  if (group === "done") return "đã đăng / đã lên lịch trên TikTok";
+  if (submissions[episodeKey(row.video) || row.video.toLowerCase()]) return "đã có biên nhận bấm Đăng / Lên lịch; bật Cho phép đăng lại nếu muốn đăng thêm";
+  return "";
+}

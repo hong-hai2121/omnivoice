@@ -1,4 +1,4 @@
-import { importQueue, isTikTok, episodeKey, rowKey, mergeScan, pruneMissingFolders, syncStatuses, videoKind, switchVariants, statusGroup, NO_VIDEO, TIKTOK_UPLOAD_URL } from "./model.js";
+import { importQueue, isTikTok, episodeKey, rowKey, mergeScan, pruneMissingFolders, syncStatuses, videoKind, switchVariants, statusGroup, queueSkipReason, NO_VIDEO, TIKTOK_UPLOAD_URL } from "./model.js";
 import { syncSchedule, episodeNumber } from "./schedule.js";
 import { applyPostList, postAnchors } from "./posts.js";
 
@@ -17,6 +17,8 @@ let scanBusy = false, variantBusy = false, initialized = false, ignoredFolders =
 let scheduleSource = null, tiktokList = null;
 let scanSettings = { auto: true, kind: "dai", hashtags: "#truyenaudio #truyenfull #audio #fyp" };
 let saveChain = Promise.resolve();
+// Rows left out of the last publish queue (no video, already on TikTok); shown above every log update of that run.
+let queueNote = "";
 // The side panel and the separate window are two pages over one storage; each save is
 // stamped so a page can tell its own writes from the other page's.
 const viewId = crypto.randomUUID();
@@ -44,11 +46,19 @@ function setBusy(value) {
   for (const id of ["import", "add", "inspect", "tab", "schedule", "publish", "select-all", "clear-selection"]) $(id).disabled = locked;
   $("repost").disabled = locked || !$("publish").checked;
   for (const id of ["import", "add"]) $(id).disabled = locked || scanBusy;
-  const reason = value ? "Đang xử lý video" : variantBusy ? "Đang đổi phiên bản video" : checkedIds.length === 0 ? "Chưa chọn video" : checkedIds.length > 1 && !$("publish").checked ? `Đang chọn ${checkedIds.length} video; bật Bấm Đăng / Lên lịch để chạy hàng đợi` : "";
+  // Scripts still waiting for their video stay selectable (variants, review) but never enter a run.
+  const checked = rows.filter(row => checkedIds.includes(row.id));
+  const runnable = checked.filter(row => row.video && statusGroup(row) !== "novideo");
+  const reason = value ? "Đang xử lý video" : variantBusy ? "Đang đổi phiên bản video" : checkedIds.length === 0 ? "Chưa chọn video"
+    : !runnable.length ? "Dòng đã chọn chưa có video; dựng video xong bấm Cập nhật kịch bản"
+    : checkedIds.length > 1 && !$("publish").checked ? `Đang chọn ${checkedIds.length} video; bật Bấm Đăng / Lên lịch để chạy hàng đợi` : "";
   for (const id of ["prepare", "fill"]) { $(id).disabled = !!reason; $(id).title = reason; }
   $("fill").disabled ||= checkedIds.length !== 1;
   $("check-posts").disabled = locked || !checkedIds.length;
-  $("action-state").textContent = reason || (checkedIds.length > 1 ? `Sẵn sàng chạy ${checkedIds.length} video` : `Sẵn sàng: ${rows.find(row => row.id === checkedIds[0])?.tieu_de || "video đã chọn"}`);
+  const skipped = checked.length - runnable.length;
+  $("action-state").textContent = reason || (checkedIds.length > 1
+    ? `Sẵn sàng chạy ${runnable.length} video` + (skipped ? ` · bỏ qua ${skipped} chưa có video` : "")
+    : `Sẵn sàng: ${rows.find(row => row.id === checkedIds[0])?.tieu_de || "video đã chọn"}`);
   for (const id of ["reviewed", "variant-half", "variant-full", "variant-short"]) $(id).disabled = value || scanBusy || checkedIds.length === 0;
   $("stop").disabled = !value;
   for (const id of ["update", "scan", "scan-kind", "scan-hashtags", "auto-scan"]) $(id).disabled = value || scanBusy;
@@ -153,7 +163,7 @@ function progress(value, restored = false) {
   $("operation-error").hidden = value.status !== "error";
   $("operation-error").textContent = value.status === "error" ? [history, value.log.at(-1)].filter(Boolean).join("\n") : "";
   $("state").textContent = (restored ? "Lần chạy trước: " : "") + (names[value.status] || value.status);
-  $("log").textContent = [history, ...value.log].filter(Boolean).join("\n");
+  $("log").textContent = [history, restored ? "" : queueNote, ...value.log].filter(Boolean).join("\n");
   $("log").scrollTop = $("log").scrollHeight;
   const row = rows.find(item => item.id === value.rowId);
   if (row) { row.trang_thai = value.status; row.ghi_chu = value.log.at(-1) || ""; row.statusOrigin = "local"; persist(); render(); }
@@ -169,11 +179,28 @@ async function execute(type) {
   $("operation-error").textContent = "";
   $("state").textContent = "Đang bắt đầu";
   $("log").textContent = `${new Date().toLocaleTimeString("vi-VN")}  Bắt đầu thao tác · v${version}`;
+  queueNote = "";
   try {
     await persist();
     const request = structuredClone({ type, tabId: Number($("tab").value), row,
       rows: ["prepare", "checkPosts"].includes(type) ? rows.filter(item => checkedIds.includes(item.id)) : undefined,
       publish: !["inspect", "checkPosts"].includes(type) && $("publish").checked, schedule: $("schedule").checked, selectors });
+    if (request.publish && request.rows) {
+      // One script without its video (or a row TikTok already lists) must not stop the other videos.
+      const { submissions = {} } = await chrome.storage.local.get("submissions");
+      const skipped = [];
+      request.rows = request.rows.filter(item => {
+        const reason = queueSkipReason(item, { repost: $("repost").checked, submissions });
+        if (reason) skipped.push(`${item.tieu_de || item.thu_muc?.split(/[\\/]/).at(-1) || item.video || "(dòng trống)"}: ${reason}`);
+        return !reason;
+      });
+      if (!request.rows.length) throw new Error("Không có video nào chạy được:\n" + skipped.join("\n"));
+      request.row = request.rows[0];
+      if (skipped.length) {
+        queueNote = `Bỏ qua ${skipped.length} dòng, chạy ${request.rows.length} video:\n` + skipped.join("\n");
+        $("log").textContent += "\n" + queueNote;
+      }
+    }
     if (request.publish && $("repost").checked) {
       $("repost").checked = false;
       const { submissions = {} } = await chrome.storage.local.get("submissions");
@@ -250,13 +277,22 @@ async function readTikTokPosts() {
 // Judgements from TikTok replace older run results so reopening the panel does not revert them.
 async function judgeRows(targets) {
   const judged = applyPostList(targets, tiktokList);
-  if (judged.changedIds.length) {
-    const { rowResults = {} } = await chrome.storage.local.get("rowResults");
-    if (judged.changedIds.some(id => rowResults[id])) {
-      for (const id of judged.changedIds) delete rowResults[id];
-      await chrome.storage.local.set({ rowResults });
-    }
+  const { rowResults = {}, submissions = {} } = await chrome.storage.local.get(["rowResults", "submissions"]);
+  const update = {};
+  if (judged.changedIds.some(id => rowResults[id])) {
+    for (const id of judged.changedIds) delete rowResults[id];
+    update.rowResults = rowResults;
   }
+  // A title TikTok lists settles a click whose result was never read; the receipt still blocks a repeat post.
+  for (const row of targets) {
+    if (row.statusOrigin !== "tiktok" || !row.postEvidence || !row.video) continue;
+    const key = episodeKey(row.video) || row.video.toLowerCase();
+    const receipt = submissions[key];
+    if (!receipt || receipt.state === "success") continue;
+    submissions[key] = { ...receipt, state: "success", postEvidence: row.postEvidence };
+    update.submissions = submissions;
+  }
+  if (Object.keys(update).length) await chrome.storage.local.set(update);
   return judged;
 }
 async function changeVariant(kind, ids = checkedIds) {

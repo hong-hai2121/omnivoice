@@ -66,12 +66,12 @@
       </table>
     </div>
     <div class="actions">
-      {# SEO/Thumbnail chạy ở HÀNG ĐỢI CHÍNH (SEO cần Firefox như bước ②). #}
+      {# SEO/Thumbnail chạy ở HÀNG ĐỢI CHÍNH (SEO dùng chung phiên Gemini với bước ②). #}
       <button type="button" class="small"
               hx-post="/seo" hx-target="#queue" hx-swap="innerHTML"
               hx-disabled-elt="this"
               title="Sinh tiêu đề + mô tả + tag từ SRT tiếng Việt bằng Gemini
-— cần TICK video, Firefox phải đóng, chạy ở hàng đợi chính">📑 Sinh SEO (tick video trước)</button>
+— cần TICK video, dịch qua Chrome Extension (Firefox dự phòng), chạy ở hàng đợi chính">📑 Sinh SEO (tick video trước)</button>
       <button type="button" class="small"
               hx-post="/thumb" hx-target="#queue" hx-swap="innerHTML"
               hx-disabled-elt="this"

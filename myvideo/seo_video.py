@@ -1,18 +1,23 @@
 # -*- coding: utf-8 -*-
 """Sinh SEO (tiêu đề · mô tả · thẻ tag) cho video đã dịch — từ <base>_vi.srt.
 
-Cách chạy (web xếp vào HÀNG ĐỢI CHÍNH — dùng Firefox nên không được chạy song
-song với bước ② dịch):
+Cách chạy (web xếp vào HÀNG ĐỢI CHÍNH — dùng chung phiên Gemini với bước ②
+dịch nên không được chạy song song):
     venv\\Scripts\\python.exe myvideo\\seo_video.py --base "<thư mục>/<tên>_x0.7"
-    (lặp --base để làm nhiều video trong MỘT phiên Firefox)
+    (lặp --base để làm nhiều video trong MỘT phiên trình duyệt)
 
-Cách hoạt động: mượn bộ lái Gemini của myvoice (dich_gemini — Selenium Firefox
-profile đã đăng nhập, KHÔNG cần API key), mỗi video mở CHAT MỚI rồi gửi phụ đề
-tiếng Việt kèm lời dặn; trả về theo mốc "TIÊU ĐỀ / MÔ TẢ / THẺ TAG" thì ghi
-<base>_seo.json = {"title", "desc", "tags"}. File này là nguồn caption cho cả
-đăng YouTube (dang_youtube.py) lẫn lên lịch Facebook (FACEBOOK/…).
+Cách hoạt động: mượn bộ lái Gemini của myvoice (dich_gemini — bản mới 01/10/2026
+đi qua CHROME EXTENSION OmniVoice Gemini, Firefox/Selenium là dự phòng; lựa chọn
+gemini_backend dùng chung với myvoice, KHÔNG cần API key), mỗi video mở CHAT MỚI
+rồi gửi phụ đề tiếng Việt kèm lời dặn; trả về theo mốc "TIÊU ĐỀ / MÔ TẢ / THẺ
+TAG" thì ghi <base>_seo.json = {"title", "desc", "tags"}. File này là nguồn
+caption cho cả đăng YouTube (dang_youtube.py) lẫn lên lịch Facebook (FACEBOOK/…).
+Extension gửi lỗi giữa chừng (chưa kết nối, "Gemini chưa xác nhận"...) thì tự
+chuyển Firefox cho các video còn lại — y khuôn seo_youtube_gemini bên myvoice
+(03/10/2026). Trong lúc chạy, giu_man_hinh giữ màn hình không tắt (màn hình tắt
+là Chrome bóp tab Gemini, SEO hỏng).
 
-⚠️ Firefox phải ĐÓNG trước khi chạy (Selenium cần khoá profile) — y hệt bước ②.
+⚠️ Dùng đường Firefox thì Firefox đang mở phải ĐÓNG trước (Selenium khoá profile).
 Tên kênh (nếu muốn nhắc trong mô tả) đặt ở khoá `seo_kenh` trong
 myvideo/web/web_settings.json — kênh MỚI chưa đặt tên thì cứ để trống.
 """
@@ -33,7 +38,8 @@ OUTPUT_DIR = ROOT / "myvideo" / "output"
 SETTINGS_FILE = ROOT / "myvideo" / "web" / "web_settings.json"
 
 sys.path.insert(0, str(ROOT / "myvoice" / "scripts"))
-import dich_gemini as dg  # noqa: E402  (bộ lái Firefox/Gemini dùng chung)
+import dich_gemini as dg  # noqa: E402  (bộ lái Gemini dùng chung — extension/Firefox)
+from giu_man_hinh import giu_man_hinh  # noqa: E402  (giữ màn hình khi dịch/SEO)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -141,39 +147,68 @@ def main() -> int:
         print("✅ Không có video nào cần SEO.")
         return 0
 
-    print("🦊 Mở Firefox (Gemini)... Firefox đang mở sẵn thì phải đóng trước.")
+    print(f"🌐 Mở {dg.browser_label()} (Gemini)...")
+    backend_ep = None   # "firefox" sau khi extension lỗi giữa chừng — dùng tới hết mẻ
     driver = dg.init_firefox()
     loi = 0
+
+    def _gui(driver, prompt_text):
+        """Gửi 1 lượt SEO. Lỗi của EXTENSION → chuyển Firefox dự phòng cho video
+        này VÀ các video sau — y khuôn seo_youtube_gemini bên myvoice 03/10/2026
+        (trước đó mỗi tập chết sau ~5 giây vì lỗi ném thẳng ra ngoài)."""
+        nonlocal backend_ep
+        try:
+            return driver, dg.send_to_gemini(driver, prompt_text)
+        except Exception as e:
+            print(f"  ⚠️ Gửi SEO lỗi: {e}")
+            if (backend_ep is None and getattr(driver, "is_chrome_extension", False)
+                    and dg.fallback_enabled()):
+                print("  🦊 DỰ PHÒNG: chuyển sang Firefox (Selenium) cho các video còn lại.")
+                try:
+                    driver.quit()   # nhả cổng bridge của extension
+                except Exception:
+                    pass
+                backend_ep = "firefox"
+                try:
+                    driver = dg.init_firefox(backend=backend_ep)
+                    return driver, dg.send_to_gemini(driver, prompt_text)
+                except Exception as e2:
+                    print(f"  ⚠️ Firefox dự phòng cũng lỗi: {e2}")
+            return driver, None
+
     try:
-        for i, (base, srt) in enumerate(viec):
-            print(f"📑 [{i + 1}/{len(viec)}] {ten_hienthi(base)}")
-            noi_dung = _srt_text(srt)[:MAX_INPUT_CHARS]
-            seo = None
-            for lan in range(1, ATTEMPTS + 1):
-                # Mỗi lượt một CHAT MỚI — gửi vào chat cũ dễ đọc nhầm câu trả
-                # lời trước đó (bài học tập 55-58 bên myvoice dùng chung SEO).
-                if not dg.is_driver_alive(driver):
-                    driver = dg.restart_firefox(driver)
-                else:
-                    driver.get(dg.GEMINI_URL)
-                    time.sleep(6)
-                tra_loi = dg.send_to_gemini(driver, _prompt(noi_dung, kenh))
-                seo = _parse(tra_loi or "")
-                if seo:
-                    break
-                print(f"  ⚠️ Lượt {lan}: câu trả lời không đúng định dạng"
-                      + (" — thử lại chat mới..." if lan < ATTEMPTS else ""))
-            if not seo:
-                # KHÔNG ghi bừa kết quả hỏng — thiếu SEO thì đăng bài dùng tên
-                # video, còn hơn mang tiêu đề sai của video khác.
-                print(f"  ⛔ Bỏ qua {ten_hienthi(base)} — Gemini không trả đúng định dạng.")
-                loi += 1
-                continue
-            seo["made_at"] = datetime.now().isoformat(timespec="seconds")
-            out = OUTPUT_DIR / f"{base}_seo.json"
-            out.write_text(json.dumps(seo, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
-            print(f"  ✅ «{seo['title']}» → {out.name}")
+        # Màn hình tắt là Chrome bóp tab Gemini → SEO hỏng (bài học 03/10/2026
+        # bên myvoice) — giữ màn hình suốt mẻ SEO.
+        with giu_man_hinh():
+            for i, (base, srt) in enumerate(viec):
+                print(f"📑 [{i + 1}/{len(viec)}] {ten_hienthi(base)}")
+                noi_dung = _srt_text(srt)[:MAX_INPUT_CHARS]
+                seo = None
+                for lan in range(1, ATTEMPTS + 1):
+                    # Mỗi lượt một CHAT MỚI — gửi vào chat cũ dễ đọc nhầm câu trả
+                    # lời trước đó (bài học tập 55-58 bên myvoice dùng chung SEO).
+                    if not dg.is_driver_alive(driver):
+                        driver = dg.restart_firefox(driver)
+                    else:
+                        driver.get(dg.GEMINI_URL)
+                        time.sleep(6)
+                    driver, tra_loi = _gui(driver, _prompt(noi_dung, kenh))
+                    seo = _parse(tra_loi or "")
+                    if seo:
+                        break
+                    print(f"  ⚠️ Lượt {lan}: câu trả lời không đúng định dạng"
+                          + (" — thử lại chat mới..." if lan < ATTEMPTS else ""))
+                if not seo:
+                    # KHÔNG ghi bừa kết quả hỏng — thiếu SEO thì đăng bài dùng tên
+                    # video, còn hơn mang tiêu đề sai của video khác.
+                    print(f"  ⛔ Bỏ qua {ten_hienthi(base)} — Gemini không trả đúng định dạng.")
+                    loi += 1
+                    continue
+                seo["made_at"] = datetime.now().isoformat(timespec="seconds")
+                out = OUTPUT_DIR / f"{base}_seo.json"
+                out.write_text(json.dumps(seo, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+                print(f"  ✅ «{seo['title']}» → {out.name}")
     finally:
         try:
             driver.quit()

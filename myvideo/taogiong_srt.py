@@ -139,46 +139,18 @@ def tts_text(text):
     return t
 
 
-# ── Khung thời lượng theo ÂM TIẾT tiếng Việt ─────────────────────────────────
-# Chép từ myvoice/scripts/amain_taogiong_gui.py (module GUI nặng, không import
-# làm thư viện được — xem chú thích bên đó về số đo hiệu chỉnh). VÌ SAO CẦN:
-# OmniVoice sinh song song — CHỐT trước số token audio rồi mới nhồi chữ vào
-# khung đó; để model tự đoán theo trọng số KÝ TỰ thì câu tiếng Việt nhiều từ
-# ngắn bị khung quá hẹp → đọc gấp, TỪ CUỐI nhỏ dần rồi mất. Tính khung theo số
-# âm tiết thì nhịp đọc đều và đủ chỗ cho từ cuối.
-VN_RATE      = 4.65   # âm tiết/giây khi đang nói liên tục
-VN_PAUSE_MID = 0.112  # giây nghỉ thêm cho mỗi dấu , ; :
-VN_PAUSE_END = 0.262  # giây nghỉ thêm cho mỗi dấu . ! ?
-NUM_STEP     = 32     # số bước giải mã — mặc định tác giả model đã kiểm
-
-_VN_TOKEN  = re.compile(r"[0-9A-Za-zÀ-ỹà-ỹ]+")
-_VN_MID_RE = re.compile(r"[,;:]")
-_VN_END_RE = re.compile(r"[.!?]")
-_VN_SYL_PER_DIGIT = 1.5          # "26" → "hai mươi sáu": mỗi chữ số ~1.5 âm tiết
-_VN_CJK    = re.compile(r"[一-鿿㐀-䶿豈-﫿]")   # chữ Hán sót qua bước dịch
-_VN_VOWELS = re.compile(r"[aeiouyàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩị"
-                        r"òóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵ]+")
-
-
-def _vn_syl_token(tok):
-    """Số âm tiết đọc ra của MỘT token (text đã .lower() trước khi vào đây)."""
-    if tok.isdigit():
-        return len(tok) * _VN_SYL_PER_DIGIT
-    if any(c.isdigit() for c in tok):
-        return sum(_VN_SYL_PER_DIGIT if c.isdigit() else 1 for c in tok)
-    return max(1, len(_VN_VOWELS.findall(tok)))
-
-
-def vn_duration(text):
-    """Số giây nên dành cho câu `text` — None nếu không có âm tiết nào
-    (ép duration khi đó sẽ lỗi, để model tự đoán)."""
-    syllables = sum(_vn_syl_token(tok) for tok in _VN_TOKEN.findall(text))
-    syllables += len(_VN_CJK.findall(text))
-    if not syllables:
-        return None
-    return (syllables / VN_RATE
-            + len(_VN_MID_RE.findall(text)) * VN_PAUSE_MID
-            + len(_VN_END_RE.findall(text)) * VN_PAUSE_END)
+# ── Khung thời lượng theo ÂM TIẾT tiếng Việt — DÙNG CHUNG với myvoice ────────
+# Trước 13/10/2026 khối này CHÉP NGUYÊN VĂN từ myvoice/scripts/amain_taogiong_gui.py
+# (VN_RATE/VN_PAUSE_*/NUM_STEP + vn_duration); nay import thẳng để myvoice chỉnh
+# nhịp đọc là bên này theo luôn, không còn hai bản chực lệch nhau. Import module
+# GUI là AN TOÀN: cửa sổ chỉ mở dưới __main__ — taogiong_chia_cau và web runner
+# bên myvoice cũng import đúng kiểu này. VÌ SAO CẦN vn_duration: OmniVoice sinh
+# song song — CHỐT trước số token audio rồi mới nhồi chữ vào khung đó; để model
+# tự đoán theo trọng số KÝ TỰ thì câu tiếng Việt nhiều từ ngắn bị khung quá hẹp
+# → đọc gấp, TỪ CUỐI nhỏ dần rồi mất (xem chú thích hiệu chỉnh bên myvoice).
+# detect_spike cũng lấy từ đó: quét tiếng TO bất thường / file câm — cùng một
+# hàm với run_tts bên myvoice (lớp kiểm thô chạy trước lớp ASR).
+from amain_taogiong_gui import NUM_STEP, detect_spike, vn_duration  # noqa: E402
 
 
 def generate_all(cues, voice_path, tts_dir, redo=False):
@@ -362,7 +334,8 @@ def _voice_prompt(model, voice_path):
 def _doc_cau(model, text, prompt, dur_scale=1.0):
     """Đọc MỘT câu → mảng audio. language + duration + num_step: cùng bộ tham
     số bên myvoice — thiếu duration là khung bị đoán hụt, nuốt từ cuối câu.
-    dur_scale: nới khung khi đọc lại câu bị nuốt chữ (lượt 2 dùng 1.08)."""
+    dur_scale: nới khung khi đọc lại câu bị nuốt chữ (lượt 2 dùng 1.06 — cùng
+    mức với myvoice)."""
     dur = vn_duration(text)
     if dur is not None:
         dur *= dur_scale
@@ -370,12 +343,58 @@ def _doc_cau(model, text, prompt, dur_scale=1.0):
                           language="vi", duration=dur, num_step=NUM_STEP)[0]
 
 
+# ── Kiểm SPIKE ngay sau khi sinh (tái dùng detect_spike của myvoice) ─────────
+def kiemtra_spike(cues, files, model, sr, voice_path):
+    """Lớp kiểm THÔ, y nếp run_tts bên myvoice: quét spike (tiếng lạ TO bất
+    thường gấp 5 lần nền / file gần như câm) toàn bộ câu NGAY khi OmniVoice còn
+    trên VRAM — câu dính thì re-roll luôn, không tốn lượt nạp lại model. Lớp ASR
+    kiemtra_va_docla phía sau mới soi mất chữ + tiếng lạ ngang mức lời nói.
+    Trả về model (có thể vừa nạp nếu mọi câu lấy từ cache mà vẫn dính spike)."""
+    import soundfile as sf
+
+    if not sr:
+        for f in files:
+            if f and Path(f).exists():
+                sr = sf.info(str(f)).samplerate
+                break
+        if not sr:
+            return model
+    bad = []
+    for i, f in enumerate(files):
+        if not f or not Path(f).exists():
+            continue
+        try:
+            spikes = detect_spike(Path(f), sr)
+        except Exception:
+            continue
+        if spikes:
+            bad.append((i, spikes))
+    if not bad:
+        print("✅ Kiểm spike: không câu nào có tiếng to bất thường.")
+        return model
+    texts = [tts_text(t) for _t, t in cues]
+    print(f"🔊 {len(bad)} câu có spike → đọc lại ngay "
+          f"(câu {', '.join(str(i + 1) for i, _s in bad)})...")
+    if model is None:
+        model, sr = _load_omnivoice()
+    prompt = _voice_prompt(model, voice_path)
+    for i, spikes in bad:
+        print(f"  câu {i + 1}: spike tại {spikes[:3]}s → đọc lại")
+        try:
+            sf.write(str(files[i]), _doc_cau(model, texts[i], prompt), sr)
+        except Exception as e:
+            print(f"  ⚠️ Câu {i + 1} lỗi khi đọc lại: {e}")
+    # Không quét lại vòng nữa — như myvoice: bản re-roll hiếm khi dính tiếp,
+    # và lớp ASR phía sau vẫn nghe lại toàn bộ (kể cả các câu vừa đọc lại).
+    return model
+
+
 # ── Kiểm MẤT CHỮ + TIẾNG LẠ, đọc lại câu hỏng (tái dùng taogiong_kiemtra_matchu)
 def kiemtra_va_docla(cues, files, tts_dir, voice_path):
     """ASR đối chiếu TỪNG câu với văn bản (large-v3-turbo, xem
     taogiong_kiemtra_matchu — bộ kiểm còn soi cả TIẾNG LẠ rè/rít không phải
     giọng đọc). Câu dính cờ được đọc lại ngay: lượt 1 re-roll, lượt 2 nới
-    khung +8%. OmniVoice là masked-diffusion nên thi thoảng nuốt cụm từ — đo
+    khung +6% (cùng mức myvoice). OmniVoice là masked-diffusion nên thi thoảng nuốt cụm từ — đo
     bên myvoice là 7–12% số đoạn; có vòng này thì mọi video tự được
     "bảo hành đủ chữ".
 
@@ -393,6 +412,8 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
         return
 
     texts = [tts_text(t) for _t, t in cues]
+    sr_spike = next((sf.info(str(f)).samplerate for f in files
+                     if f and Path(f).exists()), 0)
     # Bộ kiểm đọc file <i:04d>.wav ĐÁNH SỐ TỪ 0 theo index — file của ta đánh
     # từ 0001 nên chép sang thư mục đệm cho đúng khuôn (wav nhỏ, không đáng kể).
     shim = Path(tts_dir) / "_kiemtra"
@@ -407,7 +428,8 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
         _sync(range(len(cues)))
         print(f"🕵️ Kiểm tra mất chữ + tiếng lạ {len(cues)} câu (ASR nghe lại)...")
         bad = ktm.quet_va_xac_minh(texts, shim, on_log=print)
-        for lan, scale in ((1, 1.0), (2, 1.08)):
+        # Lượt 2 nới khung +6% — cùng mức với run_tts bên myvoice (1.06).
+        for lan, scale in ((1, 1.0), (2, 1.06)):
             if not bad:
                 break
             print(f"🔁 Lượt đọc lại {lan}: {len(bad)} câu nuốt chữ / có tiếng lạ "
@@ -422,6 +444,12 @@ def kiemtra_va_docla(cues, files, tts_dir, voice_path):
                 try:
                     sf.write(str(files[i]),
                              _doc_cau(model, texts[i], prompt, dur_scale=scale), sr)
+                    # Như myvoice: bản đọc lại dính spike thì chỉ CẢNH BÁO để
+                    # nghe tay — lượt quét ASR kế tiếp vẫn soi lại câu này.
+                    spikes = detect_spike(Path(files[i]), sr_spike or sr)
+                    if spikes:
+                        print(f"  ⚠️ Câu {i + 1} bản đọc lại có spike tại "
+                              f"{spikes[:3]}s — nghe kiểm tay.")
                 except Exception as e:
                     print(f"  ⚠️ Câu {i + 1} lỗi khi đọc lại: {e}")
             model = _do_omnivoice(model, "quét lại lượt sau")
@@ -729,6 +757,9 @@ def main():
             print(f"❌ Không tìm thấy giọng mẫu nào trong {VOICE_DIR}")
             sys.exit(1)
         files, model, _sr = generate_all(cues, voice, tts_dir, redo=args.redo_tts)
+        # 1a. Kiểm SPIKE ngay khi model còn trên VRAM (lớp thô, re-roll tại chỗ).
+        if not args.no_kiemtra:
+            model = kiemtra_spike(cues, files, model, _sr, voice)
         # Dỡ OmniVoice NGAY: bước kiểm chữ cần cả card cho ASR, còn phần xếp
         # timeline + ghép wav bên dưới chạy CPU nên giữ model lại chỉ tổ chiếm chỗ.
         model = _do_omnivoice(model, "TTS xong")

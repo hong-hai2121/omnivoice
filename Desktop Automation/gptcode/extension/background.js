@@ -14,6 +14,7 @@ const sameReceipt = (a, b) => {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && sameReceipt(a[key], b[key]));
 };
+const postKindLabel = kind => ({ scheduled: 'đã lên lịch', processing: 'đang xử lý' })[kind] || 'đã đăng';
 const canResumeConfirmation = (receipt, request) => request.type === 'fill' && request.publish === true &&
   receipt.state === 'uncertain' && !receipt.confirmation && receipt.video === request.row.video && receipt.date === request.row.gio_dang &&
   (receipt.tabId === undefined || receipt.tabId === Number(request.tabId)) &&
@@ -64,14 +65,19 @@ async function run(request, token) {
     if (!state.titleMatches) throw new Error(`Tiêu đề chưa khớp: ô mô tả đang có "${state.actualTitle || "(trống)"}". Chưa bấm đăng.`);
     return value.text;
   };
+  // `timeout` is a duration, or an object whose `at` the callback may push back.
   const waitFor = async (fn, timeout, message) => {
-    const end = Date.now() + timeout;
-    while (Date.now() < end) {
+    const deadline = typeof timeout === 'number' ? { at: Date.now() + timeout } : timeout;
+    while (Date.now() < deadline.at) {
       await check();
       if (await fn()) return;
       await sleep(500);
     }
     throw new Error(message);
+  };
+  const onContentPage = async () => {
+    const tab = await chrome.tabs.get(token.tabId).catch(() => null);
+    return !!tab && isTikTok(tab.url) && /^\/tiktokstudio\/content\/?$/.test(new URL(tab.url).pathname);
   };
   const verifySubmission = async label => {
     if (!await dom('draftCheck', { video: request.row.video })) throw new Error('Video trong ban nhap da thay doi. Dung truoc khi dang.');
@@ -101,18 +107,26 @@ async function run(request, token) {
   };
   const finishSubmission = async (key, receipt, resume = false) => {
     if (resume && (await dom('publishOutcome')).state !== 'confirmation') throw new Error('Lan bam truoc chua ro ket qua va khong con dung hop thoai cho xac nhan. Kiem tra TikTok; khong bam lai nut dang.');
-    let checkingContent = false, contentMessage = '';
+    let contentSince = 0, contentMessage = '';
+    const deadline = { at: Date.now() + 45_000 };
     await waitFor(async () => {
       let outcome;
       try { outcome = await driver.publicationState(); }
-      catch { driver.current = null; return false; }
+      catch {
+        // The SPA replaces its document while moving to Nội dung; the tab URL still says where it is.
+        driver.current = null;
+        outcome = await onContentPage() ? { state: 'content', content: { page: true, ready: false, posts: [] } } : null;
+        if (!outcome) return false;
+      }
       if (outcome.state === 'content') {
         stage = 'Đối chiếu danh sách bài đăng';
-        if (!checkingContent) {
-          checkingContent = true;
+        if (!contentSince) {
+          contentSince = Date.now();
+          // The list renders after the redirect; give it a full minute rather than what is left of the 45 s.
+          deadline.at = Math.max(deadline.at, contentSince + 60_000);
           await report('running', 'Đã chuyển sang Nội dung. Đang đối chiếu tiêu đề và trạng thái bài trên TikTok...');
         }
-        if (!outcome.content.ready) return false;
+        if (!outcome.content.ready) { contentMessage = 'Chưa đọc được danh sách bài trên trang Nội dung.'; return false; }
         const previous = receipt.previousAttempts || [];
         const matched = matchContentPost(outcome.content.posts, { title: receipt.caption || receipt.title || request.row.tieu_de,
           schedule: request.schedule, date: request.row.gio_dang, excludeIds: previous.map(attempt => attempt.postEvidence?.id).filter(Boolean) });
@@ -122,7 +136,7 @@ async function run(request, token) {
           contentMessage = 'Tiêu đề khớp nhưng lần đăng lại chưa phân biệt được với bài cũ. Kiểm tra danh sách trên TikTok.';
           return false;
         }
-        receipt.postEvidence = { ...matched.post, source: 'content-list', matchedBy: 'title', checkedAt: new Date().toISOString() };
+        receipt.postEvidence = { ...matched.post, source: 'content-list', matchedBy: 'title', checkedAt: new Date().toISOString(), ...(matched.message ? { note: matched.message } : {}) };
         return true;
       }
       if (['error', 'dialog'].includes(outcome.state)) throw new Error('Can kiem tra TikTok: ' + outcome.message);
@@ -137,12 +151,13 @@ async function run(request, token) {
         await report('running', 'Đã bấm Đăng ngay trong hộp thoại kiểm tra video chưa hoàn tất. Đang chờ TikTok xác nhận kết quả.');
       }
       return outcome.state === 'success';
-    }, 45_000, 'Da bam nut nhung chua xac nhan thanh cong. Kiem tra TikTok; khong chay lai de tranh trung video.')
+    }, deadline, 'Da bam nut nhung chua xac nhan thanh cong. Kiem tra TikTok; khong chay lai de tranh trung video.')
       .catch(error => { if (contentMessage) error.message += ' ' + contentMessage; throw error; });
     receipt.state = 'success';
     await saveSubmission(key, receipt);
     const confirmation = receipt.postEvidence
-      ? `Đã thấy đúng tiêu đề trong Nội dung: ${receipt.postEvidence.kind === 'scheduled' ? 'đã lên lịch' : 'đã đăng'} · ${receipt.postEvidence.stage} · ${receipt.postEvidence.url}`
+      ? `Đã thấy đúng tiêu đề trong Nội dung: ${postKindLabel(receipt.postEvidence.kind)} · ${receipt.postEvidence.stage || 'chưa có nhãn ngày'} · ${receipt.postEvidence.url}`
+        + (receipt.postEvidence.note ? ' · ' + receipt.postEvidence.note : '')
       : (request.schedule ? 'TikTok da xac nhan len lich thanh cong.' : 'TikTok da xac nhan dang thanh cong.');
     await report('done', confirmation);
   };
@@ -501,9 +516,13 @@ async function checkContentList(request, token) {
     for (const row of rows) {
       const match = matchContentPost(content.posts, { title: row.tieu_de });
       const key = episodeKey(row.video) || String(row.video || '').toLowerCase();
-      if (match.state === 'matched') {
+      if (match.state === 'matched' && match.post.kind === 'processing') {
+        // A manual check proves nothing about which click made a post still in review: look again later.
+        if (statusGroup(rowResults[row.id] || row) !== 'done') rowResults[row.id] = { trang_thai: 'review', ghi_chu: `TikTok đang xử lý bài này: ${match.post.url}`, statusOrigin: 'local' };
+        results.push({ id: row.id, state: 'processing', message: `đang xử lý · ${match.post.url}` });
+      } else if (match.state === 'matched') {
         const postEvidence = { ...match.post, source: 'content-list', matchedBy: 'title', checkedAt };
-        const note = `Đã thấy bài ${match.post.kind === 'scheduled' ? 'đã lên lịch' : 'đã đăng'}: ${match.post.stage} · ${match.post.url}`;
+        const note = `Đã thấy bài ${postKindLabel(match.post.kind)}: ${match.post.stage} · ${match.post.url}`;
         rowResults[row.id] = { trang_thai: 'done', ghi_chu: note, statusOrigin: 'local', postEvidence };
         if (key) submissions[key] = { ...(submissions[key] || { video: row.video, title: row.tieu_de, date: row.gio_dang, schedule: match.post.kind === 'scheduled', at: null }), state: 'success', postEvidence };
         results.push({ id: row.id, state: 'matched', message: note });

@@ -192,27 +192,57 @@ export function pageTask(action, data = {}) {
     (data.selectors?.file || !el.accept || /video|mp4|mov|webm|m4v|avi/i.test(el.accept)));
   const uploadTrigger = () => unique(all('button, [role="button"], label').filter(usable).filter(el =>
     /^(select video|select file|choose file|chon video|chon tep|chon tap tin|tai video len)$/.test(normalize(label(el)))));
-  const contentPosts = () => {
-    const page = /^\/tiktokstudio\/content\/?$/.test(location.pathname);
-    if (!page) return { page: false, ready: false, posts: [] };
-    const table = unique(all('[data-tt="components_PostTable_Container"]').filter(visible));
-    if (!table) return { page: true, ready: false, posts: [] };
-    const posts = [], ids = new Set();
-    for (const row of table.querySelectorAll('[data-tt="components_PostTable_Absolute"]')) {
-      if (!visible(row)) continue;
-      const link = unique([...row.querySelectorAll('[data-tt="components_PostInfoCell_Container"] a[data-tt="components_PostInfoCell_a"]')].filter(visible));
-      if (!link) continue;
-      let url;
-      try { url = new URL(link.getAttribute('href'), location.href); } catch { continue; }
+  const contentPage = () => /^\/tiktokstudio\/content\/?$/.test(location.pathname);
+  const videoId = link => {
+    try {
+      const url = new URL(link.getAttribute('href'), location.href);
       const match = /^\/@[^/]+\/video\/(\d+)\/?$/.exec(url.pathname);
-      if (url.origin !== location.origin || !match || ids.has(match[1])) continue;
-      ids.add(match[1]);
-      const labels = [...row.querySelectorAll('[data-tt^="components_PublishStageLabel_"]')].filter(visible);
-      posts.push({ id: match[1], url: url.origin + url.pathname, caption: link.textContent.trim(),
-        stage: [...new Set(labels.map(el => el.textContent.trim()).filter(Boolean))].join(' | '),
-        icons: [...new Set(labels.flatMap(el => [...el.querySelectorAll('[data-icon]')].map(icon => icon.getAttribute('data-icon'))))] });
+      return url.origin === location.origin && match ? match[1] : null;
+    } catch { return null; }
+  };
+  // A post row: its caption link, the date/status labels and every icon (alarm = scheduled).
+  const readPost = (row, link, id) => {
+    const labels = [...row.querySelectorAll('[data-tt^="components_PublishStageLabel_"]')].filter(visible);
+    return { id, url: location.origin + new URL(link.getAttribute('href'), location.href).pathname, caption: link.textContent.trim(),
+      stage: [...new Set(labels.map(el => el.textContent.trim()).filter(Boolean))].join(' | '),
+      icons: [...new Set([...row.querySelectorAll('[data-icon]')].map(icon => icon.getAttribute('data-icon')))] };
+  };
+  // Read-only list that starts from each video link instead of TikTok's table hooks, which
+  // get renamed or duplicated (a heading carries the same data-tt as the table).
+  const postLinks = () => {
+    const byId = new Map();
+    for (const link of all('a[href*="/video/"]')) {
+      const id = videoId(link), caption = link.textContent.trim();
+      if (!id || !caption || !visible(link)) continue;
+      // The row is the widest ancestor that still holds this post only.
+      let row = link;
+      for (let parent = row.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+        if ([...parent.querySelectorAll('a[href*="/video/"]')].some(other => (videoId(other) || id) !== id)) break;
+        row = parent;
+      }
+      const post = readPost(row, link, id);
+      if (!byId.has(id) || caption.length > byId.get(id).caption.length) byId.set(id, post);
     }
-    return { page: true, ready: true, posts };
+    return [...byId.values()];
+  };
+  const contentPosts = () => {
+    if (!contentPage()) return { page: false, ready: false, posts: [] };
+    const containers = all('[data-tt="components_PostTable_Container"]').filter(visible);
+    const posts = [], ids = new Set();
+    for (const container of containers) {
+      for (const row of container.querySelectorAll('[data-tt="components_PostTable_Absolute"]')) {
+        if (!visible(row)) continue;
+        const link = unique([...row.querySelectorAll('[data-tt="components_PostInfoCell_Container"] a[data-tt="components_PostInfoCell_a"]')].filter(visible));
+        const id = link && videoId(link);
+        if (!id || ids.has(id)) continue;
+        ids.add(id);
+        posts.push(readPost(row, link, id));
+      }
+    }
+    if (posts.length) return { page: true, ready: true, posts };
+    // No row hook matched (renamed by TikTok, or the list is still loading): the links decide.
+    const linked = postLinks();
+    return { page: true, ready: containers.length > 0 || linked.length > 0, posts: linked };
   };
   // "Bài đăng 113" tab heading; only small elements are read to keep this cheap.
   const postTotal = () => {
@@ -224,35 +254,12 @@ export function pageTask(action, data = {}) {
     return null;
   };
   if (action === 'contentPosts') return data.withTotal ? { ...contentPosts(), total: postTotal() } : contentPosts();
-  // Read-only list for "Cập nhật kịch bản": starts from each video link instead of requiring
-  // one table container, and reads the row's date label and icons (alarm = scheduled).
-  const videoId = link => {
-    try {
-      const url = new URL(link.getAttribute('href'), location.href);
-      const match = /^\/@[^/]+\/video\/(\d+)\/?$/.exec(url.pathname);
-      return url.origin === location.origin && match ? match[1] : null;
-    } catch { return null; }
-  };
+  // Read-only list for "Cập nhật kịch bản" (link-based, with the "Bài đăng N" total).
   if (action === 'postList') {
-    if (!/^\/tiktokstudio\/content\/?$/.test(location.pathname)) return { page: false, ready: false, posts: [] };
-    const byId = new Map();
-    for (const link of all('a[href*="/video/"]')) {
-      const id = videoId(link), caption = link.textContent.trim();
-      if (!id || !caption || !visible(link)) continue;
-      // The row is the widest ancestor that still holds this post only.
-      let row = link;
-      for (let parent = row.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
-        if ([...parent.querySelectorAll('a[href*="/video/"]')].some(other => (videoId(other) || id) !== id)) break;
-        row = parent;
-      }
-      const labels = [...row.querySelectorAll('[data-tt^="components_PublishStageLabel_"]')].filter(visible);
-      const post = { id, url: location.origin + new URL(link.getAttribute('href'), location.href).pathname, caption,
-        stage: [...new Set(labels.map(el => el.textContent.trim()).filter(Boolean))].join(' | '),
-        icons: [...new Set([...row.querySelectorAll('[data-icon]')].map(icon => icon.getAttribute('data-icon')))] };
-      if (!byId.has(id) || caption.length > byId.get(id).caption.length) byId.set(id, post);
-    }
+    if (!contentPage()) return { page: false, ready: false, posts: [] };
+    const posts = postLinks();
     const table = all('[data-tt="components_PostTable_Container"]').some(visible);
-    return { page: true, ready: byId.size > 0 || table, posts: [...byId.values()], total: postTotal() };
+    return { page: true, ready: posts.length > 0 || table, posts, total: postTotal() };
   }
   if (action === 'postProbe') {
     const count = selector => all(selector).length;

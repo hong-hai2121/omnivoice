@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 
 {# Trang duy nhất của myvideo, bố cục theo THỨ TỰ LÀM VIỆC như Home của myvoice:
-   hàng đợi → nguồn (danh sách) → bốn khối bước ①②③④, MỖI KHỐI mang cài đặt
-   riêng của bước đó. Bấm nút của bước nào thì chạy từ bước đó; ô ⛓ quyết định
-   có nối tiếp bước sau không. Muốn chạy trọn gói thì bấm ▶ Chạy tất cả ở khối
-   Nguồn — nút đó đi thẳng ①→④, không nhìn tới các ô ⛓.
+   hàng đợi → nguồn (danh sách) → 📼 bảng Kết quả (bước nào xong/thiếu, ⏩/🗑)
+   → bốn khối bước ①②③④, MỖI KHỐI mang cài đặt riêng của bước đó. Bấm nút
+   của bước nào thì chạy từ bước đó; ô ⛓ quyết định có nối tiếp bước sau không.
+   Muốn chạy trọn gói thì bấm ▶ Chạy tất cả ở khối Nguồn — nút đó đi thẳng
+   ①→④, không nhìn tới các ô ⛓.
 
    MỌI thao tác chọn/tick/ghim ⭐ chỉ đổi ngay trên trang (HTML/CSS), KHÔNG gọi
    server: tới lúc bấm nút chạy (hoặc 💾) mới lưu cài đặt rồi mới chạy. Các nút
@@ -125,6 +126,15 @@
     </div>
   </div>
 
+  {# 📼 Kết quả DỜI LÊN trước "Các bước" (13/10/2026, theo yêu cầu): nhìn bảng
+     xong là bấm ⏩/🗑 ngay, khỏi cuộn qua 4 khối cài đặt. Khối nằm TRONG
+     #mainform nên _bang.html chỉ dùng nút htmx type="button" + thẻ <a>,
+     KHÔNG có <form> con (form lồng form là HTML sai). #}
+  <p class="colhead later">📼 Kết quả</p>
+  <div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_bang.html" %}
+  </div>
+
   <p class="colhead later">Các bước — bấm nút bước nào thì chạy từ bước đó</p>
 
   <div class="panel">
@@ -198,15 +208,24 @@
               hx-disabled-elt="this">🌐 Chạy bước ②</button>
     </div>
     <div class="chks">
+      {# Cách dịch Gemini DÙNG CHUNG với myvoice (gemini_backend — một lựa chọn
+         cho cả hai bảng, đổi ở đâu cũng là đổi cả hai). JS cuối trang giữ cho
+         hai ô loại trừ nhau như bên myvoice. #}
+      <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"
+        {{ 'checked' if gemini_backend != 'firefox' }}> 🧩 Dịch bằng Chrome Extension (mặc định)</label>
+      <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"
+        {{ 'checked' if gemini_backend == 'firefox' }}> 🦊 Dịch bằng Firefox / Selenium (dự phòng)</label>
       <label class="chk"><input type="checkbox" name="offline" {{ 'checked' if settings.offline }}>
         📴 Dịch offline bằng opus-mt
         <span class="l-zh">zh-vi</span><span class="l-en">en-vi (lần đầu tự tải model ~300MB)</span>
-        (nhanh, KHÔNG cần Firefox — chất lượng thô, chỉ nên làm nháp)</label>
+        (nhanh, không cần trình duyệt — chất lượng thô, chỉ nên làm nháp)</label>
       <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if settings.auto3 }}>
         ⛓ Xong thì tự chạy bước ③ tạo giọng</label>
     </div>
-    <p class="hint">⚠️ Gemini dùng Firefox với profile đã đăng nhập —
-      <b>đóng Firefox</b> trước khi chạy bước này.</p>
+    <p class="hint">Lựa chọn dùng chung với myvoice — áp dụng cho bước ② và 📑 SEO.
+      Extension: giữ Chrome (đã cài extension OmniVoice Gemini + đăng nhập Gemini) đang mở;
+      không kết nối được thì tự mở Firefox thay. Firefox: <b>đóng Firefox</b> trước khi chạy.
+      Cài/thử extension ở tab 🧩 của bảng myvoice.</p>
   </div>
 
   <div class="panel">
@@ -556,12 +575,8 @@
   </div>
 </form>
 
-<p class="colhead later">📼 Kết quả</p>
-<div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
-  {% include "_bang.html" %}
-</div>
-
-{# 📤 Đăng bài đã ra TAB RIÊNG (/dangbai): khâu đó nằm NGOÀI vòng lặp 4 bước —
+{# 📼 Kết quả đã dời LÊN TRÊN, ngay sau khối Nguồn (trước "Các bước").
+   📤 Đăng bài đã ra TAB RIÊNG (/dangbai): khâu đó nằm NGOÀI vòng lặp 4 bước —
    dựng xong cả mẻ mới ngó tới, để chung chỉ làm trang chính dài ra. #}
 
 <script>
@@ -1005,6 +1020,15 @@
     if (e.detail && e.detail.chay)
       form.querySelectorAll("input[name=redoasr], input[name=redotts]")
           .forEach(o => { o.checked = false; });
+  });
+
+  // Hai ô "cách dịch Gemini" loại trừ nhau (đúng một trình duyệt) — y khuôn
+  // app.js bên myvoice, vì cùng ghi vào MỘT lựa chọn dùng chung hai bảng.
+  document.addEventListener("change", e => {
+    if (!e.target.matches('input[type="checkbox"][name="gemini_backend"]')) return;
+    const chon = e.target.value;
+    document.querySelectorAll('input[name="gemini_backend"]')
+      .forEach(o => { o.checked = o.value === chon; });
   });
 
   // Nhật ký trong khối hàng đợi: luôn cuộn xuống dòng mới nhất, kể cả sau khi

@@ -33,12 +33,9 @@ export function postAnchors(list, now = new Date()) {
 export function applyPostList(rows, list, now = new Date()) {
   const result = { scheduled: 0, published: 0, waiting: 0, review: 0, unknown: 0, changedIds: [] };
   if (!Array.isArray(list?.posts)) return result;
-  const nowIso = postDate({ year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), hour: now.getHours(), minute: now.getMinutes() }, now);
   const posts = list.posts.map(post => {
-    const info = postStage(post), date = postDate(info.when, now);
-    // Only a scheduled post can show a future date, even if its alarm icon was not read.
-    if (info.kind === 'published' && date > nowIso) info.kind = 'scheduled';
-    return { ...post, title: postTitle(post.caption), episode: postEpisode(post.caption), info, date };
+    const info = postInfo(post, now);
+    return { ...post, title: postTitle(post.caption), episode: postEpisode(post.caption), info, date: info.date };
   });
   const numbers = posts.map(post => post.episode).filter(value => value !== null);
   const oldest = numbers.length ? Math.min(...numbers) : null;
@@ -49,7 +46,7 @@ export function applyPostList(rows, list, now = new Date()) {
     const title = postTitle(row.tieu_de), episode = episodeNumber(row);
     const matches = title ? posts.filter(post => post.title === title) : [];
     // A post in the list that is not processing/failed exists on TikTok, even without a date label.
-    const live = matches.filter(post => post.info.kind !== 'pending');
+    const live = matches.filter(post => !['pending', 'processing'].includes(post.info.kind));
     // Untitled rows are scripts without metadata yet; their number alone proves nothing.
     const sameNumber = episode === null || !title ? [] : posts.filter(post => post.episode === episode);
     if (live.length) {
@@ -88,7 +85,9 @@ const plain = value => captionText(value).normalize('NFD').replace(/[\u0300-\u03
 
 export function postStage(post) {
   const text = plain(post.stage);
-  if (/dang (kiem tra|xu ly|tai)|processing|under review|draft|ban nhap|that bai|failed|vi pham|violation|removed|da xoa/.test(text)) return { kind: 'pending' };
+  // Processing / under review: the post exists, its date label comes later. Failed, removed or draft: no post.
+  if (/dang (kiem tra|xu ly|tai)|processing|under review/.test(text)) return { kind: 'processing', when: null };
+  if (/draft|ban nhap|that bai|failed|vi pham|violation|removed|da xoa/.test(text)) return { kind: 'pending', when: null };
   const date = text.match(/\b(\d{1,2}) thang (\d{1,2})(?:,? (\d{4}))?,? (\d{1,2}):(\d{2})(?: (sa|ch))?\b/);
   let when = null;
   if (date && Number(date[1]) >= 1 && Number(date[1]) <= 31 && Number(date[2]) >= 1 && Number(date[2]) <= 12 &&
@@ -97,17 +96,28 @@ export function postStage(post) {
     if (date[6]) hour = hour % 12 + (date[6] === 'ch' ? 12 : 0);
     when = { day: Number(date[1]), month: Number(date[2]), year: date[3] ? Number(date[3]) : null, hour, minute: Number(date[5]) };
   }
-  const scheduled = post.icons?.includes('Alarm') || /\b(len lich|scheduled)\b/.test(text);
+  const scheduled = (post.icons || []).some(icon => /alarm/i.test(String(icon))) || /\b(len lich|scheduled)\b/.test(text);
   return { kind: scheduled ? 'scheduled' : when || /\b(da dang|published|posted)\b/.test(text) ? 'published' : 'unknown', when };
 }
 
-export function matchContentPost(posts, { title, schedule, date, excludeIds = [] }) {
+const nowIso = now => postDate({ year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate(), hour: now.getHours(), minute: now.getMinutes() }, now);
+// Stage plus the calendar: only a scheduled post can show a date still ahead, even if its alarm icon was not read.
+export function postInfo(post, now = new Date()) {
+  const info = postStage(post);
+  const date = postDate(info.when, now);
+  if (info.kind === 'published' && date && date > nowIso(now)) info.kind = 'scheduled';
+  return { ...info, date };
+}
+
+export function matchContentPost(posts, { title, schedule, date, excludeIds = [], now = new Date() }) {
   const expected = postTitle(title);
   if (!expected) return { state: 'missing', message: 'Tiêu đề trống, không thể đối chiếu.' };
   const matches = posts.filter(post => postTitle(post.caption) === expected && !excludeIds.includes(post.id));
   if (!matches.length) return { state: 'missing', message: 'Chưa thấy tiêu đề khớp trong các bài đang hiển thị; chưa kết luận đăng thất bại.' };
   if (matches.length !== 1) return { state: 'ambiguous', message: 'Có nhiều bài trùng tiêu đề; cần kiểm tra trên TikTok.' };
-  const post = matches[0], stage = postStage(post);
+  const post = matches[0], stage = postInfo(post, now);
+  // TikTok lists a fresh post as processing / under review before its date label: the click did create it.
+  if (stage.kind === 'processing') return { state: 'matched', post: { ...post, kind: 'processing' }, message: 'TikTok đang xử lý / kiểm tra bài; lịch sẽ hiện sau. Bấm Cập nhật kịch bản để xem lại.' };
   if (!['scheduled', 'published'].includes(stage.kind)) return { state: 'pending', message: 'Đã thấy tiêu đề nhưng trạng thái bài chưa xác nhận đăng / lên lịch thành công.' };
   if (typeof schedule === 'boolean' && stage.kind !== (schedule ? 'scheduled' : 'published')) return { state: 'mismatch', message: 'Tiêu đề khớp nhưng trạng thái đăng / lên lịch khác yêu cầu.' };
   if (schedule) {

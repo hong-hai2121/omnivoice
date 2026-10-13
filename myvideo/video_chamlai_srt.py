@@ -25,8 +25,8 @@ Cách làm (tương tự myvoice/scripts/nhandien_giongnoi.py, dùng chung model
          gộp vào câu liền trước
          (tránh phụ đề nháy qua quá nhanh không kịp đọc).
 
-  5. TỰ DỊCH sang tiếng Việt: gọi dich_srt.py gửi SRT lên Gemini (Firefox,
-     profile đã đăng nhập — Firefox phải ĐÓNG trước khi chạy) → lưu thêm
+  5. TỰ DỊCH sang tiếng Việt: gọi dich_srt.py gửi SRT lên Gemini (Chrome
+     Extension như myvoice, Firefox/Selenium là dự phòng) → lưu thêm
      <tên>_vi.srt (Việt) + <tên>_zhvi.srt / <tên>_envi.srt (song ngữ).
      Tắt bằng --no-dich.
 
@@ -426,16 +426,17 @@ def main():
         print(f"📊 {len(subs)} câu, trung bình "
               f"{n_chars / max(len(subs), 1):.1f} {cfg['don_vi']}/câu.")
 
-        # 3b. Tự dịch sang tiếng Việt: gửi SRT lên Gemini (Firefox) → lưu _vi.srt
-        # + bản song ngữ. Lỗi dịch KHÔNG làm hỏng cả lượt — SRT tiếng gốc đã lưu,
-        # chạy lại dich_srt.py là dịch tiếp (có file tiến độ _vi.partial.json).
+        # 3b. Tự dịch sang tiếng Việt: gửi SRT lên Gemini (extension/Firefox) →
+        # lưu _vi.srt + bản song ngữ. Lỗi dịch KHÔNG làm hỏng cả lượt — SRT tiếng
+        # gốc đã lưu, chạy lại dich_srt.py là dịch tiếp (file tiến độ _vi.partial.json).
         if not args.no_dich:
             out_vi = f"{os.path.splitext(out_srt)[0]}_vi.srt"
             if os.path.isfile(out_vi):
                 print(f"♻ Đã có bản dịch {os.path.basename(out_vi)} — bỏ qua bước dịch "
                       "(xoá file đó nếu muốn dịch lại).")
             else:
-                print("🌐 Đang dịch sang tiếng Việt qua Gemini (Firefox phải ĐÓNG trước)...")
+                print("🌐 Đang dịch sang tiếng Việt qua Gemini (Chrome Extension, "
+                      "Firefox dự phòng)...")
                 dich_script = os.path.join(SCRIPT_DIR, "dich_srt.py")
                 ret = subprocess.run([sys.executable, dich_script, out_srt,
                                       "--lang", args.lang])

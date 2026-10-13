@@ -25,7 +25,7 @@ tail = LogTail(maxlen=300)
 q = JobRunner(tail=tail)
 
 # Hai hàng đợi ĐĂNG BÀI riêng (học nếp myvoice): đăng chỉ tốn băng thông chứ
-# không tranh GPU/Firefox/ffmpeg với hàng đợi chính, và YouTube với Facebook
+# không tranh GPU/phiên Gemini/ffmpeg với hàng đợi chính, và YouTube với Facebook
 # chạy song song được với nhau. Mỗi hàng vẫn MỘT worker duy nhất — riêng
 # Facebook mà hai lượt chạy cùng lúc là cùng đọc lịch Page rồi xếp trùng
 # một khung giờ, đừng gộp hay thêm worker.
