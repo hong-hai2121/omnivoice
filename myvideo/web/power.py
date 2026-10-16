@@ -10,13 +10,15 @@ Ba chốt an toàn (học từ myvoice):
     không úp máy ngay;
   • rảnh rồi vẫn đếm ngược N phút, có việc mới chen vào là huỷ đếm
     (bước này xong nối bước sau, hàng đợi rảnh vài giây là chuyện thường);
-  • NGỦ là MẶC ĐỊNH: tick sẵn khi mở server, ngủ xong dậy vẫn giữ tick cho mẻ
-    sau (phải thấy BẬN lại mới đếm tiếp); TẮT MÁY vẫn tự bỏ tick một lần duy
-    nhất, mẻ sau không bị bất ngờ.
+  • MẶC ĐỊNH KHÔNG TICK GÌ (user đổi 16/10/2026 — trước đó 🌙 tick sẵn); thực
+    hiện xong cũng TỰ BỎ TICK — một lần duy nhất, mẻ sau không bị ngủ/tắt
+    bất ngờ.
 
-Bỏ tick trên trang là huỷ, kể cả khi đang đếm ngược. NGỦ chờ 3 phút (lỡ ngủ thì
-chạm chuột là dậy, không mất gì); TẮT MÁY chờ 5 phút và còn hẹn thêm 60 giây
-qua `shutdown /s /t 60` — đổi ý thì mở CMD gõ `shutdown /a`.
+Bỏ tick trên trang là huỷ, kể cả khi đang đếm ngược. Cả NGỦ lẫn TẮT MÁY đều chờ
+3 phút sau khi hàng đợi rảnh (lỡ ngủ thì chạm chuột là dậy, không mất gì);
+TẮT MÁY còn hẹn thêm 60 giây qua `shutdown /s /t 60` — đổi ý thì mở CMD gõ
+`shutdown /a`. Hai ô ⏻/🌙 bên cửa sổ desktop (chay.py) là công tắc từ xa của
+cùng bộ đếm này.
 """
 
 from __future__ import annotations
@@ -30,8 +32,9 @@ from .jobs import q, q_dang, q_fb
 
 CREATE_NO_WINDOW = 0x08000000
 POLL_SEC = 5.0
-# Ngủ dễ huỷ hơn nhiều (chạm chuột là dậy) nên chờ ngắn hơn tắt máy.
-DELAY_MIN = {"ngu": 3, "tat": 5}
+# Cả hai cùng chờ 3 phút (user chốt 16/10/2026); tắt máy vẫn kịp đổi ý nhờ 60
+# giây hẹn của Windows (`shutdown /a`).
+DELAY_MIN = {"ngu": 3, "tat": 3}
 MODE_LABEL = {"ngu": "NGỦ", "tat": "TẮT MÁY"}
 
 
@@ -61,9 +64,9 @@ class PowerWhenDone:
     """Trạng thái ô tick + chế độ (ngủ/tắt) + luồng nền canh hàng đợi."""
 
     def __init__(self) -> None:
-        # Mặc định tick sẵn "🌙 cho máy ngủ" — bỏ tick trên trang nếu không muốn.
-        # An toàn vì _tick đòi TỪNG THẤY hàng đợi bận mới bắt đầu đếm ngược.
-        self._armed = True
+        # MẶC ĐỊNH KHÔNG TICK GÌ (user đổi 16/10/2026): muốn chạy mẻ qua đêm
+        # rồi ngủ/tắt thì tick tay trên trang web hoặc cửa sổ desktop (chay.py).
+        self._armed = False
         self._mode = "ngu"
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
@@ -139,11 +142,11 @@ class PowerWhenDone:
                 return ""
             if time.monotonic() < self._due:
                 return ""
-            # Hạ cờ TRƯỚC khi thực hiện. NGỦ là mặc định nên giữ tick cho mẻ
-            # sau (dậy rồi phải thấy BẬN lại mới đếm tiếp — không ngủ lặp);
-            # TẮT MÁY vẫn tự bỏ tick một lần duy nhất.
+            # Hạ cờ TRƯỚC khi thực hiện và TỰ BỎ TICK cả hai chế độ — một lần
+            # duy nhất (mặc định là không tick gì), mẻ sau không bị ngủ/tắt
+            # ngoài ý muốn.
             mode = self._mode
-            self._armed = mode == "ngu"
+            self._armed = False
             self._saw_busy = False
             self._due = 0.0
             return mode

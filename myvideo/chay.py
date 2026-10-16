@@ -7,6 +7,11 @@
 Cửa sổ nhỏ bật server (cổng 8766), server sẵn sàng là TỰ MỞ trang web trong
 trình duyệt (nút '🌐 Mở link web' chỉ để mở LẠI khi lỡ đóng tab).
 Đóng cửa sổ = tắt server (nếu server do cửa sổ này bật).
+
+Hai chế độ "xong hết thì…" — ⏻ TẮT MÁY hoặc 🌙 cho máy NGỦ sau 3 phút rảnh,
+CHỌN MỘT, MẶC ĐỊNH không tick gì. Cả hai do SERVER giữ (web/power.py canh hàng
+đợi + đếm ngược); ô ở đây chỉ là công tắc từ xa, khớp hai chiều với ô trên
+trang web.
 """
 
 from __future__ import annotations
@@ -22,6 +27,10 @@ VENV_PY = ROOT / "venv" / "Scripts" / "python.exe"
 TOKEN_FILE = ROOT / "myvideo" / "web" / "token.txt"
 LOG_LOI = ROOT / "myvideo" / "chay_loi.log"
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+# Số phút chờ sau khi hàng đợi rảnh rồi mới ngủ/tắt máy — CHỈ để ghi nhãn ô
+# tick; bộ đếm thật nằm ở myvideo/web/power.py (DELAY_MIN), sửa thì sửa cả hai.
+POWER_DELAY_MIN = 3
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -120,7 +129,7 @@ def _run_launcher(port: int) -> int:
     root = tk.Tk()
     root.title("myvideo — bảng điều khiển web")
     root.configure(bg=MAU["bg"])
-    root.minsize(560, 380)
+    root.minsize(560, 440)
 
     # ── Header: dải gradient indigo → tím + tên app (vẽ lại khi đổi cỡ) ──────
     header = tk.Canvas(root, height=66, bd=0, highlightthickness=0,
@@ -150,7 +159,7 @@ def _run_launcher(port: int) -> int:
     wrap = tk.Frame(root, bg=MAU["bg"])
     wrap.pack(fill="both", expand=True, padx=16, pady=(12, 14))
     wrap.columnconfigure(0, weight=1)
-    wrap.rowconfigure(4, weight=1)
+    wrap.rowconfigure(6, weight=1)          # hàng nhật ký giãn
 
     # ── Trạng thái: chấm màu + chữ ───────────────────────────────────────────
     st_row = tk.Frame(wrap, bg=MAU["bg"])
@@ -205,8 +214,45 @@ def _run_launcher(port: int) -> int:
                     fg=MAU["do_chu"])
     btn_quit.pack(side="left", padx=(10, 0))
 
+    # Hai chế độ "xong hết thì…", CHỌN MỘT (tick ô này thì ô kia tự bỏ), MẶC
+    # ĐỊNH không tick gì. CẢ HAI do SERVER giữ (web/power.py: canh hàng đợi +
+    # đếm ngược 3 phút) — khác myvoice/chay.py (⏻ tự canh ở cửa sổ): ô ở đây
+    # chỉ là công tắc từ xa, bấm thì POST /hangdoi/power rồi soi lại
+    # /api/trangthai để vẽ theo sự thật của server.
+    def _chk(parent, text, var):
+        return tk.Checkbutton(parent, text=text, variable=var, bg=MAU["bg"],
+                              fg=MAU["fg"], activebackground=MAU["bg"],
+                              activeforeground=MAU["fg"],
+                              selectcolor=MAU["card"],
+                              disabledforeground="#565b8d", bd=0,
+                              highlightthickness=0, cursor="hand2",
+                              font=("Segoe UI", 9))
+
+    sd_row = tk.Frame(wrap, bg=MAU["bg"])
+    sd_row.grid(row=3, column=0, sticky="w", pady=(0, 2))
+    var_shutdown = tk.BooleanVar(value=False)
+    chk_shutdown = _chk(
+        sd_row, f"⏻  Xong hết thì TẮT MÁY (sau {POWER_DELAY_MIN} phút rảnh)",
+        var_shutdown)
+    chk_shutdown.config(state="disabled")
+    chk_shutdown.pack(side="left")
+    tk.Label(sd_row, text="huỷ phút chót: mở CMD gõ  shutdown /a", bg=MAU["bg"],
+             fg=MAU["mo"], font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+
+    sl_row = tk.Frame(wrap, bg=MAU["bg"])
+    sl_row.grid(row=4, column=0, sticky="w", pady=(0, 8))
+    var_sleep = tk.BooleanVar(value=False)
+    chk_sleep = _chk(
+        sl_row, f"🌙  Xong hết thì cho máy NGỦ (sau {POWER_DELAY_MIN} phút rảnh)",
+        var_sleep)
+    chk_sleep.config(state="disabled")
+    chk_sleep.pack(side="left")
+    power_note = tk.StringVar(value="")
+    tk.Label(sl_row, textvariable=power_note, bg=MAU["bg"], fg=MAU["mo"],
+             font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
+
     tk.Label(wrap, text="NHẬT KÝ", bg=MAU["bg"], fg=MAU["mo"],
-             font=("Segoe UI", 8, "bold")).grid(row=3, column=0, sticky="w")
+             font=("Segoe UI", 8, "bold")).grid(row=5, column=0, sticky="w")
 
     log_box = tk.Text(wrap, height=9, wrap="word", state="disabled",
                       bg=MAU["log_bg"], fg=MAU["log_fg"], bd=0,
@@ -214,14 +260,14 @@ def _run_launcher(port: int) -> int:
                       selectbackground=MAU["accent"],
                       highlightthickness=1, highlightbackground=MAU["vien"],
                       font=("Consolas", 9))
-    log_box.grid(row=4, column=0, sticky="nsew", pady=(4, 0))
+    log_box.grid(row=6, column=0, sticky="nsew", pady=(4, 0))
     scroll = tk.Scrollbar(wrap, orient="vertical", command=log_box.yview,
                           troughcolor=MAU["bg"], bd=0, width=10)
-    scroll.grid(row=4, column=1, sticky="ns", pady=(4, 0))
+    scroll.grid(row=6, column=1, sticky="ns", pady=(4, 0))
     log_box.config(yscrollcommand=scroll.set)
 
     # ── CĂN GIỮA màn hình ────────────────────────────────────────────────────
-    w, h = 680, 470
+    w, h = 680, 530
     root.update_idletasks()
     x = (root.winfo_screenwidth() - w) // 2
     y = max(0, (root.winfo_screenheight() - h) // 2 - 24)
@@ -254,8 +300,8 @@ def _run_launcher(port: int) -> int:
         status.set(f"Đang chạy — cổng {port}"
                    + ("" if owner else "  (tiến trình khác bật sẵn)"))
         _dot("#4ade80")
-        for b in (btn_open, btn_copy):
-            b.config(state="normal")
+        for wg in (btn_open, btn_copy, chk_shutdown, chk_sleep):
+            wg.config(state="normal")
         _doi_mau(btn_open, MAU["accent"], MAU["accent_h"])   # nút chính sáng lên
         btn_copy.config(fg="white")
         if not owner:
@@ -265,6 +311,7 @@ def _run_launcher(port: int) -> int:
         _open()
         log("🧩 Bước dịch Gemini đi qua Chrome Extension (như myvoice) — giữ Chrome "
             "đã đăng nhập Gemini mở; không kết nối được thì tự mở Firefox thay.")
+        _sync_power_now()       # server chạy sẵn có thể đã bật ⏻/🌙 → ô khớp ngay
 
     def _poll(n: int = 0) -> None:
         if _port_busy(port):
@@ -327,7 +374,164 @@ def _run_launcher(port: int) -> int:
         root.clipboard_append(url_var.get())
         log("📋 Đã copy địa chỉ.")
 
+    # ── Gọi chính server đang chạy (kèm token) ──────────────────────────────
+    def _http(path: str, data: dict | None = None):
+        """GET (data=None) hoặc POST form tới server. Trả dict nếu JSON, không
+        thì trả chuỗi. Gọi TRONG LUỒNG NỀN — mạng chậm sẽ treo cửa sổ.
+
+        POST gửi kèm header HX-Request: các nút của server trả lời htmx bằng
+        khối HTML tại chỗ (mã 200); thiếu header là bị chuyển hướng 303 về "/"
+        KHÔNG kèm token → urllib bám theo rồi ăn 401 dù lệnh đã chạy."""
+        import json
+        import urllib.parse
+        import urllib.request
+        try:
+            token = TOKEN_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            token = ""
+        url = f"http://127.0.0.1:{port}{path}?token={urllib.parse.quote(token)}"
+        body = urllib.parse.urlencode(data).encode() if data is not None else None
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"HX-Request": "true"} if body is not None else {})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            raw = r.read().decode("utf-8", "replace")
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return raw
+
+    # ── ⏻ / 🌙 "Xong hết thì…" — MỘT trạng thái, server là nguồn sự thật ────
+    # pw["mode"] ∈ {"", "tat", "ngu"} là chế độ cửa sổ đang vẽ; mọi thay đổi
+    # (bấm ô, server báo về) đều đi qua _apply_mode nên hai ô không bao giờ
+    # cùng bật. Chống "GET cũ ghi đè POST mới" (ô nhấp nháy/tự bật lại — đã
+    # gặp bên myvoice 08/09/2026) bằng seq/pending: kết quả GET chỉ được ghi
+    # khi seq lúc xin còn là seq hiện tại VÀ không còn POST nào đang bay.
+    sync_lock = threading.Lock()
+    pw = {"mode": "", "srv_mode": None, "left": "", "seq": 0, "pending": 0}
+
+    def _apply_server_power(st, seq: int) -> None:
+        """Ghi trạng thái ⏻/🌙 server trả về vào pw — BỎ QUA nếu đã cũ."""
+        p = st.get("power") if isinstance(st, dict) else None
+        if not isinstance(p, dict):
+            return
+        with sync_lock:
+            if seq != pw["seq"] or pw["pending"]:
+                return
+            pw["srv_mode"] = (p.get("mode") or "") if p.get("armed") else ""
+            pw["left"] = p.get("left") or ""
+
+    def _post_power(mode: str) -> None:
+        """Đẩy chế độ lên server. Ghi pw NGAY (ô tick khớp tức thì), gọi mạng
+        ở luồng nền; hỏng thì thử lại một lần, vẫn hỏng thì hỏi lại server để
+        ô tick vẽ theo sự thật chứ không theo ý vừa bấm."""
+        with sync_lock:
+            pw["seq"] += 1
+            pw["pending"] += 1
+            pw["srv_mode"] = mode
+            if not mode:
+                pw["left"] = ""
+
+        def work() -> None:
+            import time
+            err = None
+            for lan in (1, 2):
+                try:
+                    _http("/hangdoi/power",
+                          {"on": "1", "mode": mode} if mode else {"mode": ""})
+                    err = None
+                    break
+                except Exception as e:
+                    err = e
+                    if lan == 1:
+                        time.sleep(2)
+            with sync_lock:
+                pw["pending"] -= 1
+            if err is not None:
+                lines.put(f"❌ Không đặt được chế độ ngủ/tắt máy ở server ({err})"
+                          " — ô tick sẽ vẽ lại theo trạng thái thật của server.\n")
+                _sync_power_now()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sync_power_now() -> None:
+        """Hỏi NGAY trạng thái server (không đợi lượt poll 5 giây): lúc server
+        vừa sẵn sàng — server chạy sẵn có thể đã bật ⏻/🌙 bên trang web, ô ở
+        đây phải khớp — và sau khi POST hỏng. Chạy luồng nền."""
+        with sync_lock:
+            seq = pw["seq"]
+
+        def work() -> None:
+            try:
+                st = _http("/api/trangthai")
+            except Exception:
+                return
+            _apply_server_power(st, seq)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_mode(mode: str, source: str = "user") -> None:
+        """Nơi DUY NHẤT đổi chế độ. mode: "" / "tat" / "ngu". Chạy trên luồng Tk.
+
+        source="user"  : bấm ở cửa sổ này → đẩy lên server.
+        source="server": server báo về (tick bên trang web, hoặc tự bỏ tick sau
+                         khi ngủ/tắt xong) → chỉ vẽ lại, KHÔNG POST ngược lại
+                         kẻo hai bên đá nhau vô tận."""
+        old = pw["mode"]
+        if mode == old:
+            return
+        pw["mode"] = mode
+        var_shutdown.set(mode == "tat")
+        var_sleep.set(mode == "ngu")
+        if source == "user":
+            _post_power(mode)
+        if mode:
+            log(("🌙" if mode == "ngu" else "⏻")
+                + f" Bật chế độ {'cho máy NGỦ' if mode == 'ngu' else 'TẮT MÁY'}"
+                f" khi xong: hàng đợi xong hết + rảnh {POWER_DELAY_MIN} phút."
+                + (" (đã bỏ ô kia)" if old else ""))
+        elif source == "user":
+            log("✖ Đã tắt chế độ ngủ/tắt máy khi xong.")
+        else:
+            log("Server đã bỏ tick ngủ/tắt máy (bỏ bên trang web / vừa thực hiện xong).")
+
+    def _click_shutdown() -> None:
+        _apply_mode("tat" if var_shutdown.get() else "")
+
+    def _click_sleep() -> None:
+        _apply_mode("ngu" if var_sleep.get() else "")
+
+    def _power_sync() -> None:
+        """Mỗi giây soi pw (luồng nền ghi) → vẽ ô tick + dòng đếm ngược."""
+        with sync_lock:
+            srv, left, pending = pw["srv_mode"], pw["left"], pw["pending"]
+        if srv is not None and not pending and srv != pw["mode"]:
+            _apply_mode(srv, source="server")
+        if pw["mode"] and left:
+            power_note.set(f"⏳ {'ngủ' if pw['mode'] == 'ngu' else 'tắt máy'} "
+                           f"sau {left} — huỷ: bỏ tick")
+        elif pw["mode"]:
+            power_note.set("chờ hàng đợi xong hết")
+        else:
+            power_note.set("")
+        root.after(1000, _power_sync)
+
+    def _power_watcher() -> None:
+        """Luồng nền: 5 giây hỏi /api/trangthai một lần cho _power_sync vẽ lại."""
+        import time
+        while True:
+            time.sleep(5)
+            with sync_lock:
+                seq = pw["seq"]
+            try:
+                st = _http("/api/trangthai")
+            except Exception:
+                continue           # server tắt/chưa lên → thử lại lượt sau
+            _apply_server_power(st, seq)
+
     def _close() -> None:
+        if pw["mode"] and owner:
+            # Bộ đếm ⏻/🌙 nằm TRONG server, đóng cửa sổ là tắt server → hết
+            # hẹn (lệnh `shutdown /s` ĐÃ nổ thì vẫn chạy — huỷ: shutdown /a).
+            log("✖ Tắt server = huỷ luôn chế độ ngủ/tắt máy đang chờ.")
         if owner:
             log("⏹ Đang tắt server…")
             root.update_idletasks()
@@ -337,9 +541,13 @@ def _run_launcher(port: int) -> int:
     btn_open.config(command=_open)
     btn_copy.config(command=_copy)
     btn_quit.config(command=_close)
+    chk_shutdown.config(command=_click_shutdown)
+    chk_sleep.config(command=_click_sleep)
     root.protocol("WM_DELETE_WINDOW", _close)
     url_entry.bind("<Double-Button-1>", lambda _e: _open())
 
+    threading.Thread(target=_power_watcher, daemon=True).start()
+    _power_sync()
     root.after(100, _start)
     _drain()
     root.mainloop()

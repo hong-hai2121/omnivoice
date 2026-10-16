@@ -7,6 +7,7 @@
       <tr>
         <th></th><th>Tập</th>
         {% for key, label in step_labels %}<th>{{ label }}</th>{% endfor %}
+        <th title="Xoá tập = đưa NGUYÊN thư mục của tập trong kịch_bản/ vào Thùng rác Windows (khôi phục được)">Xoá</th>
       </tr>
     </thead>
     <tbody>
@@ -39,6 +40,11 @@
               <td class="{{ 'yes' if r.steps[key] else 'no' }}">{{ '✅' if r.steps[key] else '—' }}</td>
             {% endif %}
           {% endfor %}
+          {# Nút 🗑 là type="button" (bảng nằm TRONG form của trang — không lồng
+             form con được), app.js hỏi xác nhận rồi POST /tap/xoa (X-Ajax). #}
+          <td><button type="button" class="ghost small danger nut-xoa-tap"
+                  data-tap="{{ r.episode }}" data-ten="{{ r.name }}"
+                  title="Xoá tập {{ r.episode }}: đưa nguyên thư mục “{{ r.name }}” vào Thùng rác Windows (khôi phục được)">🗑</button></td>
         </tr>
       {% endfor %}
     </tbody>
@@ -46,5 +52,7 @@
 </div>
 {% set ns = namespace(pending=0) %}
 {% for r in rows %}{% if r.done_count < r.total_steps %}{% set ns.pending = ns.pending + 1 %}{% endif %}{% endfor %}
-<p class="hint">{{ rows|length }} tập · {{ ns.pending }} tập còn việc chưa xong.</p>
+<p class="hint">{{ rows|length }} tập · {{ ns.pending }} tập còn việc chưa xong.
+   Nút 🗑 xoá nguyên thư mục tập khỏi kịch_bản/ (chỉ đưa vào Thùng rác Windows,
+   khôi phục được).</p>
 {% endif %}

@@ -10,6 +10,10 @@
     <button class="ghost" type="button" onclick="tickAll(false)">Bỏ chọn</button>
     <button class="ghost" type="button"
             onclick="htmx.trigger('#recogtable', 'refresh')">🔄 Làm mới</button>
+    {# Xoá TỔNG: mọi thư mục tập vào Thùng rác — app.js hỏi xác nhận rồi POST
+       /tap/xoa-tatca. type="button" vì khối này nằm trong form của trang. #}
+    <button class="ghost danger" type="button" id="nut-xoa-tatca"
+            title="Đưa TẤT CẢ thư mục tập trong kịch_bản/ vào Thùng rác Windows (khôi phục được)">🗑 Xoá hết</button>
   </div>
   <div id="recogtable" hx-get="/partials/recog-table{{ '?form=' ~ bform if bform }}"
        hx-trigger="refresh, every 15s" hx-swap="innerHTML">

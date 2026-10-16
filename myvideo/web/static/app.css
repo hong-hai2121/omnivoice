@@ -787,6 +787,26 @@ body.p-video .phead h2 { color: var(--accent); }
   border: 1px solid rgba(0, 0, 0, .3); vertical-align: baseline; margin-right: 2px;
 }
 
+/* 🎚 Hàng chỉnh âm lượng KIỂU CAPCUT (tab 🔊 Âm thanh): nhãn — thanh kéo có
+   phần ĐÃ KÉO tô sáng + núm tròn trắng — ô số dB gõ được — nút ↺ về mặc định.
+   Phần tô sáng do JS đặt (linear-gradient theo %), giống hệt hàng Volume
+   trong panel Audio của CapCut PC. */
+.cc-row { display: flex; align-items: center; gap: 12px; margin: 12px 0 2px; }
+.cc-row .cc-ten { width: 92px; flex: none; font-size: 13px; color: var(--muted); }
+.cc-keo { flex: 1; -webkit-appearance: none; appearance: none; height: 4px;
+  border-radius: 999px; outline: none; cursor: pointer; border: none;
+  background: linear-gradient(to right, var(--accent) 0%, var(--accent) 50%,
+              var(--sunken) 50%); }
+.cc-keo::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45); cursor: grab; }
+.cc-keo:active::-webkit-slider-thumb { cursor: grabbing; }
+.cc-keo::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; border: none; box-shadow: 0 1px 4px rgba(0, 0, 0, .45); }
+.cc-so { width: 76px; flex: none; text-align: right; }
+.cc-dv { flex: none; color: var(--muted); font-size: 12px; }
+.cc-nhan { margin: 0 0 8px 104px; font-size: 12px; color: var(--muted); }
+
 /* Thanh chỉnh VỊ TRÍ · cỡ chữ · số ký tự/dòng, nằm dưới ảnh khung ngang 16:9. */
 .kvitri-dk { display: flex; flex-direction: column; gap: 8px; }
 .kvitri-dk input[type=range] { width: 100%; accent-color: var(--accent); }

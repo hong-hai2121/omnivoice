@@ -1092,3 +1092,57 @@ window.xemTruocThumb = function () {
     img.src = `/tap/${encodeURIComponent(tap)}/${img.dataset.kieu}?t=${t}`;
   });
 };
+
+
+// ── Nút 🗑 xoá tập ở bảng tập (16/10/2026) ───────────────────────────────────
+// Từng dòng (.nut-xoa-tap, POST /tap/xoa) và Xoá hết (#nut-xoa-tatca, POST
+// /tap/xoa-tatca). Nút là type="button" vì bảng nằm trong form của trang (không
+// lồng form con được). Server CHỈ đưa thư mục tập vào Thùng rác Windows (khôi
+// phục được) — vẫn hỏi xác nhận trước vì mất cả thư mục tập khỏi kịch_bản/.
+(function () {
+  async function goiXoa(url, fd, nut) {
+    nut.disabled = true;
+    try {
+      const r = await fetch(url, { method: 'POST', body: fd, credentials: 'same-origin',
+                                   headers: { 'X-Ajax': '1' } });
+      let notes = [];
+      if ((r.headers.get('content-type') || '').includes('json')) {
+        notes = (await r.json().catch(() => ({}))).notes || [];
+      }
+      if (!r.ok) {
+        notes.push(r.status === 401 ? '⛔ Hết phiên — mở lại link có ?token=… in ở cửa sổ server.'
+                                    : `⛔ Server báo lỗi ${r.status}.`);
+      }
+      window.mvToast(notes.length ? notes : ['✓ Đã gửi']);
+      if (window.htmx && document.getElementById('recogtable')) {
+        htmx.trigger('#recogtable', 'refresh');
+      }
+    } catch (_) {
+      window.mvToast(['⛔ Không gửi được — server còn chạy không?']);
+    } finally {
+      nut.disabled = false;
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const mot = e.target.closest('.nut-xoa-tap');
+    if (mot) {
+      const tap = mot.dataset.tap || '';
+      const ten = mot.dataset.ten || tap;
+      if (!confirm(`Đưa NGUYÊN thư mục của tập ${tap} (“${ten}”) vào Thùng rác?\n`
+                   + 'Mọi file đã làm của tập (dịch, giọng, video, thumbnail) rời khỏi '
+                   + 'kịch_bản/ — khôi phục được từ Thùng rác Windows.')) return;
+      const fd = new FormData();
+      fd.append('tap', tap);
+      goiXoa('/tap/xoa', fd, mot);
+      return;
+    }
+    const het = e.target.closest('#nut-xoa-tatca');
+    if (het) {
+      if (!confirm('Đưa TẤT CẢ thư mục tập trong kịch_bản/ vào Thùng rác?\n'
+                   + '(khôi phục được từ Thùng rác Windows — file rời trong kịch_bản/ '
+                   + 'và output/ không bị đụng)')) return;
+      goiXoa('/tap/xoa-tatca', new FormData(), het);
+    }
+  });
+})();

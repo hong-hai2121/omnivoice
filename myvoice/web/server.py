@@ -810,6 +810,63 @@ def partial_recog_table(request: Request, form: str = ""):
          "bform": form if form.isalnum() else ""})
 
 
+# ── Xoá tập (16/10/2026): CHỈ đưa vào Thùng rác Windows, confirm ở trình duyệt ─
+def _ly_do_khong_xoa_duoc() -> str:
+    """Lý do KHÔNG xoá được lúc này ("" = xoá được). Hàng đợi nào đang chạy thì
+    file của tập có thể đang được ghi/đọc (dựng video, đăng YouTube/Facebook)."""
+    if runner.busy():
+        return ("Hàng đợi chính đang chạy — dừng hết trước rồi hãy xoá "
+                "(file của tập có thể đang được ghi).")
+    if upload_runner.busy():
+        return "Đang đăng YouTube — chờ xong rồi hãy xoá (video của tập đang được đọc)."
+    if fb_runner.busy():
+        return "Đang đăng Facebook — chờ xong rồi hãy xoá (video của tập đang được đọc)."
+    return ""
+
+
+@app.post("/tap/xoa")
+def delete_episode(tap: str = Form("")):
+    """Nút 🗑 từng dòng ở bảng tập: đưa NGUYÊN thư mục của tập trong kịch_bản/
+    vào Thùng rác Windows (mọi file đã làm: dịch, giọng, video, thumbnail —
+    khôi phục được). Manifest GIỮ NGUYÊN để số tập không bị cấp lại cho nguồn
+    khác (sổ Facebook/YouTube tra theo số tập)."""
+    ly_do = _ly_do_khong_xoa_duoc()
+    if ly_do:
+        log(f"⚠️ {ly_do}")
+        return RedirectResponse("/nhandien", status_code=303)
+    folder = core.episode_folder(tap.strip())
+    if not folder:
+        log(f"⚠️ Không thấy thư mục của tập {tap} trong kịch_bản/.")
+        return RedirectResponse("/nhandien", status_code=303)
+    ok, fail = core.gui.App._send_to_recycle_bin([folder])
+    if fail:
+        log(f"⚠️ Tập {tap}: KHÔNG đưa được “{folder.name}” vào Thùng rác — giữ nguyên.")
+    else:
+        log(f"🗑 Tập {tap}: đã đưa thư mục “{folder.name}” vào Thùng rác — "
+            "khôi phục: mở Thùng rác Windows.")
+    return RedirectResponse("/nhandien", status_code=303)
+
+
+@app.post("/tap/xoa-tatca")
+def delete_all_episodes():
+    """Nút 🗑 Xoá hết ở bảng tập: đưa MỌI thư mục tập trong kịch_bản/ vào Thùng
+    rác Windows. File rời trong kịch_bản/ (input.docx…) và output/ KHÔNG bị đụng
+    — dọn cả những thứ đó thì dùng 🗑 Xóa output ở trang Giọng nói."""
+    ly_do = _ly_do_khong_xoa_duoc()
+    if ly_do:
+        log(f"⚠️ {ly_do}")
+        return RedirectResponse("/nhandien", status_code=303)
+    ep_dirs = core.gui.episode_dirs()
+    if not ep_dirs:
+        log("Không có tập nào trong kịch_bản/ để xoá.")
+        return RedirectResponse("/nhandien", status_code=303)
+    ok, fail = core.gui.App._send_to_recycle_bin(ep_dirs)
+    log(f"🗑 Đã đưa {ok} thư mục tập vào Thùng rác"
+        + (f", {fail} thư mục KHÔNG xoá được" if fail else "")
+        + " — khôi phục: mở Thùng rác Windows.")
+    return RedirectResponse("/nhandien", status_code=303)
+
+
 def _run_resume(request: Request, form) -> RedirectResponse:
     """Nút ⏩ Chạy tiếp: chạy ĐÚNG các bước còn thiếu của từng tập, HAI LƯỢT
     (04/10/2026, giống nút ⚡ bên GUI):

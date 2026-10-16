@@ -328,6 +328,22 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                 if nf.is_file():
                     argv += ["--nhac", str(nf),
                              "--nhac-db", str(s.get("nhacnen_db") or "-18")]
+            # 🔉 Tiếng gốc (thanh kéo kiểu CapCut): ô rỗng = như cũ (thay tiếng
+            # → tắt hẳn, giữ tiếng gốc → nguyên mức); có số = mức dB của tiếng
+            # gốc (thay tiếng thì trộn nhỏ dưới giọng đọc, kiểu thuyết minh).
+            # gocnorm: chuẩn hoá tiếng gốc về -23 LUFS (EBU R128) trước.
+            if str(s.get("gocdb") or "").strip():
+                argv += ["--goc-db", str(s["gocdb"]).strip()]
+            if s.get("gocnorm"):
+                argv.append("--goc-norm")
+            # 🗣 Giọng đọc (kênh thứ hai của tab 🔊, độc lập với tiếng gốc):
+            # ttsdb = chỉnh dB sau chuẩn hoá ("0" = như cũ), ttsnorm = chuẩn
+            # hoá -23 LUFS (EBU) thay vì -14 (YouTube). Chỉ có nghĩa khi thay
+            # tiếng — không có --audio thì script tự bỏ qua.
+            if str(s.get("ttsdb") or "").strip() not in ("", "0"):
+                argv += ["--tts-db", str(s["ttsdb"]).strip()]
+            if s.get("ttsnorm"):
+                argv += ["--tts-lufs", "-23"]
             # 🏷 Logo / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi khi ô bật VÀ
             # file có thật trong myvideo/kenh/<tên>/ (thiếu file thì thôi, không
             # làm hỏng lượt dựng; script cũng tự bỏ qua nếu file biến mất sau).
@@ -391,9 +407,12 @@ def _check_input(start: str, B: str, s: dict) -> str:
         if not os.path.isfile(f"{B}.mp4"):
             return f"Chưa có {name}.mp4 — chạy bước ① trước."
         ve_sub, thay = bool(s.get("vesub", True)), bool(s.get("thaytieng", True))
-        if not ve_sub and not thay:
+        # Chỉ chỉnh TIẾNG GỐC (thanh 🔉 / 📏 -23 LUFS) cũng là việc hợp lệ
+        # của bước ④ — không bắt phải vẽ sub hay thay tiếng.
+        chinh_goc = bool(str(s.get("gocdb") or "").strip()) or bool(s.get("gocnorm"))
+        if not ve_sub and not thay and not chinh_goc:
             return ("Bước ④ không còn việc gì: đã bỏ cả vẽ sub lẫn thay tiếng "
-                    "(tick lại một trong hai).")
+                    "(tick lại một trong hai, hoặc chỉnh 🔉 tiếng gốc).")
         if thay:
             # Không vẽ sub thì chỉ cần file audio, khỏi đòi bản SRT đã xếp.
             can = [f"{B}_vi_audio.wav"] + ([f"{B}_vi_sapxep.srt"] if ve_sub else [])

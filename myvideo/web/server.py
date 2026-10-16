@@ -109,6 +109,16 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 # 🎵 Nhạc nền nhỏ dưới tiếng chính: tên file trong myvideo/nhac
                 # (rỗng = không nhạc — mặc định tắt) + âm lượng dB (âm).
                 nhacnen="", nhacnen_db="-18",
+                # 🔊 TAB ÂM THANH (/amthanh — lưu riêng qua /amthanh/luu, KHÔNG
+                # nằm trong form chính): hai kênh chỉnh ĐỘC LẬP cho bước ④.
+                # • TIẾNG GỐC video: gocdb = mức dB ("" = như cũ — thay tiếng
+                #   thì TẮT hẳn, giữ tiếng gốc thì nguyên mức; thanh kéo kiểu
+                #   CapCut), gocnorm = chuẩn hoá về -23 LUFS trước khi áp dB.
+                # • GIỌNG ĐỌC (audio bước ③ tạo): ttsdb = chỉnh dB SAU chuẩn
+                #   hoá ("0" = như cũ), ttsnorm = chuẩn hoá về -23 LUFS (EBU
+                #   R128) thay vì -14 (YouTube) như từ trước tới giờ.
+                # Tất cả mặc định tắt — hành vi y như trước.
+                gocdb="", gocnorm=False, ttsdb="0", ttsnorm=False,
                 # 🏷 Đóng logo / nối outro của HỒ SƠ KÊNH đang chọn
                 # (kenh/<tên>/logo.png · outro.mp4) — mặc định tắt cả hai.
                 logo_kenh=False, outro_kenh=False,
@@ -499,11 +509,14 @@ def _tra(request: Request, loi: str = "", ok: str = "",
     # LUÔN trả (trang nào cũng có #queue — hai trang kia là mỏ neo ẩn).
     url = request.headers.get("hx-current-url") or ""
     tren_dang, tren_hangdoi = "/dangbai" in url, "/hangdoi" in url
+    # Tab 🔊 Âm thanh như tab ⏱: ngoài hàng đợi + lời nhắn không cần OOB nào.
+    tren_amthanh = "/amthanh" in url
     ctx = {"loi": loi, "ok": ok, "tren_dang": tren_dang,
-           "tren_hangdoi": tren_hangdoi, **_queue_ctx()}
+           "tren_hangdoi": tren_hangdoi, "tren_amthanh": tren_amthanh,
+           **_queue_ctx()}
     if tren_dang:
         ctx.update(_dang_ctx())
-    elif not tren_hangdoi:
+    elif not (tren_hangdoi or tren_amthanh):
         ctx.update(**_bang_ctx(), **_nguon_ctx())
     return templates.TemplateResponse(request, "_capnhat.html", ctx,
                                       headers=headers)
@@ -558,6 +571,36 @@ async def dangbai_view(request: Request):
         "loi": request.query_params.get("loi", ""),
         **_dang_ctx(),
     })
+
+
+@app.get("/amthanh", response_class=HTMLResponse)
+async def amthanh_view(request: Request):
+    """TAB 🔊 Âm thanh — HAI KÊNH chỉnh độc lập cho bước ④: tiếng gốc của
+    video và giọng đọc code tạo (bước ③). Lưu riêng qua /amthanh/luu nên
+    form chính (/luu, /chay) không đụng tới các khoá này."""
+    return templates.TemplateResponse(request, "amthanh.html", {
+        "settings": load_settings(),
+        "trang": "amthanh",
+        "loi": request.query_params.get("loi", ""),
+    })
+
+
+@app.post("/amthanh/luu")
+async def amthanh_luu(request: Request):
+    """Lưu tab 🔊 — CHỈ bốn khoá âm thanh (save_settings trộn, phần khác giữ)."""
+    g = (await request.form()).get
+    save_settings({
+        # Thanh tiếng gốc gửi -21…+20 (vạch 0 ở giữa, trái giảm phải tăng);
+        # -21 (nấc tận trái) = tắt/như cũ → lưu rỗng.
+        "gocdb": "" if int(_clamp(g("gocdb"), -21, 20, -21)) <= -21
+                 else _clamp(g("gocdb"), -20, 20, 0),
+        "gocnorm": bool(g("gocnorm")),
+        # Giọng đọc: 0 = như cũ; kẹp -20…+20 dB (tăng có chặn đỉnh bên ④).
+        "ttsdb": _clamp(g("ttsdb"), -20, 20, 0),
+        "ttsnorm": bool(g("ttsnorm")),
+    })
+    return _tra(request, ok="Đã lưu cài đặt âm thanh — ăn vào lượt dựng ④ kế tiếp",
+                luu=True)
 
 
 @app.get("/hangdoi", response_class=HTMLResponse)
@@ -820,6 +863,9 @@ def _settings_from_form(form) -> dict:
         nhacnen=(g("nhacnen") or "").strip()
                 if (g("nhacnen") or "") == Path((g("nhacnen") or "")).name else "",
         nhacnen_db=str(_clamp(g("nhacnen_db"), -40, 0, -18)),
+        # (gocdb/gocnorm/ttsdb/ttsnorm KHÔNG đọc ở đây: chúng thuộc tab 🔊 Âm
+        # thanh, lưu riêng qua /amthanh/luu — form chính không có mấy ô đó,
+        # đọc ở đây là mỗi lượt /luu lại reset về mặc định.)
         logo_kenh=bool(g("logo_kenh")), outro_kenh=bool(g("outro_kenh")),
         thu60_tu=_phut(g("thu60_tu")),
         auto2=bool(g("auto2")), auto3=bool(g("auto3")), auto4=bool(g("auto4")),
@@ -1299,8 +1345,8 @@ async def mo_thumuc(request: Request):
 
 @app.get("/api/trangthai")
 async def trangthai():
-    """Cho launcher/công cụ ngoài hỏi nhanh: hàng đợi + vài dòng nhật ký cuối."""
-    return JSONResponse({**q.state(), "lines": tail.tail(30)})
+    """Cho launcher/công cụ ngoài hỏi nhanh: hàng đợi + chế độ ⏻/🌙 + nhật ký cuối."""
+    return JSONResponse({**q.state(), "power": power.state(), "lines": tail.tail(30)})
 
 
 def main() -> None:

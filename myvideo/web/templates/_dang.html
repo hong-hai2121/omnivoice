@@ -16,6 +16,14 @@
     <p class="hint">Video dựng xong bước ④ chờ ở đây: 📑 SEO → 🖼 thumbnail →
       ⬆ YouTube (khung 08h/18h) · 📘 Facebook (khung 09h/19h). Tick vài video
       thì các nút chỉ làm những video đó.</p>
+    <span class="spacer"></span>
+    {# Xoá TỔNG (16/10/2026): cùng đường /xoa-het với nút ở trang quy trình —
+       mọi thứ trong output vào Thùng rác Windows, khôi phục được. #}
+    <button type="button" class="ghost danger"
+            hx-post="/xoa-het" hx-target="#queue" hx-swap="innerHTML"
+            hx-disabled-elt="this"
+            hx-confirm="Đưa TOÀN BỘ thư mục output vào Thùng rác? Mọi video đã dựng (cả SEO, thumbnail…) sẽ rời khỏi máy — khôi phục được từ Thùng rác Windows."
+            title="Xoá sạch output (mọi video trong bảng dưới) — chỉ đưa vào Thùng rác Windows, khôi phục được">🗑 Xoá cả output</button>
   </div>
 
   <form method="post" action="/dang/youtube" id="dangform"
@@ -48,7 +56,8 @@
     <div class="tablewrap">
       <table class="dangtab">
         <tr><th></th><th>Video</th><th>📑 SEO</th><th>🖼 Thumb</th>
-            <th>▶️ YouTube</th><th>📘 Facebook</th></tr>
+            <th>▶️ YouTube</th><th>📘 Facebook</th>
+            <th title="Xoá video = đưa MỌI file của nó trong output vào Thùng rác Windows (khôi phục được)">Xoá</th></tr>
         {% for r in dang.rows %}
           <tr>
             <td><input type="checkbox" name="chon" value="{{ r.base }}"></td>
@@ -58,10 +67,17 @@
             <td>{{ '✔ đã đăng' if r.yt else 'chưa' }}</td>
             <td>{% if r.fb %}✔ đã đăng/chờ lịch{% elif r.fb_when %}dự kiến
                 {{ r.fb_when.strftime('%d/%m %H:%M') }}{% else %}chưa{% endif %}</td>
+            {# Cùng đường /xoa với nút 🗑 ở bảng trang quy trình — type="button"
+               vì đang đứng trong form #dangform. Sổ "đã đăng" KHÔNG bị đụng. #}
+            <td><button type="button" class="ghost small danger"
+                    hx-post="/xoa" hx-vals='{{ {"base": r.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+                    title="Xoá video này khỏi output (vào Thùng rác Windows, khôi phục được)">🗑</button></td>
           </tr>
         {% endfor %}
         {% if not dang.rows %}
-          <tr><td colspan="6" class="hint">Chưa có video nào dựng xong bước ④.</td></tr>
+          <tr><td colspan="7" class="hint">Chưa có video nào dựng xong bước ④.</td></tr>
         {% endif %}
       </table>
     </div>

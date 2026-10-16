@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}🔊 Âm thanh — myvideo{% endblock %}
+
+{# TAB RIÊNG chỉnh ÂM THANH cho bước ④ — HAI KÊNH ĐỘC LẬP, mỗi kênh một thanh
+   kéo kiểu CapCut (±20 dB, vạch 0 ở GIỮA — trái giảm, phải tăng) + một nút
+   chuẩn hoá riêng:
+     🎬 TIẾNG GỐC của video  — tắt / giữ nhỏ dưới giọng đọc + chuẩn hoá -23 LUFS
+     🗣 GIỌNG ĐỌC code tạo   — chỉnh dB sau chuẩn hoá + đổi mức chuẩn hoá
+                               sang -23 LUFS (EBU R128) thay vì -14 (YouTube)
+   Lưu qua /amthanh/luu (CHỈ 4 khoá này) — form chính /luu không đụng tới,
+   nên lưu bên nào cũng không ghi đè bên kia. Cài đặt ăn vào LƯỢT DỰNG ④ KẾ
+   TIẾP; video đã dựng rồi không tự đổi. #}
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🔊</span> Âm thanh — bước ④</h1>
+  <p class="muted">Hai kênh chỉnh ĐỘC LẬP: tiếng gốc của video và giọng đọc
+    code tạo (bước ③). Lưu xong, cài đặt ăn vào lượt dựng ④ kế tiếp — dựng ở
+    tab <a href="/">🎬 Quy trình 4 bước</a>.</p>
+</div>
+
+{# Lời nhắn (lỗi / đã lưu): khối nổi góc phải dưới, bấm vào là tắt. #}
+<div id="tinnhan" class="tinnhan">{% if loi %}<p class="warn">⚠️ {{ loi }}</p>{% endif %}</div>
+{# Mỏ neo ẨN cho htmx — mọi nút đều nhả kết quả vào #queue (như tab 📤). #}
+<div id="queue" hidden></div>
+
+<form method="post" action="/amthanh/luu"
+      hx-post="/amthanh/luu" hx-target="#queue" hx-swap="innerHTML">
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">🎬</span><h2>Tiếng gốc của video</h2>
+      <p class="hint">Âm thanh có sẵn trong video nguồn. Khi <b>thay tiếng</b>:
+        mặc định tắt hẳn như trước (núm tận trái); kéo thanh vào một mức dB là
+        GIỮ tiếng gốc dưới giọng đọc (kiểu thuyết minh). Khi <b>giữ tiếng
+        gốc</b> (bỏ tick thay tiếng ở khối ④): thanh chỉnh thẳng âm lượng đầu
+        ra. Trái giảm tối đa −20 dB, phải tăng tối đa +20 dB, vạch 0 ở giữa.</p>
+    </div>
+    {# Hàng Volume KIỂU CAPCUT: thanh kéo (tô sáng từ VẠCH 0 giữa thanh tới
+       núm, hai phía) + ô số dB gõ được (đồng bộ hai chiều) + nút ↺ về mặc
+       định. Dải -20…+20; nấc -21 tận trái = tắt/như cũ (server lưu rỗng).
+       Chỉ thanh kéo mang name — ô số là bản chiếu, khỏi gửi trùng giá trị.
+       Giá trị cũ dưới -20 (dải -41…0 trước kia) kẹp về -20, khỏi hoá "tắt". #}
+    <div class="cc-row">
+      <span class="cc-ten">Âm lượng</span>
+      <input type="range" class="cc-keo" name="gocdb" id="gocdbKeo"
+             min="-21" max="20" step="1"
+             value="{{ [settings.gocdb|int, -20]|max if settings.gocdb else '-21' }}">
+      <input type="number" class="cc-so" id="gocdbSo" min="-21" max="20" step="1">
+      <span class="cc-dv">dB</span>
+      <button type="button" class="small" id="gocdbReset"
+              title="Về mặc định (tắt / như cũ)">↺</button>
+    </div>
+    <p class="cc-nhan" id="gocdbNhan"></p>
+    <label class="chk"><input type="checkbox" name="gocnorm"
+        {{ 'checked' if settings.gocnorm }}>
+      Chuẩn hoá âm lượng (như ô Loudness normalization của CapCut) — đưa tiếng
+      gốc về −23 LUFS trước khi chỉnh dB, nguồn to nhỏ thất thường vẫn ra một
+      mức đều</label>
+  </div>
+
+  <div class="panel">
+    <div class="phead">
+      <span class="num">🗣</span><h2>Giọng đọc (audio code tạo ở bước ③)</h2>
+      <p class="hint">File <code>_vi_audio.wav</code> do bước ③ sinh ra, xưa
+        nay luôn được chuẩn hoá về −14 LUFS (mức YouTube) khi vào video.
+        Hai ô dưới chỉnh ĐỘC LẬP với kênh tiếng gốc ở trên.</p>
+    </div>
+    <div class="cc-row">
+      <span class="cc-ten">Âm lượng</span>
+      <input type="range" class="cc-keo" name="ttsdb" id="ttsdbKeo"
+             min="-20" max="20" step="1"
+             value="{{ settings.ttsdb or '0' }}">
+      <input type="number" class="cc-so" id="ttsdbSo" min="-20" max="20" step="1">
+      <span class="cc-dv">dB</span>
+      <button type="button" class="small" id="ttsdbReset"
+              title="Về mặc định (0 dB — như cũ)">↺</button>
+    </div>
+    <p class="cc-nhan" id="ttsdbNhan"></p>
+    <label class="chk"><input type="checkbox" name="ttsnorm"
+        {{ 'checked' if settings.ttsnorm }}>
+      Chuẩn hoá âm lượng (như ô Loudness normalization của CapCut) — đưa giọng
+      đọc về −23 LUFS thay vì −14 LUFS (mức YouTube, mặc định từ trước tới
+      giờ)</label>
+  </div>
+
+  <div class="savebar">
+    <button>💾 Lưu cài đặt âm thanh</button>
+    <span class="hint">Chỉ lưu hai kênh trên trang này — cài đặt khác không bị
+      đụng. Nhạc nền 🎵 vẫn chỉnh ở khối ④ tab Quy trình.</span>
+  </div>
+</form>
+
+<script>
+  // Lời nhắn góc phải: bấm vào là tắt — y các tab khác.
+  const tin = document.getElementById("tinnhan");
+  tin.addEventListener("click", () => tin.replaceChildren());
+
+  // Hàng âm lượng KIỂU CAPCUT: kéo thanh ↔ gõ ô số đồng bộ hai chiều, nút ↺
+  // về mặc định, dòng nhãn nói rõ đang chọn gì. Vạch 0 dB nằm GIỮA thanh nên
+  // tô sáng TỪ VẠCH 0 tới núm (hai phía) — nhìn là biết đang tăng hay giảm.
+  // Chỉ thanh kéo mang name nên form luôn gửi đúng một giá trị.
+  const ccVol = (id, macdinh, ve) => {
+    const keo = document.getElementById(id + "Keo");
+    const so = document.getElementById(id + "So");
+    const nhan = document.getElementById(id + "Nhan");
+    const toMau = () => {
+      const min = +keo.min, max = +keo.max, v = +keo.value;
+      const pct = ((v - min) / (max - min)) * 100;
+      const z = ((0 - min) / (max - min)) * 100;     // vị trí vạch 0 dB
+      const [a, b] = pct < z ? [pct, z] : [z, pct];
+      keo.style.background = "linear-gradient(to right, var(--sunken) " + a +
+        "%, var(--accent) " + a + "%, var(--accent) " + b +
+        "%, var(--sunken) " + b + "%)";
+      so.value = keo.value;
+      nhan.textContent = ve(v);
+    };
+    keo.addEventListener("input", toMau);
+    so.addEventListener("change", () => {           // gõ số chính xác như CapCut
+      const v = parseInt(so.value, 10);
+      if (!Number.isNaN(v)) keo.value = Math.max(+keo.min, Math.min(+keo.max, v));
+      toMau();
+    });
+    document.getElementById(id + "Reset").addEventListener("click", () => {
+      keo.value = macdinh;
+      toMau();
+    });
+    toMau();
+  };
+  ccVol("gocdb", -21, v => v <= -21
+    ? "⊘ tắt / như cũ (mặc định — thay tiếng: tắt hẳn; giữ tiếng gốc: nguyên mức)"
+    : (v === 0 ? "0 dB — nguyên mức"
+       : v > 0 ? "+" + v + " dB — tiếng gốc to lên (tự chặn đỉnh −1.5 dB kẻo vỡ tiếng)"
+       : v + " dB — nhỏ đi (lót dưới giọng đọc khi thay tiếng)"));
+  ccVol("ttsdb", 0, v => v === 0 ? "0 dB — như cũ (mặc định)"
+    : (v > 0 ? "+" + v + " dB — to lên (tự chặn đỉnh −1.5 dB kẻo vỡ tiếng)"
+       : v + " dB — nhỏ đi"));
+</script>
+{% endblock %}

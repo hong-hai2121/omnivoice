@@ -120,7 +120,8 @@ def chia_cue(start, end, text, max_chars=MAX_LINE_CHARS, dong=2):
 
 
 def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
-         zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None):
+         zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None,
+         goc_db=None, goc_norm=False, tts_db=0.0, tts_lufs=-14.0):
     """Dựng video kết quả. Các phần đều tuỳ chọn, bỏ hết cũng chạy:
 
     `ass_path` → vẽ cứng phụ đề (None = không vẽ chữ nào).
@@ -134,6 +135,16 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     nên .ass phải soạn theo khung 1080×1920.
     `nhac` → trộn NHẠC NỀN này dưới tiếng chính, âm lượng `nhac_db` dB (âm là
     nhỏ hơn tiếng chính; nhạc ngắn tự lặp lại cho phủ hết video).
+    `goc_db`/`goc_norm` → TIẾNG GỐC của video (kéo thanh âm lượng kiểu CapCut):
+    goc_db là mức dB (0 = nguyên mức, âm = nhỏ đi), goc_norm chuẩn hoá tiếng
+    gốc về -23 LUFS (EBU R128) TRƯỚC khi áp dB — nguồn to nhỏ thất thường vẫn
+    ra một mức đều. Có `audio`: goc_db=None giữ nếp cũ (tiếng gốc TẮT hẳn),
+    có số thì TRỘN tiếng gốc dưới giọng đọc ở mức đó (kiểu thuyết minh).
+    Không `audio`: chỉnh thẳng tiếng gốc (None + không norm = copy như cũ).
+    `tts_db`/`tts_lufs` → GIỌNG ĐỌC (file `audio`) — kênh chỉnh ĐỘC LẬP với
+    tiếng gốc: tts_lufs là mức chuẩn hoá (mặc định -14 LUFS chuẩn YouTube như
+    xưa nay; -23 = EBU R128), tts_db chỉnh THÊM sau chuẩn hoá (0 = như cũ;
+    tăng (+) thì tự chặn đỉnh -1.5 dB kẻo vỡ tiếng).
     `logo` → đóng ảnh PNG này (logo kênh) ở góc phải trên suốt video, rộng
     ~12%% khung; nền trong suốt của PNG giữ nguyên.
 
@@ -194,7 +205,14 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
         logo_w = max(48, round(vw * 0.12 / 2) * 2)
         pad = max(12, vw // 100)
 
-    LOUD = "loudnorm=I=-14:TP=-1.5:LRA=11"
+    # Chuỗi filter GIỌNG ĐỌC: chuẩn hoá về tts_lufs (mặc định -14 — chuẩn
+    # YouTube, đúng hành vi xưa nay) rồi chỉnh thêm tts_db. Tăng (+dB) thì
+    # chặn đỉnh -1.5 dBFS — limiter chỉ cắn khi chạm trần, giảm thì vô hại.
+    LOUD = f"loudnorm=I={float(tts_lufs):g}:TP=-1.5:LRA=11"
+    if tts_db:
+        LOUD += f",volume={float(tts_db):g}dB"
+        if float(tts_db) > 0:
+            LOUD += ",alimiter=limit=0.84:level=false"
 
     def build_cmd(gpu):
         codec = (["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19"]
@@ -217,21 +235,50 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             vi_logo, n = n, n + 1
 
         fc, maps, out_a, out_v = [], [], [], []
-        # ── Tiếng: TTS (loudnorm -14 LUFS chuẩn YouTube) ± nhạc nền ──────────
-        if ai_nhac is not None:
-            # amix normalize=0: KHÔNG tự hạ tiếng chính xuống — nhạc đã tự nhỏ
-            # bằng volume dB; duration=first ăn theo độ dài tiếng chính.
-            chinh = (f"[{ai_tts}:a]{LOUD},aresample=48000[chinh]"
-                     if ai_tts is not None else "[0:a]anull[chinh]")
-            fc += [chinh, f"[{ai_nhac}:a]volume={float(nhac_db):g}dB[bg]",
-                   "[chinh][bg]amix=inputs=2:duration=first:normalize=0[aout]"]
+        # ── Tiếng: TTS (loudnorm -14 LUFS chuẩn YouTube) ± tiếng gốc ± nhạc ──
+        # Chuỗi filter TIẾNG GỐC: chuẩn hoá -23 LUFS (EBU R128) trước — nguồn
+        # to nhỏ thất thường vẫn ra một mức — rồi mới áp goc_db dB (kéo kiểu
+        # CapCut); tăng (+dB) thì chặn đỉnh -1.5 dBFS như kênh giọng đọc kẻo
+        # vỡ tiếng. loudnorm trả mẫu 192kHz nên phải aresample lại.
+        goc_af = ",".join((["loudnorm=I=-23:TP=-2:LRA=7"] if goc_norm else [])
+                          + ([f"volume={float(goc_db):g}dB"] if goc_db else [])
+                          + (["alimiter=limit=0.84:level=false"]
+                             if goc_db and float(goc_db) > 0 else [])
+                          + ["aresample=48000"])
+        mix_goc = ai_tts is not None and goc_db is not None   # gốc LÓT dưới TTS
+        loc_goc = ai_tts is None and (goc_norm or bool(goc_db))  # chỉnh thẳng gốc
+        if ai_nhac is not None or mix_goc:
+            # amix normalize=0: KHÔNG tự hạ tiếng chính xuống — các lớp dưới
+            # (tiếng gốc/nhạc) đã tự nhỏ bằng volume dB; duration=first ăn
+            # theo độ dài tiếng chính.
+            srcs = ["[chinh]"]
+            fc.append(f"[{ai_tts}:a]{LOUD},aresample=48000[chinh]"
+                      if ai_tts is not None
+                      else f"[0:a]{goc_af if loc_goc else 'anull'}[chinh]")
+            if mix_goc:
+                fc.append(f"[0:a]{goc_af}[goc]")
+                srcs.append("[goc]")
+            if ai_nhac is not None:
+                fc.append(f"[{ai_nhac}:a]volume={float(nhac_db):g}dB[bg]")
+                srcs.append("[bg]")
+            fc.append("".join(srcs)
+                      + f"amix=inputs={len(srcs)}:duration=first:normalize=0[aout]")
             maps += ["-map", "[aout]"]
             out_a = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
         elif ai_tts is not None:
             # -map (i):a: chỉ lấy audio TTS — tiếng gốc của video TẮT hẳn.
             maps += ["-map", f"{ai_tts}:a"]
             out_a = ["-af", LOUD, "-ar", "48000", "-c:a", "aac", "-b:a", "192k"]
+        elif loc_goc:
+            # Giữ tiếng gốc nhưng chuẩn hoá/giảm dB → mã hoá lại MỖI audio;
+            # hình không đụng gì vẫn -c:v copy như cũ (nhanh, không mất nét).
+            maps += ["-map", "0:a"]
+            out_a = ["-af", goc_af, "-ar", "48000", "-c:a", "aac", "-b:a", "192k"]
         else:
+            if vi_logo is not None:
+                # Nhánh logo map hình bằng [vout] → ffmpeg TẮT chọn stream tự
+                # động, phải map tiếng gốc vào tay kẻo video đóng logo MẤT TIẾNG.
+                maps += ["-map", "0:a?"]
             out_a = ["-c:a", "copy"]
         # ── Hình: chuỗi vf (che mờ → zoom → dọc → chữ) ± logo đè cuối ────────
         if vi_logo is not None:
@@ -420,6 +467,25 @@ def main():
     parser.add_argument("--nhac-db", type=float, default=-18.0,
                         help="Âm lượng nhạc nền, dB so với 0 (mặc định -18 — "
                              "nghe rõ tiếng đọc, nhạc chỉ lót nền; -25 là rất nhỏ).")
+    parser.add_argument("--goc-db", type=float, default=None,
+                        help="Âm lượng TIẾNG GỐC của video, dB (0 = nguyên mức, "
+                             "âm = nhỏ đi, dương = to lên có chặn đỉnh -1.5 dB "
+                             "— kéo thanh kiểu CapCut). Có --audio: "
+                             "bỏ cờ này = tắt tiếng gốc như cũ, có số = TRỘN "
+                             "tiếng gốc dưới giọng đọc ở mức đó (vd -15, kiểu "
+                             "thuyết minh). Không --audio: chỉnh thẳng tiếng gốc.")
+    parser.add_argument("--goc-norm", action="store_true",
+                        help="Chuẩn hoá tiếng gốc về -23 LUFS (EBU R128) TRƯỚC "
+                             "khi áp --goc-db — nguồn to nhỏ thất thường vẫn ra "
+                             "một mức đều.")
+    parser.add_argument("--tts-db", type=float, default=0.0,
+                        help="Chỉnh GIỌNG ĐỌC (file --audio) thêm bấy nhiêu dB "
+                             "SAU khi chuẩn hoá (0 = như cũ; âm = nhỏ đi, dương "
+                             "= to lên — tăng thì tự chặn đỉnh -1.5 dB). Kênh "
+                             "chỉnh ĐỘC LẬP với --goc-db của tiếng gốc.")
+    parser.add_argument("--tts-lufs", type=float, default=-14.0,
+                        help="Mức chuẩn hoá giọng đọc, LUFS (mặc định -14 — "
+                             "chuẩn YouTube như xưa nay; -23 = EBU R128).")
     parser.add_argument("--logo", default="",
                         help="Đóng ảnh PNG này (logo kênh) góc phải trên suốt "
                              "video, rộng ~12%% khung. Bỏ trống = không logo.")
@@ -554,15 +620,35 @@ def main():
         print(f"⚠️ Không thấy outro: {outro} — dựng không outro.")
         outro = None
 
+    # 🔉 Tiếng gốc: trộn dưới giọng đọc (có --audio) hoặc chỉnh thẳng (không).
+    goc_db, goc_norm = args.goc_db, bool(args.goc_norm)
+    # 🗣 Giọng đọc: kênh chỉnh riêng, chỉ có nghĩa khi --audio.
+    tts_db, tts_lufs = args.tts_db, args.tts_lufs
+    if audio and (tts_db or tts_lufs != -14.0):
+        print(f"🗣 Giọng đọc: chuẩn hoá {tts_lufs:g} LUFS"
+              + (f", chỉnh thêm {tts_db:+g}dB" if tts_db else ""))
+    if audio and goc_db is not None:
+        print(f"🔉 Giữ tiếng gốc dưới giọng đọc: {goc_db:g}dB"
+              + (" (chuẩn hoá -23 LUFS trước)" if goc_norm else ""))
+    elif not audio and (goc_norm or goc_db):
+        print("🔉 Tiếng gốc: " + " rồi ".join(
+            (["chuẩn hoá -23 LUFS"] if goc_norm else [])
+            + ([f"chỉnh {goc_db:g}dB"] if goc_db else [])))
+
     # Bỏ hết thì file ra y hệt file vào — chặn sớm cho đỡ tốn công.
-    if not any((ve_sub, vung, audio, zoom, doc, nhac, logo, outro)):
+    # (goc_db=0/goc_norm tắt mà không có gì khác cũng tính là "bỏ hết".)
+    if not any((ve_sub, vung, audio, zoom, doc, nhac, logo, outro,
+                goc_norm, goc_db)):
         print("❌ Không vẽ sub, không che mờ, không thay tiếng, không zoom, "
-              "không khung dọc, không nhạc/logo/outro — chẳng có gì để làm.")
+              "không khung dọc, không nhạc/logo/outro, không chỉnh tiếng gốc "
+              "— chẳng có gì để làm.")
         sys.exit(1)
 
     if not burn(video, out_path, ass_path=ass_path, audio=audio,
                 force_cpu=args.cpu, vung=vung, zoom=zoom, doc=doc,
-                nhac=nhac, nhac_db=args.nhac_db, logo=logo):
+                nhac=nhac, nhac_db=args.nhac_db, logo=logo,
+                goc_db=goc_db, goc_norm=goc_norm,
+                tts_db=tts_db, tts_lufs=tts_lufs):
         print("❌ ffmpeg lỗi khi vẽ phụ đề.")
         sys.exit(1)
     if outro:
