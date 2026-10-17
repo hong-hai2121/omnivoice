@@ -119,8 +119,11 @@
       flash(chip, addSource(chip.dataset.src) ? '✓ đã thêm' : 'đã có rồi');
       return;
     }
-    if (e.target.closest('#srcClear')) {
-      const el = box();
+    const xoa = e.target.closest('#srcClear, .srcClear');
+    if (xoa) {
+      // Ô Nguồn của CHÍNH form chứa nút (trang Nhận diện không có #srcBox) — ô nào
+      // cũng đồng bộ với các ô khác + server qua sự kiện input (khối mvNguon).
+      const el = (xoa.closest('form') || document).querySelector('textarea[name="sources"]') || box();
       // Đã gõ gì đó mới hỏi — ô trống mà cũng bật hộp thoại thì phiền.
       if (el && el.value.trim() && confirm('Xoá hết nội dung ô Nguồn?')) {
         el.value = '';
@@ -134,6 +137,15 @@
       return;
     }
     if (e.target.closest('#srcAdd')) openPicker();
+    if (e.target.closest('#srcRun')) {
+      // ⏩ Nạp link & chạy tiếp (17/10/2026): gửi form Tạo kịch bản với start=resume
+      // qua nút submit ẨN cuối form (#srcRunSubmit) — đi đúng đường của mọi nút
+      // chạy: Home lưu hết các khối, gửi ngầm X-Ajax, rồi làm mới hàng đợi + bảng
+      // tập + ô Nguồn. Nút này là type=button để không thành nút mặc định của form.
+      const f = document.querySelector('form[action="/kichban/chay"]');
+      const b = document.getElementById('srcRunSubmit');
+      if (f && b) f.requestSubmit(b);
+    }
   });
 
   async function forget() {
@@ -1129,9 +1141,14 @@ window.xemTruocThumb = function () {
     if (mot) {
       const tap = mot.dataset.tap || '';
       const ten = mot.dataset.ten || tap;
-      if (!confirm(`Đưa NGUYÊN thư mục của tập ${tap} (“${ten}”) vào Thùng rác?\n`
-                   + 'Mọi file đã làm của tập (dịch, giọng, video, thumbnail) rời khỏi '
-                   + 'kịch_bản/ — khôi phục được từ Thùng rác Windows.')) return;
+      // Dòng ⏳ đã nạp (data-cho): chưa có thư mục, chỉ bỏ mục đã nạp khỏi bảng.
+      const hoi = mot.dataset.cho
+        ? `Bỏ link đã nạp của tập ${tap} khỏi bảng?\n(${ten})\n`
+          + 'Chưa có thư mục, không xoá file nào — dán lại link là nạp lại được.'
+        : `Đưa NGUYÊN thư mục của tập ${tap} (“${ten}”) vào Thùng rác?\n`
+          + 'Mọi file đã làm của tập (dịch, giọng, video, thumbnail) rời khỏi '
+          + 'kịch_bản/ — khôi phục được từ Thùng rác Windows.';
+      if (!confirm(hoi)) return;
       const fd = new FormData();
       fd.append('tap', tap);
       goiXoa('/tap/xoa', fd, mot);

@@ -41,6 +41,7 @@ STEP_CHOICES = [
 ]
 # Bước lẻ, dùng cho nút “chạy lại” của từng ô trong bảng tiến độ.
 SINGLE_STEPS = {
+    "tai":       "Tải video/audio",
     "recognize": "Nhận diện",
     "translate": "Dịch Gemini",
     "retranslate": "Dịch lại đoạn trống",
@@ -255,9 +256,9 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
     return steps, ""
 
 
-def resume_steps(missing: list[str], source: str, episode: str,
-                 upload: bool = False,
-                 require: list[str] | None = None) -> tuple[list[Step], str]:
+def resume_step(missing: list[str], source: str, episode: str,
+                upload: bool = False, require: list[str] | None = None,
+                label: str = "", continue_on_fail: bool = False) -> tuple[Step | None, str]:
     """MỘT bước chạy LIỀN MẠCH các bước còn thiếu của một tập → (Step, lỗi).
 
     Gộp cả chuỗi vào một lần gọi runner (--steps "a,b,c") thay vì mỗi bước một
@@ -265,14 +266,16 @@ def resume_steps(missing: list[str], source: str, episode: str,
     vấp profile đang khoá), và tập chạy trọn vẹn không bị việc khác chen ngang.
 
     require: các bước phải ĐÃ XONG lúc runner bắt đầu chạy, không thì dừng ⛔ (mã
-    STOP_CODE). Dùng cho lượt 2 của ⏩: lượt 1 (dịch/input) xếp trước nhưng chạy
-    trước bao lâu, kết quả ra sao thì lúc xếp chưa biết.
+    STOP_CODE). Dùng cho các đợt sau của ⏩: đợt trước xếp trước nhưng chạy xong
+    bao lâu, kết quả ra sao thì lúc xếp chưa biết.
+    continue_on_fail: bước này nằm trong một ĐỢT nhiều tập (17/10/2026) — hỏng thì
+    hàng đợi ghi nhận rồi chạy tiếp tập sau thay vì dừng cả việc.
     """
     # Bước đăng (YouTube / Short / Facebook) không phải việc của run_episode.py — bên gọi
     # (_run_resume) xếp chúng vào hàng đợi đăng; lọc ở đây để không tạo lệnh sai.
     missing = [k for k in missing if k not in core.POST_STEPS]
     if not missing:
-        return [], f"Tập {episode}: không còn bước nào thiếu."
+        return None, f"Tập {episode}: không còn bước nào thiếu."
     argv = _base_argv(",".join(missing), source, episode, force=False)
     if require:
         argv += ["--require", ",".join(require)]
@@ -280,17 +283,25 @@ def resume_steps(missing: list[str], source: str, episode: str,
     if "tts" in missing:
         tts_json, err = _write_tts_json()
         if err:
-            return [], err
+            return None, err
         argv += ["--tts-json", tts_json]
         # Số tập đã biết sẵn (chạy tiếp thư mục có rồi) → nối thẳng việc đăng,
         # không cần đi vòng qua file --episode-out như lúc nguồn là link mới.
         on_success = lambda ep=episode, u=upload: queue_after_build(ep, u)   # noqa: E731
-    label = "⏩ " + " → ".join(SINGLE_STEPS.get(k, k) for k in missing)
+    label = label or ("⏩ " + " → ".join(SINGLE_STEPS.get(k, k) for k in missing))
     # Cả chuỗi là MỘT lần gọi runner: SEO hỏng thì runner tự đi tiếp bên trong, xong
     # mới trả STOP_CODE (có dựng video) hoặc SEO_SOFT_CODE (chỉ SEO/thumbnail).
-    return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
-                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE, SEO_SOFT_CODE),
-                 on_success=on_success)], ""
+    return Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
+                env=core.subprocess_env(), soft_fail_codes=(STOP_CODE, SEO_SOFT_CODE),
+                continue_on_fail=continue_on_fail, on_success=on_success), ""
+
+
+def resume_steps(missing: list[str], source: str, episode: str,
+                 upload: bool = False,
+                 require: list[str] | None = None) -> tuple[list[Step], str]:
+    """Bản danh-sách của resume_step (một tập = một việc riêng)."""
+    step, err = resume_step(missing, source, episode, upload=upload, require=require)
+    return ([step] if step is not None else []), err
 
 
 def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = False,

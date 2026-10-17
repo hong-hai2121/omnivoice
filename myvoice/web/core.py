@@ -187,16 +187,19 @@ def source_progress() -> dict[str, dict]:
             "episode": str(entry.get("episode", "")).strip().zfill(2),
             "done": done, "total": len(core_steps),
             "xong": bool(entry.get("done")) or (bool(core_steps) and done == len(core_steps)),
+            # Link đã NẠP (register_sources) mà runner chưa chạy bước nào.
+            "cho": is_pending_entry(entry),
         }
     return out
 
 
 def _danh_dau(key: str, prog: dict[str, dict]) -> dict:
-    """Nhãn "đã làm" cho một nguồn: tập mấy, xong chưa, được mấy bước."""
+    """Nhãn "đã làm" cho một nguồn: tập mấy, xong chưa, được mấy bước, hay mới nạp
+    chờ chạy (`cho`)."""
     p = prog.get(gui.norm_source(key))
     if not p:
-        return {"episode": "", "xong": False, "buoc": ""}
-    return {"episode": p["episode"], "xong": p["xong"],
+        return {"episode": "", "xong": False, "buoc": "", "cho": False}
+    return {"episode": p["episode"], "xong": p["xong"], "cho": p.get("cho", False),
             "buoc": f"{p['done']}/{p['total']}" if p["total"] else ""}
 
 
@@ -264,6 +267,122 @@ def drop_from_src_draft(done: list[str]) -> None:
     lines = load_src_draft()["text"].splitlines()
     con = [l for l in lines if l.strip() and l.strip() not in xong]
     save_src_draft("\n".join(con) + ("\n" if con else ""))
+
+
+# ── Nạp link vào bảng tập (17/10/2026) ───────────────────────────────────────
+# Nút ⏩ (cả nút ở ô Nguồn lẫn nút ở khối "Chạy cho những tập đã tick") nhận link/file
+# đang nằm trong ô Nguồn: mỗi nguồn được GHI NGAY vào manifest (batch_manifest.json)
+# với số tập đã cấp + cờ "pending" = đã nạp, chưa chạy bước nào. Nhờ vậy:
+#   • bảng tập hiện tập đó ngay (dòng ⏳ đã nạp), ⏩ xem nó như một tập thiếu đủ
+#     mọi bước và xếp chạy y như tập đang dở — không cần nhánh riêng cho link mới;
+#   • hàng đợi chỉ nằm trong RAM: tắt server/máy giữa chừng thì link đã nạp vẫn
+#     còn trong manifest, mở lại bấm ⏩ là chạy tiếp — không mất link;
+#   • số tập giữ nguyên qua các lần bấm (plan_episodes/_allocate_episode đều tra
+#     manifest), dán lại link cũ cũng về đúng tập đó.
+# Runner ghi manifest sau mỗi bước (App._manifest_update) và XOÁ cờ pending khi đó;
+# thư mục tập có rồi thì dòng thật thay dòng ⏳. Tập 🗑 xoá thư mục (manifest giữ
+# để không cấp lại số) KHÔNG mang cờ này nên không bị ⏩ làm lại từ đầu.
+def is_pending_entry(entry: dict) -> bool:
+    """Mục manifest là link ĐÃ NẠP, chưa chạy: có cờ pending và chưa có thư mục."""
+    return (isinstance(entry, dict) and bool(entry.get("pending"))
+            and not entry.get("folder")
+            and str(entry.get("episode", "")).strip().isdecimal())
+
+
+def pending_entries() -> dict[str, dict]:
+    """Khoá manifest → mục của các link đã nạp chưa chạy (bỏ mục đã có thư mục tập)."""
+    have = {gui.episode_of(p.name) for p in gui.episode_dirs()}
+    return {k: e for k, e in gui.load_manifest().items()
+            if is_pending_entry(e) and str(e["episode"]).strip().zfill(2) not in have}
+
+
+def register_sources(lines: list[str], plan: list[str] | None = None
+                     ) -> list[tuple[str, str, bool]]:
+    """Nạp các nguồn vào manifest → [(nguồn, số tập, mới nạp?)].
+
+    plan: số tập định sẵn cho từng nguồn (plan_episodes — cùng độ dài lines, "" =
+    tự cấp). Nguồn đã có trong manifest thì giữ nguyên tập cũ — bấm lại không cấp
+    số mới, không tạo tập trùng: còn thư mục tập → (mới nạp? = False, chạy tiếp tập
+    đó); thư mục đã 🗑 xoá → nạp LẠI dưới đúng số cũ (mới nạp? = True) — y như 🎙
+    vốn dựng lại tập cũ theo manifest; dán lại link là người dùng muốn làm lại."""
+    import datetime as _dt
+    plan = list(plan or [])
+    m = gui.load_manifest()
+    skip = gui.load_skip_episodes()
+    live = {gui.episode_of(p.name) for p in gui.episode_dirs()}
+    # Số đang giữ chỗ: thư mục tập có thật + mục đã nạp chờ chạy (cùng quy tắc với
+    # plan_episodes). Mục cũ không pending, không thư mục (tập đã 🗑) KHÔNG chặn —
+    # làm bù vẫn cấp lại được số kênh còn thiếu cho truyện khác, như runner xưa nay.
+    taken = {str(v.get("episode", "")).strip().zfill(2) for v in m.values()
+             if is_pending_entry(v)} | live
+    cursor = gui.next_episode_number(last_used_episode(), skip)
+    now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    out: dict[int, tuple[str, str, bool]] = {}
+    changed = False
+    moi: list[tuple[int, str, str]] = []        # (vị trí, nguồn, khoá) chưa có trong manifest
+    # LƯỢT 1 — nguồn đã có trong manifest: giữ ĐÚNG số cũ và giữ chỗ số đó trước,
+    # để lượt 2 không cấp trùng cho link mới (một link trùng số sẽ bị che mất).
+    for i, src in enumerate(lines):
+        src = src.strip()
+        if not src:
+            continue
+        key = gui.norm_source(src)
+        entry = m.get(key)
+        if entry is None:
+            # Manifest cũ khoá theo chuỗi thô (trước norm_source) — cùng cách dò với
+            # App._allocate_episode để file gõ khác kiểu vẫn về đúng tập cũ.
+            for old_key in list(m):
+                if old_key != key and gui.norm_source(old_key) == key:
+                    entry = m[key] = m.pop(old_key)
+                    changed = True
+                    break
+        if entry is not None and str(entry.get("episode", "")).strip().isdecimal():
+            ep = str(entry["episode"]).strip().zfill(2)
+            taken.add(ep)
+            if ep in live:
+                out[i] = (src, ep, False)
+                continue
+            if not is_pending_entry(entry):
+                # Thư mục tập không còn (🗑) → nạp lại dưới số cũ: bỏ tiến độ cũ
+                # (file đã mất), về trạng thái "đã nạp, chờ chạy".
+                entry.update({"folder": "", "steps": {}, "pending": True, "updated": now})
+                entry.pop("done", None)
+                changed = True
+            out[i] = (src, ep, True)
+            continue
+        moi.append((i, src, key))
+    # LƯỢT 2 — nguồn mới: số theo plan nếu chưa ai giữ, không thì cấp số kế tiếp.
+    for i, src, key in moi:
+        ep = str(plan[i]).strip().zfill(2) if i < len(plan) and str(plan[i]).strip() else ""
+        if ep in taken:
+            ep = ""
+        while not ep:
+            cand = str(cursor).zfill(2)
+            cursor = gui.next_episode_number(cursor, skip)
+            if cand not in taken:
+                ep = cand
+        taken.add(ep)
+        m[key] = {"source": key, "episode": ep, "folder": "", "steps": {},
+                  "pending": True, "updated": now}
+        changed = True
+        out[i] = (src, ep, True)
+    if changed:
+        gui.save_manifest(m)
+    return [out[i] for i in sorted(out)]
+
+
+def drop_pending(episode: str = "") -> int:
+    """Bỏ mục đã nạp chưa chạy khỏi manifest: một tập (`episode`) hoặc tất cả ("").
+    → số mục đã bỏ. Chỉ đụng mục pending chưa có thư mục; tập thật không bị đụng."""
+    want = str(episode or "").strip().zfill(2) if str(episode or "").strip() else ""
+    m = gui.load_manifest()
+    keys = [k for k, e in pending_entries().items()
+            if not want or str(e["episode"]).strip().zfill(2) == want]
+    for k in keys:
+        m.pop(k, None)
+    if keys:
+        gui.save_manifest(m)
+    return len(keys)
 
 
 def list_download_files() -> list[dict]:
@@ -934,6 +1053,28 @@ def episode_rows() -> list[dict]:
             "co_dich": (folder / "gemini_result.docx").exists(),
             "done_count": sum(1 for v in core_steps.values() if v),
             "total_steps": len(core_steps),
+            "cho": False,
+        })
+    # Link đã NẠP (⏩ / nút ⏩ ở ô Nguồn) mà runner chưa chạy bước nào → dòng ⏳ với
+    # mọi bước còn thiếu, để ⏩ xếp chạy như tập đang dở và người dùng thấy link
+    # không bị mất khi tắt server. Thư mục có rồi thì dòng thật ở trên thay thế.
+    have = {r["episode"] for r in rows}
+    no_steps = {k: False for k in ("recognize", "translate", "input", "seo", "thumbnail",
+                                   "audio", "video_ngang", "video_doc", "video_tiktok",
+                                   "video_short", "upload", "short", "facebook",
+                                   "doc_cho_seo")}
+    for key, entry in manifest.items():
+        if not is_pending_entry(entry):
+            continue
+        ep = str(entry["episode"]).strip().zfill(2)
+        if ep in have:
+            continue
+        have.add(ep)
+        rows.append({
+            "episode": ep, "name": "", "folder": "", "title": "",
+            "source": entry.get("source", key), "updated": entry.get("updated", ""),
+            "steps": dict(no_steps), "trong": [], "do": [], "co_dich": False,
+            "done_count": 0, "total_steps": len(build_keys), "cho": True,
         })
     rows.sort(key=lambda r: int(r["episode"]), reverse=True)
     return rows
@@ -1008,8 +1149,18 @@ def plan_episodes(sources: list[str], start_ep: str = "",
         pool = todo[todo.index(start):] if start in todo else [start]
         cursor = gui.next_episode_number(last_used_episode(), skip)
 
-    known = {gui.norm_source(k) for k in gui.load_manifest()}
+    manifest = gui.load_manifest()
+    known = {gui.norm_source(k): e for k, e in manifest.items()}
     taken = {gui.episode_of(p.name) for p in gui.episode_dirs()}
+    # Số đang GIỮ CHỖ trong manifest cũng không cấp cho link mới (17/10/2026):
+    # mục đã nạp chờ chạy (pending), và mục của chính các nguồn trong mẻ này —
+    # nguồn đã có tập thì chạy lại ĐÚNG số cũ, cấp số đó cho link khác là hai link
+    # trùng số, một link bị che mất (BV12VJr6VEzU giữ 119, link 1 cũng được 119).
+    trong_me = {gui.norm_source(s) for s in sources}
+    for k, e in manifest.items():
+        ep_cu = str(e.get("episode", "")).strip()
+        if ep_cu.isdecimal() and (is_pending_entry(e) or gui.norm_source(k) in trong_me):
+            taken.add(ep_cu.zfill(2))
 
     out: list[str] = []
     for src in sources:

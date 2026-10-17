@@ -12,10 +12,19 @@
       <h2>Nguồn</h2>
       <span class="phead-gap"></span>
       <button type="button" class="small" id="srcAdd">📂 Thêm từ máy</button>
+      {# ⏩ (17/10/2026): nạp link trong ô vào bảng tập rồi chạy logic "⏩ Chạy tiếp các
+         bước còn thiếu" (hai lượt). type=button + JS gọi nút submit ẩn ở cuối form
+         (#srcRunSubmit): đặt submit thật ở đây thì nó thành nút mặc định của form —
+         bấm Enter ở ô "Số tập" hoá ra chạy ⏩ thay vì 🎙 như trước. #}
+      <button type="button" class="small primary" id="srcRun"
+              title="Nạp các link/file trong ô vào bảng tập (giữ được khi tắt server) rồi chạy các bước còn thiếu theo bốn đợt, mỗi đợt làm hết mọi tập: ① tải video/audio → ② nhận diện → ③ dịch + input.docx + SEO → ④ thumbnail + giọng + video (→ đăng)">⏩ Nạp link &amp; chạy tiếp</button>
       <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
     </div>
     <label class="field">
-      <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
+      <span>Link hoặc đường dẫn file — mỗi dòng một nguồn. Link <b>Bilibili</b>
+        tự tải VIDEO bản chất lượng cao nhất qua app Bili23 (về
+        Downloads\&lt;mã BV&gt;.mp4); link tải lỗi được note vào
+        <code>kịch_bản/link_tai_loi.txt</code>.</span>
       {# Ô Nguồn DÙNG CHUNG với trang Nhận diện (và mọi tab): nội dung lưu ở server
          (core.load_src_draft), gõ ở đâu các chỗ khác cũng có — xem app.js. #}
       <textarea id="srcBox" name="sources" rows="6" data-ver="{{ src_draft.ver }}"
@@ -32,7 +41,7 @@
         {% for h in src_history %}
           <button type="button" data-src="{{ h.full }}"
                   class="chip {{ 'chip-xong' if h.xong else ('chip-dang' if h.episode) }}"
-                  title="{{ h.full }}{% if h.episode %} — tập {{ h.episode }}, {{ 'đã làm xong' if h.xong else 'đang dở ' ~ h.buoc ~ ' bước' }}{% endif %}">{%
+                  title="{{ h.full }}{% if h.episode %} — tập {{ h.episode }}, {{ 'đã làm xong' if h.xong else ('đã nạp, chờ chạy' if h.cho else 'đang dở ' ~ h.buoc ~ ' bước') }}{% endif %}">{%
             if h.episode %}<i class="dalam">{{ '✓' if h.xong else '◐' }}</i>{% endif %}{{ h.label }}</button>
         {% endfor %}
         {# type=button + gọi ngầm bằng JS, KHÔNG phải submit: khối Nguồn là panel
@@ -153,4 +162,8 @@
       chạy{% if on_home %} — trên Home, mọi nút chạy của khối nào cũng lưu luôn
       cài đặt của TẤT CẢ các khối trên trang{% endif %}.</span>
   </div>
+  {# Nút submit ẨN cho ⏩ ở đầu khối Nguồn (#srcRun, app.js gọi requestSubmit):
+     đặt CUỐI form để không thành nút mặc định khi bấm Enter. #}
+  <button type="submit" name="start" value="resume" id="srcRunSubmit" hidden
+          tabindex="-1" aria-hidden="true"></button>
 </form>

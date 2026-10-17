@@ -83,9 +83,13 @@
     <label class="field">
       <span>Mỗi dòng một file — mỗi dòng thành MỘT việc riêng trong hàng đợi.
         Bước ① cần file video gốc; chạy lẻ bước ②③④ thì dán file/tên
-        <code>_x0.7</code> trong output (hoặc dùng nút ở bảng dưới).</span>
+        <code>_x0.7</code> trong output (hoặc dùng nút ở bảng dưới).
+        Dán <b>link Bilibili</b> cũng được — tự tải bản chất lượng cao nhất
+        qua app Bili23 (file về Downloads/&lt;mã BV&gt;.mp4) rồi chạy tiếp.
+        Muốn tải trước cả mẻ mà chưa chạy gì: dán danh sách link rồi bấm
+        <b>⬇ Chỉ tải về</b> — tải lần lượt từng link.</span>
       <textarea id="srcBox" name="sources" rows="4" spellcheck="false"
-                placeholder="C:\Users\PC\Downloads\video1.mp4&#10;C:\Users\PC\Downloads\video2.mp4"></textarea>
+                placeholder="C:\Users\PC\Downloads\video1.mp4&#10;https://www.bilibili.com/video/BV…"></textarea>
     </label>
     {# File trong Downloads/Videos/output giờ nằm trong bảng 📂 Thêm từ máy (có
        ô lọc tên, cỡ file, ngày sửa và dấu đã-làm) — hàng chip dưới đây dành cho
@@ -113,6 +117,15 @@
                style="width:90px"
                title="Cắt 60 giây bắt đầu từ phút này — nhảy vào giữa bài cho bản nháp đại diện hơn; trống/0 = từ đầu">
       </label>
+      {# ⬇ CHỈ TẢI VỀ: dán cả danh sách link Bilibili rồi bấm một nút — mỗi link
+         một việc, hàng đợi tải LẦN LƯỢT về Downloads/<mã BV>.mp4, KHÔNG chạy
+         ①→④ (tải trước cả mẻ, lúc rảnh mới 📂 Thêm từ máy chạy quy trình).
+         Dòng nào không phải link thì cả lượt không xếp — y hệt lỗi dòng khác. #}
+      <button name="start" value="tai"
+              hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              title="Chỉ tải các link Bilibili trong ô Nguồn về Downloads (bản chất lượng
+cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">⬇ Chỉ tải về (danh sách link)</button>
       <span class="spacer"></span>
       {# Xoá cả output để ngay đây cho gần chỗ bắt đầu một mẻ mới (trước nằm tít
          dưới bảng Kết quả). type=button + hx-post chứ KHÔNG phải submit: <form>

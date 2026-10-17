@@ -8,9 +8,18 @@
 
   <div class="batch-side">
     <div class="panel">
-      <div class="phead"><h2>Nhận diện link → tiếng Trung</h2></div>
+      <div class="phead">
+        <h2>Nhận diện link → tiếng Trung</h2>
+        <span class="phead-gap"></span>
+        {# ✕ như ở khối Nguồn trang Home/Tạo kịch bản (app.js bắt .srcClear): xoá
+           ô này là xoá bản nháp dùng chung → các trang/tab khác cũng trống. #}
+        <button type="button" class="small danger srcClear"
+                title="Xoá hết link/file đang nhập (ô Nguồn dùng chung mọi trang)">✕ Xoá ô nhập</button>
+      </div>
       <label class="field">
-        <span>Link hoặc đường dẫn file — mỗi dòng một nguồn</span>
+        <span>Link hoặc đường dẫn file — mỗi dòng một nguồn (link Bilibili tự
+          tải VIDEO bản cao nhất qua app Bili23; link lỗi note vào
+          <code>kịch_bản/link_tai_loi.txt</code>)</span>
         {# Cùng MỘT ô Nguồn với trang Tạo kịch bản — xem _form_script.html. #}
         <textarea name="sources" rows="3" data-ver="{{ src_draft.ver }}"
                   placeholder="https://www.bilibili.com/video/…">

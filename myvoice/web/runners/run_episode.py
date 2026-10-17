@@ -23,8 +23,11 @@ import contextlib
 import json
 import logging
 import os
+import re
+import subprocess
 import sys
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 _WEB_DIR = Path(__file__).resolve().parent.parent
@@ -40,7 +43,7 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
 
 import amain_taogiong_gui as gui                # noqa: E402
-from giu_man_hinh import NHICH_SAU, giu_man_hinh  # noqa: E402
+from giu_man_hinh import CHO_SANG, NHICH_SAU, giu_man_hinh  # noqa: E402
 from myvoice.web import core                    # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
@@ -54,7 +57,10 @@ ERROR = 2
 # để dành tới khi có SEO, và KHÔNG tự đăng. Khớp SEO_SOFT_CODE trong web/steps.py.
 SEO_SOFT = 78
 
-ALL_STEPS = ["recognize", "translate", "input", "seo", "thumbnail", "tts"]
+# "tai" (17/10/2026): CHỈ tải video/audio của nguồn về máy — ⏩ xếp đợt tải cho mọi
+# tập trước, rồi mới nhận diện hàng loạt; "recognize" chạy sau thấy file có sẵn thì
+# dùng lại ngay (cả Bili23 lẫn yt-dlp đều bỏ qua khi file đích đã có).
+ALL_STEPS = ["tai", "recognize", "translate", "input", "seo", "thumbnail", "tts"]
 # Gộp "script" thành một bước lớn để dịch → SEO dùng CHUNG một phiên Firefox
 # (mở hai lần thì phiên sau vấp profile đang bị khoá).
 STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
@@ -62,6 +68,75 @@ STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
 # Bước chạy trong lúc giữ màn hình sáng (03/10/2026): màn hình tắt thì Chrome bóp tab
 # Gemini → dịch/SEO hỏng (scripts/giu_man_hinh.py). Các bước khác màn hình tắt thoải mái.
 GIU_MAN_HINH = {"recognize", "translate", "seo"}
+
+# ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO bản chất lượng cao nhất qua
+# app Bili23 Downloader bằng script cầu nối bên myvideo — mượn NGUYÊN script
+# (như gemini_backend dùng chung), không viết bộ tải thứ hai. File về
+# Downloads/<mã BV>.mp4, TRÙNG chỗ với bên myvideo: video nào bên kia tải rồi
+# thì bên này nhặt lại luôn. Link KHÔNG phải bilibili vẫn đi yt-dlp lấy mp3 như cũ.
+TAIBILI_SCRIPT = _BASE_DIR.parent / "myvideo" / "video_taibilibili.py"
+_BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
+_BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+# Link tải lỗi NOTE vào đây (giờ · tập · link · lý do) — log web chỉ nằm RAM,
+# chạy đêm hỏng link nào sáng ra còn tra lại được.
+LINK_LOI_FILE = _BASE_DIR / "kịch_bản" / "link_tai_loi.txt"
+
+
+def note_link_loi(src: str, ly_do: str, episode: str = "") -> None:
+    """Ghi một dòng vào sổ link lỗi — lỗi tải là chuyện của NGUỒN, phải giữ lại
+    được sau khi log trôi/tắt server."""
+    try:
+        LINK_LOI_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LINK_LOI_FILE, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M}"
+                    + (f" · tập {episode}" if episode else "")
+                    + f" · {src} · {ly_do}\n")
+        logging.info(f"📝 Đã note link lỗi vào kịch_bản/{LINK_LOI_FILE.name}")
+    except OSError as e:
+        logging.warning(f"⚠️ Không ghi được sổ link lỗi: {e}")
+
+
+def _ten_tai_bilibili(src: str) -> str:
+    """Link → tên file sẽ tải về (mã BV/av; link rút gọn b23.tv lấy mã rút gọn).
+    Cùng quy ước với myvideo/web/steps.py để hai bên dùng chung một file."""
+    m = _BILI_ID_RE.search(src or "")
+    if m:
+        return m.group(1)
+    duoi = re.sub(r"[^0-9A-Za-z]+", "", src.rstrip("/").rsplit("/", 1)[-1].split("?")[0])
+    return f"b23_{duoi[:24]}" if duoi else ""
+
+
+def _tai_video_bilibili(src: str) -> tuple[str, str]:
+    """Link bilibili → (đường dẫn video đã tải, ""), lỗi thì ("", lý do).
+
+    Chạy video_taibilibili.py làm tiến trình con, in của nó đổ thẳng ra stdout
+    cho web thấy tiến độ; dòng ❌ cuối cùng chính là lý do lỗi để note sổ."""
+    ten = _ten_tai_bilibili(src)
+    if not ten:
+        return "", f"không nhận ra mã BV/av trong link: {src}"
+    if not TAIBILI_SCRIPT.is_file():
+        return "", f"thiếu script {TAIBILI_SCRIPT}"
+    out = Path.home() / "Downloads" / f"{ten}.mp4"
+    ly_do = ""
+    try:
+        p = subprocess.Popen([sys.executable, "-u", str(TAIBILI_SCRIPT), src,
+                              "--out", str(out)],
+                             cwd=str(_BASE_DIR.parent),
+                             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace")
+        for line in p.stdout:
+            line = line.rstrip()
+            if line:
+                print(line, flush=True)
+            if line.startswith("❌"):
+                ly_do = line.lstrip("❌").strip()
+        rc = p.wait()
+    except OSError as e:
+        return "", f"không chạy được script tải: {e}"
+    if rc == 0 and out.is_file():
+        return str(out), ""
+    return "", ly_do or f"script tải thoát mã {rc}"
 
 
 class _Var:
@@ -123,6 +198,53 @@ def _resolve_folder(app: HeadlessApp, source: str, episode: str | None):
 
 
 # ── Từng bước ───────────────────────────────────────────────────────────────
+def _fetch_media(source: str, episode: str) -> tuple[str, str]:
+    """Nguồn → (đường dẫn file media, ""), lỗi → ("", lý do).
+
+    File local dùng thẳng; link thì tải về (Bilibili: NGUYÊN VIDEO bản cao nhất qua
+    app Bili23 — file dùng được cho cả myvideo; link khác: yt-dlp lấy mp3). Đã có
+    file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước "tai" chạy trước, bước
+    "recognize" chạy sau không tải lại. Link tải lỗi được note vào sổ link lỗi."""
+    src = (source or "").strip().strip('"').strip("'")
+    if not src:
+        return "", "Không có nguồn (link/file) để nhận diện."
+    if os.path.isfile(src):
+        logging.info(f"📁 File local: {src}")
+        return src, ""
+    if _BILI_LINK_RE.match(src):
+        logging.info(f"⬇ Link Bilibili → tải video bản cao nhất qua app Bili23: {src}")
+        media, ly_do = _tai_video_bilibili(src)
+        if not media:
+            note_link_loi(src, ly_do, episode)
+            return "", f"Không tải được video Bilibili: {ly_do}"
+        logging.info(f"✅ Video đã về: {media}")
+        return media, ""
+    if src.lower().startswith(("http://", "https://")):
+        logging.info(f"🌐 Tải audio từ link: {src}")
+        media = gui.download_audio_mp3(src, gui.DOWNLOAD_DIR)
+        if not media:
+            note_link_loi(src, "yt-dlp không tải được audio (xem log)", episode)
+            return "", "Không tải được audio từ link."
+        return media, ""
+    return "", f"Nguồn không hợp lệ (không phải file cũng không phải link): {src}"
+
+
+def step_tai(folder: Path, episode: str, source: str, force: bool) -> int:
+    """Bước TẢI (17/10/2026): chỉ đem video/audio của nguồn về máy, KHÔNG nhận diện.
+    ⏩ xếp đợt tải cho MỌI tập trước, xong hết mới tới đợt nhận diện. Đã có bản
+    nhận diện thì khỏi tải (trừ khi --force)."""
+    existing = gui.find_zh_docx(folder)
+    if existing and gui.read_zh_docx_chunks(existing) and not force:
+        logging.info(f"♻ Bỏ qua tải (đã có {existing.name}).")
+        return 0
+    media, ly_do = _fetch_media(source, episode)
+    if not media:
+        logging.error(f"❌ {ly_do}")
+        return ERROR
+    logging.info(f"✅ Sẵn sàng cho đợt nhận diện: {media}")
+    return 0
+
+
 def step_recognize(app, folder: Path, episode: str, source: str,
                    model: str, speed: float, force: bool) -> int:
     import nhandien_giongnoi as recog
@@ -131,22 +253,9 @@ def step_recognize(app, folder: Path, episode: str, source: str,
     if existing and gui.read_zh_docx_chunks(existing) and not force:
         logging.info(f"♻ Bỏ qua nhận diện (đã có {existing.name}).")
         return 0
-    if not source:
-        logging.error("❌ Không có nguồn (link/file) để nhận diện.")
-        return ERROR
-
-    src = source.strip().strip('"').strip("'")
-    if os.path.isfile(src):
-        media = src
-        logging.info(f"📁 File local: {media}")
-    elif src.lower().startswith(("http://", "https://")):
-        logging.info(f"🌐 Tải audio từ link: {src}")
-        media = gui.download_audio_mp3(src, gui.DOWNLOAD_DIR)
-        if not media:
-            logging.error("❌ Không tải được audio từ link.")
-            return ERROR
-    else:
-        logging.error(f"❌ Nguồn không hợp lệ (không phải file cũng không phải link): {src}")
+    media, ly_do = _fetch_media(source, episode)
+    if not media:
+        logging.error(f"❌ {ly_do}")
         return ERROR
 
     try:
@@ -418,13 +527,20 @@ def main(argv=None) -> int:
     code = 0
     seo_hong = False
     if GIU_MAN_HINH.intersection(steps):
-        logging.info(f"🖱 Nhận diện/dịch/SEO: máy rảnh {NHICH_SAU // 60} phút thì tự nhích "
+        logging.info("🖱 Dịch/SEO: nhích chuột đánh thức màn hình trước khi bắt đầu (máy rảnh "
+                     f"lâu thì chờ {CHO_SANG} s cho sáng hẳn). "
+                     f"Nhận diện/dịch/SEO: máy rảnh {NHICH_SAU // 60} phút thì tự nhích "
                      "chuột 1 px để màn hình không tắt.")
     try:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
-            with giu_man_hinh() if name in GIU_MAN_HINH else contextlib.nullcontext():
-                if name == "recognize":
+            # Dịch/SEO cần màn hình SÁNG HẲN trước khi gửi Gemini (chờ CHO_SANG giây nếu
+            # máy đã rảnh lâu); nhận diện chỉ cần giữ màn hình, không cần chờ.
+            with (giu_man_hinh(cho_sang=0 if name == "recognize" else CHO_SANG)
+                  if name in GIU_MAN_HINH else contextlib.nullcontext()):
+                if name == "tai":
+                    code = step_tai(folder, episode, args.source.strip(), args.force)
+                elif name == "recognize":
                     code = step_recognize(app, folder, episode, args.source.strip(),
                                           args.model, args.speed, args.force)
                 elif name == "translate":

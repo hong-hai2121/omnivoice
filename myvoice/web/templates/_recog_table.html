@@ -14,7 +14,10 @@
       {% for r in rows %}
         <tr class="{{ 'done' if r.done_count == r.total_steps else 'need' }}">
           <td><input type="checkbox" name="tap" value="{{ r.episode }}"{% if bform %} form="{{ bform }}"{% endif %}></td>
-          <td class="epcell" title="{{ r.title or r.name }}">{{ r.episode }}</td>
+          {# Dòng ⏳: link đã nạp (⏩) mà runner chưa chạy bước nào — chưa có thư mục,
+             nguồn ghi ở manifest (core.register_sources). #}
+          <td class="epcell" title="{{ ('Đã nạp, chưa chạy — ' ~ r.source) if r.cho else (r.title or r.name) }}">{{ r.episode }}{% if r.cho %}
+            <span class="badge stopped" title="Link đã nạp vào bảng (chưa tải / nhận diện) — ⏩ sẽ chạy, 🗑 để bỏ: {{ r.source }}">⏳ đã nạp</span>{% endif %}</td>
           {% for key, label in step_labels %}
             {% if key == 'translate' and (r.trong or r.do) %}
               {# Nhãn "n trống" là NÚT: bấm mở popup ✍️ dịch tay (app.js) — trái là
@@ -43,8 +46,8 @@
           {# Nút 🗑 là type="button" (bảng nằm TRONG form của trang — không lồng
              form con được), app.js hỏi xác nhận rồi POST /tap/xoa (X-Ajax). #}
           <td><button type="button" class="ghost small danger nut-xoa-tap"
-                  data-tap="{{ r.episode }}" data-ten="{{ r.name }}"
-                  title="Xoá tập {{ r.episode }}: đưa nguyên thư mục “{{ r.name }}” vào Thùng rác Windows (khôi phục được)">🗑</button></td>
+                  data-tap="{{ r.episode }}" data-ten="{{ r.name or r.source }}"{% if r.cho %} data-cho="1"{% endif %}
+                  title="{% if r.cho %}Bỏ link đã nạp của tập {{ r.episode }} khỏi bảng (chưa có thư mục, không xoá file nào){% else %}Xoá tập {{ r.episode }}: đưa nguyên thư mục “{{ r.name }}” vào Thùng rác Windows (khôi phục được){% endif %}">🗑</button></td>
         </tr>
       {% endfor %}
     </tbody>

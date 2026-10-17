@@ -291,13 +291,20 @@ def _tien_do() -> dict[str, dict]:
 
 
 def _danh_dau(src: str, prog: dict[str, dict]) -> dict:
-    """Nhãn "đã làm" cho một nguồn — nguồn chưa chạy bao giờ thì không có nhãn."""
-    return prog.get(st.tenchinh(Path(src).stem)) or {"lam": False, "xong": False,
-                                                     "done": 0, "buoc": ""}
+    """Nhãn "đã làm" cho một nguồn — nguồn chưa chạy bao giờ thì không có nhãn.
+
+    Nguồn là LINK Bilibili thì tính theo tên file nó sẽ tải về (<mã BV>.mp4) —
+    chip lịch sử của link vẫn hiện đúng video đó đã chạy tới bước nào."""
+    ten = (st.ten_tai_bilibili(src) if st.la_link_bilibili(src)
+           else Path(src).stem)
+    return prog.get(st.tenchinh(ten)) or {"lam": False, "xong": False,
+                                          "done": 0, "buoc": ""}
 
 
 def _src_label(src: str) -> str:
-    """Nhãn ngắn cho chip: chỉ tên file, bỏ đường dẫn dài loằng ngoằng."""
+    """Nhãn ngắn cho chip: chỉ tên file (link Bilibili → mã BV), bỏ phần dài."""
+    if st.la_link_bilibili(src):
+        return f"🔗 Bilibili {st.ten_tai_bilibili(src) or '?'}"
     return Path(src).name or src
 
 
@@ -912,8 +919,12 @@ async def chay(request: Request):
     for title, job_steps in jobs:
         q.enqueue(title, job_steps)
     remember_sources(sources)     # để lần sau bấm chip là xong, khỏi đi tìm lại
-    return _tra(request, ok=f"Đã lưu cài đặt · xếp {len(jobs)} việc vào hàng đợi",
-                luu=True, chay=True)
+    if start == "tai":
+        ok = (f"Đã xếp {len(jobs)} link tải LẦN LƯỢT — file về Downloads/<mã BV>.mp4, "
+              "tiến độ ở tab ⏱; tải xong thì 📂 Thêm từ máy để chạy ①→④")
+    else:
+        ok = f"Đã lưu cài đặt · xếp {len(jobs)} việc vào hàng đợi"
+    return _tra(request, ok=ok, luu=True, chay=True)
 
 
 @app.post("/luu")

@@ -429,6 +429,12 @@ def _plan_source_episodes(form, lines: list[str]) -> list[str]:
 async def run_script(request: Request):
     form = await request.form()
     start = str(form.get("start", "recognize"))
+    if start == "resume":
+        # Nút ⏩ cạnh 📂 ở ô Nguồn (17/10/2026): nạp link trong ô vào bảng tập rồi
+        # chạy ĐÚNG logic ⏩ Chạy tiếp (hai lượt) cho mọi tập còn việc — _run_resume.
+        # Ô trống vẫn hợp lệ: chạy tiếp các tập đang dở.
+        _save_pipe_from_form(form)
+        return _run_resume(request, form)
     if start not in _STAGES:
         start = "recognize"
 
@@ -456,7 +462,8 @@ async def run_script(request: Request):
         if err:
             log(f"⛔ {err}")
             break
-        runner.enqueue(steps_mod.title_for(src, ep, chain), built)
+        runner.enqueue(steps_mod.title_for(src, ep, chain), built,
+                       episodes=[ep] if ep else None)
         queued.append(src)
     core.drop_from_src_draft(queued)      # đã xếp hàng → rời ô Nguồn, khỏi chạy trùng
     return _back(request, "/kichban")
@@ -836,7 +843,12 @@ def delete_episode(tap: str = Form("")):
         return RedirectResponse("/nhandien", status_code=303)
     folder = core.episode_folder(tap.strip())
     if not folder:
-        log(f"⚠️ Không thấy thư mục của tập {tap} trong kịch_bản/.")
+        # Dòng ⏳ đã nạp chưa chạy (chưa có thư mục): chỉ bỏ mục đã nạp khỏi manifest,
+        # không có file nào để xoá; link vẫn ở "Gần đây", dán lại là nạp lại.
+        if core.drop_pending(tap.strip()):
+            log(f"↩ Tập {tap}: đã bỏ link đã nạp (chưa chạy bước nào) khỏi bảng tập.")
+        else:
+            log(f"⚠️ Không thấy thư mục của tập {tap} trong kịch_bản/.")
         return RedirectResponse("/nhandien", status_code=303)
     ok, fail = core.gui.App._send_to_recycle_bin([folder])
     if fail:
@@ -857,8 +869,12 @@ def delete_all_episodes():
         log(f"⚠️ {ly_do}")
         return RedirectResponse("/nhandien", status_code=303)
     ep_dirs = core.gui.episode_dirs()
+    bo = core.drop_pending()            # dòng ⏳ đã nạp chưa chạy: chỉ bỏ mục manifest
+    if bo:
+        log(f"↩ Đã bỏ {bo} link đã nạp (chưa chạy) khỏi bảng tập.")
     if not ep_dirs:
-        log("Không có tập nào trong kịch_bản/ để xoá.")
+        if not bo:
+            log("Không có tập nào trong kịch_bản/ để xoá.")
         return RedirectResponse("/nhandien", status_code=303)
     ok, fail = core.gui.App._send_to_recycle_bin(ep_dirs)
     log(f"🗑 Đã đưa {ok} thư mục tập vào Thùng rác"
@@ -874,11 +890,43 @@ def _run_resume(request: Request, form) -> RedirectResponse:
       lượt 2 — thumbnail → giọng + video (→ đăng) của từng tập.
     Hàng đợi chạy lần lượt theo thứ tự xếp, nên việc cần Gemini/màn hình sáng xong
     hết rồi mới tới GPU. Trước đây mỗi tập một việc trọn gói: tập đầu dựng video xong
-    tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO)."""
+    tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO).
+
+    17/10/2026: link/file đang nằm trong ô Nguồn được NẠP trước (core.register_sources
+    — ghi manifest với số tập đã cấp, cờ pending) rồi xếp như mọi tập thiếu đủ bước.
+    Trước đây ⏩ chỉ dò thư mục tập, vừa dán link mà bấm ⏩ thì báo "không còn bước
+    nào cần chạy" — phải bấm 🎙 (chuỗi theo ô ⛓) mới chạy. Link đã nạp nằm trong
+    manifest nên tắt server giữa chừng không mất, mở lại bấm ⏩ là chạy tiếp."""
+    lines = list(dict.fromkeys(s.strip() for s in str(form.get("sources", "")).splitlines()
+                               if s.strip()))
+    nap: list[tuple[str, str, bool]] = []
+    if lines:
+        core.remember_sources(lines)
+        plan = _plan_source_episodes(form, lines)
+        nap = core.register_sources(lines, plan)
+        moi = [(s, ep) for s, ep, is_new in nap if is_new]
+        cu = [ep for _, ep, is_new in nap if not is_new]
+        if moi:
+            log(f"📥 Đã nạp {len(moi)} nguồn vào bảng tập: " + " · ".join(
+                f"tập {ep} ← {core._src_label(s)}" for s, ep in moi))
+        if cu:
+            log(f"ℹ️ {len(cu)} nguồn đã có tập từ trước → chạy tiếp tập cũ: "
+                + ", ".join(f"tập {ep}" for ep in cu))
+        # Chỉ rời ô Nguồn những dòng ĐÃ nằm trong manifest (save_manifest lỗi chỉ
+        # cảnh báo) — link chưa ghi được thì ở lại ô, không mất.
+        da_ghi = core.gui.load_manifest()
+        con = [s for s in lines if core.gui.norm_source(s) not in da_ghi]
+        if con:
+            log(f"⛔ {len(con)} nguồn chưa ghi được vào manifest — giữ lại trong ô Nguồn.")
+            nap = [t for t in nap if t[0] not in con]
+        core.drop_from_src_draft([s for s in lines if s not in con])
     picked = [str(e) for e in form.getlist("tap")]
     rows = core.episode_rows()
     if picked:
-        targets = [r for r in rows if r["episode"] in picked]
+        # Có tick tập thì chạy các tập đó + các nguồn vừa nạp (dán link rồi bấm ⏩
+        # là muốn link đó chạy, dù đang tick tập khác).
+        chon = set(picked) | {ep for _, ep, _ in nap}
+        targets = [r for r in rows if r["episode"] in chon]
         if not targets:
             log("⚠️ Không tìm thấy các tập đã chọn — làm mới bảng tập rồi chọn lại.")
             return _back(request, "/nhandien")
@@ -899,12 +947,20 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     fb_auto = core.facebook_auto()
     options = core.load_options()
     on_channel = core.episodes_on_channel() if upload_on else set()
-    later = []                          # (dòng tập, bước lượt 2, lượt 1 có việc không)
+    # Tập đã có việc ĐANG CHẠY/CHỜ trong hàng đợi chính thì không xếp thêm: bấm ⏩
+    # hai lần (hay ⏩ ở ô Nguồn rồi ⏩ ở khối tập) không nhân đôi việc.
+    dang_cho = runner.queued_episodes()
+    da_xep = 0
+    viec = []                           # (dòng tập, bước đợt trước, bước đợt sau)
     for r in sorted(targets, key=lambda r: int(r["episode"])):
         missing = core.missing_steps(
             r["steps"], fb_ban, options=options,
             upload=upload_on and int(r["episode"]) not in on_channel)
         if not missing:
+            continue
+        if r["episode"] in dang_cho:
+            log(f"⏳ Tập {r['episode']}: đã có việc trong hàng đợi — không xếp thêm.")
+            da_xep += 1
             continue
         post = [k for k in missing if k in core.POST_STEPS]
         if post and len(post) == len(missing):
@@ -930,36 +986,59 @@ def _run_resume(request: Request, form) -> RedirectResponse:
                 "→ dán lại link vào ô nhận diện để chạy tập này.")
             blocked += 1
             continue
-        front = [k for k in missing if k in core.FRONT_STEPS]
-        back = [k for k in missing if k not in core.FRONT_STEPS]
-        if front:
-            built, err = steps_mod.resume_steps(front, r["source"], r["episode"])
+        viec.append((r, [k for k in missing if k in core.FRONT_STEPS],
+                     [k for k in missing if k not in core.FRONT_STEPS]))
+
+    # BỐN ĐỢT (17/10/2026 — yêu cầu: tải hết → nhận diện hết → dịch hết). Mỗi đợt là
+    # MỘT việc trong hàng đợi, một bước cho mỗi tập (continue_on_fail: tập hỏng thì
+    # đợt vẫn đi tiếp tập sau), nên 6 link = 4 việc chứ không phải 12–24 dòng.
+    #   ① tải video/audio — chỉ nguồn là link; file đã có thì bộ tải bỏ qua tức thì
+    #   ② nhận diện tiếng Trung
+    #   ③ dịch → input.docx → SEO  (--require recognize nếu ② có việc cho tập đó)
+    #   ④ thumbnail → giọng + video (→ đăng)  (--require translate,input nếu ③ có việc:
+    #      dịch/input dừng ⛔ ở ③ — đoạn trống, tô đỏ chưa kiểm… — thì không tạo giọng;
+    #      SEO hỏng vẫn đi tiếp như trước: dựng giọng + video ngang, không tự đăng)
+    def _xep_dot(ten: str, muc: list) -> None:
+        nonlocal queued, blocked
+        buoc, eps = [], []
+        for r, keys, require, label in muc:
+            step, err = steps_mod.resume_step(
+                keys, r["source"], r["episode"], upload=upload_on, require=require,
+                label=f"{label} tập {r['episode']}", continue_on_fail=True)
             if err:
                 log(f"⛔ {err}")
                 blocked += 1
                 continue
-            runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 1 "
-                           f"({len(front)} bước thiếu)", built)
+            buoc.append(step)
+            eps.append(r["episode"])
+        if buoc:
+            runner.enqueue(f"⏩ {ten} — {len(buoc)} tập", buoc, episodes=eps)
             queued += 1
-        if back:
-            later.append((r, back, bool(front)))
-    for r, back, had_front in later:
-        # Lượt 1 có việc cho tập này → runner kiểm lại lúc tới lượt: dịch/input dừng ⛔
-        # ở lượt 1 (đoạn trống, tô đỏ chưa kiểm…) thì không tạo giọng/video. SEO hỏng
-        # vẫn cho đi tiếp như trước (dựng giọng + video ngang, không tự đăng).
-        built, err = steps_mod.resume_steps(
-            back, r["source"], r["episode"], upload=upload_on,
-            require=["translate", "input"] if had_front else None)
-        if err:
-            log(f"⛔ {err}")
-            blocked += 1
-            continue
-        runner.enqueue(f"Tập {r['episode']} — ⏩ lượt 2 "
-                       f"({len(back)} bước thiếu)", built)
-        queued += 1
+
+    def _la_link(src: str) -> bool:
+        return str(src or "").strip().lower().startswith(("http://", "https://"))
+
+    def _ten(keys: list[str]) -> str:
+        return " → ".join(steps_mod.SINGLE_STEPS.get(k, k) for k in keys)
+
+    _xep_dot("đợt 1 · tải video/audio", [
+        (r, ["tai"], None, "Tải")
+        for r, front, _ in viec if "recognize" in front and _la_link(r["source"])])
+    _xep_dot("đợt 2 · nhận diện tiếng Trung", [
+        (r, ["recognize"], None, "Nhận diện")
+        for r, front, _ in viec if "recognize" in front])
+    _xep_dot("đợt 3 · dịch → input.docx → SEO", [
+        (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
+        for r, front, _ in viec
+        if (rest := [k for k in front if k != "recognize"])])
+    _xep_dot("đợt 4 · thumbnail → giọng + video", [
+        (r, back, ["translate", "input"] if front else None, _ten(back))
+        for r, front, back in viec if back])
     if not queued:
         if blocked:
             log("⚠️ Có tập còn thiếu bước nhưng chưa xếp chạy được — xem lý do ở trên.")
+        elif da_xep:
+            log(f"ℹ️ {da_xep} tập còn việc đều đã nằm trong hàng đợi — chờ chạy xong.")
         elif deferred_posts:
             log(f"ℹ️ Còn {deferred_posts} tập chỉ thiếu bước đăng Short/Facebook "
                 "— tick các tập muốn đăng rồi bấm Chạy tiếp.")
@@ -1053,7 +1132,8 @@ async def run_recog(request: Request):
             if err:
                 log(f"⛔ {err}")
                 break
-            runner.enqueue(steps_mod.title_for(src, ep, chain), prereq + built)
+            runner.enqueue(steps_mod.title_for(src, ep, chain), prereq + built,
+                           episodes=[ep] if ep else None)
             queued.append(src)
         core.drop_from_src_draft(queued)
         return _back(request, "/nhandien")
@@ -1095,7 +1175,8 @@ async def run_recog(request: Request):
         if err:
             log(f"⛔ {err}")
             break
-        runner.enqueue(steps_mod.title_for("", r["episode"], chain), built)
+        runner.enqueue(steps_mod.title_for("", r["episode"], chain), built,
+                       episodes=[r["episode"]])
     return _back(request, "/nhandien")
 
 

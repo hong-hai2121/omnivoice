@@ -61,6 +61,28 @@ LABELS = {
 
 _XTAG = re.compile(r"_x\d+(?:\.\d+)?")
 
+# ⬇ LINK BILIBILI dán thẳng vào ô Nguồn: xếp bước tải (video_taibilibili.py —
+# nhờ app Bili23 Downloader tải bản chất lượng cao nhất qua MCP) TRƯỚC bước ①.
+# File về Downloads/<mã BV>.mp4 — tên biết TRƯỚC khi tải nên mọi bước sau trỏ
+# đúng đường dẫn như file local, xếp cả chuỗi vào hàng đợi một lần vẫn ổn.
+_BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
+_BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+TAIVE_DIR = Path.home() / "Downloads"      # đã nằm trong DOWNLOAD_DIRS của web
+
+
+def la_link_bilibili(src: str) -> bool:
+    return bool(_BILI_LINK_RE.match((src or "").strip()))
+
+
+def ten_tai_bilibili(src: str) -> str:
+    """Link → tên file local sẽ tải về (không đuôi): mã BV/av, hoặc đoạn cuối
+    link rút gọn b23.tv (link đó không lộ mã BV, lấy mã rút gọn làm tên)."""
+    m = _BILI_ID_RE.search(src or "")
+    if m:
+        return m.group(1)
+    duoi = re.sub(r"[^0-9A-Za-z]+", "", src.rstrip("/").rsplit("/", 1)[-1].split("?")[0])
+    return f"b23_{duoi[:24]}" if duoi else ""
+
 
 def _python() -> str:
     return str(VENV_PY) if VENV_PY.exists() else sys.executable
@@ -427,12 +449,40 @@ def _check_input(start: str, B: str, s: dict) -> str:
 def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
     """Từ form chính: → (tiêu đề việc, các bước, lỗi — khác rỗng là chưa chạy được)."""
     src = (src or "").strip().strip('"')
+    # Ô Nguồn là LINK BILIBILI → thêm bước ⬇ tải lên đầu rồi coi file sẽ về
+    # (Downloads/<mã BV>.mp4) như nguồn local; các kiểm tra isfile bên dưới bỏ
+    # qua vì file CHỈ có sau khi bước ⬇ chạy xong.
+    buoc_tai: list[Step] = []
+    if la_link_bilibili(src):
+        if start not in ("cham", "tatca", "thu60", "tai"):
+            return "", [], ("Link Bilibili chỉ chạy được từ bước ① (nút ▶/🧪/①/⬇) — "
+                            "các bước sau cần file đã tải sẵn.")
+        ten = ten_tai_bilibili(src)
+        if not ten:
+            return "", [], f"Không nhận ra mã video trong link: {src}"
+        dich = TAIVE_DIR / f"{ten}.mp4"
+        buoc_tai = [Step(label="⬇ Tải video Bilibili (Bili23 — bản cao nhất)",
+                         argv=[_python(), "-u",
+                               str(BASE_DIR / "video_taibilibili.py"), src,
+                               "--out", str(dich)],
+                         cwd=str(REPO_ROOT), env=_env())]
+        # ⬇ CHỈ TẢI VỀ: dán cả danh sách link rồi bấm MỘT nút — mỗi link một
+        # việc riêng (một link hỏng không chặn các link sau), hàng đợi một
+        # worker nên tải LẦN LƯỢT; KHÔNG chạy ①→④, file nằm sẵn ở Downloads
+        # để lúc rảnh 📂 Thêm từ máy chạy quy trình. Tiêu đề thật của video
+        # nằm trên dòng 🎬 trong nhật ký (tên file là mã BV cho khỏi đổi).
+        if start == "tai":
+            return f"🔗 {ten} — ⬇ chỉ tải về Downloads", buoc_tai, ""
+        src = str(dich)
+    elif start == "tai":
+        return "", [], ("⬇ Chỉ tải về chỉ nhận LINK Bilibili — dòng này không phải "
+                        f"link: {src or '(trống)'}")
     if start == "thu60":
         # 🧪 BẢN NHÁP: cắt 60 giây rồi chạy TRỌN 4 bước (bỏ qua các ô ⛓) —
         # duyệt giọng/kiểu sub/vùng che trước khi tốn nửa tiếng cho cả bài.
         # Ô "từ phút thứ…" dời khúc cắt vào giữa bài: 60s ĐẦU thường là intro
         # nhạc hiệu, không đại diện cho giọng đọc lẫn vùng sub của cả video.
-        if not src or not os.path.isfile(src):
+        if not src or (not buoc_tai and not os.path.isfile(src)):
             return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
         try:
             tu_phut = max(0.0, float(str(s.get("thu60_tu") or "0").replace(",", ".")))
@@ -448,19 +498,19 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
                    argv=["ffmpeg", "-y", "-loglevel", "error", *seek, "-t", "60",
                          "-i", src, "-c", "copy", str(clip)],
                    cwd=str(REPO_ROOT), env=_env())
-        steps = [cut] + _steps_for(ORDER, str(clip), base, s)
+        steps = buoc_tai + [cut] + _steps_for(ORDER, str(clip), base, s)
         return f"{Path(src).name} — 🧪 thử 60s ①②③④", steps, ""
     if start == "tatca":
         # ▶ CHẠY TẤT CẢ: từ bước ① tới bước ④ một mạch, BỎ QUA các ô ⛓ (chúng
         # chỉ điều khiển mấy nút "Chạy bước …" riêng lẻ ở từng khối). Một nút
         # cho cả quy trình — khỏi phải nhớ đã tick đủ ba ô ⛓ hay chưa.
-        if not src or not os.path.isfile(src):
+        if not src or (not buoc_tai and not os.path.isfile(src)):
             return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
         base = base_for(src, s["speed"])
         return (f"{base.name} — ▶ {''.join(NUM[k] for k in ORDER)}",
-                _steps_for(ORDER, src, base, s), "")
+                buoc_tai + _steps_for(ORDER, src, base, s), "")
     if start == "cham":
-        if not src or not os.path.isfile(src):
+        if not src or (not buoc_tai and not os.path.isfile(src)):
             return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
     elif not src:
         return "", [], ("Điền nguồn (file gốc hoặc tên _x… trong output) — "
@@ -472,7 +522,7 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
             return "", [], err
     keys = chain_keys(start, s)
     title = f"{base.name} — {''.join(NUM[k] for k in keys)}"
-    return title, _steps_for(keys, src, base, s), ""
+    return title, buoc_tai + _steps_for(keys, src, base, s), ""
 
 
 def resume(base: str, s: dict) -> tuple[str, list[Step], str]:

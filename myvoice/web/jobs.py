@@ -139,6 +139,10 @@ class Step:
     # Mã thoát nghĩa là "bước này chưa xong nhưng các bước SAU vẫn chạy được" (03/10/2026:
     # SEO hỏng thì vẫn tạo giọng + video, chỉ không tự đăng). Không gọi on_success.
     continue_codes: tuple[int, ...] = ()
+    # True: bước này lỗi/dừng với BẤT KỲ mã nào thì ghi nhận rồi chạy tiếp bước sau
+    # (17/10/2026: một việc ⏩ = một ĐỢT gồm nhiều tập, mỗi tập một bước — tập hỏng
+    # không được kéo cả đợt dừng theo). Không gọi on_success cho bước hỏng.
+    continue_on_fail: bool = False
     # Gọi sau khi bước này CHẠY XONG KHÔNG LỖI. Dùng để nối việc sang hàng đợi khác
     # (dựng video xong → xếp việc đăng YouTube vào upload_runner) mà không bắt hàng
     # đợi chính đứng chờ. Lỗi trong callback không được làm hỏng công việc.
@@ -154,6 +158,10 @@ class Job:
     # KHÔNG tính vào heavy_busy() — bấm một nút xem kế hoạch mà bị coi là "đã
     # chạy xong mẻ" rồi 3 phút sau 🌙 úp máy thì vô lý.
     light: bool = False
+    # Các số tập việc này làm (nếu biết lúc xếp) — để ⏩ Chạy tiếp không xếp thêm
+    # việc cho tập ĐÃ nằm trong hàng đợi (bấm ⏩ hai lần, hay nút ⏩ ở ô Nguồn rồi ⏩
+    # ở khối tập). Rỗng = không rõ (nguồn là link mới, số do runner cấp lúc chạy).
+    episodes: tuple[str, ...] = ()
     status: str = "queued"        # queued | running | done | failed | stopped
     step_index: int = 0
     created: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
@@ -203,13 +211,24 @@ class JobRunner:
             except Exception:       # nhật ký hỏng không được làm hỏng việc đang chạy
                 pass
 
-    def enqueue(self, title: str, steps: list[Step], light: bool = False) -> Job:
-        job = Job(id=next(self._ids), title=title, steps=steps, light=light)
+    def enqueue(self, title: str, steps: list[Step], light: bool = False,
+                episodes: list[str] | tuple[str, ...] | None = None) -> Job:
+        eps = tuple(str(e).strip().zfill(2) for e in (episodes or ()) if str(e).strip())
+        job = Job(id=next(self._ids), title=title, steps=steps, light=light, episodes=eps)
         with self._lock:
             self._pending.append(job)
         self.note(f"➕ Xếp hàng: {title} ({len(steps)} bước)")
         self._wake.set()
         return job
+
+    def queued_episodes(self) -> set[str]:
+        """Số tập của các việc ĐANG CHẠY hoặc CÒN CHỜ (chỉ việc có ghi số tập lúc
+        xếp). ⏩ Chạy tiếp tra đây để không xếp trùng tập đã có việc."""
+        with self._lock:
+            out = {e for j in self._pending for e in j.episodes}
+            if self._current is not None:
+                out.update(self._current.episodes)
+        return out
 
     def pause(self) -> None:
         self._paused = True
@@ -310,6 +329,7 @@ class JobRunner:
         job.status = "running"
         job.started = datetime.now().strftime("%H:%M:%S")
         self.note(f"▶ {job.title}")
+        chua_xong = 0                 # bước continue_on_fail đã hỏng/dừng
         for i, step in enumerate(job.steps):
             job.step_index = i
             if self._skip_current:
@@ -327,6 +347,12 @@ class JobRunner:
                 self.note(f"⚠️ {job.title}: “{step.label}” chưa xong (mã {code}) — "
                           "vẫn chạy tiếp bước sau.")
                 continue
+            if code != 0 and step.continue_on_fail:
+                chua_xong += 1
+                self.note(f"⚠️ {job.title}: “{step.label}” "
+                          f"{'dừng' if code in step.soft_fail_codes else 'lỗi'} (mã {code}) "
+                          "— vẫn chạy tiếp tập sau.")
+                continue
             if code in step.soft_fail_codes:
                 job.status = "stopped"
                 job.message = f"Dừng ở bước “{step.label}” (mã {code}) — xem nhật ký."
@@ -343,9 +369,18 @@ class JobRunner:
                 except Exception as e:      # nối việc hỏng ≠ bước vừa chạy hỏng
                     self.note(f"⚠️ Không nối được việc sau bước “{step.label}”: {e}")
         job.step_index = len(job.steps)
+        if chua_xong and chua_xong == len(job.steps):
+            job.status = "failed"
+            job.message = f"Không tập nào xong ({chua_xong} bước lỗi/dừng) — xem nhật ký."
+            self.note(f"❌ {job.title} — không tập nào xong.")
+            return
         job.status = "done"
-        job.message = "Hoàn tất."
-        self.note(f"✅ {job.title} — xong.")
+        if chua_xong:
+            job.message = f"Xong, nhưng {chua_xong}/{len(job.steps)} tập lỗi/dừng — xem nhật ký."
+            self.note(f"⚠️ {job.title} — xong, {chua_xong}/{len(job.steps)} tập lỗi/dừng.")
+        else:
+            job.message = "Hoàn tất."
+            self.note(f"✅ {job.title} — xong.")
 
     def _run_step(self, step: Step) -> int:
         try:

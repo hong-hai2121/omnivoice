@@ -99,14 +99,15 @@
   // về mặc định, dòng nhãn nói rõ đang chọn gì. Vạch 0 dB nằm GIỮA thanh nên
   // tô sáng TỪ VẠCH 0 tới núm (hai phía) — nhìn là biết đang tăng hay giảm.
   // Chỉ thanh kéo mang name nên form luôn gửi đúng một giá trị.
-  const ccVol = (id, macdinh, ve) => {
+  const ccVol = (id, macdinh, ve, tatTrai) => {
     const keo = document.getElementById(id + "Keo");
     const so = document.getElementById(id + "So");
     const nhan = document.getElementById(id + "Nhan");
     const toMau = () => {
       const min = +keo.min, max = +keo.max, v = +keo.value;
-      const pct = ((v - min) / (max - min)) * 100;
+      let pct = ((v - min) / (max - min)) * 100;
       const z = ((0 - min) / (max - min)) * 100;     // vị trí vạch 0 dB
+      if (tatTrai && v <= min) pct = z;  // nấc ⊘ tắt: không tô — chẳng có mức nào
       const [a, b] = pct < z ? [pct, z] : [z, pct];
       keo.style.background = "linear-gradient(to right, var(--sunken) " + a +
         "%, var(--accent) " + a + "%, var(--accent) " + b +
@@ -130,7 +131,7 @@
     ? "⊘ tắt / như cũ (mặc định — thay tiếng: tắt hẳn; giữ tiếng gốc: nguyên mức)"
     : (v === 0 ? "0 dB — nguyên mức"
        : v > 0 ? "+" + v + " dB — tiếng gốc to lên (tự chặn đỉnh −1.5 dB kẻo vỡ tiếng)"
-       : v + " dB — nhỏ đi (lót dưới giọng đọc khi thay tiếng)"));
+       : v + " dB — nhỏ đi (lót dưới giọng đọc khi thay tiếng)"), true);
   ccVol("ttsdb", 0, v => v === 0 ? "0 dB — như cũ (mặc định)"
     : (v > 0 ? "+" + v + " dB — to lên (tự chặn đỉnh −1.5 dB kẻo vỡ tiếng)"
        : v + " dB — nhỏ đi"));

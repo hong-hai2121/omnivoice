@@ -7408,6 +7408,9 @@ class App(tk.Tk):
         entry["source"] = key
         entry["episode"] = str(episode)
         entry["folder"] = str(folder)
+        # Link nạp từ web (core.register_sources, cờ "pending" = chờ chạy): chạy
+        # bước đầu là hết chờ — bảng web chuyển sang dòng thật theo thư mục.
+        entry.pop("pending", None)
         entry["steps"] = self._folder_steps(folder, episode)
         if done is not None:
             entry["done"] = bool(done)

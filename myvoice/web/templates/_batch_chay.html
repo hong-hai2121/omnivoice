@@ -10,7 +10,8 @@
   <div class="phead"><h2>Chạy cho những tập đã tick</h2></div>
   {% include "_gemini_backend.html" %}
   <div class="actions col">
-    <button class="primary" name="action" value="resume"{{ fa | safe }}>⏩ Chạy tiếp các bước còn thiếu</button>
+    <button class="primary" name="action" value="resume"{{ fa | safe }}
+            title="Link/file đang ở ô Nguồn được nạp vào bảng tập trước (giữ được khi tắt server), rồi chạy nốt các bước còn thiếu của tập đã tick (không tick = mọi tập còn việc)">⏩ Chạy tiếp các bước còn thiếu</button>
     <span class="hint">Từng bước:</span>
     <button name="action" value="translate"{{ fa | safe }} title="Chạy tập đã tick; chưa tick thì lấy ô Nguồn (tự nhận diện nếu cần), ô trống thì lấy tập đủ điều kiện. Dịch → input.docx → SEO rồi dừng.">🌐 ② Dịch + input.docx + SEO</button>
     <span class="hint">②: ưu tiên tập đã tick; chưa tick thì chạy các link/file trong ô Nguồn,
@@ -26,11 +27,15 @@
   {# Home: đoạn giải thích dài thu lại thành một dòng bấm-để-mở — để nguyên thì cột
      nút cao gấp mấy lần bảng tập bên cạnh, dưới bảng trống một khoảng lớn. #}
   {% if bform %}<details class="hintmore"><summary>ℹ️ Các nút này chạy thế nào</summary>{% endif %}
-  <p class="hint">⏩ tự dò tập đang dở (vd đã dịch xong) rồi chạy nốt các bước
-     còn thiếu, hai lượt: lượt 1 nhận diện → dịch → input.docx → SEO cho MỌI tập,
-     xong hết mới tới lượt 2 thumbnail → giọng + video (→ đăng); tập nào lượt 1 dịch
-     chưa xong thì lượt 2 bỏ qua — không tick thì chạy mọi tập
-     còn việc. Kiểm cả video dọc, TikTok và Short theo các ô tạo video đang bật;
+  <p class="hint">⏩ nạp trước các link/file đang nằm trong ô Nguồn vào bảng tập
+     (dòng “⏳ đã nạp” — ghi vào manifest nên tắt server không mất, bỏ bằng 🗑; nút
+     ⏩ cạnh 📂 ở ô Nguồn cũng chính là nút này), rồi tự dò tập đang dở (vd đã dịch
+     xong) và chạy nốt các bước còn thiếu, BỐN ĐỢT, mỗi đợt làm cho MỌI tập rồi mới sang đợt sau: ① tải video/audio
+     → ② nhận diện tiếng Trung → ③ dịch → input.docx → SEO → ④ thumbnail → giọng +
+     video (→ đăng). Mỗi đợt là MỘT việc trong hàng đợi (một bước cho mỗi tập); tập
+     nào lỗi hay dừng thì đợt vẫn đi tiếp tập sau, và các đợt sau tự bỏ qua tập đó
+     (chưa nhận diện thì không dịch, dịch chưa xong thì không tạo giọng) — không tick
+     thì chạy mọi tập còn việc. Kiểm cả video dọc, TikTok và Short theo các ô tạo video đang bật;
      đã dựng đủ mà chưa đăng YouTube thì tiếp tục đăng khi bật “tự động đăng”.
      Facebook còn thiếu cũng chạy tiếp khi bật tự động đăng Facebook;
      đăng bù Short riêng thì cần tick tập.
