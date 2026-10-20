@@ -6,7 +6,10 @@ Chọn 1 giọng (hoặc tạo cho TẤT CẢ), nhập/dùng kịch bản mẫu 
 clone để NGHE THỬ xem giọng nào hợp. Chức năng giống "tạo giọng" nhưng gọn,
 chỉ để so sánh giọng. Kết quả lưu ở voice/_thu_giong/<tên_giọng>.wav.
 Khi nghe có thể chỉnh TỐC ĐỘ (giữ cao độ) và TÔNG GIỌNG (cao/trầm theo bán cung,
-giữ tốc độ) — chỉ ảnh hưởng bản phát, file gốc không đổi.
+giữ tốc độ), và từ 20/10/2026 thêm hai BỘ LỌC kiểu CapCut: 🔔 TIẾNG VANG (trường
+độ / cường độ) và 🧒 GIỌNG THIẾU NIÊN (cường độ), thang 0–100, 0 = tắt — tất cả
+chỉ ảnh hưởng bản phát, file gốc không đổi. Lõi ở scripts/hieuung_giong.py, bài
+thật áp đúng bộ lọc đó nên mở app lên là các thanh ở đúng mức bài thật sẽ ra.
 Đường sinh audio đi Y HỆT bài thật (amain_taogiong_gui.run_tts): làm sạch chữ →
 chia mỗi đoạn một câu (cỡ "chunk" trong taogiong_options.json) → sinh từng đoạn
 → cân mức to giữa các đoạn → ghép có khoảng nghỉ theo dấu câu → đệm im lặng
@@ -38,6 +41,7 @@ if _SCRIPTS_DIR not in sys.path:
 # Import module này KHÔNG mở cửa sổ nào (mainloop nằm trong __main__), và nó
 # đặt sẵn PYTORCH_CUDA_ALLOC_CONF trước lần import torch đầu tiên.
 import amain_taogiong_gui as tts   # noqa: E402  (phải sau khi vá sys.path)
+import hieuung_giong as hu         # noqa: E402  bộ lọc giọng + lõi đổi tông/tốc độ (ffmpeg)
 
 import re
 import json
@@ -149,14 +153,12 @@ def safe_stem(name: str) -> str:
     return re.sub(r"[^\w\-. ]+", "_", Path(name).stem).strip() or "giong"
 
 
-# ── đổi tốc độ / tông bằng ffmpeg ───────────────────────────────────────────────
-# Lõi đổi tông (rubberband giữ formant, dự phòng asetrate+atempo) nằm bên bản tạo
-# giọng thật — amain_taogiong_gui.build_audio_filter — và bài thật cũng áp đúng
-# bộ lọc đó lên output.wav (tuỳ chọn "pitch"). Ở đây chỉ dùng lại, không chép.
-has_rubberband = tts.has_rubberband
-pitch_factor = tts.pitch_factor
-atempo_chain = tts.atempo_chain
-build_audio_filter = tts.build_audio_filter
+# ── đổi tốc độ / tông / bộ lọc bằng ffmpeg ─────────────────────────────────────
+# Lõi (rubberband giữ formant, dự phòng asetrate+atempo; tiếng vang bằng afir +
+# đáp ứng xung tự sinh; thiếu niên = dời formant + nhỉnh cao độ) nằm ở
+# scripts/hieuung_giong.py — bài thật (amain_taogiong_gui.run_tts) cũng áp đúng
+# bộ lọc đó lên output.wav (tuỳ chọn "pitch" + 3 khoá bộ lọc). Ở đây chỉ dùng
+# lại hu.build_ffmpeg_args, không chép.
 
 
 def fmt_pitch(semitones: float) -> str:
@@ -173,13 +175,22 @@ def default_pitch() -> float:
         return 0.0
 
 
+def default_fx() -> dict:
+    """Bộ lọc mặc định = 3 khoá bộ lọc của bài thật (taogiong_options.json) —
+    mở app lên là nghe đúng bộ lọc bài thật sẽ ra; kéo về 0 để tắt."""
+    try:
+        return hu.fx_from(tts.load_opt_settings())
+    except Exception:
+        return hu.fx_from(None)
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("Thử giọng — OmniVoice")
         root.configure(bg=UI["bg"])
-        self._center(root, 940, 660)
-        root.minsize(820, 580)
+        self._center(root, 1000, 740)
+        root.minsize(880, 640)
 
         self._busy = False
         self._playing = False
@@ -253,7 +264,7 @@ class App:
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(5, weight=1)
+        right.rowconfigure(7, weight=1)
 
         ttk.Label(right, text="Kịch bản thử (sửa tay được):",
                   style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -323,14 +334,36 @@ class App:
         ttk.Label(pitch_row, text="bán cung: + cao, − trầm  •  giữ tốc độ  •  mở lên = mức bài thật",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
+        # ── Bộ lọc giọng kiểu CapCut (0–100, 0 = tắt): tiếng vang + thiếu niên ──
+        fx0 = default_fx()
+        self.var_fx, self.lbl_fx = {}, {}
+        vang_row = ttk.Frame(right)
+        vang_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(vang_row, text="🔔  Tiếng vang:", width=15).pack(side="left")
+        self._fx_slider(vang_row, "vang_truong_do", "trường độ", fx0, length=140)
+        self._fx_slider(vang_row, "vang_cuong_do", "cường độ", fx0, length=140)
+        ttk.Button(vang_row, text="↺ tắt", width=6,
+                   command=lambda: self._set_fx(vang_cuong_do=0)).pack(side="left", padx=(6, 0))
+        ttk.Label(vang_row, text="bật khi cường độ > 0  •  mở lên = mức bài thật",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
+        tn_row = ttk.Frame(right)
+        tn_row.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(tn_row, text="🧒  Thiếu niên:", width=15).pack(side="left")
+        self._fx_slider(tn_row, "thieu_nien", "cường độ", fx0, length=280)
+        ttk.Button(tn_row, text="↺ 0", width=6,
+                   command=lambda: self._set_fx(thieu_nien=0)).pack(side="left", padx=(6, 0))
+        ttk.Label(tn_row, text="giọng trẻ hơn: dời formant + nhỉnh cao độ  •  giữ tốc độ",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(right, textvariable=self.status, style="Muted.TLabel").grid(
-            row=6, column=0, sticky="w", pady=(8, 2))
+            row=8, column=0, sticky="w", pady=(8, 2))
         self.pb = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.pb.grid(row=7, column=0, sticky="ew")
+        self.pb.grid(row=9, column=0, sticky="ew")
 
         logf = ttk.LabelFrame(right, text="  Nhật ký  ", padding=6)
-        logf.grid(row=5, column=0, sticky="nsew", pady=(10, 6))
+        logf.grid(row=7, column=0, sticky="nsew", pady=(10, 6))
         logf.rowconfigure(0, weight=1)
         logf.columnconfigure(0, weight=1)
         self.logbox = scrolledtext.ScrolledText(logf, height=7, wrap="word", state="disabled",
@@ -629,6 +662,38 @@ class App:
         self._update_pitch_label()
         self._replay_if_playing()
 
+    # ── bộ lọc giọng nghe thử (tiếng vang / thiếu niên) ──
+    def _fx_slider(self, parent, key: str, label: str, init: dict, length: int):
+        """Một thanh 0–100 + nhãn số cho khoá bộ lọc `key` (nhả chuột → phát lại)."""
+        ttk.Label(parent, text=f"{label}:").pack(side="left", padx=(8, 4))
+        self.var_fx[key] = tk.DoubleVar(value=init.get(key, 0))
+        sc = ttk.Scale(parent, from_=hu.FX_MIN, to=hu.FX_MAX, length=length,
+                       orient="horizontal", variable=self.var_fx[key],
+                       command=lambda _v: self._update_fx_labels())
+        sc.pack(side="left", padx=(0, 4))
+        sc.bind("<ButtonRelease-1>", self._on_fx_release)
+        self.lbl_fx[key] = ttk.Label(parent, text=str(int(init.get(key, 0))), width=4,
+                                     font=("Segoe UI Semibold", 11))
+        self.lbl_fx[key].pack(side="left")
+
+    def _fx(self) -> dict:
+        """3 mức bộ lọc đang chọn (int 0–100) — cùng dạng dict mà bài thật nhận."""
+        return {k: hu.parse_fx(v.get()) for k, v in self.var_fx.items()}
+
+    def _update_fx_labels(self):
+        for k, v in self._fx().items():
+            self.lbl_fx[k].config(text=str(v))
+
+    def _set_fx(self, **vals):
+        for k, v in vals.items():
+            self.var_fx[k].set(hu.parse_fx(v))
+        self._on_fx_release()
+
+    def _on_fx_release(self, _e=None):
+        """Nhả chuột / bấm ↺: nếu đang phát dở thì phát lại luôn với bộ lọc mới."""
+        self._update_fx_labels()
+        self._replay_if_playing()
+
     def _replay_if_playing(self):
         if self._is_playing() and self._last_src and self._last_src.exists():
             self._play_file(self._last_src)
@@ -637,19 +702,20 @@ class App:
         """winsound không báo khi phát xong → ước lượng bằng độ dài file."""
         return self._playing and time.monotonic() < self._play_until
 
-    def _render_file(self, src: Path, speed: float, pitch: float) -> Path:
-        """Bản đã đổi tốc độ (giữ cao độ) và/hoặc tông (giữ tốc độ) của `src` —
-        dùng lại nếu đã render và còn mới. Tông 0 thì tên file y như trước
-        (`...@1.05x.wav`) để cache tốc độ cũ vẫn dùng được."""
+    def _render_file(self, src: Path, speed: float, pitch: float, fx: dict | None = None) -> Path:
+        """Bản đã đổi tốc độ (giữ cao độ), tông (giữ tốc độ) và/hoặc bộ lọc của
+        `src` — dùng lại nếu đã render và còn mới. Tông 0 + không bộ lọc thì tên
+        file y như trước (`...@1.05x.wav`) để cache tốc độ cũ vẫn dùng được."""
         SPEED_DIR.mkdir(exist_ok=True)
-        tag = f"@{speed:.2f}x" + (f"{pitch:+.1f}st" if abs(pitch) > 1e-9 else "")
+        fx = hu.fx_from(fx)
+        tag = (f"@{speed:.2f}x" + (f"{pitch:+.1f}st" if abs(pitch) > 1e-9 else "")
+               + hu.fx_tag(**fx))
         dst = SPEED_DIR / f"{src.stem}{tag}.wav"
         if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
             return dst
-        sr = sf.info(str(src)).samplerate
+        args, sr, _ = hu.build_ffmpeg_args(src, speed, pitch, None, **fx)
         proc = subprocess.run(
-            [FFMPEG, "-y", "-loglevel", "error", "-i", str(src),
-             "-filter:a", build_audio_filter(speed, pitch, sr), str(dst)],
+            [FFMPEG, "-y", "-loglevel", "error", *args, "-ar", str(sr), str(dst)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             creationflags=CREATE_NO_WINDOW)
         if proc.returncode != 0 or not dst.exists():
@@ -670,19 +736,20 @@ class App:
         self._play_file(f)
 
     def _play_file(self, path: Path):
-        """Phát `path` (file GỐC) ở tốc độ + tông đang chọn; file gốc không bị sửa."""
+        """Phát `path` (file GỐC) ở tốc độ + tông + bộ lọc đang chọn; file gốc không bị sửa."""
         self._stop_play()
         self._last_src = path
-        speed, pitch = self._speed(), self._pitch()
+        speed, pitch, fx = self._speed(), self._pitch(), self._fx()
         play_path = path
-        if abs(speed - 1.0) > 1e-6 or abs(pitch) > 1e-9:
-            self.status.set(f"🎚️ Đang đổi tốc độ {speed:.2f}× / tông {fmt_pitch(pitch)}...")
+        if abs(speed - 1.0) > 1e-6 or abs(pitch) > 1e-9 or hu.fx_active(**fx):
+            self.status.set(f"🎚️ Đang đổi tốc độ {speed:.2f}× / tông {fmt_pitch(pitch)} / "
+                            f"bộ lọc {hu.fx_describe(**fx)}...")
             self.root.update_idletasks()
             try:
-                play_path = self._render_file(path, speed, pitch)
+                play_path = self._render_file(path, speed, pitch, fx)
             except Exception as e:
-                self._log(f"⚠️ Không đổi được tốc độ/tông ({e}) → phát bản gốc.", "warn")
-                speed, pitch = 1.0, 0.0
+                self._log(f"⚠️ Không đổi được tốc độ/tông/bộ lọc ({e}) → phát bản gốc.", "warn")
+                speed, pitch, fx = 1.0, 0.0, hu.fx_from(None)
         try:
             duration = sf.info(str(play_path)).duration
         except Exception:
@@ -693,7 +760,8 @@ class App:
             self._playing = True
             self._play_until = time.monotonic() + duration + 0.3
             self.status.set(f"▶ Đang phát: {path.name}  "
-                            f"({speed:.2f}×, tông {fmt_pitch(pitch)}, {duration:.1f}s)")
+                            f"({speed:.2f}×, tông {fmt_pitch(pitch)}, "
+                            f"bộ lọc: {hu.fx_describe(**fx)}, {duration:.1f}s)")
         except Exception:
             try:
                 os.startfile(str(play_path))  # type: ignore[attr-defined]

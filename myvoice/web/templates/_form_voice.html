@@ -81,7 +81,8 @@
       <span>Giọng mẫu (chế độ Clone)</span>
       <select name="voice">
         {% for v in voices %}
-          <option value="{{ v.name }}" {{ 'selected' if current_voice == v.name }}>
+          <option value="{{ v.name }}" {{ 'selected' if current_voice == v.name }}
+                  {% if v.fav %}data-fav="1"{% endif %}>
             {{ '★ ' if v.fav }}{{ v.name }}</option>
         {% endfor %}
       </select>
@@ -91,7 +92,12 @@
         <audio controls preload="none"
                src="/giongnoi/nghe?file={{ (voice_dir ~ '\\' ~ current_voice) | urlencode }}"></audio>
       {% endif %}
-      <button class="ghost" type="submit" form="fav-voice">☆ / ★ giọng đang chọn</button>
+      {# Gửi qua form #fav-voice đặt NGOÀI #voiceform (HTML không cho lồng form) —
+         xem cuối file. #}
+      {% set cur_fav = voices | selectattr('name', 'equalto', current_voice)
+                              | map(attribute='fav') | list | first %}
+      <button class="ghost" type="submit" form="fav-voice" id="favVoiceBtn">
+        {{ '★ Bỏ yêu thích' if cur_fav else '☆ Yêu thích' }} giọng đang chọn</button>
     </div>
 
     <label class="field">
@@ -130,6 +136,21 @@
         <span>🎵 Tông giọng (bán cung)</span>
         <input name="pitch" value="{{ opts.pitch }}" list="pitches" inputmode="decimal"
                title="+ cao hơn, − trầm hơn, 0 = giữ nguyên. Giữ tốc độ, giữ âm sắc người đọc. Áp lên audio gốc (output.wav) ngay sau khi ghép nên video ngang/dọc/TikTok đều theo. Chỉ áp lúc tạo giọng; ♻ dùng lại audio thì giữ tông cũ.">
+      </label>
+      <label class="field">
+        <span>🔔 Tiếng vang – trường độ (0–100)</span>
+        <input name="vang_truong_do" value="{{ opts.vang_truong_do }}" inputmode="numeric"
+               title="Độ dài đuôi vang như CapCut: 0 = phòng nhỏ, 100 = hội trường. Chỉ có tác dụng khi cường độ > 0.">
+      </label>
+      <label class="field">
+        <span>🔔 Tiếng vang – cường độ (0–100, 0 = tắt)</span>
+        <input name="vang_cuong_do" value="{{ opts.vang_cuong_do }}" inputmode="numeric"
+               title="Mức tiếng vang trộn vào giọng. 0 = không vang. Áp lên audio gốc cùng lúc với tông giọng; ♻ dùng lại audio thì giữ bộ lọc cũ.">
+      </label>
+      <label class="field">
+        <span>🧒 Giọng thiếu niên – cường độ (0–100, 0 = tắt)</span>
+        <input name="thieu_nien" value="{{ opts.thieu_nien }}" inputmode="numeric"
+               title="Giọng trẻ hơn: dời formant + nhỉnh cao độ theo mức (100 = formant ×1,18 và +4 bán cung). Nghe thử trước bằng voice/thu_giong.py.">
       </label>
       <label class="field">
         <span>Nguồn clip ngang</span>
@@ -697,5 +718,35 @@
     <p class="hint">Mọi nút ở trên cũng lưu cài đặt trước khi chạy.</p>
   </div>
 </form>
+
+{# Form của nút ☆/★ giọng mẫu (khối 1). Trước đây nút trỏ form="fav-voice" mà
+   không có form nào tên đó → bấm không gửi gì, voice_favorites.json mãi rỗng.
+   Form phải nằm NGOÀI #voiceform (không lồng form được); tên giọng gửi lên là
+   giọng đang chọn trong <select> LÚC BẤM (chép sang ở sự kiện submit, trước khi
+   app.js gửi ngầm). data-ajax="tailai": gửi xong tải lại trang để ★ trong danh
+   sách, thứ tự (★ lên đầu) và nhãn nút cập nhật — chung file với GUI. #}
+<form id="fav-voice" method="post" action="/giongnoi/yeuthich/voice" data-ajax="tailai" hidden>
+  <input type="hidden" name="name" value="{{ current_voice }}">
+</form>
+<script>
+  (() => {   // bọc IIFE: form này nhúng ở cả Home lẫn trang Giọng nói
+    const form = document.getElementById("fav-voice");
+    if (!form || form.dataset.gan) return;
+    form.dataset.gan = "1";
+    const sel = document.querySelector("#voiceform select[name=voice]");
+    const nut = document.getElementById("favVoiceBtn");
+    const ten = form.querySelector("input[name=name]");
+    if (!sel || !nut || !ten) return;
+    const capNhat = () => {
+      const o = sel.options[sel.selectedIndex];
+      ten.value = o ? o.value : "";
+      nut.textContent = (o && o.dataset.fav ? "★ Bỏ yêu thích" : "☆ Yêu thích")
+        + " giọng đang chọn";
+    };
+    sel.addEventListener("change", capNhat);
+    form.addEventListener("submit", capNhat);   // chắc ăn: lấy đúng giọng lúc bấm
+    capNhat();
+  })();
+</script>
 
 

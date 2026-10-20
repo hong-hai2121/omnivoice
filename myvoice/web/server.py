@@ -1629,6 +1629,8 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
+             # bộ lọc giọng kiểu CapCut, 0–100 (0 = tắt) — xem scripts/hieuung_giong.py
+             "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",

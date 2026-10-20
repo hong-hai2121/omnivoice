@@ -64,6 +64,9 @@ whisper_cache/
 # Cache thời lượng clip videodoc/videongang (sinh tự động, tránh ffprobe lại từ đầu)
 /myvoice/scripts/probe_cache.json
 
+# Đáp ứng xung tiếng vang (bộ lọc giọng) sinh tự động theo sample rate + trường độ
+/myvoice/scripts/hieuung_cache/
+
 # Cache model dịch zh→vi offline (opus-mt-zh-vi, ~300MB, tải tự động khi cần)
 mt_cache/
 

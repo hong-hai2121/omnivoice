@@ -1431,8 +1431,10 @@ def tts_settings() -> tuple[dict | None, str]:
     return dict(
         mode=mode, voice_param=voice_param,
         chunk=_i(opts.get("chunk"), 160, 40, 2000),
-        # Tông giọng (bán cung) áp lên output.wav sau khi ghép — mặc định +2.
+        # Tông giọng (bán cung) áp lên output.wav sau khi ghép — mặc định +1.
         pitch=_f(opts.get("pitch"), gui.OPTS_DEFAULTS["pitch"], gui.PITCH_MIN, gui.PITCH_MAX),
+        # Bộ lọc giọng kiểu CapCut (tiếng vang trường độ / cường độ, thiếu niên), 0–100.
+        fx=gui.hu.fx_from(opts),
         make_video=bool(opts.get("make_video")), effect=effect_path,
         make_video_doc=bool(opts.get("make_video_doc")),
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),

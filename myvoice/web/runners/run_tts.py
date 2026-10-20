@@ -99,6 +99,7 @@ def main(argv=None) -> int:
         ngang_speed=ts.get("ngang_speed", 1.0), ngang_source=ts.get("ngang_source"),
         ngang_out=out_dir / "YOUTUBE.mp4",
         pitch=ts.get("pitch", 0.0),               # tông giọng (bán cung) áp lên audio gốc
+        fx=ts.get("fx"),                          # bộ lọc giọng (tiếng vang / thiếu niên)
         doc_speed=ts.get("doc_speed", 1.0), doc_percent=ts.get("doc_percent", 100),
         doc_from_ngang=ts.get("doc_from_ngang", False),
         doc_from_subfolder=ts.get("doc_from_subfolder", False),
