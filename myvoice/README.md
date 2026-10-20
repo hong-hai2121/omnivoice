@@ -167,6 +167,7 @@ Giao diện chia 3 cột: **(1) quy trình tạo kịch bản · (2) điều khi
 
 Khi bấm **▶ Chạy**, ngoài `output.wav` còn có các tùy chọn ở khung "Cài đặt":
 
+- **🎵 Tông giọng** (bán cung, mặc định **+2** từ 20/10/2026; cùng ô bên web, khoá `pitch` trong `taogiong_options.json`): áp lên `output.wav` ngay sau khi ghép đoạn, trước chuẩn độ to, bằng ffmpeg `rubberband` (giữ tốc độ, giữ âm sắc người đọc; ffmpeg không có rubberband thì `asetrate`+`atempo`). Vì đổi ở audio gốc nên video ngang/dọc/TikTok, bản tăng tốc, trộn nhạc đều theo. Chỉ áp lúc **tạo** giọng: ♻ dùng lại audio thì giữ tông cũ (mức đã áp ghi ở `_pitch.txt` trong thư mục chunk; khác mức đang chọn thì nhật ký báo, bỏ tick ♻ để tạo lại). Nghe thử trước bằng `voice/thu_giong.py` (thanh 🎵 mở lên đúng mức này; kéo về 0 để nghe giọng gốc).
 - **🎬 Tự dựng video** (ngang): dựng video có khung từ **audio full**.
 - **📱 Video dọc** (mặc định bật): dựng video dọc từ **audio full** (muốn ngắn hơn thì đặt **%** audio, cắt ở cuối câu). Nguồn hình video dọc (Facebook) chọn theo thứ tự ưu tiên:
   - **📁 Ghép từ thư mục con videodoc** (theo `videodoc/input.txt`): ghi TÊN 1 thư mục con của `videodoc/` vào file `videodoc/input.txt` → ghép random clip trong thư mục chủ đề đó. Sửa file = đổi nguồn cho tương lai (không cần đụng code). File rỗng/không hợp lệ → tự dùng cả kho `videodoc/`.

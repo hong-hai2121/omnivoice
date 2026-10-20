@@ -84,7 +84,7 @@ templates.env.globals["asset_v"] = _asset_v
 # ── Bảo vệ bằng token ───────────────────────────────────────────────────────
 @app.middleware("http")
 async def require_token(request: Request, call_next):
-    if request.url.path.startswith("/static"):
+    if request.url.path.startswith("/static") or request.url.path == "/api/ping":
         return await call_next(request)
     given = request.query_params.get("token") or request.cookies.get(COOKIE, "")
     if not secrets.compare_digest(given, TOKEN):
@@ -145,6 +145,14 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
 
 
 # ── Context dùng chung ──────────────────────────────────────────────────────
+# ── Nhận diện server ─────────────────────────────────────────────────────────
+# Launcher (chay.py / nút 🌐 trong GUI) gọi route này để chắc cái đang nghe ở cổng
+# là myvoice chứ không phải chương trình khác (xem _is_myvoice). Không cần token.
+@app.get("/api/ping")
+def api_ping():
+    return JSONResponse({"app": "myvoice"})
+
+
 @app.get("/gemini-extension", response_class=HTMLResponse)
 def gemini_extension_setup(request: Request):
     """Tab 🧩 Extension: hướng dẫn cài + mã kết nối + thử kết nối / gửi thử (gemini_test)."""
@@ -1620,6 +1628,7 @@ def fb_queue_remove(job_id: int, request: Request):
 
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
+             "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
@@ -1724,6 +1733,19 @@ def _port_busy(port: int, timeout: float = 0.4) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _is_myvoice(port: int, timeout: float = 1.0) -> bool:
+    """Cái đang nghe ở cổng có ĐÚNG là bảng web myvoice không (hỏi /api/ping).
+    19/10/2026: dự án "Đăng video tự động" (DangvideoYTBTikTokZalo) cũng nghe 8765 —
+    chỉ dò cổng bận thì tưởng bảng web mình đang chạy sẵn, mở nhầm bảng của nó."""
+    import json
+    from urllib.request import urlopen
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=timeout) as r:
+            return json.load(r).get("app") == "myvoice"
+    except Exception:
+        return False
+
+
 def _should_open_browser() -> bool:
     """Có tự mở trình duyệt không. Đặt MYVOICE_WEB_NO_OPEN=1 để tắt — GUI dùng cờ
     này vì nó tự mở lấy, bật cả hai bên sẽ ra hai tab."""
@@ -1733,11 +1755,15 @@ def _should_open_browser() -> bool:
 def main() -> None:
     import uvicorn
 
-    port = int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
+    port = int(os.environ.get("MYVOICE_WEB_PORT", "8766"))
 
     # Bấm shortcut lần thứ hai khi server đã chạy: mở luôn trình duyệt vào bản đang
     # chạy rồi thoát, thay vì để uvicorn văng traceback "địa chỉ đang bận".
     if _port_busy(port):
+        if not _is_myvoice(port):
+            print(f"⛔ Cổng {port} đang bị chương trình KHÁC chiếm (không phải myvoice).\n"
+                  "   Tắt chương trình đó, hoặc đặt biến MYVOICE_WEB_PORT sang cổng khác.")
+            raise SystemExit(2)
         print(f"Bảng điều khiển đã chạy sẵn — mở lại: {_url(port)}")
         if _should_open_browser():
             import webbrowser

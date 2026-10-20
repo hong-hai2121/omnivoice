@@ -32,7 +32,7 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 
 | Muốn gì | Làm sao |
 |---|---|
-| Đổi cổng (mặc định 8765) | đặt `MYVOICE_WEB_PORT` |
+| Đổi cổng (mặc định 8766) | đặt `MYVOICE_WEB_PORT` |
 | Không tự mở trình duyệt | đặt `MYVOICE_WEB_NO_OPEN=1` |
 | Đổi token | xoá `web/token.txt` rồi chạy lại |
 

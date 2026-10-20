@@ -6,7 +6,7 @@ taogiong_chia_cau.py — Xuất file XEM TRƯỚC cách chia câu của kịch b
 web/runners/run_tts.py): đọc input.docx (hay input.txt tập cũ) → clean_text → chữ thường
 → split_chunks(chunk). Mỗi dòng trong file là MỘT đoạn sẽ đưa vào OmniVoice, kèm:
     số thứ tự | số ký tự | thời lượng dự kiến (vn_duration) | nghỉ chèn SAU đoạn | nội dung
-Nghỉ sau đoạn: ¶ 0,80 s (hết đoạn văn) · . 0,45 s (hết câu) · , 0,22 s (hết vế ; : ,).
+Nghỉ sau đoạn: ¶ 0,60 s (hết đoạn văn) · . 0,45 s (hết câu) · ; 0,30 s (cắt ở ; :) · , 0,25 s (cắt ở ,).
 
 Kết quả: input_chia_cau.docx nằm cạnh file input. Lúc tạo giọng thật cũng ghi lại file này
 (gọi write_preview) nên nó luôn khớp với bản audio vừa sinh.
@@ -72,6 +72,8 @@ def _pause_label(gui, chunk_text: str) -> tuple[str, float]:
         return "¶", sec
     if sec == gui.PAUSE_SENT:
         return ".", sec
+    if sec == gui.PAUSE_SEMI:
+        return ";", sec
     return ",", sec
 
 
@@ -79,7 +81,7 @@ def describe(chunks: list) -> dict:
     """Số liệu tổng: số đoạn, thời lượng dự kiến, phân bố nghỉ, đoạn dài/ngắn nhất."""
     gui = _gui()
     rows, total_speech, total_pause = [], 0.0, 0.0
-    n_para = n_sent = n_clause = 0
+    n_para = n_sent = n_semi = n_comma = 0
     for i, c in enumerate(chunks, 1):
         text = " ".join(c.split())
         dur = gui.vn_duration(text) or 0.0
@@ -90,15 +92,17 @@ def describe(chunks: list) -> dict:
             n_para += 1
         elif mark == ".":
             n_sent += 1
+        elif mark == ";":
+            n_semi += 1
         else:
-            n_clause += 1
+            n_comma += 1
         total_speech += dur
         rows.append((i, len(text), dur, mark, psec, text))
     lens = [r[1] for r in rows] or [0]
     return {
         "rows": rows, "n": len(rows),
         "speech_sec": total_speech, "pause_sec": total_pause,
-        "n_para": n_para, "n_sent": n_sent, "n_clause": n_clause,
+        "n_para": n_para, "n_sent": n_sent, "n_semi": n_semi, "n_comma": n_comma,
         "min_len": min(lens), "max_len": max(lens),
         "avg_len": (sum(lens) / len(lens)) if rows else 0,
     }
@@ -131,7 +135,8 @@ def write_preview(folder_or_input, chunks: list, chunk_size: int, source_name: s
         f"(đọc {d['speech_sec'] / 60:.1f} phút + nghỉ {d['pause_sec'] / 60:.1f} phút). "
         f"Nghỉ sau đoạn: ¶ {gui.PAUSE_PARA:.2f} s hết đoạn văn ×{d['n_para']} · "
         f". {gui.PAUSE_SENT:.2f} s hết câu ×{d['n_sent']} · "
-        f", {gui.PAUSE_CLAUSE:.2f} s hết vế ×{d['n_clause']}")
+        f"; {gui.PAUSE_SEMI:.2f} s cắt ở ; : ×{d['n_semi']} · "
+        f", {gui.PAUSE_COMMA:.2f} s cắt ở , ×{d['n_comma']}")
     doc.add_paragraph("Cột: số thứ tự | số ký tự | giây dự kiến | nghỉ sau | nội dung đưa vào model "
                       "(đã hạ chữ thường, bỏ dấu lạ như lúc tạo giọng thật).")
 

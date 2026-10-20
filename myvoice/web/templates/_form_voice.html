@@ -58,6 +58,7 @@
 
 <datalist id="speeds">{% for s in ["1.0","1.05","1.1","1.15","1.2","1.25"] %}<option value="{{ s }}">{% endfor %}</datalist>
 <datalist id="percents">{% for p in ["25","30","40","50","60","70","75","80","90","100"] %}<option value="{{ p }}">{% endfor %}</datalist>
+<datalist id="pitches">{% for p in ["-3","-2","-1","0","1","1.5","2","2.5","3","4"] %}<option value="{{ p }}">{% endfor %}</datalist>
 
 {# id để ô "Số tập" đặt bên khối Thumbnail vẫn gửi kèm được (xem
    _field_tiktok_episode.html). #}
@@ -124,6 +125,11 @@
         <span>Câu dài quá (ký tự) → cắt ở dấu ; : ,</span>
         <input name="chunk" value="{{ opts.chunk }}" inputmode="numeric"
                title="Mỗi đoạn giọng = 1 câu, nghỉ giữa các câu theo dấu. Câu dài hơn số này cắt thêm ở dấu ; : , gần giữa. Đặt rất lớn (1000) nếu không muốn cắt câu.">
+      </label>
+      <label class="field">
+        <span>🎵 Tông giọng (bán cung)</span>
+        <input name="pitch" value="{{ opts.pitch }}" list="pitches" inputmode="decimal"
+               title="+ cao hơn, − trầm hơn, 0 = giữ nguyên. Giữ tốc độ, giữ âm sắc người đọc. Áp lên audio gốc (output.wav) ngay sau khi ghép nên video ngang/dọc/TikTok đều theo. Chỉ áp lúc tạo giọng; ♻ dùng lại audio thì giữ tông cũ.">
       </label>
       <label class="field">
         <span>Nguồn clip ngang</span>

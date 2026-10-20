@@ -184,6 +184,10 @@ def video_gansub_max_chars_doc(default: int = 27) -> int:
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=160,
+    # 20/10/2026: TÔNG GIỌNG (bán cung, + cao / − trầm, 0 = giữ nguyên) áp lên
+    # output.wav ngay sau khi ghép (giữ tốc độ) → mọi bản video/cắt/tăng tốc kế
+    # thừa. Mặc định +2 theo chốt của user sau khi so trên app Thử giọng.
+    pitch=2.0,
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
@@ -1300,11 +1304,14 @@ def split_chunks(text: str, max_len: int):
 # ── GHÉP ĐOẠN CÓ KHOẢNG NGHỈ THEO DẤU CÂU ───────────────────────────────────
 # Model tự để ~0,2 s im lặng ở mỗi mép đoạn nhưng không đều (đo: 0,10–0,24 s), nên
 # cắt về EDGE_KEEP_SEC mỗi mép rồi chèn đúng độ dài nghỉ cho loại dấu kết thúc
-# đoạn. Mức tham khảo giọng đọc truyện: hết câu ~0,4–0,5 s, hết đoạn văn ~0,8 s,
-# hết vế câu (; : ,) ~0,2 s. Muốn thở chậm hơn thì tăng PAUSE_*.
-PAUSE_PARA    = 0.80    # sau đoạn kết thúc đoạn văn (chunk mang "\n")
-PAUSE_SENT    = 0.45    # sau đoạn kết thúc bằng . ! ?
-PAUSE_CLAUSE  = 0.22    # sau đoạn bị cắt ở ; : , (câu dài)
+# đoạn. Mức user chốt 18/10/2026 (theo bảng sentenceBreak/mediumBreak/majorBreak/
+# paragraphBreak): hết đoạn văn 0,60 s · hết câu 0,45 s · chấm phẩy/hai chấm
+# 0,30 s · phẩy 0,25 s. Muốn thở chậm hơn thì tăng PAUSE_*.
+PAUSE_PARA    = 0.60    # paragraphBreak: sau đoạn kết thúc đoạn văn (chunk mang "\n")
+PAUSE_SENT    = 0.45    # sentenceBreak:  sau đoạn kết thúc bằng . ! ?
+PAUSE_SEMI    = 0.30    # majorBreak:     sau đoạn bị cắt ở ; : (câu dài)
+PAUSE_COMMA   = 0.25    # mediumBreak:    sau đoạn bị cắt ở , (câu dài)
+PAUSE_CLAUSE  = PAUSE_COMMA   # tên cũ (trước 18/10 gộp ; : , = 0,22 s), giữ cho mã ngoài
 EDGE_KEEP_SEC = 0.05    # im lặng giữ lại ở mỗi mép đoạn sau khi cắt
 EDGE_DB       = -40.0   # dưới mức này coi là im lặng
 
@@ -1313,9 +1320,12 @@ def _pause_after(chunk_text: str) -> float:
     t = (chunk_text or "").rstrip(" \t")
     if t.endswith("\n"):
         return PAUSE_PARA
-    if t.rstrip().endswith((".", "!", "?", "。", "！", "？")):
+    t = t.rstrip()
+    if t.endswith((".", "!", "?", "。", "！", "？")):
         return PAUSE_SENT
-    return PAUSE_CLAUSE
+    if t.endswith((";", ":", "；", "：")):
+        return PAUSE_SEMI
+    return PAUSE_COMMA
 
 
 def _trim_edges(x: np.ndarray, sr: int) -> np.ndarray:
@@ -1561,6 +1571,133 @@ def _speedup_audio_for_doc(src, factor):
     if r.returncode != 0 or not out.exists():
         raise RuntimeError(f"ffmpeg atempo lỗi: {(r.stderr or '')[-300:] or r.returncode}")
     return out
+
+
+# ── ĐỔI TÔNG GIỌNG (cao độ theo bán cung, GIỮ tốc độ) ────────────────────────
+# Filter rubberband của ffmpeg (engine R2): formant=preserved để vẫn ra "người
+# đó" nói cao/trầm hơn (không chipmunk); transients=smooth + detector=soft chỉnh
+# cho giọng nói — đo 20/10/2026 trên app Thử giọng: bám tông đúng hơn, ít khung
+# lệch >1 bán cung và ít rung giật hơn mặc định crisp/compound. Build ffmpeg
+# không có rubberband → asetrate (kéo cả cao độ lẫn tốc độ) rồi atempo bù lại
+# tốc độ. Các hàm này dùng CHUNG với voice/thu_giong.py: nghe thử ra sao thì bài
+# thật ra vậy. (Muốn mượt hơn nữa: Praat PSOLA qua praat-parselmouth — chưa cài.)
+PITCH_MIN, PITCH_MAX = -6.0, 6.0        # bán cung; ±12 = một quãng tám
+PITCH_MARK = "_pitch.txt"                # trong thư mục chunk: tông đã áp lên output.wav
+_HAS_RUBBERBAND = None                   # None = chưa dò; True/False = ffmpeg có/không
+
+
+def parse_pitch(value, default: float = 0.0) -> float:
+    """Đọc mức tông (ô nhập / JSON) → float, làm tròn 0,5, kẹp [PITCH_MIN, PITCH_MAX]."""
+    try:
+        v = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return default
+    v = round(v * 2) / 2
+    return max(PITCH_MIN, min(v, PITCH_MAX))
+
+
+def has_rubberband() -> bool:
+    """ffmpeg đang dùng có filter rubberband không (dò 1 lần, nhớ kết quả)."""
+    global _HAS_RUBBERBAND
+    if _HAS_RUBBERBAND is None:
+        import shutil
+        import subprocess
+        try:
+            r = subprocess.run(
+                [shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-filters"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                creationflags=CREATE_NO_WINDOW)
+            _HAS_RUBBERBAND = re.search(r"^\s*\S+\s+rubberband\s", r.stdout or "",
+                                        re.M) is not None
+        except Exception:
+            _HAS_RUBBERBAND = False
+    return _HAS_RUBBERBAND
+
+
+def pitch_factor(semitones: float) -> float:
+    """Hệ số nhân tần số ứng với số bán cung: +12 → ×2, −12 → ×0.5."""
+    return 2.0 ** (semitones / 12.0)
+
+
+def atempo_chain(ratio: float) -> list[str]:
+    """Tách tỉ lệ tốc độ thành chuỗi atempo, mỗi mắt trong [0.5, 2.0] — ffmpeg mới
+    cho tới 100 nhưng bản cũ chỉ tới 2.0, chia nhỏ thì chạy được ở cả hai."""
+    parts = []
+    while ratio > 2.0:
+        parts.append("atempo=2.0")
+        ratio /= 2.0
+    while ratio < 0.5:
+        parts.append("atempo=0.5")
+        ratio /= 0.5
+    parts.append(f"atempo={ratio:.3f}")
+    return parts
+
+
+def build_audio_filter(speed: float, semitones: float, sample_rate: int) -> str:
+    """Chuỗi -filter:a cho ffmpeg: đổi tông trước, đổi tốc độ sau.
+    Rỗng khi tốc độ 1.0 và tông 0 (không cần render gì)."""
+    chain = []
+    has_pitch = abs(semitones) > 1e-9
+    has_speed = abs(speed - 1.0) > 1e-6
+    if has_pitch:
+        p = pitch_factor(semitones)
+        if has_rubberband():
+            # Muốn kiểu "chipmunk"/giọng nhỏ lại thì đổi preserved → shifted.
+            chain.append(f"rubberband=pitch={p:.5f}:formant=preserved"
+                         ":transients=smooth:detector=soft")
+            if has_speed:
+                chain += atempo_chain(speed)
+        else:
+            # asetrate kéo cả cao độ lẫn tốc độ lên p lần → atempo chia lại p.
+            chain += [f"asetrate={round(sample_rate * p)}", f"aresample={sample_rate}"]
+            chain += atempo_chain(speed / p)
+    elif has_speed:
+        chain += atempo_chain(speed)
+    return ",".join(chain)
+
+
+def _pitch_shift_file(src, semitones: float, out=None) -> Path:
+    """Đổi tông `src` đi `semitones` bán cung (giữ tốc độ, giữ sample rate).
+    out=None → ghi đè chính file nguồn (qua file tạm; lỗi thì file cũ còn nguyên)."""
+    import shutil
+    import subprocess
+    src = Path(src)
+    out = Path(out) if out else src
+    if abs(semitones) < 1e-9:
+        if out != src:
+            shutil.copyfile(src, out)
+        return out
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
+    sr = sf.info(str(src)).samplerate
+    tmp = out.with_name(out.stem + "_tong.tmp.wav")
+    cmd = [ffmpeg, "-y", "-hide_banner", "-nostats", "-i", str(src),
+           "-filter:a", build_audio_filter(1.0, semitones, sr),
+           "-ar", str(sr), "-c:a", "pcm_s16le", str(tmp)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 4096:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg đổi tông lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+    os.replace(tmp, out)
+    return out
+
+
+def _ghi_pitch_da_ap(tmp_dir, pitch: float) -> None:
+    """Ghi tông đã áp lên output.wav vào thư mục chunk (cho luồng ♻ đọc lại)."""
+    try:
+        (Path(tmp_dir) / PITCH_MARK).write_text(f"{pitch:.1f}", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _doc_pitch_da_ap(tmp_dir):
+    """Tông đã áp lần tạo trước; None = tập tạo bằng bản cũ chưa có tính năng (tông gốc)."""
+    try:
+        return float((Path(tmp_dir) / PITCH_MARK).read_text(encoding="utf-8").strip())
+    except Exception:
+        return None
 
 
 def list_music_files() -> list[str]:
@@ -2051,7 +2188,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2110,6 +2247,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         if reuse_audio:
             logging.info(f"♻ Dùng lại audio đã có (bỏ qua tạo giọng): {output_path.name}")
             status_var.set(f"♻ Dùng audio đã có → {output_path.name}")
+            # Tông giọng chỉ áp lúc TẠO: bản cũ ở tông nào giữ tông đó (đổi tông
+            # chồng lên bản đã đổi là chất lượng tụt). Khác mức đang chọn thì báo.
+            da_ap = _doc_pitch_da_ap(tmp_dir) or 0.0
+            if not video_only and abs(da_ap - pitch) > 1e-9:
+                logging.info(f"🎵 Audio cũ ở tông {da_ap:+.1f}, mức đang chọn {pitch:+.1f} → "
+                             "GIỮ tông cũ (bỏ tick ♻ để tạo lại giọng ở tông mới).")
             # Audio của các tập dựng bằng bản cũ chưa qua chuẩn hoá → chuẩn nốt,
             # không thì tập cũ dựng lại vẫn to nhỏ thất thường. Chỉ đụng vào file
             # còn LỆCH mức đích: file đã chuẩn rồi mà nén thêm lần nữa là bẹt giọng.
@@ -2310,6 +2453,20 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 [merged, np.zeros(int(TAIL_SILENCE_SEC * sr), dtype="float32")])
 
             sf.write(output, merged, sr)
+
+            # Đổi TÔNG giọng (bán cung) ngay trên audio GỐC, trước loudnorm: mức to
+            # chuẩn theo bản đã đổi tông, và mọi bản dẫn xuất (video ngang/dọc,
+            # TikTok, bản %/tăng tốc, trộn nhạc) đều lấy từ output.wav nên kế thừa
+            # luôn. Ghi mức đã áp vào _pitch.txt để luồng ♻ biết bản cũ ở tông nào.
+            if abs(pitch) > 1e-9:
+                status_var.set(f"Đang đổi tông giọng {pitch:+.1f} bán cung...")
+                try:
+                    _pitch_shift_file(output_path, pitch)
+                    logging.info(f"🎵 Đã đổi tông giọng {pitch:+.1f} bán cung (giữ tốc độ).")
+                except Exception as e:
+                    pitch = 0.0
+                    logging.warning(f"⚠️ Không đổi được tông giọng ({e}) → giữ tông gốc.")
+            _ghi_pitch_da_ap(tmp_dir, pitch)
 
             # San bằng mức GIỮA CÁC CÂU + chuẩn độ to cả bài về mức phát hành.
             # Làm NGAY tại đây vì mọi bản dẫn xuất (cắt TikTok, tăng tốc, trộn
@@ -3130,6 +3287,19 @@ class App(tk.Tk):
                                             values=_ngang_sources, width=14, state="readonly")
         self.cb_ngang_source.pack(side="right")
         ttk.Label(chunk_row, text="Nguồn ngang:").pack(side="right", padx=(0, 6))
+
+        # Tông giọng (bán cung): áp lên output.wav ngay sau khi ghép, giữ tốc độ.
+        # Cùng khoá "pitch" với ô bên web (chung taogiong_options.json).
+        pitch_row = ttk.Frame(sec_opt)
+        pitch_row.pack(anchor="w", fill="x", pady=(6, 0))
+        ttk.Label(pitch_row, text="🎵 Tông giọng:").pack(side="left", padx=(0, 8))
+        self.var_pitch = tk.StringVar(
+            value=f"{parse_pitch(self._opt_settings.get('pitch'), OPTS_DEFAULTS['pitch']):.1f}")
+        ttk.Spinbox(pitch_row, from_=PITCH_MIN, to=PITCH_MAX, increment=0.5, format="%.1f",
+                    textvariable=self.var_pitch, width=6).pack(side="left")
+        ttk.Label(pitch_row, text="bán cung: + cao, − trầm, 0 = giữ nguyên "
+                                  "(giữ tốc độ; áp lên audio gốc nên video nào cũng theo)",
+                  style="Hint.TLabel").pack(side="left", padx=8)
 
         video_row = ttk.Frame(sec_opt)
         video_row.pack(anchor="w", fill="x", pady=(8, 0))
@@ -5393,6 +5563,7 @@ class App(tk.Tk):
             save_opt_settings(dict(
                 from_gemini=self.var_from_gemini.get(),
                 chunk=int(self.var_chunk.get()),
+                pitch=parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
                 make_video=self.var_make_video.get(),
                 ngang_speed=self.var_ngang_speed.get(),
                 ngang_source=self.var_ngang_source.get(),
@@ -5536,9 +5707,9 @@ class App(tk.Tk):
     @staticmethod
     def _web_port() -> int:
         try:
-            return int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
+            return int(os.environ.get("MYVOICE_WEB_PORT", "8766"))
         except ValueError:
-            return 8765
+            return 8766
 
     @staticmethod
     def _web_alive(port: int, timeout: float = 0.4) -> bool:
@@ -5547,6 +5718,19 @@ class App(tk.Tk):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(timeout)
             return s.connect_ex(("127.0.0.1", port)) == 0
+
+    @staticmethod
+    def _web_is_myvoice(port: int, timeout: float = 1.0) -> bool:
+        """Cái đang nghe ở cổng có ĐÚNG là bảng web myvoice không (hỏi /api/ping).
+        19/10/2026: dự án "Đăng video tự động" cũng nghe 8765 → chỉ dò cổng bận thì
+        tưởng bảng web mình đang chạy, mở trình duyệt nhầm sang bảng của nó."""
+        import json
+        from urllib.request import urlopen
+        try:
+            with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=timeout) as r:
+                return json.load(r).get("app") == "myvoice"
+        except Exception:
+            return False
 
     def _open_web_panel(self):
         """Bật bảng điều khiển web rồi mở trình duyệt.
@@ -5594,6 +5778,13 @@ class App(tk.Tk):
                         "Xem cửa sổ console vừa mở để biết lỗi.")
                     return
             else:
+                if not self._web_is_myvoice(port):
+                    messagebox.showerror(
+                        "Cổng đang bị chiếm",
+                        f"Cổng {port} đang có chương trình KHÁC nghe (không phải bảng "
+                        "web myvoice).\nTắt chương trình đó, hoặc đặt biến "
+                        "MYVOICE_WEB_PORT sang cổng khác rồi mở lại.")
+                    return
                 logging.info("🌐 Bảng điều khiển web đang chạy sẵn.")
 
             token = ""
@@ -6423,6 +6614,7 @@ class App(tk.Tk):
 
         return dict(
             mode=mode, voice_param=voice_param, chunk=self.var_chunk.get(),
+            pitch=parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
             make_video=self.var_make_video.get(), effect=effect_path,
             make_video_doc=self.var_make_video_doc.get(),
             doc_speed=doc_speed,
@@ -6701,6 +6893,7 @@ class App(tk.Tk):
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
             doc_from_subfolder=ts.get("doc_from_subfolder", False),
             ngang_source=ts.get("ngang_source"),   # nguồn clip video ngang theo chủ đề
+            pitch=ts.get("pitch", 0.0),            # tông giọng (bán cung) áp lên audio gốc
             # Bản tự động: đặt tên riêng cho các video kết quả trong thư mục tập.
             ngang_out=folder / "YOUTUBE.mp4",      # video NGANG (đăng YouTube)
             doc_out=folder / "facebook.mp4",       # video DỌC  (đăng Facebook)
@@ -7907,6 +8100,11 @@ class App(tk.Tk):
             logging.info(f"Video ngang sẽ tăng tốc audio x{ngang_speed:.2f} (giữ cao độ).")
         ngang_source = self.var_ngang_source.get()   # nguồn clip video ngang theo chủ đề
 
+        # Tông giọng (bán cung) — áp lên output.wav sau khi ghép, giữ tốc độ
+        pitch = parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"])
+        if abs(pitch) > 1e-9:
+            logging.info(f"🎵 Tông giọng {pitch:+.1f} bán cung (áp lên audio gốc, giữ tốc độ).")
+
         # Tốc độ audio cho VIDEO TIKTOK (cắt theo %) — atempo, giữ cao độ
         make_tiktok = self.var_make_tiktok.get()
         try:
@@ -8002,6 +8200,7 @@ class App(tk.Tk):
                     "tiktok_music_loop": load_opt_settings().get("tiktok_music_loop", False),
                     "doc_from_subfolder": doc_from_subfolder,   # ghép video dọc từ thư mục con videodoc
                     "ngang_source": ngang_source,               # nguồn clip video ngang theo chủ đề
+                    "pitch": pitch,                             # tông giọng (bán cung) áp lên audio gốc
                     # Quy tắc đặt tên 3 video (giống bản tự động).
                     "ngang_out": ngang_out,
                     "doc_out": doc_out,

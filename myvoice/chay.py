@@ -98,9 +98,9 @@ def _report_fatal(e: BaseException) -> None:
 # ── Thông tin bảng web (khớp myvoice/web/server.py) ─────────────────────────
 def _web_port() -> int:
     try:
-        return int(os.environ.get("MYVOICE_WEB_PORT", "8765"))
+        return int(os.environ.get("MYVOICE_WEB_PORT", "8766"))
     except ValueError:
-        return 8765
+        return 8766
 
 
 def _port_busy(port: int, timeout: float = 0.3) -> bool:
@@ -109,6 +109,19 @@ def _port_busy(port: int, timeout: float = 0.3) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
         return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _is_myvoice(port: int, timeout: float = 1.0) -> bool:
+    """Cái đang nghe ở cổng có ĐÚNG là bảng web myvoice không (hỏi /api/ping).
+    19/10/2026: dự án "Đăng video tự động" (DangvideoYTBTikTokZalo) cũng nghe 8765 —
+    chỉ dò cổng bận thì tưởng bảng web mình đang chạy sẵn, mở nhầm bảng của nó."""
+    import json
+    from urllib.request import urlopen
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=timeout) as r:
+            return json.load(r).get("app") == "myvoice"
+    except Exception:
+        return False
 
 
 def _web_url(port: int) -> str:
@@ -359,6 +372,12 @@ def _run_launcher(port: int) -> int:
     def _start() -> None:
         nonlocal proc, owner
         if _port_busy(port):              # đã chạy sẵn → KHÔNG bật cái thứ hai (lỗi bind)
+            if not _is_myvoice(port):
+                status.set(f"Cổng {port} bị chương trình KHÁC chiếm — không phải myvoice")
+                _dot("#fb7185")
+                log(f"⛔ Cổng {port} đang có chương trình khác nghe (không phải bảng web "
+                    "myvoice). Tắt chương trình đó, hoặc đặt MYVOICE_WEB_PORT sang cổng khác.")
+                return
             log(f"🌐 Bảng web đang chạy sẵn ở cổng {port} — dùng luôn bản đó.")
             _ready()
             return

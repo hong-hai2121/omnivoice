@@ -103,14 +103,18 @@ def _is_section_marker(text):
 def _looks_like_title(text):
     """Dòng TIÊU ĐỀ thật: ngắn gọn, không phải chú thích/câu dẫn/mốc mục.
 
-    Loại bỏ: dòng chú thích '(...)'; dòng MỐC kết thúc bằng ':' (vd 'Tiêu đề quán
-    quân tốt nhất:'); dòng mốc mục 'BƯỚC n: ...' dù Word không gán Heading; và CÂU
+    Loại bỏ: dòng chú thích '(...)'; dòng toàn KÝ HIỆU không có chữ nào (vd '**' —
+    Markdown Gemini để sót, tập 138 lên thumbnail với tên truyện '**'); dòng MỐC kết
+    thúc bằng ':' (vd 'Tiêu đề quán quân tốt nhất:'); dòng mốc mục 'BƯỚC n: ...' dù
+    Word không gán Heading; và CÂU
     MỞ ĐẦU dài dòng của Gemini (vd 'Dưới đây là 5 tiêu đề được thiết kế chuẩn
     SEO...') — vốn hay bị lấy nhầm làm tiêu đề. Độ dài đo trên tên truyện trần (bỏ
     '| Mimi audio' + ghi chú số ký tự) để tên truyện dài hợp lệ không bị gạt.
     """
     t = (text or "").strip()
     if not t or _is_note(t):
+        return False
+    if not re.search(r"[^\W_]", t):        # không có chữ/số nào → chỉ là ký hiệu
         return False
     if t.endswith(":") or t.endswith("："):
         return False
@@ -132,6 +136,34 @@ def _is_desc_hint(text):
     return any(_norm(p) in t for p in _DESC_SKIP_PHRASES)
 
 
+# Markdown Gemini để sót trong câu trả lời (tập 138, 17/10/2026): dòng trích dẫn '> '
+# và in đậm '**…**'. Khi đó mốc tiêu đề thành HAI dòng:
+#     > **Tiêu đề quán quân:**
+#     > **Sự Thật Đằng Sau Kẻ Giả Làm Cao Thủ Tu Tiên | Mimi audio**
+# Không gỡ thì phần sau dấu ':' của dòng mốc còn đúng '**' và bị lấy làm tên truyện
+# (lên cả thumbnail lẫn tên video). Gỡ NGAY LÚC ĐỌC để tiêu đề, tag, mô tả cùng sạch.
+_MD_QUOTE_RE = re.compile(r"^\s*(?:>\s*)+")
+_MD_BOLD = ("**", "__")
+
+# Cũng lượt đó Gemini bọc cả câu trả lời trong thẻ '<ElicitationsGroup>' …
+# '</ElicitationsGroup>'. Dòng chỉ có một thẻ như vậy không phải nội dung — mà lọt
+# vào mô tả thì YouTube từ chối (mô tả không được chứa '<' '>').
+_TAG_LINE_RE = re.compile(r"^\s*</?[A-Za-z][\w.:-]*(?:\s[^<>]*)?/?>\s*$")
+
+
+def strip_markdown(text):
+    """Bỏ dấu trích dẫn '>' đầu dòng và dấu in đậm '**'/'__' Gemini để sót."""
+    t = _MD_QUOTE_RE.sub("", text or "")
+    for mark in _MD_BOLD:
+        t = t.replace(mark, "")
+    return t.strip()
+
+
+def _is_tag_line(text):
+    """Dòng chỉ là một thẻ HTML/XML ('<ElicitationsGroup>', '</ElicitationsGroup>')."""
+    return bool(_TAG_LINE_RE.match(text or ""))
+
+
 def _read_paragraphs(path):
     """Đọc (text, is_heading) của từng paragraph đã strip, GIỮ NGUYÊN thứ tự.
 
@@ -139,6 +171,9 @@ def _read_paragraphs(path):
     các mốc mục ('BƯỚC 3: THẺ TAG', 'BƯỚC 4: MÔ TẢ VIDEO') hay bị Word gán style
     Heading — nếu bỏ thì không định vị được THẺ TAG / MÔ TẢ (mất tag + mô tả). Cờ
     is_heading để phần tách TIÊU ĐỀ tránh nhặt nhầm dòng mốc làm tiêu đề.
+
+    Mỗi dòng được gỡ Markdown sót (strip_markdown); dòng chỉ là thẻ '<…>' bị bỏ hẳn
+    (_is_tag_line) — xem chú thích phía trên.
     """
     from docx import Document
     doc = Document(str(path))
@@ -146,7 +181,10 @@ def _read_paragraphs(path):
     for p in doc.paragraphs:
         style = p.style.name or ""
         is_heading = style.startswith("Heading") or style.startswith("Title")
-        out.append((p.text.strip(), is_heading))
+        text = strip_markdown(p.text)
+        if _is_tag_line(text):
+            continue
+        out.append((text, is_heading))
     return out
 
 

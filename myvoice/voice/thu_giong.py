@@ -5,6 +5,12 @@ thu_giong.py — Thử nhanh các giọng mẫu trong thư mục voice/.
 Chọn 1 giọng (hoặc tạo cho TẤT CẢ), nhập/dùng kịch bản mẫu sẵn rồi tạo audio
 clone để NGHE THỬ xem giọng nào hợp. Chức năng giống "tạo giọng" nhưng gọn,
 chỉ để so sánh giọng. Kết quả lưu ở voice/_thu_giong/<tên_giọng>.wav.
+Khi nghe có thể chỉnh TỐC ĐỘ (giữ cao độ) và TÔNG GIỌNG (cao/trầm theo bán cung,
+giữ tốc độ) — chỉ ảnh hưởng bản phát, file gốc không đổi.
+Đường sinh audio đi Y HỆT bài thật (amain_taogiong_gui.run_tts): làm sạch chữ →
+chia mỗi đoạn một câu (cỡ "chunk" trong taogiong_options.json) → sinh từng đoạn
+→ cân mức to giữa các đoạn → ghép có khoảng nghỉ theo dấu câu → đệm im lặng
+cuối → nén nhẹ + chuẩn độ to. Nghe thử ra sao thì bài thật ra vậy.
 
 Chạy:  python thu_giong.py   (tự chuyển sang python của venv)
 """
@@ -52,7 +58,7 @@ VOICE_DIR = Path(_HERE)                       # thư mục chứa giọng mẫu 
 OUT_DIR = VOICE_DIR / "_thu_giong"            # nơi lưu audio nghe thử
 OUT_DIR.mkdir(exist_ok=True)
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
-CHUNK_SIZE = 300                              # ký tự tối đa mỗi đoạn khi tách
+CHUNK_DEFAULT = 160                           # cỡ cắt câu dài khi chưa có taogiong_options.json
 
 # ── NHỚ LỰA CHỌN GIỮA CÁC LẦN CHẠY ──────────────────────────────────────────────
 # Chỉ để nhớ giọng đang chọn, nên để riêng một file nhỏ trong _thu_giong/ thay vì
@@ -80,19 +86,28 @@ def save_settings(**kv) -> None:
     except Exception:
         pass
 
-# ── NGHE THỬ THEO TỐC ĐỘ ────────────────────────────────────────────────────────
+# ── NGHE THỬ THEO TỐC ĐỘ / TÔNG GIỌNG ──────────────────────────────────────────
 # Đổi tốc độ bằng ffmpeg atempo (GIỮ NGUYÊN cao độ, không bị "chipmunk" như cách
-# đổi sample rate). File gốc trong _thu_giong/ KHÔNG bị đụng — bản đổi tốc độ để
-# riêng ở _thu_giong/_tocdo/ và có cache theo từng mức tốc độ.
+# đổi sample rate). Đổi tông giọng theo BÁN CUNG bằng ffmpeg rubberband (GIỮ
+# NGUYÊN tốc độ, giữ formant nên vẫn ra "người đó" nói cao/trầm hơn); build
+# ffmpeg không có rubberband thì dùng asetrate (kéo cả cao độ lẫn tốc độ) rồi
+# atempo bù lại tốc độ. File gốc trong _thu_giong/ KHÔNG bị đụng — bản đã chỉnh
+# để riêng ở _thu_giong/_tocdo/, cache theo từng cặp (tốc độ, tông).
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 SPEED_DIR = OUT_DIR / "_tocdo"
 SPEED_MIN, SPEED_MAX, SPEED_STEP = 0.75, 1.60, 0.05
+PITCH_MIN, PITCH_MAX, PITCH_STEP = tts.PITCH_MIN, tts.PITCH_MAX, 0.5   # bán cung
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Kịch bản mẫu để thử giọng (sửa tay thoải mái) — có câu kể, câu hỏi để nghe ngữ điệu.
 DEFAULT_SCRIPT = (
-    "Chào bạn, hôm nay trời khá đẹp, nắng nhẹ và gió mát. "
-    "Tôi vừa đi dạo một vòng quanh hồ, ngắm mấy chú chim sẻ đậu trên cành, "
-    "cảm giác thật sự dễ chịu."
+    "Tôi cứ nghĩ, chỉ cần mình quay lưng, anh ấy sẽ chẳng bao giờ giữ lại. "
+    "Nhưng ngay khi tôi chạm tay vào cửa, phía sau bỗng vang lên một tiếng gọi gấp gáp. "
+    "“Đừng đi!” "
+    "Tôi khựng lại, cố giấu đôi mắt đã đỏ hoe. "
+    "Anh bước tới, giọng run run: "
+    "“Em giận anh cũng được, mắng anh cũng được… "
+    "nhưng đừng biến mất khỏi cuộc đời anh thêm lần nào nữa.”"
 )
 
 UI = dict(
@@ -112,11 +127,21 @@ def list_voices():
                   if f.is_file() and f.suffix.lower() in AUDIO_EXTS)
 
 
-def split_chunks(text, max_len=CHUNK_SIZE):
-    """Tách đoạn y hệt bản tạo giọng thật (tts.split_chunks) — nghe thử mà chia
-    đoạn khác thì chỗ ngắt và nhịp đọc đã khác, so sánh giọng thành vô nghĩa.
+def chunk_size() -> int:
+    """Cỡ cắt câu dài (ô "chunk" mục Cài đặt) — đọc từ taogiong_options.json của
+    bản tạo giọng thật để chia đoạn y hệt bên đó; chưa có/lỗi thì CHUNK_DEFAULT."""
+    try:
+        return int(tts.load_opt_settings().get("chunk") or CHUNK_DEFAULT)
+    except Exception:
+        return CHUNK_DEFAULT
+
+
+def split_chunks(text, max_len=None):
+    """Tách đoạn y hệt bản tạo giọng thật (tts.split_chunks: mỗi đoạn MỘT câu, câu
+    dài hơn `max_len` thì cắt thêm ở ; : ,) — nghe thử mà chia đoạn khác thì chỗ
+    ngắt và nhịp đọc đã khác, so sánh giọng thành vô nghĩa.
     Thêm lưới: văn bản không có dấu câu nào thì lấy nguyên cả bài làm 1 đoạn."""
-    return tts.split_chunks(text, max_len) or [text.strip()]
+    return tts.split_chunks(text, max_len or chunk_size()) or [text.strip()]
 
 
 def safe_stem(name: str) -> str:
@@ -124,13 +149,37 @@ def safe_stem(name: str) -> str:
     return re.sub(r"[^\w\-. ]+", "_", Path(name).stem).strip() or "giong"
 
 
+# ── đổi tốc độ / tông bằng ffmpeg ───────────────────────────────────────────────
+# Lõi đổi tông (rubberband giữ formant, dự phòng asetrate+atempo) nằm bên bản tạo
+# giọng thật — amain_taogiong_gui.build_audio_filter — và bài thật cũng áp đúng
+# bộ lọc đó lên output.wav (tuỳ chọn "pitch"). Ở đây chỉ dùng lại, không chép.
+has_rubberband = tts.has_rubberband
+pitch_factor = tts.pitch_factor
+atempo_chain = tts.atempo_chain
+build_audio_filter = tts.build_audio_filter
+
+
+def fmt_pitch(semitones: float) -> str:
+    """'+2.0', '-1.5', còn 0 thì '0.0' (không ra '+0.0' hay '-0.0')."""
+    return f"{semitones:+.1f}" if abs(semitones) > 1e-9 else "0.0"
+
+
+def default_pitch() -> float:
+    """Tông mặc định = tuỳ chọn "pitch" của bài thật (taogiong_options.json) —
+    mở app lên là nghe đúng tông mà bài thật sẽ ra; kéo về 0 để nghe giọng gốc."""
+    try:
+        return tts.parse_pitch(tts.load_opt_settings().get("pitch"), 0.0)
+    except Exception:
+        return 0.0
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("Thử giọng — OmniVoice")
         root.configure(bg=UI["bg"])
-        self._center(root, 940, 620)
-        root.minsize(820, 540)
+        self._center(root, 940, 660)
+        root.minsize(820, 580)
 
         self._busy = False
         self._playing = False
@@ -204,7 +253,7 @@ class App:
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(4, weight=1)
+        right.rowconfigure(5, weight=1)
 
         ttk.Label(right, text="Kịch bản thử (sửa tay được):",
                   style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -233,7 +282,7 @@ class App:
         # ── Tốc độ nghe thử ──
         speed_row = ttk.Frame(right)
         speed_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        ttk.Label(speed_row, text="⏩  Tốc độ nghe:").pack(side="left")
+        ttk.Label(speed_row, text="⏩  Tốc độ nghe:", width=15).pack(side="left")
         ttk.Button(speed_row, text="−", width=3,
                    command=lambda: self._bump_speed(-SPEED_STEP)).pack(side="left", padx=(8, 0))
         self.var_speed = tk.DoubleVar(value=1.0)
@@ -252,14 +301,36 @@ class App:
         ttk.Label(speed_row, text="giữ nguyên cao độ  •  file gốc không đổi",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
+        # ── Tông giọng nghe thử (cao độ theo bán cung, giữ tốc độ) ──
+        pitch_row = ttk.Frame(right)
+        pitch_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(pitch_row, text="🎵  Tông giọng:", width=15).pack(side="left")
+        ttk.Button(pitch_row, text="−", width=3,
+                   command=lambda: self._bump_pitch(-PITCH_STEP)).pack(side="left", padx=(8, 0))
+        self.var_pitch = tk.DoubleVar(value=default_pitch())
+        self.scale_pitch = ttk.Scale(pitch_row, from_=PITCH_MIN, to=PITCH_MAX, length=280,
+                                     orient="horizontal", variable=self.var_pitch,
+                                     command=lambda _v: self._update_pitch_label())
+        self.scale_pitch.pack(side="left", padx=6)
+        self.scale_pitch.bind("<ButtonRelease-1>", self._on_pitch_release)
+        ttk.Button(pitch_row, text="+", width=3,
+                   command=lambda: self._bump_pitch(PITCH_STEP)).pack(side="left")
+        self.lbl_pitch = ttk.Label(pitch_row, text=fmt_pitch(self._pitch()), width=6,
+                                   font=("Segoe UI Semibold", 11))
+        self.lbl_pitch.pack(side="left", padx=(10, 0))
+        ttk.Button(pitch_row, text="↺ 0", width=8,
+                   command=lambda: self._set_pitch(0.0)).pack(side="left", padx=(6, 0))
+        ttk.Label(pitch_row, text="bán cung: + cao, − trầm  •  giữ tốc độ  •  mở lên = mức bài thật",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(right, textvariable=self.status, style="Muted.TLabel").grid(
-            row=5, column=0, sticky="w", pady=(8, 2))
+            row=6, column=0, sticky="w", pady=(8, 2))
         self.pb = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.pb.grid(row=6, column=0, sticky="ew")
+        self.pb.grid(row=7, column=0, sticky="ew")
 
         logf = ttk.LabelFrame(right, text="  Nhật ký  ", padding=6)
-        logf.grid(row=4, column=0, sticky="nsew", pady=(10, 6))
+        logf.grid(row=5, column=0, sticky="nsew", pady=(10, 6))
         logf.rowconfigure(0, weight=1)
         logf.columnconfigure(0, weight=1)
         self.logbox = scrolledtext.ScrolledText(logf, height=7, wrap="word", state="disabled",
@@ -403,12 +474,34 @@ class App:
             thay vì ref_audio= khiến mỗi đoạn phải chạy lại Whisper phiên âm.
             Prompt này bài thật dùng lại được luôn.
         """
-        chunks = split_chunks(text.strip().lower())
+        # clean_text y hệt bài thật ("…" → ".", bỏ ngoặc kép, gạch ngang → cách)
+        # rồi .lower() — bài thật cũng vào model bằng chữ thường.
+        chunks = split_chunks(tts.clean_text(text).lower())
         parts = []
         for j, c in enumerate(chunks):
             self._set_status(f"Đang tạo đoạn {j + 1}/{len(chunks)}...")
-            parts.append(tts._generate_chunk(self._model, "clone", str(voice_path), c)[0])
-        return np.concatenate(parts) if len(parts) > 1 else parts[0]
+            a = tts._generate_chunk(self._model, "clone", str(voice_path), c)[0]
+            parts.append(np.asarray(a, dtype="float32"))
+        # Ghép Y HỆT bài thật (run_tts): cân mức to giữa các đoạn → cắt im lặng
+        # mép đoạn rồi chèn nghỉ theo dấu kết thúc đoạn (hết câu 0,45 s, hết đoạn
+        # văn 0,60 s, ; : 0,30 s, phẩy 0,25 s — PAUSE_* bên tts) → đệm im lặng
+        # cuối. Trước đây ghép thẳng nên chỗ nghỉ giữa câu khác hẳn bài thật.
+        self._set_status("Đang ghép các đoạn...")
+        parts = tts._balance_chunk_levels(parts, self._sr)
+        merged = tts._join_with_pauses(parts, chunks, self._sr)
+        tail = np.zeros(int(tts.TAIL_SILENCE_SEC * self._sr), dtype="float32")
+        return np.concatenate([merged, tail])
+
+    def _save(self, out: Path, audio) -> None:
+        """Ghi wav rồi chuẩn độ to y hệt bài thật (nén nhẹ SPEECH_COMPRESSOR +
+        loudnorm về VOICE_LUFS) — so giọng mà bản to bản nhỏ thì tai nghiêng về
+        bản to, so sánh không công bằng."""
+        sf.write(str(out), audio, self._sr)
+        self._set_status("Đang chuẩn hoá độ to...")
+        try:
+            tts._loudnorm_file(out, tts.VOICE_LUFS, pre_filter=tts.SPEECH_COMPRESSOR)
+        except Exception as e:
+            self._log(f"⚠️ Không chuẩn được độ to ({e}) → giữ bản chưa chuẩn.", "warn")
 
     # ── tạo cho 1 giọng ──
     def _on_make_one(self):
@@ -434,7 +527,7 @@ class App:
             self._log(f"🎙️ Thử giọng: {voice}")
             audio = self._synthesize(text, VOICE_DIR / voice)
             out = OUT_DIR / f"{safe_stem(voice)}.wav"
-            sf.write(str(out), audio, self._sr)
+            self._save(out, audio)
             self.pb["value"] = 100
             self._log(f"✅ Xong → {out.name} (nghe thử ngay).", "ok")
             self._set_status(f"Xong: {voice} → đang phát...")
@@ -478,7 +571,7 @@ class App:
                 try:
                     audio = self._synthesize(text, VOICE_DIR / voice)
                     out = OUT_DIR / f"{safe_stem(voice)}.wav"
-                    sf.write(str(out), audio, self._sr)
+                    self._save(out, audio)
                     self._log(f"   ✅ → {out.name}", "ok")
                 except Exception as e:
                     self._log(f"   ❌ {voice}: {e}", "err")
@@ -512,6 +605,31 @@ class App:
     def _on_speed_release(self, _e=None):
         """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tốc độ mới để so sánh."""
         self._update_speed_label()
+        self._replay_if_playing()
+
+    # ── tông giọng nghe thử ──
+    def _pitch(self) -> float:
+        """Số bán cung đang chọn, đã làm tròn về bội của PITCH_STEP (0.5, 1.0, 1.5...)."""
+        v = round(self.var_pitch.get() / PITCH_STEP) * PITCH_STEP
+        return round(min(PITCH_MAX, max(PITCH_MIN, v)), 1)
+
+    def _update_pitch_label(self):
+        self.lbl_pitch.config(text=fmt_pitch(self._pitch()))
+
+    def _set_pitch(self, value: float):
+        self.var_pitch.set(min(PITCH_MAX, max(PITCH_MIN, value)))
+        self._update_pitch_label()
+        self._on_pitch_release()
+
+    def _bump_pitch(self, delta: float):
+        self._set_pitch(self._pitch() + delta)
+
+    def _on_pitch_release(self, _e=None):
+        """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tông mới để so sánh."""
+        self._update_pitch_label()
+        self._replay_if_playing()
+
+    def _replay_if_playing(self):
         if self._is_playing() and self._last_src and self._last_src.exists():
             self._play_file(self._last_src)
 
@@ -519,17 +637,21 @@ class App:
         """winsound không báo khi phát xong → ước lượng bằng độ dài file."""
         return self._playing and time.monotonic() < self._play_until
 
-    def _speed_file(self, src: Path, speed: float) -> Path:
-        """Bản đổi tốc độ (giữ cao độ) của `src` — dùng lại nếu đã render và còn mới."""
+    def _render_file(self, src: Path, speed: float, pitch: float) -> Path:
+        """Bản đã đổi tốc độ (giữ cao độ) và/hoặc tông (giữ tốc độ) của `src` —
+        dùng lại nếu đã render và còn mới. Tông 0 thì tên file y như trước
+        (`...@1.05x.wav`) để cache tốc độ cũ vẫn dùng được."""
         SPEED_DIR.mkdir(exist_ok=True)
-        dst = SPEED_DIR / f"{src.stem}@{speed:.2f}x.wav"
+        tag = f"@{speed:.2f}x" + (f"{pitch:+.1f}st" if abs(pitch) > 1e-9 else "")
+        dst = SPEED_DIR / f"{src.stem}{tag}.wav"
         if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
             return dst
+        sr = sf.info(str(src)).samplerate
         proc = subprocess.run(
             [FFMPEG, "-y", "-loglevel", "error", "-i", str(src),
-             "-filter:a", f"atempo={speed:.3f}", str(dst)],
+             "-filter:a", build_audio_filter(speed, pitch, sr), str(dst)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            creationflags=CREATE_NO_WINDOW)
         if proc.returncode != 0 or not dst.exists():
             raise RuntimeError((proc.stderr or "ffmpeg lỗi không rõ").strip()[-300:])
         return dst
@@ -548,19 +670,19 @@ class App:
         self._play_file(f)
 
     def _play_file(self, path: Path):
-        """Phát `path` (file GỐC) ở tốc độ đang chọn; file gốc không bị sửa."""
+        """Phát `path` (file GỐC) ở tốc độ + tông đang chọn; file gốc không bị sửa."""
         self._stop_play()
         self._last_src = path
-        speed = self._speed()
+        speed, pitch = self._speed(), self._pitch()
         play_path = path
-        if abs(speed - 1.0) > 1e-6:
-            self.status.set(f"⏩ Đang đổi tốc độ {speed:.2f}×...")
+        if abs(speed - 1.0) > 1e-6 or abs(pitch) > 1e-9:
+            self.status.set(f"🎚️ Đang đổi tốc độ {speed:.2f}× / tông {fmt_pitch(pitch)}...")
             self.root.update_idletasks()
             try:
-                play_path = self._speed_file(path, speed)
+                play_path = self._render_file(path, speed, pitch)
             except Exception as e:
-                self._log(f"⚠️ Không đổi được tốc độ ({e}) → phát ở 1.00×.", "warn")
-                speed = 1.0
+                self._log(f"⚠️ Không đổi được tốc độ/tông ({e}) → phát bản gốc.", "warn")
+                speed, pitch = 1.0, 0.0
         try:
             duration = sf.info(str(play_path)).duration
         except Exception:
@@ -570,7 +692,8 @@ class App:
             winsound.PlaySound(str(play_path), winsound.SND_FILENAME | winsound.SND_ASYNC)
             self._playing = True
             self._play_until = time.monotonic() + duration + 0.3
-            self.status.set(f"▶ Đang phát: {path.name}  ({speed:.2f}×, {duration:.1f}s)")
+            self.status.set(f"▶ Đang phát: {path.name}  "
+                            f"({speed:.2f}×, tông {fmt_pitch(pitch)}, {duration:.1f}s)")
         except Exception:
             try:
                 os.startfile(str(play_path))  # type: ignore[attr-defined]
