@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent          # …/OmniVoice
 VENV_PY = ROOT / "venv" / "Scripts" / "python.exe"
 GUI = ROOT / "myvoice" / "scripts" / "amain_taogiong_gui.py"
 TOKEN_FILE = ROOT / "myvoice" / "web" / "token.txt"
+CONG_FILE = ROOT / "myvoice" / "web" / "cong.txt"    # cổng bảng web dùng lần gần nhất (_chon_cong)
 LOG_LOI = ROOT / "myvoice" / "chay_loi.log"      # lỗi khi chạy bằng pythonw (không console)
 
 # Server chạy nền, không cần cửa sổ console riêng (nhật ký đã hiện trong cửa sổ này).
@@ -122,6 +123,86 @@ def _is_myvoice(port: int, timeout: float = 1.0) -> bool:
             return json.load(r).get("app") == "myvoice"
     except Exception:
         return False
+
+
+# Cổng mặc định bận (myvideo cũng mặc định 8766) → dò tiếp 8767, 8768, …
+# Khớp SO_CONG_THU + _chon_cong trong myvoice/web/server.py.
+SO_CONG_THU = 20
+
+
+def _cong_trong(port: int) -> bool:
+    """Cổng còn trống không — BIND THỬ, không connect.
+
+    Bind được ở đây = server ngay sau cũng bind được ("chưa ai nghe" theo connect
+    chưa đủ: cổng có thể đã bị bind mà chưa listen). Và bind trả lời tức thì
+    (~0,05 ms); connect tới cổng TRỐNG trên Windows lại chờ hết timeout (~0,4 s),
+    quét 20 cổng kiểu đó mất ~8 s — chính là lý do trước đây bật bảng web lâu.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _cong_da_nho(uu_tien: int) -> int | None:
+    """Cổng ghi trong CONG_FILE lần trước — chỉ tin khi còn nằm trong dải đang dò
+    (đổi MYVOICE_WEB_PORT sang dải khác thì bỏ qua số cũ). Không có/hỏng → None."""
+    try:
+        p = int(CONG_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return p if uu_tien <= p < uu_tien + SO_CONG_THU else None
+
+
+def _nho_cong(port: int) -> None:
+    """Ghi cổng vừa chọn cho lần sau; ghi hỏng (ổ chỉ đọc…) thì thôi, không chết."""
+    try:
+        CONG_FILE.write_text(str(port), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _chon_cong(uu_tien: int) -> tuple[int, bool]:
+    """Chọn cổng cho bảng web → (cổng, myvoice_đã_chạy_sẵn_ở_đó).
+
+    Thứ tự dò: cổng NHỚ từ lần trước (web/cong.txt) → cổng ưu tiên → phần còn lại
+    của dải uu_tien … uu_tien+SO_CONG_THU-1.
+    1) Đã có myvoice nghe sẵn ở cổng nào trong dải → trả cổng đó + True: dùng luôn,
+       không bật cái thứ hai.
+    2) Chưa có → cổng TRỐNG đầu tiên theo thứ tự trên. Cổng nhớ đứng đầu nên bị
+       đẩy sang 8767 một lần là lần sau vào thẳng 8767, khỏi dò lại. Cổng ưu tiên
+       bị chương trình KHÁC chiếm (myvideo chẳng hạn) thì tự nhảy cổng thay vì
+       văng traceback "địa chỉ đang bận".
+    Cổng chọn được GHI LẠI vào web/cong.txt. Cả dải đều bận → OSError.
+
+    Dò bằng bind (tức thì) nên quét cả dải chỉ mất vài ms; chỉ cổng ĐANG bận mới
+    phải hỏi /api/ping xem có phải mình không.
+    """
+    dai = range(uu_tien, uu_tien + SO_CONG_THU)
+    nho = _cong_da_nho(uu_tien)
+    thu_tu = ([nho] if nho is not None else []) + [p for p in dai if p != nho]
+    trong = {p: _cong_trong(p) for p in thu_tu}
+    for p in thu_tu:
+        if not trong[p] and _is_myvoice(p):
+            _nho_cong(p)
+            return p, True
+    for p in thu_tu:
+        if trong[p] and _cong_trong(p):      # dò lại sát lúc chọn cho chắc
+            _nho_cong(p)
+            return p, False
+    raise OSError(f"Không còn cổng trống trong khoảng {dai.start}–{dai[-1]} "
+                  "(toàn bị chương trình khác chiếm). Đặt MYVOICE_WEB_PORT sang dải khác.")
+
+
+def _bao_doi_cong(uu_tien: int, port: int) -> str:
+    """Câu báo khi cổng chọn ≠ cổng ưu tiên: do nhớ từ lần trước, hay do bị chiếm."""
+    if _cong_trong(uu_tien):
+        return (f"ℹ️ Dùng cổng {port} nhớ từ lần trước (cổng {uu_tien} đang trống — "
+                f"xoá web/cong.txt nếu muốn quay về {uu_tien}).")
+    return f"⚠️ Cổng {uu_tien} đang bị chương trình khác chiếm → dùng cổng {port}."
 
 
 def _web_url(port: int) -> str:
@@ -370,19 +451,27 @@ def _run_launcher(port: int) -> int:
         root.after(400, _poll, n + 1)
 
     def _start() -> None:
-        nonlocal proc, owner
-        if _port_busy(port):              # đã chạy sẵn → KHÔNG bật cái thứ hai (lỗi bind)
-            if not _is_myvoice(port):
-                status.set(f"Cổng {port} bị chương trình KHÁC chiếm — không phải myvoice")
-                _dot("#fb7185")
-                log(f"⛔ Cổng {port} đang có chương trình khác nghe (không phải bảng web "
-                    "myvoice). Tắt chương trình đó, hoặc đặt MYVOICE_WEB_PORT sang cổng khác.")
-                return
+        nonlocal proc, owner, port
+        uu_tien = port
+        # Cổng ưu tiên bị chương trình KHÁC chiếm (myvideo chẳng hạn) → tự chọn cổng
+        # trống kế tiếp; đã có myvoice chạy sẵn đâu đó trong dải → dùng luôn bản đó.
+        try:
+            port, dang_chay = _chon_cong(uu_tien)
+        except OSError as e:
+            status.set("Không còn cổng trống — xem nhật ký")
+            _dot("#fb7185")
+            log(f"⛔ {e}")
+            return
+        if dang_chay:                     # đã chạy sẵn → KHÔNG bật cái thứ hai (lỗi bind)
             log(f"🌐 Bảng web đang chạy sẵn ở cổng {port} — dùng luôn bản đó.")
             _ready()
             return
+        if port != uu_tien:
+            log(_bao_doi_cong(uu_tien, port))
         log("🌐 Đang bật server…")
         env = {**os.environ,
+               "MYVOICE_WEB_PORT": str(port),  # server nghe ĐÚNG cổng vừa chọn —
+                                               # _poll/_ready/_http bên này trông vào nó
                "MYVOICE_WEB_NO_OPEN": "1",     # server đừng mở — _ready() bên này
                                                # tự mở, kẻo bung ra hai tab
                "PYTHONIOENCODING": "utf-8",

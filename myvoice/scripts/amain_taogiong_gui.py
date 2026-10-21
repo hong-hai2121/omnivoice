@@ -5714,6 +5714,73 @@ class App(tk.Tk):
         except Exception:
             return False
 
+    @staticmethod
+    def _web_cong_trong(port: int) -> bool:
+        """Cổng còn trống không — BIND THỬ, không connect: bind trả lời tức thì
+        (~0,05 ms), còn connect tới cổng TRỐNG trên Windows chờ hết timeout
+        (~0,4 s) — quét 20 cổng kiểu đó mất ~8 s, chính là lý do trước đây bật
+        bảng web lâu. Bind được ở đây = server ngay sau cũng bind được."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return True
+            except OSError:
+                return False
+
+    # Cổng mặc định bận (myvideo cũng mặc định 8766) → dò tiếp 8767, 8768, …
+    # Khớp SO_CONG_THU + _chon_cong trong myvoice/web/server.py.
+    _WEB_SO_CONG_THU = 20
+    # Cổng dùng lần gần nhất (server/launcher cũng ghi vào đây) — lần sau thử TRƯỚC:
+    # bị đẩy sang 8767 một lần là về sau cứ 8767, khỏi dò lại từ đầu mỗi lần bật.
+    _WEB_CONG_FILE = BASE_DIR / "web" / "cong.txt"
+
+    def _web_cong_da_nho(self, uu_tien: int) -> int | None:
+        """Cổng ghi ở web/cong.txt lần trước — chỉ tin khi còn nằm trong dải đang dò
+        (đổi MYVOICE_WEB_PORT sang dải khác thì bỏ qua số cũ). Không có/hỏng → None."""
+        try:
+            p = int(self._WEB_CONG_FILE.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return p if uu_tien <= p < uu_tien + self._WEB_SO_CONG_THU else None
+
+    def _web_nho_cong(self, port: int) -> None:
+        """Ghi cổng vừa chọn cho lần sau; ghi hỏng thì thôi, không chết."""
+        try:
+            self._WEB_CONG_FILE.write_text(str(port), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _web_chon_cong(self, uu_tien: int) -> tuple[int, bool]:
+        """→ (cổng, myvoice_đã_chạy_sẵn_ở_đó). Dò theo thứ tự: cổng NHỚ lần trước →
+        uu_tien → phần còn lại của dải. Có myvoice nghe sẵn ở đâu thì dùng luôn
+        (không bật cái thứ hai); không thì cổng trống đầu tiên — cổng nhớ đứng đầu
+        nên bị đẩy sang 8767 một lần là lần sau vào thẳng 8767. Cổng chọn được ghi
+        lại cho lần sau. Dò bằng bind nên cả dải chỉ mất vài ms; chỉ cổng đang bận
+        mới phải hỏi /api/ping xem có phải mình không."""
+        dai = range(uu_tien, uu_tien + self._WEB_SO_CONG_THU)
+        nho = self._web_cong_da_nho(uu_tien)
+        thu_tu = ([nho] if nho is not None else []) + [p for p in dai if p != nho]
+        trong = {p: self._web_cong_trong(p) for p in thu_tu}
+        for p in thu_tu:
+            if not trong[p] and self._web_is_myvoice(p):
+                self._web_nho_cong(p)
+                return p, True
+        for p in thu_tu:
+            if trong[p] and self._web_cong_trong(p):    # dò lại sát lúc chọn cho chắc
+                self._web_nho_cong(p)
+                return p, False
+        raise OSError(f"Không còn cổng trống trong khoảng {dai.start}–{dai[-1]} "
+                      "(toàn bị chương trình khác chiếm).\n"
+                      "Đặt MYVOICE_WEB_PORT sang dải khác rồi mở lại.")
+
+    def _web_bao_doi_cong(self, uu_tien: int, port: int) -> str:
+        """Câu báo khi cổng chọn ≠ cổng ưu tiên: do nhớ từ lần trước, hay do bị chiếm."""
+        if self._web_cong_trong(uu_tien):
+            return (f"ℹ️ Bảng web dùng cổng {port} nhớ từ lần trước (cổng {uu_tien} đang "
+                    f"trống — xoá web/cong.txt nếu muốn quay về {uu_tien}).")
+        return f"⚠️ Cổng {uu_tien} đang bị chương trình khác chiếm → bảng web dùng cổng {port}."
+
     def _open_web_panel(self):
         """Bật bảng điều khiển web rồi mở trình duyệt.
 
@@ -5727,7 +5794,7 @@ class App(tk.Tk):
         import time
         import webbrowser
 
-        port = self._web_port()
+        uu_tien = self._web_port()
         web_dir = BASE_DIR / "web"
         server = web_dir / "server.py"
         if not server.exists():
@@ -5736,15 +5803,28 @@ class App(tk.Tk):
 
         self.btn_web.config(state="disabled")
         try:
-            if not self._web_alive(port):
+            # Cổng mặc định bị chương trình KHÁC chiếm (myvideo chẳng hạn) → tự chọn
+            # cổng trống kế tiếp; myvoice chạy sẵn đâu đó trong dải → dùng luôn.
+            try:
+                port, dang_chay = self._web_chon_cong(uu_tien)
+            except OSError as e:
+                messagebox.showerror("Không còn cổng trống", str(e))
+                return
+            self._web_port_thuc = port      # _start_web_log_mirror trông vào cổng này
+            if not dang_chay:
+                if port != uu_tien:
+                    msg = self._web_bao_doi_cong(uu_tien, port)
+                    (logging.warning if msg.startswith("⚠") else logging.info)(msg)
                 logging.info("🌐 Đang bật bảng điều khiển web...")
                 # python.exe (KHÔNG phải pythonw) để có cửa sổ console tắt được.
                 exe = _VENV_PYTHON if os.path.exists(_VENV_PYTHON) else sys.executable
                 CREATE_NEW_CONSOLE = 0x00000010
                 # Server tự mở trình duyệt khi chạy một mình; ở đây TẮT đi vì
                 # hàm này mở lấy (còn lo cả trường hợp server đã chạy sẵn) —
-                # không thì ra hai tab.
-                env = {**os.environ, "MYVOICE_WEB_NO_OPEN": "1"}
+                # không thì ra hai tab. MYVOICE_WEB_PORT = cổng vừa chọn để server
+                # nghe ĐÚNG cổng mà vòng chờ bên dưới đang trông.
+                env = {**os.environ, "MYVOICE_WEB_NO_OPEN": "1",
+                       "MYVOICE_WEB_PORT": str(port)}
                 subprocess.Popen([exe, "-m", "myvoice.web.server"],
                                  cwd=str(BASE_DIR.parent), env=env,
                                  creationflags=CREATE_NEW_CONSOLE)
@@ -5760,14 +5840,7 @@ class App(tk.Tk):
                         "Xem cửa sổ console vừa mở để biết lỗi.")
                     return
             else:
-                if not self._web_is_myvoice(port):
-                    messagebox.showerror(
-                        "Cổng đang bị chiếm",
-                        f"Cổng {port} đang có chương trình KHÁC nghe (không phải bảng "
-                        "web myvoice).\nTắt chương trình đó, hoặc đặt biến "
-                        "MYVOICE_WEB_PORT sang cổng khác rồi mở lại.")
-                    return
-                logging.info("🌐 Bảng điều khiển web đang chạy sẵn.")
+                logging.info(f"🌐 Bảng điều khiển web đang chạy sẵn (cổng {port}).")
 
             token = ""
             try:
@@ -5800,9 +5873,14 @@ class App(tk.Tk):
             import urllib.request
 
             since = -1          # -1 = chỉ lấy từ giờ trở đi, bỏ qua mẻ đăng cũ
-            port = self._web_port()
             token_file = BASE_DIR / "web" / "token.txt"
             while True:
+                # Cổng THẬT do _open_web_panel chọn (cổng mặc định bận thì bị đẩy sang
+                # cổng khác); chưa mở trong phiên này thì cổng nhớ ở web/cong.txt
+                # (server bật từ launcher cũng ghi vào đó), không có mới tới mặc định.
+                uu_tien = self._web_port()
+                port = (getattr(self, "_web_port_thuc", None)
+                        or self._web_cong_da_nho(uu_tien) or uu_tien)
                 if not self._web_alive(port, timeout=0.2):
                     since = -1          # server tắt rồi bật lại → xin lại từ đầu
                     time.sleep(5)

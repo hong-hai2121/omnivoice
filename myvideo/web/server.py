@@ -225,9 +225,17 @@ def _asset_v() -> str:
 templates.env.globals["asset_v"] = _asset_v
 
 
+# Launcher (chay.py) gọi route này để chắc cái đang nghe ở cổng là myvideo chứ
+# không phải chương trình khác (myvoice cũng mặc định 8766) — xem _is_myvideo.
+# Không cần token.
+@app.get("/api/ping")
+def api_ping():
+    return JSONResponse({"app": "myvideo"})
+
+
 @app.middleware("http")
 async def require_token(request: Request, call_next):
-    if request.url.path.startswith("/static"):
+    if request.url.path.startswith("/static") or request.url.path == "/api/ping":
         return await call_next(request)
     given = request.query_params.get("token") or request.cookies.get(COOKIE, "")
     if not secrets.compare_digest(given, TOKEN):
@@ -1360,17 +1368,129 @@ async def trangthai():
     return JSONResponse({**q.state(), "power": power.state(), "lines": tail.tail(30)})
 
 
+# ── Khởi động ───────────────────────────────────────────────────────────────
+# Cổng mặc định bận (myvoice cũng mặc định 8766) thì dò tiếp 8767, 8768, … tối đa
+# chừng này cổng. Launcher myvideo/chay.py dùng CÙNG số + cùng cách chọn (_chon_cong).
+SO_CONG_THU = 20
+# Cổng dùng lần gần nhất (launcher cũng ghi vào đây) — lần sau thử cổng này TRƯỚC:
+# bị đẩy sang 8767 một lần là về sau cứ ở 8767, địa chỉ web không đổi, khỏi dò
+# lại từ đầu mỗi lần bật. Xoá file = quay về dò từ cổng mặc định.
+CONG_FILE = WEB_DIR / "cong.txt"
+
+
+def _is_myvideo(port: int, timeout: float = 1.0) -> bool:
+    """Cái đang nghe ở cổng có ĐÚNG là bảng web myvideo không (hỏi /api/ping) —
+    myvoice cũng mặc định 8766, chỉ dò "cổng bận" thì tưởng mình đang chạy sẵn."""
+    from urllib.request import urlopen
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=timeout) as r:
+            return json.load(r).get("app") == "myvideo"
+    except Exception:
+        return False
+
+
+def _cong_trong(port: int) -> bool:
+    """Cổng còn trống không — BIND THỬ, không connect.
+
+    Bind được ở đây = server ngay sau cũng bind được ("chưa ai nghe" theo connect
+    chưa đủ: cổng có thể đã bị bind mà chưa listen). Và bind trả lời tức thì
+    (~0,05 ms); connect tới cổng TRỐNG trên Windows lại chờ hết timeout (~0,4 s),
+    quét 20 cổng kiểu đó mất ~8 s — chính là lý do trước đây bật bảng web lâu.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _cong_da_nho(uu_tien: int) -> int | None:
+    """Cổng ghi trong CONG_FILE lần trước — chỉ tin khi còn nằm trong dải đang dò
+    (đổi MYVIDEO_WEB_PORT sang dải khác thì bỏ qua số cũ). Không có/hỏng → None."""
+    try:
+        p = int(CONG_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return p if uu_tien <= p < uu_tien + SO_CONG_THU else None
+
+
+def _nho_cong(port: int) -> None:
+    """Ghi cổng vừa chọn cho lần sau; ghi hỏng (ổ chỉ đọc…) thì thôi, không chết."""
+    try:
+        CONG_FILE.write_text(str(port), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _chon_cong(uu_tien: int) -> tuple[int, bool]:
+    """Chọn cổng cho bảng web → (cổng, myvideo_đã_chạy_sẵn_ở_đó).
+
+    Thứ tự dò: cổng NHỚ từ lần trước (web/cong.txt) → cổng ưu tiên → phần còn lại
+    của dải uu_tien … uu_tien+SO_CONG_THU-1.
+    1) Đã có myvideo nghe sẵn ở cổng nào trong dải → trả cổng đó + True: dùng luôn,
+       không bật cái thứ hai.
+    2) Chưa có → cổng TRỐNG đầu tiên theo thứ tự trên. Cổng nhớ đứng đầu nên bị
+       đẩy sang 8767 một lần là lần sau vào thẳng 8767, khỏi dò lại. Cổng ưu tiên
+       bị chương trình KHÁC chiếm (myvoice chẳng hạn) thì tự nhảy cổng thay vì
+       văng traceback "địa chỉ đang bận".
+    Cổng chọn được GHI LẠI vào web/cong.txt. Cả dải đều bận → OSError.
+
+    Dò bằng bind (tức thì) nên quét cả dải chỉ mất vài ms; chỉ cổng ĐANG bận mới
+    phải hỏi /api/ping xem có phải mình không.
+    """
+    dai = range(uu_tien, uu_tien + SO_CONG_THU)
+    nho = _cong_da_nho(uu_tien)
+    thu_tu = ([nho] if nho is not None else []) + [p for p in dai if p != nho]
+    trong = {p: _cong_trong(p) for p in thu_tu}
+    for p in thu_tu:
+        if not trong[p] and _is_myvideo(p):
+            _nho_cong(p)
+            return p, True
+    for p in thu_tu:
+        if trong[p] and _cong_trong(p):      # dò lại sát lúc chọn cho chắc
+            _nho_cong(p)
+            return p, False
+    raise OSError(f"Không còn cổng trống trong khoảng {dai.start}–{dai[-1]} "
+                  "(toàn bị chương trình khác chiếm). Đặt MYVIDEO_WEB_PORT sang dải khác.")
+
+
+def _bao_doi_cong(uu_tien: int, port: int) -> str:
+    """Câu báo khi cổng chọn ≠ cổng ưu tiên: do nhớ từ lần trước, hay do bị chiếm."""
+    if _cong_trong(uu_tien):
+        return (f"ℹ️ Dùng cổng {port} nhớ từ lần trước (cổng {uu_tien} đang trống — "
+                f"xoá web/cong.txt nếu muốn quay về {uu_tien}).")
+    return f"⚠️ Cổng {uu_tien} đang bị chương trình khác chiếm → dùng cổng {port}."
+
+
 def main() -> None:
     import webbrowser
 
     import uvicorn
 
+    uu_tien = int(os.environ.get("MYVIDEO_WEB_PORT", "8766"))
+    # Bật lần hai khi đã chạy → mở lại trình duyệt rồi thoát. Cổng bị chương trình
+    # KHÁC chiếm (myvoice cũng mặc định 8766) → tự dò cổng trống kế tiếp, không để
+    # uvicorn văng traceback "địa chỉ đang bận".
+    try:
+        port, dang_chay = _chon_cong(uu_tien)
+    except OSError as e:
+        print(f"⛔ {e}", flush=True)
+        raise SystemExit(2)
+    url = f"http://127.0.0.1:{port}/?token={quote(TOKEN)}"
+    if dang_chay:
+        print(f"🌐 myvideo web đã chạy sẵn — mở lại: {url}", flush=True)
+        if not os.environ.get("MYVIDEO_WEB_NO_OPEN"):
+            webbrowser.open(url)
+        return
+    if port != uu_tien:
+        print(_bao_doi_cong(uu_tien, port), flush=True)
+
     OUTPUT_DIR.mkdir(exist_ok=True)
     # Ảnh xem trước kiểu phụ đề còn thiếu (kiểu mới thêm) → tự vẽ nền sau,
     # không chặn server; vẽ xong tải lại trang là thấy.
     threading.Thread(target=kieusub.taomau_thieu, daemon=True).start()
-    port = int(os.environ.get("MYVIDEO_WEB_PORT", "8766"))
-    url = f"http://127.0.0.1:{port}/?token={quote(TOKEN)}"
     print(f"🌐 myvideo web: {url}", flush=True)
     if not os.environ.get("MYVIDEO_WEB_NO_OPEN"):
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()

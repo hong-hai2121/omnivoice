@@ -6,7 +6,8 @@ Luồng (chạy TRƯỚC khi tạo audio):
   1. CHECK gemini_result.docx bằng dich_kiemtra (bắt câu dẫn nhập/thừa
      Gemini hay tự thêm, vd "Dưới đây là bản dịch...", "Bản dịch truyện ngắn").
      → Nếu CÓ: BÁO (beep + liệt kê) và DỪNG, KHÔNG ghi input.txt (sửa docx trước).
-  2. Bỏ cấu trúc: tiêu đề "Kết quả dịch từ Gemini" và các mục "Đoạn k".
+  2. Bỏ cấu trúc: tiêu đề "Kết quả dịch từ Gemini" và các mục "Đoạn k"; bỏ thẻ
+     '<ElicitationsGroup>' … '</ElicitationsGroup>' Gemini bọc quanh câu trả lời.
   3. Ghép toàn bộ nội dung thành 1 đoạn hoàn chỉnh → ghi vào kịch_bản/input.txt.
   → Sau đó mở taogiong_gui.py bấm "▶ Chạy" để tạo audio.
 
@@ -110,6 +111,21 @@ _LEAD_INLINE_RE = re.compile(
     r"[^:\n.!?]{0,120})\s*:\s*",
     re.IGNORECASE)
 
+# ── Thẻ '<ElicitationsGroup>' Gemini bọc quanh câu trả lời (20/10/2026) ─────────
+# Có lượt Gemini trả về cả bản dịch bọc trong thẻ '<ElicitationsGroup>' …
+# '</ElicitationsGroup>' (seo_docx_parser đã gặp với phần mô tả video). Để lọt vào
+# input là TTS đọc "ElicitationsGroup" lên video. Thẻ có thể:
+#   • đứng riêng một dòng                → bỏ cả dòng (giữ dấu tô đỏ nếu có);
+#   • dính vào đầu/cuối/giữa câu dịch    → chỉ cắt thẻ, giữ nguyên câu.
+# Làm NGAY TRONG remove_lead_lines để MỌI đường tạo input (main() ở dưới,
+# _batch_prepare_input, _prepare_input_from_gemini) và cả dich_gemini.strip_lead_lines
+# (dọn lúc lưu docx), dich_kiemtra.find_suspects (khỏi báo oan) cùng có. Gặp thẻ mới
+# thì thêm TÊN thẻ vào _GEMINI_TAGS, đừng viết bộ lọc khác.
+_GEMINI_TAGS = ("ElicitationsGroup",)
+_GEMINI_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:" + "|".join(map(re.escape, _GEMINI_TAGS)) + r")\b[^<>]*>",
+    re.IGNORECASE)
+
 
 def _split_marks(line):
     """Tách dấu tô đỏ (dich_input_docx.MARK_START / MARK_END — mỗi dấu là CHUỖI, có
@@ -128,10 +144,22 @@ def _split_marks(line):
 
 
 def remove_lead_lines(text):
-    """Bỏ câu dẫn nhập Gemini tự thêm (xem chú thích trên) → (text_mới, [câu đã bỏ])."""
+    """Bỏ câu dẫn nhập Gemini tự thêm và thẻ '<ElicitationsGroup>' bọc câu trả lời
+    (xem chú thích trên) → (text_mới, [câu/thẻ đã bỏ])."""
     out, removed = [], []
     for line in (text or "").split("\n"):
         pre, core, post = _split_marks(line)
+        # Thẻ '<ElicitationsGroup>' / '</ElicitationsGroup>' → cắt thẻ, giữ câu; dòng
+        # chỉ có thẻ thì bỏ cả dòng (giữ dấu tô đỏ). Xét TRƯỚC câu dẫn nhập vì có khi
+        # thẻ dính ngay trước "Bản dịch tiếng Việt…:" trên cùng một dòng.
+        if _GEMINI_TAG_RE.search(core):
+            removed.extend(t.strip() for t in _GEMINI_TAG_RE.findall(core))
+            core = re.sub(r"[ \t]{2,}", " ", _GEMINI_TAG_RE.sub(" ", core)).strip()
+            if not core:
+                if (pre + post).strip():
+                    out.append(pre + post)
+                continue
+            line = pre + core + post
         core_l = core.lstrip(_LEAD_EDGE)              # bỏ trang trí ĐẦU dòng (**, ngoặc kép)
         if core_l.lower().startswith(_LEAD_STARTS):
             head, sep, rest = core_l.partition(":")
