@@ -10,6 +10,11 @@ giữ tốc độ), và từ 20/10/2026 thêm hai BỘ LỌC kiểu CapCut: 🔔
 độ / cường độ) và 🧒 GIỌNG THIẾU NIÊN (cường độ), thang 0–100, 0 = tắt — tất cả
 chỉ ảnh hưởng bản phát, file gốc không đổi. Lõi ở scripts/hieuung_giong.py, bài
 thật áp đúng bộ lọc đó nên mở app lên là các thanh ở đúng mức bài thật sẽ ra.
+Từ 23/10/2026 thêm 🔆 SÁNG GIỌNG (cường độ) trị giọng clone "ồm": bản phát áp
+EQ ngay như hai bộ lọc kia, nhưng lúc bấm Tạo nó còn EQ cả GIỌNG MẪU trong bộ
+nhớ khi dựng prompt (đúng như bài thật; file mẫu không đổi) nên bản thử mức N
+lưu riêng _thu_giong/<tên_giọng>_sang<N>.wav — đổi mức thì bấm Tạo lại để nghe
+đúng, kéo thanh sau khi tạo chỉ đổi phần EQ output.
 Đường sinh audio đi Y HỆT bài thật (amain_taogiong_gui.run_tts): làm sạch chữ →
 chia mỗi đoạn một câu (cỡ "chunk" trong taogiong_options.json) → sinh từng đoạn
 → cân mức to giữa các đoạn → ghép có khoảng nghỉ theo dấu câu → đệm im lặng
@@ -153,11 +158,19 @@ def safe_stem(name: str) -> str:
     return re.sub(r"[^\w\-. ]+", "_", Path(name).stem).strip() or "giong"
 
 
+def out_file(voice: str, sang: int = 0) -> Path:
+    """File nghe thử của một giọng. Mức 🔆 Sáng giọng > 0 thì giọng MẪU đã được EQ
+    lúc dựng prompt → bản thử khác hẳn bản mức 0, lưu riêng `<giọng>_sang<N>.wav`
+    (mức 0 giữ tên cũ `<giọng>.wav` nên bản thử đã có vẫn dùng được)."""
+    sang = hu.parse_fx(sang)
+    return OUT_DIR / f"{safe_stem(voice)}{f'_sang{sang}' if sang else ''}.wav"
+
+
 # ── đổi tốc độ / tông / bộ lọc bằng ffmpeg ─────────────────────────────────────
 # Lõi (rubberband giữ formant, dự phòng asetrate+atempo; tiếng vang bằng afir +
 # đáp ứng xung tự sinh; thiếu niên = dời formant + nhỉnh cao độ) nằm ở
 # scripts/hieuung_giong.py — bài thật (amain_taogiong_gui.run_tts) cũng áp đúng
-# bộ lọc đó lên output.wav (tuỳ chọn "pitch" + 3 khoá bộ lọc). Ở đây chỉ dùng
+# bộ lọc đó lên output.wav (tuỳ chọn "pitch" + 4 khoá bộ lọc). Ở đây chỉ dùng
 # lại hu.build_ffmpeg_args, không chép.
 
 
@@ -176,7 +189,7 @@ def default_pitch() -> float:
 
 
 def default_fx() -> dict:
-    """Bộ lọc mặc định = 3 khoá bộ lọc của bài thật (taogiong_options.json) —
+    """Bộ lọc mặc định = 4 khoá bộ lọc của bài thật (taogiong_options.json) —
     mở app lên là nghe đúng bộ lọc bài thật sẽ ra; kéo về 0 để tắt."""
     try:
         return hu.fx_from(tts.load_opt_settings())
@@ -189,8 +202,8 @@ class App:
         self.root = root
         root.title("Thử giọng — OmniVoice")
         root.configure(bg=UI["bg"])
-        self._center(root, 1000, 740)
-        root.minsize(880, 640)
+        self._center(root, 1000, 790)
+        root.minsize(880, 690)
 
         self._busy = False
         self._playing = False
@@ -264,7 +277,7 @@ class App:
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(7, weight=1)
+        right.rowconfigure(8, weight=1)
 
         ttk.Label(right, text="Kịch bản thử (sửa tay được):",
                   style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -356,14 +369,26 @@ class App:
         ttk.Label(tn_row, text="giọng trẻ hơn: dời formant + nhỉnh cao độ  •  giữ tốc độ",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
+        # 🔆 Sáng giọng (23/10/2026): EQ bớt ồm — bản phát áp ngay; lúc bấm Tạo còn
+        # EQ cả giọng mẫu trong bộ nhớ khi dựng prompt (đúng đường bài thật).
+        sang_row = ttk.Frame(right)
+        sang_row.grid(row=7, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(sang_row, text="🔆  Sáng giọng:", width=15).pack(side="left")
+        self._fx_slider(sang_row, "sang_giong", "cường độ", fx0, length=280)
+        ttk.Button(sang_row, text="↺ 0", width=6,
+                   command=lambda: self._set_fx(sang_giong=0)).pack(side="left", padx=(6, 0))
+        ttk.Label(sang_row, text="bớt ồm 150–500 Hz, thêm 3 kHz + dải cao  •  lúc Tạo: EQ cả giọng mẫu "
+                                 "(file mẫu không đổi)",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(right, textvariable=self.status, style="Muted.TLabel").grid(
-            row=8, column=0, sticky="w", pady=(8, 2))
+            row=9, column=0, sticky="w", pady=(8, 2))
         self.pb = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.pb.grid(row=9, column=0, sticky="ew")
+        self.pb.grid(row=10, column=0, sticky="ew")
 
         logf = ttk.LabelFrame(right, text="  Nhật ký  ", padding=6)
-        logf.grid(row=7, column=0, sticky="nsew", pady=(10, 6))
+        logf.grid(row=8, column=0, sticky="nsew", pady=(10, 6))
         logf.rowconfigure(0, weight=1)
         logf.columnconfigure(0, weight=1)
         self.logbox = scrolledtext.ScrolledText(logf, height=7, wrap="word", state="disabled",
@@ -494,8 +519,10 @@ class App:
         self._model = None
         self._don_vram()
 
-    def _synthesize(self, text, voice_path):
+    def _synthesize(self, text, voice_path, sang=0):
         """Sinh audio clone cho 1 giọng; ghép các đoạn nếu kịch bản dài.
+        `sang` = mức 🔆 Sáng giọng: > 0 thì giọng mẫu được EQ trong bộ nhớ lúc dựng
+        prompt (tts._voice_prompt) — đúng như bài thật làm.
 
         Gọi THẲNG _generate_chunk của bản tạo giọng thật, không tự gọi
         model.generate nữa: nghe thử phải đi đúng đường mà bài thật sẽ đi, không
@@ -513,7 +540,8 @@ class App:
         parts = []
         for j, c in enumerate(chunks):
             self._set_status(f"Đang tạo đoạn {j + 1}/{len(chunks)}...")
-            a = tts._generate_chunk(self._model, "clone", str(voice_path), c)[0]
+            a = tts._generate_chunk(self._model, "clone", str(voice_path), c,
+                                    sang_giong=sang)[0]
             parts.append(np.asarray(a, dtype="float32"))
         # Ghép Y HỆT bài thật (run_tts): cân mức to giữa các đoạn → cắt im lặng
         # mép đoạn rồi chèn nghỉ theo dấu kết thúc đoạn (hết câu 0,45 s, hết đoạn
@@ -551,15 +579,18 @@ class App:
         self._stop_play()
         self._set_busy(True)
         self.pb["value"] = 0
-        threading.Thread(target=self._worker_one, args=(voice, text), daemon=True).start()
+        # Đọc mức sáng giọng ở luồng chính (tk.Var không đọc từ luồng nền).
+        sang = self._fx()["sang_giong"]
+        threading.Thread(target=self._worker_one, args=(voice, text, sang), daemon=True).start()
 
-    def _worker_one(self, voice, text):
+    def _worker_one(self, voice, text, sang=0):
         out = None
         try:
             self._ensure_model()
-            self._log(f"🎙️ Thử giọng: {voice}")
-            audio = self._synthesize(text, VOICE_DIR / voice)
-            out = OUT_DIR / f"{safe_stem(voice)}.wav"
+            self._log(f"🎙️ Thử giọng: {voice}"
+                      + (f"  (🔆 sáng giọng {sang}: EQ cả giọng mẫu lúc dựng prompt)" if sang else ""))
+            audio = self._synthesize(text, VOICE_DIR / voice, sang)
+            out = out_file(voice, sang)
             self._save(out, audio)
             self.pb["value"] = 100
             self._log(f"✅ Xong → {out.name} (nghe thử ngay).", "ok")
@@ -593,17 +624,21 @@ class App:
         self._stop_play()
         self._set_busy(True)
         self.pb["value"] = 0
-        threading.Thread(target=self._worker_all, args=(voices, text), daemon=True).start()
+        sang = self._fx()["sang_giong"]
+        threading.Thread(target=self._worker_all, args=(voices, text, sang), daemon=True).start()
 
-    def _worker_all(self, voices, text):
+    def _worker_all(self, voices, text, sang=0):
         try:
             self._ensure_model()
             total = len(voices)
+            if sang:
+                self._log(f"🔆 Sáng giọng {sang}: EQ cả giọng mẫu lúc dựng prompt "
+                          f"(bản thử lưu *_sang{sang}.wav).")
             for k, voice in enumerate(voices):
                 self._log(f"[{k + 1}/{total}] 🎙️ {voice}")
                 try:
-                    audio = self._synthesize(text, VOICE_DIR / voice)
-                    out = OUT_DIR / f"{safe_stem(voice)}.wav"
+                    audio = self._synthesize(text, VOICE_DIR / voice, sang)
+                    out = out_file(voice, sang)
                     self._save(out, audio)
                     self._log(f"   ✅ → {out.name}", "ok")
                 except Exception as e:
@@ -677,7 +712,7 @@ class App:
         self.lbl_fx[key].pack(side="left")
 
     def _fx(self) -> dict:
-        """3 mức bộ lọc đang chọn (int 0–100) — cùng dạng dict mà bài thật nhận."""
+        """4 mức bộ lọc đang chọn (int 0–100) — cùng dạng dict mà bài thật nhận."""
         return {k: hu.parse_fx(v.get()) for k, v in self.var_fx.items()}
 
     def _update_fx_labels(self):
@@ -728,7 +763,14 @@ class App:
         if not voice:
             messagebox.showwarning("Chưa chọn giọng", "Hãy chọn một giọng để nghe lại.")
             return
-        f = OUT_DIR / f"{safe_stem(voice)}.wav"
+        sang = self._fx()["sang_giong"]
+        f = out_file(voice, sang)
+        if not f.exists() and sang and out_file(voice, 0).exists():
+            # Chưa có bản dựng với giọng mẫu EQ mức này → phát bản mẫu gốc + EQ output
+            # cho nghe tạm, nhưng nói rõ: bài thật còn EQ cả giọng mẫu.
+            self._log(f"ℹ️ Chưa có bản thử dựng với giọng mẫu EQ mức {sang} → phát bản mẫu "
+                      "gốc + EQ output. Bấm '🔊 Tạo & nghe' để nghe đúng như bài thật.", "warn")
+            f = out_file(voice, 0)
         if not f.exists():
             messagebox.showinfo("Chưa có bản thử",
                                 f"Chưa tạo bản thử cho '{voice}'.\nBấm '🔊 Tạo & nghe' trước.")

@@ -72,6 +72,8 @@ from nhandien_giongnoi import (  # noqa: E402
     get_audio_duration,
     get_model,
 )
+sys.path.insert(0, SCRIPT_DIR)
+import doan  # noqa: E402  — chia / ghép đoạn video dài (xem doan.py)
 
 # ---------------- Quy tắc ngắt câu theo từng tiếng ----------------
 _CLOSERS = "”’」』）)\"'"         # dấu đóng đi liền sau dấu kết câu
@@ -165,15 +167,21 @@ def _ghep(tokens, lang=MAC_DINH):
     return out
 
 
-def slow_video(src, dst, speed=0.7):
+def slow_video(src, dst, speed=0.7, tu=None, dai=None):
     """Xuất video làm chậm: hình setpts, tiếng atempo (0.5–2.0). libx264 CRF 18
-    giữ chất lượng gần gốc (ưu tiên chất lượng hơn tốc độ render)."""
+    giữ chất lượng gần gốc (ưu tiên chất lượng hơn tốc độ render).
+
+    tu/dai (giây, theo video GỐC) → chỉ render KHÚC đó (chia đoạn video dài):
+    -ss/-t đặt TRƯỚC -i, có encode lại nên cắt chính xác tới khung hình, mốc
+    giờ đầu ra bắt đầu từ 0 — đúng khớp SRT của đoạn (đã trừ mốc đầu đoạn)."""
     if not FFMPEG_PATH:
         print("❌ Không tìm thấy ffmpeg trong PATH.")
         return None
-    print(f"🎬 Đang render video chậm {speed:g}x (video ~{1/speed:.2f} lần dài hơn)...")
+    khuc = f" khúc {tu / 60:.1f}→{(tu + dai) / 60:.1f} phút gốc" if tu is not None else ""
+    print(f"🎬 Đang render video chậm {speed:g}x{khuc} (dài ~{1/speed:.2f} lần)...")
+    cat = ["-ss", f"{tu:.3f}", "-t", f"{dai:.3f}"] if tu is not None else []
     cmd = [
-        FFMPEG_PATH, "-y", "-i", src,
+        FFMPEG_PATH, "-y", *cat, "-i", src,
         "-filter_complex", f"[0:v]setpts=PTS/{speed}[v];[0:a]atempo={speed}[a]",
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-crf", "18", "-preset", "medium",
@@ -189,6 +197,91 @@ def slow_video(src, dst, speed=0.7):
     except subprocess.CalledProcessError as e:
         print(f"❌ Lỗi render video: {e}")
         return None
+
+
+# ---------------- Chia đoạn video dài (xem doan.py) ----------------
+def _het_cau(text, lang):
+    """Câu kết thúc bằng dấu kết câu của tiếng đó (bỏ dấu đóng ngoặc/nháy đi kèm)."""
+    t = (text or "").rstrip().rstrip(_CLOSERS).rstrip()
+    return bool(t) and t[-1] in _cfg(lang)["major"]
+
+
+def chia_doan(subs, tong, phut, phut_max, lang=MAC_DINH):
+    """Mốc cắt theo video ĐÃ CHẬM → [(tu_s, den_s), ...]; 1 phần tử = không chia.
+
+    Tới mốc `phut` thì ĐỢI HẾT CÂU: lấy ranh giới đầu tiên sau mốc mà câu trước
+    nó kết thúc bằng dấu kết câu; không có thì khe lặng DÀI NHẤT giữa hai câu
+    trong khoảng tới `phut_max`; khoảng đó không có ranh giới nào (một câu kéo
+    dài qua trần) thì cắt ngay TRƯỚC câu đang chạy qua trần. Điểm cắt đặt giữa
+    khe lặng (tối đa 0,6 s sau câu) nên không câu nào bị bổ đôi. Đoạn cuối
+    ngắn dưới 5 phút gộp vào đoạn trước."""
+    muc, tran = phut * 60.0, phut_max * 60.0
+    if tong <= tran or len(subs) < 2:
+        return [(0.0, tong)]
+    moc = [0.0]
+    while tong - moc[-1] > tran:
+        goc = moc[-1]
+        dich, han = goc + muc, goc + tran
+        chon, khe_max = None, -1.0
+        for i in range(len(subs) - 1):
+            e = subs[i][1]
+            if e < dich:
+                continue
+            if e > han:
+                break
+            khe = subs[i + 1][0] - e
+            t = e + min(khe / 2, 0.6)
+            if _het_cau(subs[i][2], lang):
+                chon = t
+                break
+            if khe > khe_max:
+                chon, khe_max = t, khe
+        if chon is None:
+            sau = [s[0] for s in subs if dich <= s[0] <= han]
+            chon = max(goc + 1.0, min(sau) - 0.05) if sau else han
+        if chon <= goc + 1.0:
+            chon = han
+        moc.append(min(chon, tong))
+    # Đoạn cuối quá ngắn (dưới 5 phút với đoạn 30 phút — tỉ lệ 1/6) → gộp vào
+    # đoạn trước cho khỏi một lượt nạp model chỉ vì vài câu.
+    if len(moc) >= 2 and tong - moc[-1] < min(300.0, muc / 6):
+        moc.pop()
+    return [(moc[i], moc[i + 1] if i + 1 < len(moc) else tong) for i in range(len(moc))]
+
+
+def ghi_doan(doan_tg, subs, base, tag, out_dir, speed, media, lang):
+    """SRT từng đoạn (mốc giờ tính từ đầu đoạn) + sổ _doan.json → tên các đoạn."""
+    so = []
+    for k, (tu, den) in enumerate(doan_tg, 1):
+        ten = doan.ten_doan(base, k, tag)
+        phan = [[s[0] - tu, min(s[1], den) - tu, s[2]] for s in subs if tu <= s[0] < den]
+        write_srt(phan, os.path.join(out_dir, ten + ".srt"))
+        so.append({"ten": ten, "tu_s": round(tu, 3), "den_s": round(den, 3), "cau": len(phan)})
+        print(f"   ✂ đoạn {k}: {tu / 60:.1f} → {den / 60:.1f} phút "
+              f"({(den - tu) / 60:.1f} phút, {len(phan)} câu)")
+    p = doan.ghi_so(os.path.join(out_dir, f"{base}{tag}"), speed,
+                    os.path.abspath(media), lang, so)
+    print(f"💾 Sổ đoạn: {os.path.basename(p)}")
+    return [d["ten"] for d in so]
+
+
+def render_doan(media, doan_tg, ten_doan_ds, out_dir, speed, out_video):
+    """Render video chậm TỪNG ĐOẠN từ đúng khúc của video gốc (đoạn đã có thì
+    bỏ qua — chạy lại là tiếp), rồi nối -c copy thành video chậm cả bài (cho
+    thumbnail / trang vùng sub; các bước ②③④ dùng video từng đoạn)."""
+    parts = []
+    for (tu, den), ten in zip(doan_tg, ten_doan_ds):
+        dst = os.path.join(out_dir, ten + ".mp4")
+        parts.append(dst)
+        if os.path.isfile(dst):
+            print(f"♻ Đã có {ten}.mp4 — bỏ qua render.")
+            continue
+        if not slow_video(media, dst, speed=speed, tu=tu * speed, dai=(den - tu) * speed):
+            return False
+    if os.path.isfile(out_video):
+        print(f"♻ Đã có {os.path.basename(out_video)} — bỏ qua nối.")
+        return True
+    return doan.noi_video(parts, out_video)
 
 
 def transcribe_words(audio_path, model_name="medium", lang=MAC_DINH,
@@ -368,6 +461,13 @@ def main():
                         help="Nhận diện lại từ đầu, bỏ qua file *_words.json đã lưu.")
     parser.add_argument("--no-dich", action="store_true",
                         help="Không tự dịch sang tiếng Việt sau khi ra SRT tiếng gốc.")
+    parser.add_argument("--chia-doan", type=float, default=0.0,
+                        help="Video dài: CHIA ĐOẠN cỡ này (phút, theo video đã chậm), cắt "
+                             "tại chỗ HẾT CÂU sau mốc; 0 = không chia. Mỗi đoạn một video "
+                             "chậm + SRT riêng (<tên>_d01_x0.7…) kèm sổ _doan.json; các "
+                             "bước sau chạy từng đoạn qua chay_doan.py rồi ghép lại.")
+    parser.add_argument("--chia-doan-max", type=float, default=0.0,
+                        help="Muộn nhất phải cắt ở phút này (mặc định = chia-doan + 5).")
     parser.add_argument("--out-dir", default=os.path.join(SCRIPT_DIR, "output"),
                         help="Thư mục lưu kết quả (mặc định myvideo/output).")
     args = parser.parse_args()
@@ -426,10 +526,46 @@ def main():
         print(f"📊 {len(subs)} câu, trung bình "
               f"{n_chars / max(len(subs), 1):.1f} {cfg['don_vi']}/câu.")
 
+        # 3a. CHIA ĐOẠN (video dài, --chia-doan): mốc cắt chọn theo kết quả nhận
+        # diện — đợi HẾT CÂU sau mốc rồi mới cắt (chia_doan / doan.py). Mỗi đoạn
+        # một SRT riêng + sổ _doan.json; video chậm từng đoạn render ở bước 4.
+        # Các bước ②③④ chạy từng đoạn qua chay_doan.py rồi ghép lại.
+        doan_tg, ten_doan_ds = [], []
+        so_doan = doan.so_path(os.path.join(args.out_dir, f"{base}{tag}"))
+        if args.chia_doan > 0:
+            tong = ((get_audio_duration(args.media) or 0) / args.speed) or subs[-1][1]
+            phut_max = args.chia_doan_max or (args.chia_doan + 5)
+            doan_tg = chia_doan(subs, tong, args.chia_doan, phut_max, lang=args.lang)
+            if len(doan_tg) >= 2:
+                print(f"✂ Video dài {tong / 60:.1f} phút (đã chậm) → chia {len(doan_tg)} đoạn "
+                      f"~{args.chia_doan:g} phút, cắt ở chỗ hết câu:")
+                ten_doan_ds = ghi_doan(doan_tg, subs, base, tag, args.out_dir,
+                                       args.speed, args.media, args.lang)
+            else:
+                doan_tg = []
+                print(f"✂ Video {tong / 60:.1f} phút ≤ {phut_max:g} phút — không chia đoạn.")
+        if not doan_tg and os.path.isfile(so_doan):
+            # Lần này không chia (tắt ô / video ngắn) → bỏ sổ cũ kẻo bước sau tưởng
+            # vẫn chia; file đoạn cũ để nguyên (xoá được thì phải khôi phục được).
+            os.remove(so_doan)
+            print(f"🧹 Bỏ sổ đoạn cũ {os.path.basename(so_doan)} (lần này không chia).")
+
         # 3b. Tự dịch sang tiếng Việt: gửi SRT lên Gemini (extension/Firefox) →
         # lưu _vi.srt + bản song ngữ. Lỗi dịch KHÔNG làm hỏng cả lượt — SRT tiếng
         # gốc đã lưu, chạy lại dich_srt.py là dịch tiếp (file tiến độ _vi.partial.json).
-        if not args.no_dich:
+        if not args.no_dich and doan_tg:
+            dich_script = os.path.join(SCRIPT_DIR, "dich_srt.py")
+            for ten in ten_doan_ds:
+                if os.path.isfile(os.path.join(args.out_dir, ten + "_vi.srt")):
+                    print(f"♻ Đã có {ten}_vi.srt — bỏ qua.")
+                    continue
+                print(f"🌐 Dịch đoạn {ten} qua Gemini...")
+                ret = subprocess.run([sys.executable, dich_script,
+                                      os.path.join(args.out_dir, ten + ".srt"),
+                                      "--lang", args.lang])
+                if ret.returncode != 0:
+                    print(f"⚠️ Dịch đoạn {ten} chưa xong — chạy lại dich_srt.py cho đoạn đó.")
+        elif not args.no_dich:
             out_vi = f"{os.path.splitext(out_srt)[0]}_vi.srt"
             if os.path.isfile(out_vi):
                 print(f"♻ Đã có bản dịch {os.path.basename(out_vi)} — bỏ qua bước dịch "
@@ -449,7 +585,11 @@ def main():
         # Đã có sẵn thì BỎ QUA: video chậm chẳng liên quan gì tới nhận diện, nên
         # chạy lại bước ① chỉ để làm lại SRT (đổi ngôn ngữ, bật nghe-ngữ-cảnh,
         # --redo-asr) không phải ngồi render lại từng đó phút cho một file y hệt.
-        if not args.no_video:
+        if not args.no_video and doan_tg:
+            if not render_doan(args.media, doan_tg, ten_doan_ds, args.out_dir,
+                               args.speed, out_video):
+                sys.exit(1)
+        elif not args.no_video:
             if os.path.isfile(out_video):
                 print(f"♻ Đã có {os.path.basename(out_video)} — bỏ qua render "
                       "(xoá file đó nếu muốn dựng lại).")

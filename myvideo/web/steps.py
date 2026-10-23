@@ -28,18 +28,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent       # myvideo/
 REPO_ROOT = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "output"
 VENV_PY = REPO_ROOT / "venv" / "Scripts" / "python.exe"
-# Kho giọng RIÊNG của myvideo (myvideo/voice) — độc lập hẳn với myvoice, chỉ
-# mượn ý tưởng chức năng; không đọc kho file hay cài đặt bên đó.
-VOICE_DIR = BASE_DIR / "voice"
+# Kho giọng: từ 24/10/2026 DÙNG CHUNG DANH SÁCH với myvoice (myvoice/voice — user
+# soạn danh sách giọng mới ở đó; .prompt.pt / .sang<N>.prompt.pt bên đó dùng lại
+# được vì cùng cách lưu). Kho cũ myvideo/voice vẫn đọc thêm để giọng đã chọn
+# không mất; trùng tên thì myvoice/voice thắng. CÀI ĐẶT (giọng đang chọn, ⭐) vẫn
+# riêng trong web_settings.json của myvideo — chỉ dùng chung kho FILE.
+VOICE_DIRS = (REPO_ROOT / "myvoice" / "voice", BASE_DIR / "voice")
+VOICE_DIR = BASE_DIR / "voice"     # kho cũ — còn dùng làm chỗ cache nghe thử (_nghe_thu)
 # Kho NHẠC NỀN: bỏ file mp3/wav vào đây là ô chọn ở khối ④ thấy ngay.
 NHAC_DIR = BASE_DIR / "nhac"
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
 
-# Hồ sơ kênh (logo.png / outro.mp4 nằm trong thư mục hồ sơ) — kenh_hoso đứng
+# Hồ sơ kênh (logo.png / khung.png / outro.mp4 nằm trong thư mục hồ sơ) — kenh_hoso đứng
 # một mình, không kéo FastAPI hay GUI nào theo.
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import kenh_hoso  # noqa: E402
+import doan  # noqa: E402       # video dài chia đoạn: nhận tên đoạn, đếm đoạn
 
 ORDER = ["cham", "dich", "giong", "gan"]
 # seo/thumb không nằm trong chuỗi ①→④ (ORDER) nhưng CÓ trong danh sách "còn
@@ -92,14 +97,35 @@ def _env() -> dict:
     return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
 
 
-def list_voices() -> list[str]:
-    """Giọng mẫu trong kho riêng myvideo/voice — cho ô chọn của bước ③."""
+def _audio_in(d: Path) -> list[str]:
+    """Tên các file audio trong thư mục `d` (xếp theo tên, không phân biệt hoa thường)."""
     try:
-        return sorted((p.name for p in VOICE_DIR.iterdir()
+        return sorted((p.name for p in d.iterdir()
                        if p.is_file() and p.suffix.lower() in AUDIO_EXTS),
                       key=str.lower)
     except OSError:
         return []
+
+
+def list_voices() -> list[str]:
+    """Giọng mẫu cho ô chọn của bước ③: danh sách myvoice/voice trước, rồi các
+    file CHỈ có trong kho cũ myvideo/voice (trùng tên thì bỏ qua bản cũ)."""
+    out: list[str] = []
+    for d in VOICE_DIRS:
+        out += [n for n in _audio_in(d) if n not in out]
+    return out
+
+
+def voice_path(ten: str) -> Path | None:
+    """Đường dẫn file giọng `ten` (tên file trần) — tìm lần lượt trong VOICE_DIRS;
+    không có → None. Chỉ nhận đúng tên file (chặn ../)."""
+    if not ten or ten != Path(ten).name:
+        return None
+    for d in VOICE_DIRS:
+        p = d / ten
+        if p.is_file() and p.suffix.lower() in AUDIO_EXTS:
+            return p
+    return None
 
 
 def list_nhac() -> list[str]:
@@ -178,6 +204,9 @@ def _flags(base: str) -> dict:
         "thumb": os.path.isfile(f"{B}_thumb.jpg") or os.path.isfile(f"{B}_thumb.png"),
         "yt": os.path.isfile(f"{B}_youtube_upload.json"),
         "fb": os.path.isfile(f"{B}_facebook_upload.json"),
+        # ✂ Video dài đã chia: số đoạn (0 = không chia) — bảng ghi chú, còn các
+        # cờ trên vẫn tính theo bản GHÉP cả bài nên logic còn lại không đổi.
+        "doan": len(doan.cac_doan(B)),
     }
 
 
@@ -244,6 +273,8 @@ def scan_rows(thaytieng: bool = True, limit: int = 25,
         # Lấy gốc từ p.name chứ KHÔNG phải p.stem: thư mục "…_x0.7_vi_tts" bị
         # stem coi ".7_vi_tts" là đuôi file → cụt còn "…_x0", sinh gốc ma.
         # Cắt theo vị trí tag _x… thì có đuôi hay không cũng ra đúng gốc.
+        if doan.DOAN_RE.search(p.name):            # file/thư mục của MỘT ĐOẠN
+            continue                               # — ẩn, chỉ hiện gốc cả bài
         tags = list(_XTAG.finditer(p.name))
         if tags:                                   # kết quả cũ dạng phẳng
             note(p.name[:tags[-1].end()], _mtime(p))
@@ -253,6 +284,8 @@ def scan_rows(thaytieng: bool = True, limit: int = 25,
             except OSError:
                 continue
             for c in subs:
+                if doan.DOAN_RE.search(c.name):    # đoạn của video dài → ẩn
+                    continue
                 t2 = list(_XTAG.finditer(c.name))
                 if t2:
                     note(f"{p.name}/{c.name[:t2[-1].end()]}", _mtime(c))
@@ -280,7 +313,16 @@ def _base_rel(base: Path) -> str:
         return base.as_posix()
 
 
-def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
+def _boc_doan(B: str, key: str, argv: list[str], bo_qua_da_xong: bool) -> list[str]:
+    """Bọc lệnh một bước ②③④ qua chay_doan.py: video đã chia đoạn (sổ _doan.json
+    do bước ① ghi) thì chạy từng đoạn rồi ghép; chưa chia thì chạy y nguyên —
+    nên lúc xếp hàng đợi KHÔNG cần biết video có bị chia hay không."""
+    return ([_python(), "-u", str(BASE_DIR / "chay_doan.py"), "--base", B, "--buoc", key]
+            + (["--bo-qua-da-xong"] if bo_qua_da_xong else []) + ["--"] + argv)
+
+
+def _steps_for(keys: list[str], src: str, base: Path, s: dict,
+               bo_qua_da_xong: bool = False) -> list[Step]:
     B = str(base)
     env = _env()
     steps = []
@@ -298,6 +340,10 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                     "--speed", str(s["speed"]), "--model", s["model"],
                     "--max-chars", n, "--hard-max", n, "--no-dich",
                     "--lang", lang, "--out-dir", str(base.parent)]
+            # ✂ Video dài: chia đoạn ~N phút tại chỗ HẾT CÂU (bước ① tự quyết theo
+            # thời lượng — ngắn hơn N+5 phút thì không chia). Xem doan.py.
+            if s.get("chiadoan", True):
+                argv += ["--chia-doan", str(s.get("chiadoan_phut") or "30")]
             if not s.get("ngucanh", True):
                 argv.append("--khong-ngu-canh")
             if s.get("redoasr"):
@@ -314,6 +360,10 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
             argv = [_python(), "-u", str(BASE_DIR / "taogiong_srt.py"), f"{B}_vi.srt"]
             if s.get("voice"):
                 argv += ["--voice", s["voice"]]
+            # 🔆 Sáng giọng (khối ③ trang chính, khoá sanggiong, mặc định 80, "0" = tắt):
+            # EQ giọng mẫu lúc dựng prompt + EQ audio tổng. Gửi luôn để script khỏi
+            # đoán; đổi mức là script tự đọc lại toàn bộ câu (sổ _vanban.json).
+            argv += ["--sang", str(s.get("sanggiong") or "80").strip()]
             if s.get("redotts"):
                 argv.append("--redo-tts")
         elif k == "seo":
@@ -366,16 +416,22 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                 argv += ["--tts-db", str(s["ttsdb"]).strip()]
             if s.get("ttsnorm"):
                 argv += ["--tts-lufs", "-23"]
-            # 🏷 Logo / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi khi ô bật VÀ
-            # file có thật trong myvideo/kenh/<tên>/ (thiếu file thì thôi, không
-            # làm hỏng lượt dựng; script cũng tự bỏ qua nếu file biến mất sau).
-            if s.get("logo_kenh") or s.get("outro_kenh"):
+            # 🏷 Logo / khung viền / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi
+            # khi ô bật VÀ file có thật trong myvideo/kenh/<tên>/ (thiếu file thì
+            # thôi, không làm hỏng lượt dựng; script cũng tự bỏ qua nếu file biến
+            # mất sau). Khung bản dọc (khung_doc.png) script tự lấy khi --khung doc.
+            if s.get("logo_kenh") or s.get("khung_kenh") or s.get("outro_kenh"):
                 kenh = kenh_hoso.hien_tai()
                 if kenh:
-                    lg = kenh_hoso.thu_muc(kenh) / "logo.png"
+                    # Hồ sơ có thể chứa nhiều "logo*.png" (hai mascot…) — lấy cái
+                    # chọn trên web (logo_file); không có thì logo.png / cái đầu.
+                    lg = kenh_hoso.logo_path(kenh, s.get("logo_file") or "")
+                    kv = kenh_hoso.thu_muc(kenh) / "khung.png"
                     ot = kenh_hoso.thu_muc(kenh) / "outro.mp4"
-                    if s.get("logo_kenh") and lg.is_file():
+                    if s.get("logo_kenh") and lg and lg.is_file():
                         argv += ["--logo", str(lg)]
+                    if s.get("khung_kenh") and kv.is_file():
+                        argv += ["--khung-vien", str(kv)]
                     if s.get("outro_kenh") and ot.is_file():
                         argv += ["--outro", str(ot)]
             if s.get("chesub", True):
@@ -392,6 +448,11 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict) -> list[Step]:
                      "④ Chỉ che mờ sub gốc")
             if s.get("cpu"):
                 argv.append("--cpu")
+        if k in ("dich", "giong", "gan"):
+            # Bọc qua chay_doan.py (xem _boc_doan): ⏩ bỏ qua đoạn đã xong, nút
+            # bấm tay chạy lại mọi đoạn. Bước dọc phía dưới nối thêm --khung doc
+            # vào đuôi → rơi đúng vào lệnh bên trong, chay_doan tự hiểu là bản dọc.
+            argv = _boc_doan(B, k, argv, bo_qua_da_xong)
         extra = {}
         if k == "gan" and after_build_hook is not None:
             # Xong bước ④ = video thành phẩm → cho server cơ hội xếp việc tự
@@ -536,7 +597,7 @@ def resume(base: str, s: dict) -> tuple[str, list[Step], str]:
     if not miss:
         return "", [], f"{base}: đủ cả rồi, không còn bước nào thiếu."
     title = f"{base} — ⏩ {''.join(NUM[k] for k in miss)}"
-    return title, _steps_for(miss, "", OUTPUT_DIR / base, s), ""
+    return title, _steps_for(miss, "", OUTPUT_DIR / base, s, bo_qua_da_xong=True), ""
 
 
 def single(base: str, key: str, s: dict) -> tuple[str, list[Step], str]:

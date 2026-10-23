@@ -2,7 +2,7 @@
 """
 hieuung_giong.py — BỘ LỌC GIỌNG NÓI kiểu CapCut, chạy hoàn toàn bằng ffmpeg sẵn có.
 
-Hai bộ lọc (tên + thang 0–100 đặt theo đúng CapCut để chỉnh cho quen tay):
+Ba bộ lọc (tên + thang 0–100 đặt theo đúng CapCut để chỉnh cho quen tay):
 
   🔔 TIẾNG VANG  — "Trường độ" (0–100: phòng nhỏ → hội trường) và "Cường độ"
      (0–100: mức tiếng vang trộn vào; 0 = tắt). Làm bằng filter `afir` của
@@ -27,13 +27,30 @@ Hai bộ lọc (tên + thang 0–100 đặt theo đúng CapCut để chỉnh cho
      cộng dồn méo. Build ffmpeg không có rubberband → asetrate kéo cả cao độ lẫn
      formant cùng tỉ lệ (kiểu "chipmunk" nhẹ), chấp nhận được.
 
+  🔆 SÁNG GIỌNG — "Cường độ" (0–100), thêm 23/10/2026 để trị giọng clone nghe
+     "ồm ồm, không thanh". Đo giọng mẫu ngọc huyền 01: ~80 % năng lượng dồn vào
+     150–600 Hz, dải 2,5–5 kHz (cảm giác "thanh, trong") chỉ ~1 %; bản clone
+     chép y nguyên (trọng tâm phổ ~500 Hz) nên đổi tông/tốc độ không sửa được.
+     Bộ lọc là chuỗi EQ ffmpeg, mức 100 = highpass 110 Hz, cắt 230 Hz −6 dB,
+     cắt 480 Hz −3 dB, nâng 3,2 kHz +6 dB, highshelf 6 kHz +6 dB, từ mức 50
+     thêm aexciter sinh họa âm 7–11,5 kHz bù phần model chỉ ra 24 kHz; mức
+     nhỏ hơn nội suy tuyến tính (đo: mức ~65 đưa trọng tâm phổ 507 → 863 Hz,
+     mức 100 → 1172 Hz). Áp ở HAI chỗ: lên output.wav (chuỗi ở đây, sau có
+     alimiter ghìm đỉnh) VÀ lên GIỌNG MẪU trong bộ nhớ lúc dựng prompt clone
+     (amain._voice_prompt, không exciter) — model nghe mẫu sáng thì phát âm
+     sáng từ gốc, EQ output chỉ đánh bóng. File giọng mẫu không bị sửa. Mặc
+     định 80 ở cả hai bảng (user chốt 23/10/2026 sau khi nghe demo): myvoice
+     khoá sang_giong (taogiong_options.json), myvideo khoá sanggiong
+     (web/web_settings.json → taogiong_srt.py --sang; bên đó EQ mẫu lúc dựng
+     prompt + EQ audio tổng _vi_audio.wav sau khi trộn).
+
 Các hàm đổi tông / tốc độ (has_rubberband, pitch_factor, atempo_chain,
 build_audio_filter) chuyển về đây làm "nhà" chung; amain_taogiong_gui import
 lại để bài thật, app Thử giọng và web cùng một đường — nghe thử ra sao thì bài
 thật ra vậy.
 
 Dùng lẻ (thử nhanh một file):
-    venv\\Scripts\\python myvoice\\scripts\\hieuung_giong.py in.wav --vang 80 76 --thieunien 100
+    venv\\Scripts\\python myvoice\\scripts\\hieuung_giong.py in.wav --vang 80 76 --thieunien 100 --sang 60
     → in_fx.wav cạnh file gốc (hoặc --out). Thêm --pitch 2 --speed 1.1 nếu muốn.
 
 Nguồn tham khảo: ffmpeg afir/rubberband/asetrate/atempo docs; Praat manual
@@ -82,6 +99,20 @@ VANG_EARLY_GAIN = 0.5     # mức cụm phản xạ sớm so với đuôi
 TN_FORMANT_MAX = 1.18
 TN_PITCH_MAX_ST = 4.0
 
+# Sáng giọng: mức 100 ứng với bộ EQ dưới (dB âm = cắt, dương = nâng), mức thấp
+# hơn nhân tuyến tính theo x = mức/100. Đo 23/10/2026 trên bản clone ngọc huyền 01:
+# trọng tâm phổ 507 Hz → 863 Hz (mức ~65) → 1172 Hz (mức 100).
+SANG_HP_HZ = (80.0, 110.0)          # highpass: mức 0+ → 80 Hz, mức 100 → 110 Hz
+SANG_EQ = (                         # (tần số Hz, độ rộng Q, dB ở mức 100)
+    (230.0, 1.2, -6.0),             # cục "ồm" 150–350 Hz
+    (480.0, 1.0, -3.0),             # đục 400–600 Hz
+    (3200.0, 0.9, 6.0),             # presence: rõ chữ, "thanh"
+)
+SANG_SHELF = (6000.0, 6.0)          # highshelf (Hz, dB ở mức 100): "air"
+SANG_EXCITER_FROM = 50              # từ mức này mới thêm aexciter (họa âm dải cao)
+SANG_EXCITER = dict(freq=7000.0, ceil=11500.0, drive=6.0, amount=1.0)  # amount ở mức 100
+SANG_LIMIT = 0.97                   # alimiter sau EQ: nâng +6 dB có thể đội đỉnh quá 1,0
+
 # Đổi tông: bán cung; ±12 = một quãng tám (giữ nguyên giới hạn cũ của amain).
 PITCH_MIN, PITCH_MAX = -6.0, 6.0
 _HAS_RUBBERBAND = None
@@ -108,38 +139,47 @@ def parse_pitch(value, default: float = 0.0) -> float:
 
 
 def fx_from(opts: dict | None) -> dict:
-    """Rút 3 khoá bộ lọc từ dict tuỳ chọn (taogiong_options.json / form) →
-    {"vang_truong_do", "vang_cuong_do", "thieu_nien"} đã kẹp 0–100."""
+    """Rút 4 khoá bộ lọc từ dict tuỳ chọn (taogiong_options.json / form) →
+    {"vang_truong_do", "vang_cuong_do", "thieu_nien", "sang_giong"} đã kẹp 0–100."""
     opts = opts or {}
     return dict(
         vang_truong_do=parse_fx(opts.get("vang_truong_do"), 0),
         vang_cuong_do=parse_fx(opts.get("vang_cuong_do"), 0),
         thieu_nien=parse_fx(opts.get("thieu_nien"), 0),
+        sang_giong=parse_fx(opts.get("sang_giong"), 0),
     )
 
 
-def fx_active(vang_cuong_do: int = 0, thieu_nien: int = 0, **_ignored) -> bool:
+def fx_active(vang_cuong_do: int = 0, thieu_nien: int = 0, sang_giong: int = 0,
+              **_ignored) -> bool:
     """Có bộ lọc nào đang bật không (tiếng vang bật khi CƯỜNG ĐỘ > 0)."""
-    return parse_fx(vang_cuong_do) > 0 or parse_fx(thieu_nien) > 0
+    return parse_fx(vang_cuong_do) > 0 or parse_fx(thieu_nien) > 0 or parse_fx(sang_giong) > 0
 
 
-def fx_tag(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0) -> str:
-    """Đuôi tên file cache: '' khi tắt hết, còn thì '_vang80-76_tn100'."""
+def fx_tag(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0,
+           sang_giong: int = 0) -> str:
+    """Đuôi tên file cache: '' khi tắt hết, còn thì '_vang80-76_tn100_sang60'."""
     tag = ""
     if parse_fx(vang_cuong_do) > 0:
         tag += f"_vang{parse_fx(vang_truong_do)}-{parse_fx(vang_cuong_do)}"
     if parse_fx(thieu_nien) > 0:
         tag += f"_tn{parse_fx(thieu_nien)}"
+    if parse_fx(sang_giong) > 0:
+        tag += f"_sang{parse_fx(sang_giong)}"
     return tag
 
 
-def fx_describe(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0) -> str:
-    """Mô tả ngắn cho nhật ký: 'tiếng vang 80/76, thiếu niên 100' hoặc 'không'."""
+def fx_describe(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0,
+                sang_giong: int = 0) -> str:
+    """Mô tả ngắn cho nhật ký: 'tiếng vang 80/76, thiếu niên 100, sáng giọng 60'
+    hoặc 'không'."""
     parts = []
     if parse_fx(vang_cuong_do) > 0:
         parts.append(f"tiếng vang trường độ {parse_fx(vang_truong_do)} / cường độ {parse_fx(vang_cuong_do)}")
     if parse_fx(thieu_nien) > 0:
         parts.append(f"thiếu niên {parse_fx(thieu_nien)}")
+    if parse_fx(sang_giong) > 0:
+        parts.append(f"sáng giọng {parse_fx(sang_giong)}")
     return ", ".join(parts) or "không"
 
 
@@ -193,11 +233,47 @@ def teen_params(thieu_nien: int) -> tuple[float, float]:
     return 1.0 + (TN_FORMANT_MAX - 1.0) * x, TN_PITCH_MAX_ST * x
 
 
+def sang_params(sang_giong: int) -> dict:
+    """Mức sáng giọng 0–100 → tham số EQ thực: highpass (Hz), eq [(Hz, Q, dB)],
+    shelf (Hz, dB), exciter (amount; 0 khi dưới SANG_EXCITER_FROM)."""
+    lv = parse_fx(sang_giong)
+    x = lv / 100.0
+    ex = max(0.0, (lv - SANG_EXCITER_FROM) / float(100 - SANG_EXCITER_FROM))
+    return dict(
+        x=x,
+        highpass=SANG_HP_HZ[0] + (SANG_HP_HZ[1] - SANG_HP_HZ[0]) * x,
+        eq=[(f, q, g * x) for f, q, g in SANG_EQ],
+        shelf=(SANG_SHELF[0], SANG_SHELF[1] * x),
+        exciter=SANG_EXCITER["amount"] * ex,
+    )
+
+
+def sang_chain(sang_giong: int, sample_rate: int, exciter: bool = True) -> list[str]:
+    """Các mắt filter ffmpeg của bộ lọc 🔆 Sáng giọng; [] khi mức 0.
+    exciter=False: bỏ aexciter (EQ giọng mẫu — họa âm giả vào mẫu thì model học
+    cả tiếng xì). aexciter đòi ceil ≥ 9999 Hz và phải dưới Nyquist → tự bỏ ở
+    sample rate thấp (≤ 2×ceil)."""
+    if parse_fx(sang_giong) <= 0:
+        return []
+    p = sang_params(sang_giong)
+    chain = [f"highpass=f={p['highpass']:.0f}"]
+    chain += [f"equalizer=f={f:.0f}:t=q:w={q:g}:g={g:.2f}" for f, q, g in p["eq"]]
+    chain.append(f"highshelf=f={p['shelf'][0]:.0f}:g={p['shelf'][1]:.2f}")
+    if exciter and p["exciter"] > 1e-6 and sample_rate / 2.0 > SANG_EXCITER["ceil"]:
+        e = SANG_EXCITER
+        chain.append(f"aexciter=amount={p['exciter']:.2f}:drive={e['drive']:g}:blend=0"
+                     f":freq={e['freq']:.0f}:ceil={e['ceil']:.0f}")
+    return chain
+
+
 def build_audio_filter(speed: float, semitones: float, sample_rate: int,
-                       thieu_nien: int = 0) -> str:
+                       thieu_nien: int = 0, sang_giong: int = 0,
+                       sang_exciter: bool = True) -> str:
     """Chuỗi -filter:a cho ffmpeg: đổi formant (thiếu niên) + đổi tông trước, đổi
-    tốc độ sau. Rỗng khi tốc độ 1.0, tông 0 và không bộ lọc (không cần render).
-    thieu_nien=0 → y hệt hàm cũ bên amain (cache tốc độ/tông cũ vẫn đúng)."""
+    tốc độ sau, rồi EQ sáng giọng (đặt SAU asetrate để các dải EQ nằm đúng tần số
+    tuyệt đối) + alimiter ghìm đỉnh. Rỗng khi tốc độ 1.0, tông 0 và không bộ lọc
+    (không cần render). thieu_nien=0, sang_giong=0 → y hệt hàm cũ bên amain
+    (cache tốc độ/tông cũ vẫn đúng). sang_exciter=False: xem sang_chain."""
     r_formant, tn_st = teen_params(thieu_nien)
     semitones = semitones + tn_st
     chain = []
@@ -230,6 +306,10 @@ def build_audio_filter(speed: float, semitones: float, sample_rate: int,
             chain += atempo_chain(speed / p)
     elif has_speed:
         chain += atempo_chain(speed)
+    sang = sang_chain(sang_giong, sample_rate, sang_exciter)
+    if sang:
+        chain += sang
+        chain.append(f"alimiter=limit={SANG_LIMIT}:attack=5:release=60:level=false:latency=true")
     return ",".join(chain)
 
 
@@ -314,15 +394,30 @@ def ir_file(sample_rate: int, vang_truong_do: int, vang_cuong_do: int) -> Path:
 
 
 # ── GHÉP LỆNH FFMPEG ────────────────────────────────────────────────────────────
+def sample_rate_of(src) -> int:
+    """Tần số lấy mẫu của file audio: soundfile trước (wav/flac/ogg); không đọc
+    được (mp3/m4a với libsndfile cũ — giọng mẫu hay là mp3) thì hỏi ffprobe."""
+    try:
+        return int(sf.info(str(src)).samplerate)
+    except Exception:
+        r = subprocess.run([shutil.which("ffprobe") or "ffprobe", "-v", "error",
+                            "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+                            "-of", "default=nw=1:nk=1", str(src)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", creationflags=CREATE_NO_WINDOW)
+        return int((r.stdout or "").strip().splitlines()[0])
+
+
 def build_ffmpeg_args(src, speed: float = 1.0, pitch: float = 0.0, sample_rate: int | None = None,
-                      vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0
+                      vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0,
+                      sang_giong: int = 0, sang_exciter: bool = True
                       ) -> tuple[list[str], int, bool]:
     """Phần đầu vào + filter của lệnh ffmpeg (chưa có tên file ra).
     Trả (args, sample_rate, có_lọc_gì_không). Tiếng vang dùng -filter_complex vì
     afir cần đáp ứng xung làm luồng vào thứ hai; còn lại dùng -filter:a như cũ."""
     src = str(src)
-    sr = int(sample_rate or sf.info(src).samplerate)
-    chain = build_audio_filter(speed, pitch, sr, thieu_nien)
+    sr = int(sample_rate or sample_rate_of(src))
+    chain = build_audio_filter(speed, pitch, sr, thieu_nien, sang_giong, sang_exciter)
     args = ["-i", src]
     if parse_fx(vang_cuong_do) > 0:
         pr = vang_params(vang_truong_do, vang_cuong_do)
@@ -345,8 +440,10 @@ def build_ffmpeg_args(src, speed: float = 1.0, pitch: float = 0.0, sample_rate: 
 
 def apply_fx_file(src, out=None, speed: float = 1.0, pitch: float = 0.0,
                   vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int = 0,
+                  sang_giong: int = 0, sang_exciter: bool = True,
                   codec: str = "pcm_s16le") -> Path:
-    """Áp tông + tốc độ + bộ lọc lên `src` → `out` (giữ sample rate).
+    """Áp tông + tốc độ + bộ lọc (vang / thiếu niên / sáng giọng) lên `src` → `out`
+    (giữ sample rate).
     out=None → ghi đè chính file nguồn (qua file tạm; lỗi thì file cũ còn nguyên).
     Không có gì để áp → chỉ chép (hoặc giữ nguyên nếu out == src)."""
     src = Path(src)
@@ -355,7 +452,7 @@ def apply_fx_file(src, out=None, speed: float = 1.0, pitch: float = 0.0,
     if not ffmpeg:
         raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
     args, sr, active = build_ffmpeg_args(src, speed, pitch, None, vang_truong_do,
-                                         vang_cuong_do, thieu_nien)
+                                         vang_cuong_do, thieu_nien, sang_giong, sang_exciter)
     if not active:
         if out != src:
             shutil.copyfile(src, out)
@@ -372,6 +469,24 @@ def apply_fx_file(src, out=None, speed: float = 1.0, pitch: float = 0.0,
     return out
 
 
+def eq_giong_mau_tam(ref, sang_giong: int) -> Path:
+    """Bản GIỌNG MẪU đã qua EQ 🔆 Sáng giọng mức `sang_giong` để dựng prompt clone
+    — ghi ra file wav TẠM (tempfile; bên gọi xoá sau khi dựng prompt), KHÔNG
+    exciter (họa âm giả vào mẫu thì model học cả tiếng xì), giữ sample rate gốc.
+    File mẫu gốc không bị đụng. Lỗi (thiếu ffmpeg, file hỏng) → raise, bên gọi
+    quyết (myvoice/amain._voice_prompt và myvideo/taogiong_srt._voice_prompt đều
+    lùi về dựng prompt từ mẫu gốc và không lưu .pt dưới tên .sang<N>)."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".wav", prefix="giongmau_sang_", delete=False) as f:
+        tmp = Path(f.name)
+    try:
+        apply_fx_file(ref, tmp, sang_giong=sang_giong, sang_exciter=False)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return tmp
+
+
 # ── CHẠY LẺ ─────────────────────────────────────────────────────────────────────
 def _cli(argv=None):
     import argparse
@@ -381,14 +496,16 @@ def _cli(argv=None):
     ap.add_argument("--vang", nargs=2, type=int, metavar=("TRUONG_DO", "CUONG_DO"), default=(0, 0),
                     help="tiếng vang: trường độ 0–100, cường độ 0–100 (0 = tắt)")
     ap.add_argument("--thieunien", type=int, default=0, help="giọng thiếu niên: cường độ 0–100")
+    ap.add_argument("--sang", type=int, default=0, help="sáng giọng (bớt ồm): cường độ 0–100")
     ap.add_argument("--pitch", type=float, default=0.0, help="tông giọng (bán cung)")
     ap.add_argument("--speed", type=float, default=1.0, help="tốc độ (giữ cao độ)")
     a = ap.parse_args(argv)
     src = Path(a.src)
     out = Path(a.out) if a.out else src.with_name(src.stem + "_fx.wav")
     apply_fx_file(src, out, speed=a.speed, pitch=parse_pitch(a.pitch),
-                  vang_truong_do=a.vang[0], vang_cuong_do=a.vang[1], thieu_nien=a.thieunien)
-    print(json.dumps({"out": str(out), "fx": fx_describe(a.vang[0], a.vang[1], a.thieunien),
+                  vang_truong_do=a.vang[0], vang_cuong_do=a.vang[1], thieu_nien=a.thieunien,
+                  sang_giong=a.sang)
+    print(json.dumps({"out": str(out), "fx": fx_describe(a.vang[0], a.vang[1], a.thieunien, a.sang),
                       "pitch": a.pitch, "speed": a.speed}, ensure_ascii=False))
 
 

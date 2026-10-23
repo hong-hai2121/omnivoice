@@ -28,9 +28,9 @@ class ParseTests(unittest.TestCase):
 
     def test_fx_from_fills_missing_keys(self):
         self.assertEqual(hu.fx_from(None),
-                         dict(vang_truong_do=0, vang_cuong_do=0, thieu_nien=0))
+                         dict(vang_truong_do=0, vang_cuong_do=0, thieu_nien=0, sang_giong=0))
         self.assertEqual(hu.fx_from({"vang_truong_do": "80", "vang_cuong_do": 76, "x": 1}),
-                         dict(vang_truong_do=80, vang_cuong_do=76, thieu_nien=0))
+                         dict(vang_truong_do=80, vang_cuong_do=76, thieu_nien=0, sang_giong=0))
 
     def test_active_tag_describe(self):
         self.assertFalse(hu.fx_active(vang_truong_do=80, vang_cuong_do=0, thieu_nien=0))
@@ -84,6 +84,50 @@ class FilterChainTests(unittest.TestCase):
             f = hu.build_audio_filter(1.2, 0.0, SR, thieu_nien=100)
         r = round(SR * hu.TN_FORMANT_MAX) / SR
         self.assertTrue(f.endswith(f"atempo={1.2 / r:.3f}"))
+
+
+class SangGiongTests(unittest.TestCase):
+    def test_fx_helpers_include_sang(self):
+        self.assertEqual(hu.fx_from({"sang_giong": "60"})["sang_giong"], 60)
+        self.assertTrue(hu.fx_active(sang_giong=1))
+        self.assertFalse(hu.fx_active(sang_giong=0))
+        self.assertEqual(hu.fx_tag(0, 0, 0, 60), "_sang60")
+        self.assertEqual(hu.fx_tag(80, 76, 100, 60), "_vang80-76_tn100_sang60")
+        self.assertIn("sáng giọng 60", hu.fx_describe(sang_giong=60))
+        self.assertEqual(hu.fx_describe(sang_giong=0), "không")
+
+    def test_chain_scales_with_level(self):
+        self.assertEqual(hu.sang_chain(0, SR), [])
+        c100 = hu.sang_chain(100, SR)
+        self.assertEqual(c100[0], f"highpass=f={hu.SANG_HP_HZ[1]:.0f}")
+        self.assertIn(f"equalizer=f=230:t=q:w=1.2:g={hu.SANG_EQ[0][2]:.2f}", c100)
+        self.assertIn(f"equalizer=f=3200:t=q:w=0.9:g={hu.SANG_EQ[2][2]:.2f}", c100)
+        self.assertIn(f"highshelf=f=6000:g={hu.SANG_SHELF[1]:.2f}", c100)
+        self.assertTrue(any(p.startswith("aexciter=amount=1.00") for p in c100))
+        c50 = hu.sang_chain(50, SR)
+        self.assertIn(f"equalizer=f=230:t=q:w=1.2:g={hu.SANG_EQ[0][2] / 2:.2f}", c50)
+        self.assertFalse(any(p.startswith("aexciter") for p in c50))       # exciter chỉ từ > 50
+        self.assertFalse(any(p.startswith("aexciter")
+                             for p in hu.sang_chain(100, SR, exciter=False)))  # EQ giọng mẫu
+        self.assertFalse(any(p.startswith("aexciter")
+                             for p in hu.sang_chain(100, 16000)))          # ceil trên Nyquist
+
+    def test_build_audio_filter_puts_eq_after_pitch_and_limits(self):
+        with patch.object(hu, "has_rubberband", return_value=True):
+            f = hu.build_audio_filter(1.0, 0.0, SR, sang_giong=60)
+            g = hu.build_audio_filter(1.2, 0.0, SR, thieu_nien=100, sang_giong=60)
+            self.assertEqual(hu.build_audio_filter(1.0, 0.0, SR, sang_giong=0), "")
+        self.assertTrue(f.startswith("highpass=f="))
+        self.assertTrue(f.endswith(f"alimiter=limit={hu.SANG_LIMIT}:attack=5:release=60"
+                                   ":level=false:latency=true"))
+        r = round(SR * hu.TN_FORMANT_MAX) / SR
+        self.assertIn(f"atempo={1.2 / r:.3f},highpass=f=", g)   # EQ đứng SAU asetrate/atempo
+
+    def test_ffmpeg_args_pass_sang(self):
+        with patch.object(hu, "has_rubberband", return_value=True):
+            args, sr, active = hu.build_ffmpeg_args("in.wav", 1.0, 0.0, SR, sang_giong=40)
+        self.assertTrue(active)
+        self.assertIn("highpass=f=", args[args.index("-filter:a") + 1])
 
 
 class ReverbTests(unittest.TestCase):
@@ -180,6 +224,38 @@ class FfmpegRoundTripTests(unittest.TestCase):
         self.assertAlmostEqual(float(y[100]), pr["dry"], places=3)    # dry đúng mức, không trễ
         start = 100 + int(pr["predelay_ms"] / 1000 * SR)
         self.assertGreater(float(np.sqrt(np.mean(y[start:start + SR // 10] ** 2))), 1e-3)
+
+    def test_sang_brightens_noise_and_keeps_length(self):
+        x = (0.2 * np.random.default_rng(2).standard_normal(SR * 2)).astype("float32")
+        src = Path(self.td.name) / "noise_sang.wav"
+        sf.write(str(src), x, SR)
+        out = hu.apply_fx_file(src, Path(self.td.name) / "sang.wav", sang_giong=100,
+                               codec="pcm_f32le")
+        y, sr = sf.read(str(out))
+        self.assertEqual(sr, SR)
+        self.assertAlmostEqual(len(y) / SR, 2.0, delta=0.05)
+        self.assertLessEqual(float(np.abs(y).max()), hu.SANG_LIMIT + 0.02)
+
+        def tilt(a):
+            spec = np.abs(np.fft.rfft(a)) ** 2
+            fr = np.fft.rfftfreq(len(a), 1 / SR)
+            lo = spec[(fr >= 150) & (fr < 400)].sum()
+            hi = spec[(fr >= 2500) & (fr < 6000)].sum()
+            return hi / lo
+        # Cắt −6 dB dải trầm + nâng +6 dB dải cao → tỉ lệ cao/trầm tăng ≥ 12 dB (≈ ×16).
+        self.assertGreater(tilt(y[:len(x)]), tilt(x) * 4)
+
+    def test_eq_giong_mau_tam_makes_temp_wav_and_keeps_source(self):
+        truoc = self.src.read_bytes()
+        tmp = hu.eq_giong_mau_tam(self.src, 100)
+        try:
+            self.assertTrue(tmp.exists())
+            self.assertNotEqual(tmp.resolve(), self.src.resolve())
+            self.assertEqual(tmp.suffix, ".wav")
+            self.assertEqual(sf.info(str(tmp)).samplerate, SR)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.assertEqual(self.src.read_bytes(), truoc)      # file mẫu gốc không bị đụng
 
     def test_nothing_to_apply_copies_file(self):
         out = hu.apply_fx_file(self.src, Path(self.td.name) / "copy.wav")

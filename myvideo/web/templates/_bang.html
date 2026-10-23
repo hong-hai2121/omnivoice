@@ -35,7 +35,7 @@
       <tbody>
         {% for r in rows %}
         <tr class="{{ 'done' if r.sub }}">
-          <td class="left clip" title="{{ r.base }}">{{ r.base }}</td>
+          <td class="left clip" title="{{ r.base }}{% if r.doan %} — video dài đã chia {{ r.doan }} đoạn, các bước chạy từng đoạn rồi ghép; cờ bên phải tính theo bản ghép cả bài{% endif %}">{{ r.base }}{% if r.doan %} <span class="hint">✂{{ r.doan }}</span>{% endif %}</td>
           <td class="{{ 'okc' if r.video and r.srt else 'no' }}">{{
             '✔' if r.video and r.srt else ('chỉ SRT' if r.srt else ('chỉ video' if r.video else '—')) }}</td>
           <td class="{{ 'okc' if r.vi else 'no' }}">{{ '✔' if r.vi else '—' }}</td>

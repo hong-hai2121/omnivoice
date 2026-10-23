@@ -17,6 +17,12 @@ mục trong myvideo/kenh/<tên>/ chứa trọn cấu hình + sổ sách của ri
         da_dang.json             ← sổ "đã đăng Page" (nguồn sự thật Facebook)
         page_cache.json          ← bản đọc Page gần nhất
         cooldown.json            ← mốc tạm ngưng khi chạm hạn mức Meta
+        logo*.png · khung.png · khung_doc.png · outro.mp4
+                                 ← bộ nhận diện kênh cho bước ④ (logo góc phải
+                                   trên — nhiều file "logo*.png" thì chọn trên
+                                   web, khoá logo_file · khung viền 16:9 và 9:16
+                                   · outro cuối video); khung vẽ bằng
+                                   kenh_thietke.py, mascot nhập bằng --mascot
 
 Kênh ĐANG DÙNG chọn trên web (khoá `kenh` trong web_settings.json); các script
 CLI nhận --kenh, bỏ trống thì tự đọc khoá đó. Đổi kênh không lẫn sổ sách —
@@ -168,3 +174,45 @@ def ghi_bien_nhan(path: Path, ten: str, info: dict) -> None:
     d = doc_bien_nhan(path)
     d[ten] = info
     path.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ── Logo của một hồ sơ ───────────────────────────────────────────────────────
+# Một hồ sơ có thể chứa NHIỀU logo (22/10/2026: hai mascot "cá mập xanh" và
+# "hải cẩu tím" của haivietsub): mọi file PNG tên bắt đầu bằng "logo" đều được
+# liệt kê, người dùng chọn trên web (khoá logo_file trong web_settings.json).
+def logos(ten: str) -> list[str]:
+    """Tên các file logo trong thư mục hồ sơ: "logo*.png" (không phân biệt hoa
+    thường), xếp theo tên. Hồ sơ rỗng/không có → []."""
+    if not ten:
+        return []
+    try:
+        return sorted((p.name for p in thu_muc(ten).iterdir()
+                       if p.is_file() and p.suffix.lower() == ".png"
+                       and p.name.lower().startswith("logo")), key=str.lower)
+    except OSError:
+        return []
+
+
+def logo_path(ten: str, chon: str = "") -> Path | None:
+    """File logo đang dùng: `chon` nếu còn trong danh sách → logo.png (tên cũ,
+    một-logo) → cái đầu danh sách; hồ sơ không có logo nào → None."""
+    ds = logos(ten)
+    if not ds:
+        return None
+    if chon and chon in ds:
+        return thu_muc(ten) / chon
+    if "logo.png" in ds:
+        return thu_muc(ten) / "logo.png"
+    return thu_muc(ten) / ds[0]
+
+
+def logo_dang_dung(ten: str) -> Path | None:
+    """Logo đang chọn trên web (khoá logo_file trong web_settings.json) của hồ
+    sơ `ten`, theo đúng luật lùi của logo_path — cho script CLI (kenh_thietke
+    xem trước…) khỏi tự đọc cài đặt."""
+    try:
+        chon = (json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+                .get("logo_file") or "").strip()
+    except (OSError, ValueError):
+        chon = ""
+    return logo_path(ten, chon)

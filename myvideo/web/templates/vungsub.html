@@ -17,7 +17,14 @@
   <div class="phead">
     <b>Khung hình xem thử</b>
     <span class="phead-gap"></span>
-    {# Đổi mốc thời gian để soi khung khác — sub có đoạn ẩn đoạn hiện. #}
+    {# 🗣 = khung bộ dò ĐÃ DÙNG (bốc lúc có giọng nói, kiểm có chữ) — soi dải
+       trên đúng khung có sub; dựng lại sau khi bấm "Tự dò lại". % = mốc rải đều
+       để soi thêm chỗ khác — sub có đoạn ẩn đoạn hiện. #}
+    <span id="vsMocGiong">
+    {% for t, nhan in mocs %}
+      <button type="button" class="small moc" data-t="{{ t }}" title="khung bộ dò đã dùng — lúc có giọng nói">🗣 {{ nhan }}</button>
+    {% endfor %}
+    </span>
     {% for p in [10, 30, 50, 70, 90] %}
       <button type="button" class="small moc" data-t="{{ (dur * p / 100) | round(1) }}">{{ p }}%</button>
     {% endfor %}
@@ -41,7 +48,7 @@
     <span class="hint" id="vsDay"></span>
     <span class="spacer"></span>
     <button type="button" class="small" id="vsDo"
-            title="Chạy lại bộ dò tự động (10 khung hình, chờ vài giây) — chỉ xem thử, ưng thì bấm Lưu">🔎 Tự dò lại</button>
+            title="Chạy lại bộ dò tự động (5 khung bốc lúc có giọng nói, chờ vài giây) — chỉ xem thử, ưng thì bấm Lưu">🔎 Tự dò lại</button>
     <button type="button" class="small danger" id="vsXoa"
             title="Bỏ vùng đã lưu — lượt dựng sau sẽ tự dò lại từ đầu">🗑 Bỏ vùng đã lưu</button>
     <button type="button" class="primary" id="vsLuu">💾 Lưu vùng che</button>
@@ -50,8 +57,8 @@
   <p class="hint">{% if co_vung %}Đang có vùng ĐÃ LƯU (dải màu là số trong file) —
     sửa xong nhớ bấm Lưu.{% else %}Video này CHƯA có vùng lưu sẵn — dải đang hiện
     chỉ là gợi ý chỗ sub hay nằm; không bấm Lưu thì lượt dựng vẫn tự dò như cũ.{% endif %}
-    Sub kiểu video truyện hay nằm NGAY GIỮA khung — bấm các nút % ở trên để soi
-    nhiều đoạn trước khi chốt.</p>
+    Sub kiểu video truyện hay nằm NGAY GIỮA khung — bấm các nút 🗣 (khung bộ dò
+    đã dùng, chắc có chữ) và % ở trên để soi nhiều đoạn trước khi chốt.</p>
   <div class="actions">
     <a class="ghost small" href="/">← Về trang chính</a>
   </div>
@@ -70,6 +77,7 @@
     const BASE = {{ base | tojson }};
 
     let y0 = {{ y0 }}, y1 = {{ y1 }};
+    let mocHienTai = {{ moc_giay | tojson }};     // khung 🗣 đang hiện — gửi kèm khi Lưu
 
     const ve = () => {
       dai.style.top = (100 * y0 / H) + "%";
@@ -134,7 +142,8 @@
 
     document.getElementById("vsLuu").addEventListener("click", async () => {
       const { ok, d } = await goi("/vungsub/luu",
-        formData({ y0: Math.round(y0), y1: Math.round(y1) }));
+        formData({ y0: Math.round(y0), y1: Math.round(y1),
+                   moc_giay: JSON.stringify(mocHienTai) }));
       bao(ok ? "✓ đã lưu vùng che" : "⚠️ " + (d.error || "lưu lỗi"), ok);
     });
     document.getElementById("vsXoa").addEventListener("click", async () => {
@@ -147,19 +156,35 @@
       e.target.textContent = "🔎 đang dò…";
       try {
         const { ok, d } = await goi("/vungsub/dola", formData());
-        if (ok && d.y0 !== undefined) { dat(d.y0, d.y1); bao("✓ dò xong — ưng thì bấm Lưu", true); }
+        if (ok && d.y0 !== undefined) {
+          dat(d.y0, d.y1);
+          if (d.moc_giay && d.moc_giay.length) veMocGiong(d.moc_giay);
+          bao("✓ dò xong" + (d.nguon_moc === "giong_noi" ? " (khung lúc có giọng nói)" : " (khung rải đều)")
+              + " — ưng thì bấm Lưu", true);
+        }
         else bao(d.none ? "không thấy dải sub nào" : "⚠️ " + (d.error || "dò lỗi"), false);
       } finally {
         e.target.disabled = false;
         e.target.textContent = "🔎 Tự dò lại";
       }
     });
-    // Nút đổi mốc khung hình xem thử.
-    document.querySelectorAll(".moc").forEach(b => b.addEventListener("click", () => {
+    // Nút đổi mốc khung hình xem thử — gắn uỷ quyền vì nút 🗣 được dựng lại
+    // sau mỗi lần "Tự dò lại".
+    document.addEventListener("click", (e) => {
+      const b = e.target.closest(".moc");
+      if (!b) return;
       anh.style.opacity = ".4";
       anh.onload = () => { anh.style.opacity = "1"; };
       anh.src = "/vungsub/khung?base=" + encodeURIComponent(BASE) + "&t=" + b.dataset.t;
-    }));
+    });
+    const mmss = (t) => { t = Math.floor(t); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+    const veMocGiong = (mocs) => {
+      mocHienTai = mocs || [];
+      document.getElementById("vsMocGiong").innerHTML = mocHienTai.map(t =>
+        '<button type="button" class="small moc" data-t="' + t
+        + '" title="khung bộ dò đã dùng — lúc có giọng nói">🗣 ' + mmss(t) + '</button>'
+      ).join(" ");
+    };
 
     ve();
   })();

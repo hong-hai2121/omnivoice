@@ -167,6 +167,19 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
           {% endfor %}
         </select>
       </label>
+      {# ✂ Video dài: bước ① cắt thành các đoạn ~N phút ngay chỗ HẾT CÂU (theo
+         nhận diện giọng nói, muộn nhất N+5 phút), ②③④ chạy từng đoạn rồi ghép —
+         bảng Kết quả vẫn một hàng cho cả bài. Video ngắn hơn N+5 phút không chia. #}
+      <label class="field">
+        <span>✂ Video dài: chia đoạn</span>
+        <span style="display:flex; gap:6px; align-items:center">
+          <input type="checkbox" name="chiadoan" {{ 'checked' if settings.chiadoan }}
+                 title="Sau khi làm chậm, video dài hơn N+5 phút thì cắt thành các đoạn ~N phút tại chỗ hết câu (đợi câu đang nói kết thúc mới cắt, đoạn 30–35 phút là bình thường); ②③④ chạy từng đoạn rồi ghép lại">
+          <input name="chiadoan_phut" type="number" min="10" max="120" step="5"
+                 value="{{ settings.chiadoan_phut or '30' }}" style="width:72px"
+                 title="Độ dài đoạn mong muốn (phút, theo video đã chậm)"> phút
+        </span>
+      </label>
       <label class="field">
         <span>Model nhận diện</span>
         <select name="model">
@@ -250,7 +263,8 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     </div>
     <div class="grid">
       <label class="field">
-        <span>Giọng đọc — kho riêng <code>myvideo/voice</code>; bấm ⭐ để
+        <span>Giọng đọc — danh sách dùng chung với myvoice (<code>myvoice/voice</code>,
+          cộng các file chỉ có trong kho cũ <code>myvideo/voice</code>); bấm ⭐ để
           ghim/bỏ ghim giọng đang chọn lên đầu danh sách (xếp lại ngay trên
           trang, ghi xuống đĩa khi bấm chạy hoặc 💾)</span>
         <span style="display:flex; gap:6px; align-items:stretch">
@@ -269,11 +283,30 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
                value="{{ voice_stars|join('\n') }}">
       </label>
     </div>
+    {# 🔆 SÁNG GIỌNG (23/10/2026; 24/10 dời từ tab 🔊 về đây vì nó là cài đặt của
+       BƯỚC ③): trị giọng clone nghe "ồm, không thanh" — EQ bớt 150–500 Hz, nâng
+       3 kHz + dải cao (100 = ±6 dB, từ 50 thêm họa âm dải cao). Áp hai chỗ: EQ
+       giọng mẫu trong bộ nhớ lúc dựng prompt (file mẫu không đổi) rồi EQ audio
+       tổng _vi_audio.wav; đổi mức là bước ③ đọc lại toàn bộ câu (sổ _vanban.json
+       nhớ mức). Lưu cùng form chính (/luu, /chay). Thanh kéo + ô số + nút ↺ như
+       tab 🔊 (CSS .cc-* ở app.css); JS ở cuối trang (veSang). #}
+    <div class="cc-row">
+      <span class="cc-ten">🔆 Sáng giọng</span>
+      <input type="range" class="cc-keo" name="sanggiong" id="sanggiongKeo"
+             min="0" max="100" step="5" value="{{ settings.sanggiong or '80' }}">
+      <input type="number" class="cc-so" id="sanggiongSo" min="0" max="100" step="5">
+      <span class="cc-dv">/100</span>
+      <button type="button" class="small" id="sanggiongReset"
+              title="Về mặc định (80)">↺</button>
+    </div>
+    <p class="cc-nhan" id="sanggiongNhan"></p>
     {# 🔊 Nghe thử NGAY TRÊN TRANG (mang từ myvoice sang): đổi ô chọn là audio
        trỏ sang file giọng đó — hết cảnh chọn giọng "mù" rồi tốn một lượt chạy
-       mới biết giọng ra sao. Nghe KẾT QUẢ từng video: nút 🔊 ở bảng Kết quả. #}
+       mới biết giọng ra sao. Từ 24/10/2026 kèm &sang=<mức> để nghe bản mẫu ĐÃ
+       EQ theo thanh 🔆 (xem trước gần đúng — bài thật còn EQ thêm lúc dựng
+       prompt). Nghe KẾT QUẢ từng video: nút 🔊 ở bảng Kết quả. #}
     <div class="inline">
-      <span class="hint">🔊 Nghe thử giọng đang chọn:</span>
+      <span class="hint">🔊 Nghe thử giọng đang chọn (đã EQ theo mức 🔆 — xem trước gần đúng):</span>
       <audio id="gNghe" controls preload="none"></audio>
       <span class="hint" id="gNgheTrong" style="display:none">— chọn một giọng
         trong danh sách để nghe</span>
@@ -561,15 +594,37 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     </div>
     <div class="chks">
       <label class="chk"><input type="checkbox" name="chesub" {{ 'checked' if settings.chesub }}>
-        🫥 Che mờ sub gốc đốt trong hình: tự dò dải chữ (10 khung hình) rồi LÀM MỜ dải đó
-        suốt video, sub Việt đè lên trên dải mờ (bỏ tick = để nguyên sub gốc;
+        🫥 Che mờ sub gốc đốt trong hình: tự dò dải chữ (5 khung hình bốc lúc CÓ GIỌNG NÓI, khung nào cũng có chữ) rồi LÀM MỜ dải đó
+        lúc có tiếng gốc (khe không thoại hơn 1 giây để nguyên hình — cảnh võ thuật),
+        sub Việt đè lên trên dải mờ (bỏ tick = để nguyên sub gốc;
         dò lệch: bấm nút 🫥 ở bảng Kết quả để KÉO dải trên khung hình thật)</label>
-      {# 🏷 Nhận diện KÊNH — hai ô mặc định TẮT; file lấy theo HỒ SƠ KÊNH đang
-         chọn ở khối 📤 Đăng bài (kenh/<tên>/logo.png · outro.mp4). Thiếu file
-         thì lượt dựng tự bỏ qua phần đó, không lỗi. #}
+      {# 🏷 Nhận diện KÊNH — ba ô mặc định TẮT; file lấy theo HỒ SƠ KÊNH đang
+         chọn ở khối 📤 Đăng bài (kenh/<tên>/logo.png · khung.png · outro.mp4).
+         Thiếu file thì lượt dựng tự bỏ qua phần đó, không lỗi. #}
       <label class="chk"><input type="checkbox" name="logo_kenh" {{ 'checked' if settings.logo_kenh }}>
-        🏷 Đóng LOGO kênh góc phải trên suốt video — đặt file
-        <code>kenh/&lt;tên kênh&gt;/logo.png</code> (PNG nền trong suốt, rộng ~12% khung)</label>
+        🏷 Đóng LOGO kênh góc phải trên suốt video — file <code>logo*.png</code> trong
+        <code>kenh/&lt;tên kênh&gt;/</code> (PNG nền trong suốt, rộng ~12% khung)</label>
+      {# Hồ sơ có NHIỀU logo (vd hai mascot) → chọn ở đây; ảnh nhỏ bên cạnh đổi
+         theo ngay, lựa chọn ghi xuống đĩa khi bấm chạy hoặc 💾. #}
+      {% if logos %}
+      <div class="inline" style="margin-left:1.6em">
+        <span class="hint">Logo đang dùng:</span>
+        <select name="logo_file" style="max-width:280px"
+                onchange="document.getElementById('logoXem').src='/kenh/logo?ten='+encodeURIComponent(this.value)">
+          {% for l in logos %}
+            <option value="{{ l }}" {{ 'selected' if logo_chon == l }}>{{ l }}</option>
+          {% endfor %}
+        </select>
+        <img id="logoXem" alt="" title="Logo đang chọn (nền xám chỉ để xem)"
+             style="height:48px; background:#4a5160; border-radius:6px; padding:3px"
+             src="/kenh/logo?ten={{ logo_chon | urlencode }}">
+      </div>
+      {% endif %}
+      <label class="chk"><input type="checkbox" name="khung_kenh" {{ 'checked' if settings.khung_kenh }}>
+        🖼 Đè KHUNG VIỀN kênh lên video (trên hình, dưới chữ) — đặt file
+        <code>kenh/&lt;tên kênh&gt;/khung.png</code> (PNG 16:9 lòng trong suốt; bản dọc
+        lấy <code>khung_doc.png</code>). Vẽ sẵn cả logo + khung bằng
+        <code>myvideo/kenh_thietke.py --kenh &lt;tên&gt;</code></label>
       <label class="chk"><input type="checkbox" name="outro_kenh" {{ 'checked' if settings.outro_kenh }}>
         🎬 Nối OUTRO kênh vào cuối video (kêu gọi đăng ký…) — đặt file
         <code>kenh/&lt;tên kênh&gt;/outro.mp4</code>; outro được nối
@@ -768,6 +823,38 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const esc = s => String(s).replace(/[&<>"']/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  // ── 🔆 Sáng giọng: thanh kéo ↔ ô số đồng bộ, nút ↺ về 80, dòng nhãn; đổi mức
+  // là ô 🔊 Nghe thử trỏ lại src (bản mẫu đã EQ theo mức mới — /nghe/giong?sang=)
+  // và đánh dấu form đã đổi. 0 ở tận trái nên tô sáng từ trái tới núm.
+  const sKeo = document.getElementById("sanggiongKeo");
+  const sSo = document.getElementById("sanggiongSo");
+  const sNhan = document.getElementById("sanggiongNhan");
+  const sangNhan = v => v === 0
+    ? "0 — tắt (giọng mẫu nguyên bản; mẫu tối thì clone nghe ồm)"
+    : v + "/100 — bớt ồm 150–500 Hz, thêm 3 kHz + dải cao"
+      + (v >= 50 ? ", có họa âm dải cao" : "") + (v === 80 ? " (mặc định)" : "")
+      + " · đổi mức là bước ③ đọc lại toàn bộ câu";
+  const veSang = () => {
+    const v = +sKeo.value;
+    const pct = (v - +sKeo.min) / (+sKeo.max - +sKeo.min) * 100;
+    sKeo.style.background = "linear-gradient(to right, var(--accent) " + pct +
+      "%, var(--sunken) " + pct + "%)";
+    sSo.value = sKeo.value;
+    sNhan.textContent = sangNhan(v);
+  };
+  const doiSang = () => { veSang(); veGiong(); danhDauDoi(true); };
+  sKeo.addEventListener("input", veSang);
+  sKeo.addEventListener("change", doiSang);
+  sSo.addEventListener("change", () => {
+    const v = parseInt(sSo.value, 10);
+    if (!Number.isNaN(v)) sKeo.value = Math.max(+sKeo.min, Math.min(+sKeo.max, v));
+    doiSang();
+  });
+  document.getElementById("sanggiongReset").addEventListener("click", () => {
+    sKeo.value = 80;
+    doiSang();
+  });
+
   // ── ⭐ ghim giọng: xếp lại danh sách NGAY TRÊN TRANG ─────────────────────
   // Trước đây nút này gửi lên server rồi tải lại cả trang (mất chỗ cuộn, mất ô
   // Nguồn đang gõ). Giờ chỉ đổi <option> tại chỗ; danh sách ghim nằm trong ô ẩn
@@ -800,7 +887,8 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     if (nghe) {
       nghe.pause();
       if (gSel.value) {
-        nghe.src = "/nghe/giong?ten=" + encodeURIComponent(gSel.value);
+        nghe.src = "/nghe/giong?ten=" + encodeURIComponent(gSel.value)
+                 + "&sang=" + encodeURIComponent(sKeo.value);
         nghe.style.display = "";
         trong.style.display = "none";
       } else {
@@ -822,6 +910,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   });
   gSel.addEventListener("change", veGiong);
   veGiong();
+  veSang();
 
   // ── Khối chọn KIỂU PHỤ ĐỀ (giống hệt myvoice) ───────────────────────────
   // Kho thẻ kiểu/font thu lại được, hai bảng màu, thanh vị trí + cỡ chữ, và HAI

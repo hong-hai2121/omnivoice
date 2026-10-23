@@ -61,6 +61,7 @@ import kieusub                       # noqa: E402
 # với myvoice: một lựa chọn trong myvoice/taogiong_pipeline.json cho cả hai
 # bảng — dich_gemini (bước ② + SEO) tự đọc từ đó, đổi ở web nào cũng là một.
 import gemini_backend                # noqa: E402
+import hieuung_giong as hu          # noqa: E402  (🔆 sáng giọng: bản nghe thử đã EQ)
 OUTPUT_DIR = st.OUTPUT_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
 SETTINGS_FILE = WEB_DIR / "web_settings.json"
@@ -104,6 +105,9 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 # (rỗng/0 = giữ nguyên). Chữ vẽ sau zoom nên không phóng theo.
                 zoom="",
                 chesub=True, vesub=True,
+                # ✂ Video dài: chia đoạn ~N phút tại chỗ hết câu rồi chạy ②③④ từng
+                # đoạn và ghép (bước ① quyết định theo thời lượng; xem doan.py).
+                chiadoan=True, chiadoan_phut="30",
                 # 📱 kèm bản DỌC 9:16 (<B>_doc.mp4) sau bước ④ — mặc định tắt.
                 xuatdoc=False,
                 # 🎵 Nhạc nền nhỏ dưới tiếng chính: tên file trong myvideo/nhac
@@ -119,9 +123,20 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 #   R128) thay vì -14 (YouTube) như từ trước tới giờ.
                 # Tất cả mặc định tắt — hành vi y như trước.
                 gocdb="", gocnorm=False, ttsdb="0", ttsnorm=False,
-                # 🏷 Đóng logo / nối outro của HỒ SƠ KÊNH đang chọn
-                # (kenh/<tên>/logo.png · outro.mp4) — mặc định tắt cả hai.
-                logo_kenh=False, outro_kenh=False,
+                # • 🔆 SÁNG GIỌNG (23/10/2026; ô nằm ở KHỐI ③ trang chính, lưu cùng
+                #   form chính /luu & /chay — 24/10 dời từ tab 🔊 về đây vì nó là cài
+                #   đặt của bước TẠO GIỌNG): 0–100, trị giọng clone "ồm" — EQ giọng
+                #   mẫu lúc dựng prompt + EQ audio tổng (taogiong_srt.py --sang).
+                #   Mặc định 80 (user chốt sau khi nghe demo); đổi mức là bước ③ đọc
+                #   lại toàn bộ câu. Ô 🔊 Nghe thử khối ③ phát bản mẫu đã EQ theo mức.
+                sanggiong="80",
+                # 🏷 Đóng logo / đè khung viền / nối outro của HỒ SƠ KÊNH đang
+                # chọn (kenh/<tên>/logo.png · khung.png · outro.mp4; logo + khung
+                # vẽ bằng myvideo/kenh_thietke.py) — mặc định tắt cả ba.
+                logo_kenh=False, khung_kenh=False, outro_kenh=False,
+                # Tên file logo đang chọn trong kenh/<tên>/ (hồ sơ có thể chứa
+                # nhiều "logo*.png", vd hai mascot); rỗng = logo.png / cái đầu.
+                logo_file="",
                 # 🧪 Nút thử cắt 60 giây TỪ PHÚT THỨ này (0/rỗng = từ đầu).
                 thu60_tu="",
                 auto2=True, auto3=True, auto4=True, thaytieng=True, cpu=False,
@@ -558,6 +573,11 @@ async def index(request: Request):
     # data-i = chỗ đứng theo tên (chưa ghim). Nút ⭐ giờ xếp lại danh sách ngay
     # trên trang, nên lúc BỎ ghim còn biết trả giọng về đúng chỗ cũ.
     tt = {v: i for i, v in enumerate(vs)}
+    # 🏷 Logo trong hồ sơ kênh đang chọn: hồ sơ có thể chứa nhiều "logo*.png"
+    # (vd hai mascot) — ô chọn + ảnh xem trước ở khối ④; cái đang dùng theo đúng
+    # luật của kenh_hoso.logo_path (chọn → logo.png → cái đầu).
+    kenh_ht = kh.hien_tai()
+    logo_ht = kh.logo_path(kenh_ht, s.get("logo_file") or "")
     return templates.TemplateResponse(request, "index.html", {
         "settings": s,
         # Cách dịch Gemini đã lưu (dùng chung với myvoice) — cho hai ô ở khối ②.
@@ -565,6 +585,8 @@ async def index(request: Request):
         "voices": [{"ten": v, "i": tt[v], "sao": v in stars}
                    for v in stars + [v for v in vs if v not in stars]],
         "voice_stars": stars,
+        "logos": kh.logos(kenh_ht),
+        "logo_chon": logo_ht.name if logo_ht else "",
         # 🎵 Kho nhạc nền myvideo/nhac — cho ô chọn ở khối ④.
         "nhacs": st.list_nhac(),
         # Kho kiểu + kho font đều kèm ẢNH XEM TRƯỚC (kieusub.py vẽ bằng đúng
@@ -763,11 +785,19 @@ def vungsub_view(request: Request, base: str = ""):
     # cho có cái mà kéo — chưa lưu thì chưa ảnh hưởng gì tới bước ④.
     y0 = int(vung["y0"]) if vung else round(h * 0.72)
     y1 = int(vung["y1"]) if vung else round(h * 0.88)
+    # Khung bộ dò đã dùng (lúc có giọng nói, trong _vungsub.json) — chưa dò thì
+    # bốc theo SRT bước ① — để soi dải đúng trên khung CÓ CHỮ chứ không mò %.
+    try:
+        moc_giay = timvungsub.moc_xem_thu(video)
+    except Exception:
+        moc_giay = []
     return templates.TemplateResponse(request, "vungsub.html", {
         "settings": load_settings(),      # base.html cần settings.lang
         "base": base, "w": w, "h": h, "dur": dur,
         "y0": max(0, min(h, y0)), "y1": max(0, min(h, y1)),
         "co_vung": vung is not None,
+        "moc_giay": moc_giay,
+        "mocs": [(t, timvungsub._mmss(t)) for t in moc_giay],
     })
 
 
@@ -779,8 +809,10 @@ def vungsub_khung(base: str = "", t: float = -1.0):
         return JSONResponse({"error": "không thấy video"}, status_code=404)
     import timvungsub
     if t < 0:
+        # Mặc định: khung đầu tiên bộ dò đã dùng (có chữ) — không có thì 30% video.
         try:
-            t = timvungsub._probe(video)[2] * 0.3
+            mocs = timvungsub.moc_xem_thu(video)
+            t = mocs[0] if mocs else timvungsub._probe(video)[2] * 0.3
         except Exception:
             t = 30.0
     r = subprocess.run(
@@ -795,7 +827,10 @@ def vungsub_khung(base: str = "", t: float = -1.0):
 
 
 @app.post("/vungsub/luu")
-def vungsub_luu(base: str = Form(...), y0: int = Form(...), y1: int = Form(...)):
+def vungsub_luu(base: str = Form(...), y0: int = Form(...), y1: int = Form(...),
+                moc_giay: str = Form("")):
+    """moc_giay: JSON [giây…] — các khung bộ dò đã dùng, lưu kèm để lần mở sau
+    trang vẫn soi đúng khung đó (rỗng = không lưu)."""
     video = _vungsub_video(base)
     if video is None:
         return JSONResponse({"error": "không thấy video"}, status_code=404)
@@ -808,8 +843,12 @@ def vungsub_luu(base: str = Form(...), y0: int = Form(...), y1: int = Form(...))
     if y1 - y0 < 8:
         return JSONResponse({"error": "dải mỏng quá — kéo hai mép cách nhau ra"},
                             status_code=400)
+    try:
+        mocs = [round(float(x), 2) for x in json.loads(moc_giay or "[]")][:20]
+    except (ValueError, TypeError):
+        mocs = []
     timvungsub._cache_path(video).write_text(json.dumps(
-        {"y0": y0, "y1": y1, "w": w, "h": h,
+        {"y0": y0, "y1": y1, "w": w, "h": h, "moc_giay": mocs,
          "ghi_chu": "sửa bằng trang 🫥 trên web; xoá file để dò lại tự động"},
         ensure_ascii=False, indent=2), encoding="utf-8")
     tail.add(f"🫥 {base}: đã lưu vùng che y {y0}–{y1}.")
@@ -818,8 +857,8 @@ def vungsub_luu(base: str = Form(...), y0: int = Form(...), y1: int = Form(...))
 
 @app.post("/vungsub/dola")
 def vungsub_dola(base: str = Form(...)):
-    """Chạy lại bộ dò tự động (10 khung hình, vài giây) — CHỈ trả kết quả cho
-    trang xem thử, chưa ghi gì; ưng thì bấm Lưu."""
+    """Chạy lại bộ dò tự động (5 khung lúc có giọng nói, vài giây) — CHỈ trả
+    kết quả + các mốc khung đã dùng cho trang xem thử, chưa ghi gì; ưng thì bấm Lưu."""
     video = _vungsub_video(base)
     if video is None:
         return JSONResponse({"error": "không thấy video"}, status_code=404)
@@ -830,7 +869,9 @@ def vungsub_dola(base: str = Form(...)):
         return JSONResponse({"error": f"dò lỗi: {e}"}, status_code=500)
     if not vung:
         return JSONResponse({"none": True})
-    return JSONResponse({"y0": vung["y0"], "y1": vung["y1"]})
+    return JSONResponse({"y0": vung["y0"], "y1": vung["y1"],
+                         "moc_giay": vung.get("moc_giay", []),
+                         "nguon_moc": vung.get("nguon_moc", "")})
 
 
 @app.post("/vungsub/xoa")
@@ -862,6 +903,8 @@ def _settings_from_form(form) -> dict:
         gopcau=bool(g("gopcau")),
         offline=bool(g("offline")),
         voice=g("voice") or "",
+        # 🔆 Sáng giọng (khối ③): 0–100, mặc định 80; ô vắng (trang cũ còn mở) → 80.
+        sanggiong=_clamp(g("sanggiong"), 0, 100, 80),
         subchars=_clamp(g("subchars"), 10, 120, 50),
         kieusub=g("kieusub") or "hopbo",
         subfont=g("subfont") or "",
@@ -872,6 +915,8 @@ def _settings_from_form(form) -> dict:
         subdong=g("subdong") if g("subdong") in ("1", "2") else "2",
         zoom=_pct(g("zoom"), 0, 100),
         chesub=bool(g("chesub")),
+        chiadoan=bool(g("chiadoan")),
+        chiadoan_phut=_clamp(g("chiadoan_phut"), 10, 120, 30),
         vesub=bool(g("vesub")),
         xuatdoc=bool(g("xuatdoc")),
         # Nhạc nền: chỉ nhận TÊN FILE trần trong kho myvideo/nhac (chặn ../).
@@ -881,7 +926,12 @@ def _settings_from_form(form) -> dict:
         # (gocdb/gocnorm/ttsdb/ttsnorm KHÔNG đọc ở đây: chúng thuộc tab 🔊 Âm
         # thanh, lưu riêng qua /amthanh/luu — form chính không có mấy ô đó,
         # đọc ở đây là mỗi lượt /luu lại reset về mặc định.)
-        logo_kenh=bool(g("logo_kenh")), outro_kenh=bool(g("outro_kenh")),
+        logo_kenh=bool(g("logo_kenh")), khung_kenh=bool(g("khung_kenh")),
+        outro_kenh=bool(g("outro_kenh")),
+        # Logo đang chọn: chỉ nhận TÊN FILE trần (chặn ../), có hay không kiểm
+        # ở kenh_hoso.logo_path lúc dùng (file xoá đi thì tự lùi về cái khác).
+        logo_file=(g("logo_file") or "").strip()
+                  if (g("logo_file") or "") == Path((g("logo_file") or "")).name else "",
         thu60_tu=_phut(g("thu60_tu")),
         auto2=bool(g("auto2")), auto3=bool(g("auto3")), auto4=bool(g("auto4")),
         thaytieng=bool(g("thaytieng")), cpu=bool(g("cpu")),
@@ -1291,13 +1341,45 @@ async def hd2(which: str, action: str, request: Request):
 
 
 # ── 🔊 Nghe thử: giọng mẫu + audio tiếng Việt đã xếp ─────────────────────────
+def _nghe_thu_giong(src: Path, sang) -> Path:
+    """File cho ô 🔊 Nghe thử khối ③: mức 🔆 sáng giọng > 0 → bản giọng mẫu ĐÃ QUA
+    EQ ở mức đó (ffmpeg một lần, cache ở voice/_nghe_thu/, làm lại khi file mẫu
+    mới hơn) — nghe là biết mức đang kéo ra sao, khỏi tốn một lượt chạy ③. Chỉ là
+    XEM TRƯỚC GẦN ĐÚNG: bài thật còn EQ thêm lúc dựng prompt rồi EQ audio tổng.
+    File mẫu gốc không đổi. Mức 0 hay ffmpeg hỏng → trả file gốc."""
+    muc = hu.parse_fx(sang)
+    if muc <= 0:
+        return src
+    out = st.VOICE_DIR / "_nghe_thu" / f"{src.name}_sang{muc}.wav"
+    try:
+        if not out.is_file() or out.stat().st_mtime < src.stat().st_mtime:
+            out.parent.mkdir(exist_ok=True)
+            hu.apply_fx_file(src, out, sang_giong=muc)
+        return out
+    except Exception:
+        return src
+
+
 @app.get("/nghe/giong")
-async def nghe_giong(ten: str = ""):
-    """Stream file giọng mẫu trong myvideo/voice — tên phải có trong kho."""
-    if ten not in st.list_voices():
-        return JSONResponse({"error": "không có giọng này trong myvideo/voice"},
+async def nghe_giong(ten: str = "", sang: str = "0"):
+    """Stream file giọng mẫu trong myvideo/voice — tên phải có trong kho.
+    sang > 0: bản đã EQ 🔆 sáng giọng ở mức đó (xem _nghe_thu_giong)."""
+    src = st.voice_path(ten)
+    if src is None:
+        return JSONResponse({"error": "không có giọng này trong myvoice/voice hay myvideo/voice"},
                             status_code=404)
-    return FileResponse(str(st.VOICE_DIR / ten))
+    f = _nghe_thu_giong(src, sang)
+    return FileResponse(str(f), media_type="audio/wav" if f.suffix == ".wav" else None)
+
+
+@app.get("/kenh/logo")
+async def kenh_logo(ten: str = ""):
+    """Ảnh logo trong thư mục HỒ SƠ KÊNH đang chọn — xem trước cạnh ô chọn logo
+    ở khối ④. Chỉ trả file nằm trong danh sách logos() của hồ sơ."""
+    p = kh.logo_path(kh.hien_tai(), ten)
+    if p is None or not p.is_file():
+        return JSONResponse({"error": "hồ sơ kênh chưa có logo"}, status_code=404)
+    return FileResponse(str(p))
 
 
 @app.get("/nghe/ketqua")

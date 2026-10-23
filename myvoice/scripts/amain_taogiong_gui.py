@@ -199,6 +199,10 @@ OPTS_DEFAULTS = dict(
     # 🔔 tiếng vang (trường độ = độ dài đuôi vang, cường độ = mức trộn — bật khi > 0)
     # và 🧒 giọng thiếu niên (dời formant + nhỉnh cao độ). Áp cùng lúc với tông.
     vang_truong_do=0, vang_cuong_do=0, thieu_nien=0,
+    # 23/10/2026: 🔆 SÁNG GIỌNG (0–100) — trị giọng clone "ồm": EQ bớt 150–500 Hz,
+    # nâng 3 kHz + dải cao, áp lên output.wav VÀ lên giọng mẫu trong bộ nhớ lúc
+    # dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn).
+    sang_giong=80,   # mặc định 80 — user chốt 23/10/2026 sau khi nghe demo các mức
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
@@ -869,8 +873,15 @@ SPEECH_RMS_DBFS = -18.0
 #     gọt riêng chúng, nhờ vậy loudnorm ở lớp ③ đủ chỗ để chỉ nâng MỘT mức gain
 #     (chế độ Linear). Không có khâu này, loudnorm phải bung chế độ Dynamic —
 #     vẫn ra -14 LUFS nhưng gain chạy qua lại trong bài.
+#   • highpass 80 Hz (23/10/2026, đứng TRƯỚC bộ nén) — dưới f0 của cả giọng nam
+#     (~100 Hz) nên gần như không đổi âm sắc; việc của nó là gạt tiếng ù/rung/
+#     bật hơi dưới 80 Hz để chúng không kích bộ nén (năng lượng ấy không mang
+#     chữ mà lại đội mức, nén ăn theo nó là cả câu bị ghìm oan) và không chiếm
+#     chỗ đỉnh khi loudnorm nâng. Giọng "ồm" thật sự nằm ở 150–500 Hz → đó là
+#     việc của bộ lọc 🔆 Sáng giọng (hieuung_giong.py), không phải khâu này.
 # Đặt "" để tắt lớp ②.
-SPEECH_COMPRESSOR = ("acompressor=threshold=-20dB:ratio=2.5:attack=50:release=400,"
+SPEECH_COMPRESSOR = ("highpass=f=80,"
+                     "acompressor=threshold=-20dB:ratio=2.5:attack=50:release=400,"
                      "volume=9dB,"
                      "alimiter=limit=-2dB:attack=5:release=50:level=disabled")
 
@@ -1137,7 +1148,22 @@ def _do_omnivoice(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ")
     return None
 
 
-def _voice_prompt(model, ref_audio):
+def _eq_giong_mau(ref_path: Path, sang: int):
+    """Bản giọng mẫu đã qua EQ 🔆 Sáng giọng mức `sang` (file TẠM, không exciter —
+    họa âm giả vào mẫu thì model học cả tiếng xì). Trả Path file tạm, bên gọi xoá
+    sau khi dựng prompt; lỗi (thiếu ffmpeg, file hỏng) → None + cảnh báo, bên gọi
+    dựng từ mẫu gốc. File giọng mẫu gốc không bị đụng."""
+    try:
+        tmp = hu.eq_giong_mau_tam(ref_path, sang)   # lõi chung với myvideo/taogiong_srt.py
+        logging.info(f"🔆 Giọng mẫu {ref_path.name}: EQ sáng giọng mức {sang} trong bộ nhớ "
+                     "trước khi dựng prompt (file gốc không đổi).")
+        return tmp
+    except Exception as e:
+        logging.warning(f"⚠️ Không EQ được giọng mẫu ({e}) → dựng prompt từ mẫu gốc.")
+        return None
+
+
+def _voice_prompt(model, ref_audio, sang_giong: int = 0):
     """VoiceClonePrompt dựng 1 lần rồi dùng lại cho mọi đoạn — và mọi lần chạy sau.
 
     Gọi model.generate(ref_audio=...) sẽ dựng LẠI prompt cho TỪNG đoạn: đọc
@@ -1148,18 +1174,26 @@ def _voice_prompt(model, ref_audio):
     Prompt còn được LƯU RA ĐĨA cạnh file giọng mẫu, nên từ lần chạy sau nạp
     thẳng file .pt và Whisper không phải vào VRAM lần nào nữa. Sửa file giọng
     mẫu (mtime mới hơn) thì prompt tự dựng lại.
+
+    sang_giong > 0 (bộ lọc 🔆 Sáng giọng, 23/10/2026): giọng mẫu được EQ TRONG BỘ
+    NHỚ (xem _eq_giong_mau; file gốc không đổi) rồi mới dựng prompt — model nghe
+    mẫu sáng thì phát âm sáng từ gốc, EQ output về sau chỉ đánh bóng. Prompt
+    này lưu riêng `<mẫu>.sang<N>.prompt.pt`, cache theo (mẫu, mức).
     """
+    sang = hu.parse_fx(sang_giong)
+    key = (ref_audio, sang)
     cache = getattr(model, "_vn_prompt_cache", None)
     if cache is None:
         cache = model._vn_prompt_cache = {}
-    if ref_audio in cache:
-        return cache[ref_audio]
+    if key in cache:
+        return cache[key]
 
     from omnivoice.models.omnivoice import VoiceClonePrompt
 
     ref_path = Path(str(ref_audio))
     # Đuôi .pt nên file này KHÔNG lọt vào danh sách giọng của GUI (lọc AUDIO_EXTS).
-    pt_path = ref_path.with_name(ref_path.name + ".prompt.pt")
+    # Mức sáng giọng > 0 → prompt riêng, không lẫn với prompt của mẫu gốc.
+    pt_path = ref_path.with_name(ref_path.name + (f".sang{sang}" if sang else "") + ".prompt.pt")
     prompt = None
 
     try:
@@ -1172,28 +1206,45 @@ def _voice_prompt(model, ref_audio):
         prompt = None
 
     if prompt is None:
-        prompt = model.create_voice_clone_prompt(ref_audio=ref_audio)
-        logging.info(f"🎙️  Đã dựng prompt giọng mẫu (dùng lại cho mọi đoạn): "
-                     f"{ref_path.name}")
+        src, tmp_eq = ref_audio, None
+        if sang:
+            tmp_eq = _eq_giong_mau(ref_path, sang)
+            if tmp_eq is not None:
+                src = str(tmp_eq)
         try:
-            prompt.save(str(pt_path))
-            logging.info(f"💾 Đã lưu prompt giọng mẫu → {pt_path.name}")
-        except Exception as e:
-            logging.warning(f"Không lưu được prompt giọng mẫu: {e}")
+            prompt = model.create_voice_clone_prompt(ref_audio=src)
+        finally:
+            if tmp_eq is not None:
+                tmp_eq.unlink(missing_ok=True)
+        logging.info(f"🎙️  Đã dựng prompt giọng mẫu (dùng lại cho mọi đoạn): "
+                     f"{ref_path.name}"
+                     + (f" — đã EQ sáng giọng mức {sang}" if tmp_eq is not None else ""))
+        if sang and tmp_eq is None:
+            # EQ hỏng → prompt này là mẫu GỐC, không được lưu dưới tên .sang<N>
+            # (lần sau nạp nhầm bản chưa EQ mà tưởng đã EQ).
+            logging.warning("⚠️ Prompt dựng từ mẫu gốc (không EQ được) → không lưu ra đĩa.")
+        else:
+            try:
+                prompt.save(str(pt_path))
+                logging.info(f"💾 Đã lưu prompt giọng mẫu → {pt_path.name}")
+            except Exception as e:
+                logging.warning(f"Không lưu được prompt giọng mẫu: {e}")
 
     # Nạp từ đĩa hay vừa dựng thì tới đây Whisper cũng hết việc cho cả bài.
     _free_asr(model)
 
-    cache[ref_audio] = prompt
+    cache[key] = prompt
     return prompt
 
 
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
-def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0):
+def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0, sang_giong=0):
     # language="vi": cả pipeline này chỉ sinh tiếng Việt, khai báo rõ giúp model
     # phát âm chuẩn hơn là để chế độ đoán ngôn ngữ.
     # dur_scale: nới khung thời lượng (render lại đoạn bị nuốt chữ lần 2 dùng
     # 1.06 — thêm ~6% chỗ để model nhét lại câu đã nuốt; lần đầu chỉ re-roll).
+    # sang_giong: mức 🔆 Sáng giọng — chế độ clone EQ giọng mẫu lúc dựng prompt
+    # (xem _voice_prompt); mức khác → prompt khác → giọng khác.
     chunk = " ".join(chunk.split())   # bỏ dấu "\n" hết đoạn văn (xem split_chunks)
     dur = vn_duration(chunk)
     if dur is not None:
@@ -1202,7 +1253,8 @@ def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0):
           "fade_duration": FADE_OUT_SEC}
     if mode == "clone":
         return model.generate(text=chunk,
-                              voice_clone_prompt=_voice_prompt(model, voice_param), **kw)
+                              voice_clone_prompt=_voice_prompt(model, voice_param, sang_giong),
+                              **kw)
     elif mode == "design":
         return model.generate(text=chunk, instruct=voice_param, **kw)
     return model.generate(text=chunk, **kw)
@@ -1598,7 +1650,7 @@ def _speedup_audio_for_doc(src, factor):
 # rubberband → asetrate (kéo cả cao độ lẫn tốc độ) rồi atempo bù lại tốc độ.
 PITCH_MARK = "_pitch.txt"                # trong thư mục chunk: tông đã áp lên output.wav
 FX_MARK = "_hieuung.json"                # trong thư mục chunk: bộ lọc đã áp lên output.wav
-FX_KEYS = ("vang_truong_do", "vang_cuong_do", "thieu_nien")   # khoá trong taogiong_options.json
+FX_KEYS = ("vang_truong_do", "vang_cuong_do", "thieu_nien", "sang_giong")   # khoá trong taogiong_options.json
 
 
 def _pitch_shift_file(src, semitones: float, out=None) -> Path:
@@ -2159,6 +2211,10 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
         audio_ready = output_path.exists() and output_path.stat().st_size > 4096
+        # 23/10/2026: mức 🔆 Sáng giọng — chế độ clone EQ giọng mẫu lúc dựng prompt
+        # (xem _voice_prompt) nên phải vào chữ ký bên dưới (chỉ khi > 0, để chữ ký
+        # của các tập đã tạo trước đó không đổi).
+        sang_mau = hu.fx_from(fx)["sang_giong"]
 
         # video_only: BỎ QUA tạo giọng, chỉ DỰNG VIDEO từ audio có sẵn (nút "Dựng
         # lại" riêng của từng mục). Cần audio đã tồn tại.
@@ -2176,7 +2232,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # ghép đoạn 32 bước với đoạn 16 bước trong cùng một bài thì nghe cứ
             # lệch lệch mà chẳng biết tại đâu. Cho vào đây là đổi số → sinh lại hết.
             sig = hashlib.sha1("|".join([mode, str(voice_param), f"step{NUM_STEP}",
-                                         f"fade{FADE_OUT_SEC}", *chunks])
+                                         f"fade{FADE_OUT_SEC}",
+                                         *([f"sang{sang_mau}"] if sang_mau else []),
+                                         *chunks])
                                .encode("utf-8")).hexdigest()
             sig_file = tmp_dir / "_signature.txt"
             old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
@@ -2233,6 +2291,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 sig_file.write_text(sig, encoding="utf-8")
 
             logging.info(f"Tổng {total} đoạn — tải model...")
+            if sang_mau and mode == "clone":
+                logging.info(f"🔆 Sáng giọng {sang_mau}: giọng mẫu được EQ trong bộ nhớ khi dựng "
+                             "prompt (file gốc không đổi); đổi mức là sinh lại hết các đoạn.")
             status_var.set("Đang tải model...")
 
             device = get_best_device()
@@ -2263,7 +2324,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     tmp_file.unlink()
 
                 logging.info(f"[{i+1}/{total}] {chunk[:60]!r}")
-                result = _generate_chunk(model, mode, voice_param, chunk)
+                result = _generate_chunk(model, mode, voice_param, chunk, sang_giong=sang_mau)
                 sf.write(str(tmp_file), result[0], sr)
 
                 # Mỗi đoạn một độ dài chuỗi khác nhau → allocator giữ lại đủ kiểu
@@ -2295,7 +2356,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     status_var.set(f"Render lại chunk lỗi {idx+1}/{len(bad_chunks)}...")
                     tmp_file = tmp_dir / f"{i:04d}.wav"
                     tmp_file.unlink(missing_ok=True)
-                    result = _generate_chunk(model, mode, voice_param, chunks[i])
+                    result = _generate_chunk(model, mode, voice_param, chunks[i],
+                                             sang_giong=sang_mau)
                     sf.write(str(tmp_file), result[0], sr)
                     logging.info(f"  [{i:04d}] render lại xong")
             else:
@@ -2358,7 +2420,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         tmp_file.unlink(missing_ok=True)
                         result = _generate_chunk(
                             model, mode, voice_param, chunks[i],
-                            dur_scale=1.0 if attempt == 1 else 1.06)
+                            dur_scale=1.0 if attempt == 1 else 1.06, sang_giong=sang_mau)
                         sf.write(str(tmp_file), result[0], sr)
                         spikes = detect_spike(tmp_file, sr)
                         if spikes:
@@ -3261,20 +3323,23 @@ class App(tk.Tk):
         # Bộ lọc giọng kiểu CapCut (20/10/2026): 🔔 tiếng vang (trường độ / cường độ)
         # + 🧒 giọng thiếu niên (cường độ), thang 0–100, 0 = tắt. Áp cùng lúc với tông;
         # cùng khoá với ô bên web (FX_KEYS trong taogiong_options.json).
+        # 23/10/2026 thêm 🔆 sáng giọng (trị giọng clone "ồm"): ngoài output.wav còn
+        # EQ cả giọng mẫu trong bộ nhớ lúc dựng prompt clone (xem _voice_prompt).
         loc_row = ttk.Frame(sec_opt)
         loc_row.pack(anchor="w", fill="x", pady=(6, 0))
         self.var_fx = {}
         for key, label in (("vang_truong_do", "🔔 Tiếng vang – trường độ:"),
                            ("vang_cuong_do", "cường độ:"),
-                           ("thieu_nien", "🧒 Thiếu niên – cường độ:")):
+                           ("thieu_nien", "🧒 Thiếu niên – cường độ:"),
+                           ("sang_giong", "🔆 Sáng giọng:")):
             ttk.Label(loc_row, text=label).pack(
                 side="left", padx=(0 if key == "vang_truong_do" else 10, 6))
             self.var_fx[key] = tk.StringVar(
                 value=str(hu.parse_fx(self._opt_settings.get(key), OPTS_DEFAULTS[key])))
             ttk.Spinbox(loc_row, from_=hu.FX_MIN, to=hu.FX_MAX, increment=5,
                         textvariable=self.var_fx[key], width=5).pack(side="left")
-        ttk.Label(loc_row, text="0–100 như CapCut, 0 = tắt (vang bật khi cường độ > 0); "
-                               "nghe thử bằng voice/thu_giong.py",
+        ttk.Label(loc_row, text="0–100, 0 = tắt (vang bật khi cường độ > 0; sáng giọng = bớt ồm, "
+                               "EQ cả giọng mẫu lúc dựng prompt); nghe thử bằng voice/thu_giong.py",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         video_row = ttk.Frame(sec_opt)
@@ -5534,8 +5599,8 @@ class App(tk.Tk):
         btn.config(text=("#" + var.get()) if var.get() else "(kiểu)")
 
     def _fx_from_vars(self) -> dict:
-        """3 mức bộ lọc giọng (tiếng vang trường độ / cường độ, thiếu niên) đang
-        chọn trên GUI, đã kẹp 0–100 — cùng dạng dict mà run_tts(fx=) nhận."""
+        """4 mức bộ lọc giọng (tiếng vang trường độ / cường độ, thiếu niên, sáng
+        giọng) đang chọn trên GUI, đã kẹp 0–100 — cùng dạng dict mà run_tts(fx=) nhận."""
         return {k: hu.parse_fx(v.get(), OPTS_DEFAULTS[k]) for k, v in self.var_fx.items()}
 
     def _save_opt_settings(self):

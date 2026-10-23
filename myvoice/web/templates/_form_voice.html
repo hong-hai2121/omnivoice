@@ -153,6 +153,11 @@
                title="Giọng trẻ hơn: dời formant + nhỉnh cao độ theo mức (100 = formant ×1,18 và +4 bán cung). Nghe thử trước bằng voice/thu_giong.py.">
       </label>
       <label class="field">
+        <span>🔆 Sáng giọng – cường độ (0–100, 0 = tắt)</span>
+        <input name="sang_giong" value="{{ opts.sang_giong }}" inputmode="numeric"
+               title="Trị giọng clone nghe ồm: EQ bớt 150–500 Hz, nâng 3 kHz + dải cao (100 = ±6 dB, thêm exciter). Áp lên audio gốc VÀ lên giọng mẫu trong bộ nhớ lúc dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn). Nghe thử trước bằng voice/thu_giong.py.">
+      </label>
+      <label class="field">
         <span>Nguồn clip ngang</span>
         <select name="ngang_source">
           {% for s in ngang_sources %}

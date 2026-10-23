@@ -6,6 +6,9 @@ tuỳ chọn THAY luôn tiếng bằng audio TTS đã sắp xếp.
 Ba việc của bước này đều BỎ ĐƯỢC, tự do phối:
   • vẽ sub  — bỏ --srt là không vẽ chữ nào (video sạch, chỉ thay tiếng).
   • che mờ  — không có --che-sub-goc/--vung là để nguyên sub gốc đốt trong hình.
+              Mặc định CHỈ che lúc có tiếng gốc (theo <video>.srt của bước ①):
+              khe không thoại dài hơn 1 giây (--che-khe) để nguyên hình nét —
+              cảnh võ thuật / không thoại thường không có hardsub.
   • thay tiếng — không có --audio là giữ tiếng gốc.
 Bỏ cả vẽ sub lẫn che mờ thì HÌNH GIỮ NGUYÊN: chỉ ghép lại tiếng (-c:v copy),
 không encode lại nên nhanh và không mất tí chất lượng nào.
@@ -120,13 +123,16 @@ def chia_cue(start, end, text, max_chars=MAX_LINE_CHARS, dong=2):
 
 
 def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
-         zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None,
-         goc_db=None, goc_norm=False, tts_db=0.0, tts_lufs=-14.0):
+         zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None, khung_vien=None,
+         goc_db=None, goc_norm=False, tts_db=0.0, tts_lufs=-14.0, che_khoang=None):
     """Dựng video kết quả. Các phần đều tuỳ chọn, bỏ hết cũng chạy:
 
     `ass_path` → vẽ cứng phụ đề (None = không vẽ chữ nào).
     `vung` (dict y0/y1 của timvungsub) → LÀM MỜ dải đó suốt video để che sub
     gốc đốt sẵn, rồi mới vẽ sub Việt đè lên trên dải mờ (None = không che).
+    `che_khoang` → [(a, b)…] giây: CHỈ che mờ trong các khoảng này (lúc có
+    tiếng gốc, xem timvungsub.khoang_co_tieng); ngoài khoảng hình giữ nguyên
+    nét (None/[] = che suốt video).
     `audio` → THAY tiếng bằng file này (None = giữ tiếng gốc).
     `zoom` → PHÓNG TO video nền bấy nhiêu % (20 = to gấp 1.2 lần) rồi cắt giữa
     về đúng khung cũ — mép hình mất đều bốn phía, độ phân giải không đổi.
@@ -147,13 +153,18 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     tăng (+) thì tự chặn đỉnh -1.5 dB kẻo vỡ tiếng).
     `logo` → đóng ảnh PNG này (logo kênh) ở góc phải trên suốt video, rộng
     ~12%% khung; nền trong suốt của PNG giữ nguyên.
+    `khung_vien` → đè ảnh PNG KHUNG VIỀN này (lòng trong suốt, vẽ bằng
+    kenh_thietke.py) lên TOÀN khung hình suốt video: scale đúng cỡ khung thành
+    phẩm rồi overlay 0:0 — nằm TRÊN hình nhưng DƯỚI chữ, nên viền không che mất
+    phụ đề; có khung thì logo lùi vào trong thêm để không đè lên dải viền.
 
-    Không vẽ sub, không che mờ, không zoom, không dọc, không logo = hình không
-    đổi pixel nào → -c:v copy (ghép lại tiếng thôi): nhanh, không mất chất lượng.
+    Không vẽ sub, không che mờ, không zoom, không dọc, không logo/khung = hình
+    không đổi pixel nào → -c:v copy (ghép lại tiếng thôi): nhanh, không mất chất lượng.
 
     Thứ tự filter CÓ CHỦ Ý: che mờ trước (toạ độ dải do timvungsub dò trên
-    hình GỐC) → zoom → đổi khung dọc → vẽ chữ → đóng logo (chữ + logo vẽ SAU
-    nên không bị phóng/cắt theo, nằm đúng vị trí đã ngắm ở ảnh xem thử).
+    hình GỐC) → zoom → đổi khung dọc → đè khung viền → vẽ chữ → đóng logo (khung,
+    chữ, logo vẽ SAU nên không bị phóng/cắt theo, nằm đúng vị trí đã ngắm ở ảnh
+    xem thử).
 
     Mô phỏng burn_subs của video_gansub (NVENC ưu tiên, lỗi tự lùi CPU) nhưng
     thêm được nhánh thay audio nên viết lại cmd ở đây.
@@ -174,9 +185,14 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     if vung:
         y0, day = int(vung["y0"]), int(vung["y1"]) - int(vung["y0"])
         sigma = max(10, min(30, day // 4))       # blur đủ tan chữ, theo độ dày dải
+        # enable= theo khoảng có tiếng: ngoài khoảng overlay tắt → khung đi
+        # thẳng, không mờ. Biểu thức dài (nhiều khoảng) → build_cmd tự chuyển
+        # filtergraph sang file script, khỏi vướng trần dòng lệnh Windows.
+        bat = (f":enable='{timvungsub.bieu_thuc_enable(che_khoang)}'"
+               if che_khoang else "")
         parts.append(f"split[goc][mo];"
                      f"[mo]crop=iw:{day}:0:{y0},gblur=sigma={sigma}[dai];"
-                     f"[goc][dai]overlay=0:{y0}")
+                     f"[goc][dai]overlay=0:{y0}{bat}")
     if zoom:
         # Phóng z lần rồi cắt GIỮA về khung cũ. trunc(…/2)*2: mọi cạnh chẵn —
         # yuv420p/libx264 từ chối cạnh lẻ; khung 16:9 chuẩn ra lại đúng số cũ
@@ -193,17 +209,27 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             "crop=1080:1920,gblur=sigma=28[bg];"
             "[chinh]scale=1080:-2:flags=lanczos[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2")
-    if sub_vf:
-        parts.append(sub_vf)
-    vf = ",".join(parts)
+    pre_vf = ",".join(parts)            # che mờ → zoom → dọc (TRƯỚC khung viền + chữ)
+    vf = ",".join(parts + ([sub_vf] if sub_vf else []))
 
-    # Logo cần cỡ khung THÀNH PHẨM để tính bề rộng: dọc = 1080 cố định, còn
-    # lại là bề rộng gốc (zoom cắt về đúng khung cũ nên không đổi số đo).
-    logo_w = pad = 0
-    if logo:
-        vw = 1080 if doc else timvungsub._probe(video)[0]
-        logo_w = max(48, round(vw * 0.12 / 2) * 2)
-        pad = max(12, vw // 100)
+    # Logo / khung viền cần cỡ khung THÀNH PHẨM: dọc = 1080×1920 cố định, còn
+    # lại là cỡ gốc; có zoom thì lặp ĐÚNG phép trunc(…/2)*2 của filter scale +
+    # crop để ra cùng số px chẵn (khung dị có thể hụt 2px so với gốc).
+    logo_w = pad = cw = ch = 0
+    if logo or khung_vien:
+        if doc:
+            cw, ch = 1080, 1920
+        else:
+            cw, ch, _ = timvungsub._probe(video)
+            if zoom:
+                z = 1 + max(0, int(zoom)) / 100
+                cw = int(int(cw * z / 2) * 2 / z / 2) * 2
+                ch = int(int(ch * z / 2) * 2 / z / 2) * 2
+        logo_w = max(48, round(cw * 0.12 / 2) * 2)
+        pad = max(12, cw // 100)
+        if khung_vien:
+            # Có khung viền: logo lùi vào trong (~4,5% cạnh ngắn) khỏi đè dải viền.
+            pad = max(pad, round(min(cw, ch) * 0.045))
 
     # Chuỗi filter GIỌNG ĐỌC: chuẩn hoá về tts_lufs (mặc định -14 — chuẩn
     # YouTube, đúng hành vi xưa nay) rồi chỉnh thêm tts_db. Tăng (+dB) thì
@@ -214,11 +240,22 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
         if float(tts_db) > 0:
             LOUD += ",alimiter=limit=0.84:level=false"
 
+    # Filtergraph dài quá (che mờ theo hàng trăm khoảng có tiếng) thì ghi ra
+    # file và đưa ffmpeg bằng -filter_script / -filter_complex_script — dòng
+    # lệnh Windows có trần ~32k ký tự. Ngắn thì đưa thẳng như xưa.
+    fc_file = Path(out_path).with_name(f"~fc_{os.getpid()}.txt")
+
+    def _loc_hinh(co_thang: str, co_file: str, graph: str) -> list[str]:
+        if len(graph) <= 8000:
+            return [co_thang, graph]
+        fc_file.write_text(graph, encoding="utf-8")
+        return [co_file, str(fc_file)]
+
     def build_cmd(gpu):
         codec = (["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "19"]
                  if gpu else ["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
         cmd = ["ffmpeg", "-y", "-i", str(Path(video).resolve())]
-        ai_tts = ai_nhac = vi_logo = None
+        ai_tts = ai_nhac = vi_logo = vi_khung = None
         n = 1
         if audio:
             cmd += ["-i", str(Path(audio).resolve())]
@@ -233,6 +270,9 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             # giữ khung đó suốt video nên không cần -loop.
             cmd += ["-i", str(Path(logo).resolve())]
             vi_logo, n = n, n + 1
+        if khung_vien:
+            cmd += ["-i", str(Path(khung_vien).resolve())]
+            vi_khung, n = n, n + 1
 
         fc, maps, out_a, out_v = [], [], [], []
         # ── Tiếng: TTS (loudnorm -14 LUFS chuẩn YouTube) ± tiếng gốc ± nhạc ──
@@ -275,16 +315,32 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             maps += ["-map", "0:a"]
             out_a = ["-af", goc_af, "-ar", "48000", "-c:a", "aac", "-b:a", "192k"]
         else:
-            if vi_logo is not None:
-                # Nhánh logo map hình bằng [vout] → ffmpeg TẮT chọn stream tự
-                # động, phải map tiếng gốc vào tay kẻo video đóng logo MẤT TIẾNG.
+            if vi_logo is not None or vi_khung is not None:
+                # Nhánh logo/khung map hình bằng [vout] → ffmpeg TẮT chọn stream
+                # tự động, phải map tiếng gốc vào tay kẻo video MẤT TIẾNG.
                 maps += ["-map", "0:a?"]
             out_a = ["-c:a", "copy"]
-        # ── Hình: chuỗi vf (che mờ → zoom → dọc → chữ) ± logo đè cuối ────────
-        if vi_logo is not None:
-            fc += [f"[0:v]{vf or 'null'}[vv]",
-                   f"[{vi_logo}:v]scale={logo_w}:-1[lg]",
-                   f"[vv][lg]overlay=W-w-{pad}:{pad}[vout]"]
+        # ── Hình: che mờ → zoom → dọc → [khung viền] → chữ → [logo] ──────────
+        # Ảnh PNG là input riêng nên phải đi filter_complex; khung đè TRƯỚC chữ
+        # (chữ nằm trên viền), logo đè sau cùng. Nhãn trung gian v0..v3, cuối
+        # cùng `null` chỉ để gắn tên [vout] cho -map.
+        if vi_logo is not None or vi_khung is not None:
+            cur = "[0:v]"
+            if pre_vf:
+                fc.append(f"{cur}{pre_vf}[v0]")
+                cur = "[v0]"
+            if vi_khung is not None:
+                fc += [f"[{vi_khung}:v]scale={cw}:{ch}:flags=lanczos[kh]",
+                       f"{cur}[kh]overlay=0:0[v1]"]
+                cur = "[v1]"
+            if sub_vf:
+                fc.append(f"{cur}{sub_vf}[v2]")
+                cur = "[v2]"
+            if vi_logo is not None:
+                fc += [f"[{vi_logo}:v]scale={logo_w}:-1[lg]",
+                       f"{cur}[lg]overlay=W-w-{pad}:{pad}[v3]"]
+                cur = "[v3]"
+            fc.append(f"{cur}null[vout]")
             maps = ["-map", "[vout]"] + maps
             out_v = [*codec, "-pix_fmt", "yuv420p"]
         elif vf:
@@ -296,12 +352,13 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
                 out_v = [*codec, "-pix_fmt", "yuv420p"]
             else:
                 maps = (["-map", "0:v"] + maps) if maps else []
-                out_v = ["-vf", vf, *codec, "-pix_fmt", "yuv420p"]
+                out_v = [*_loc_hinh("-vf", "-filter_script:v", vf),
+                         *codec, "-pix_fmt", "yuv420p"]
         else:
             maps = (["-map", "0:v"] + maps) if maps else []
             out_v = ["-c:v", "copy"]
         if fc:
-            cmd += ["-filter_complex", ";".join(fc)]
+            cmd += _loc_hinh("-filter_complex", "-filter_complex_script", ";".join(fc))
         cmd += maps + out_v + out_a
         if ai_tts is not None:
             cmd += ["-shortest"]
@@ -312,7 +369,7 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     # cwd = thư mục chứa .ass để filter subtitles= chỉ cần TÊN file (đường dẫn
     # Windows có dấu hai chấm, nhét vào filtergraph là hỏng cú pháp).
     cwd = str((ass_path or Path(out_path)).parent)
-    if not vf and not logo:
+    if not vf and not logo and not khung_vien:
         print("🎬 Hình giữ nguyên (copy) — chỉ ghép lại tiếng.")
         return subprocess.run(build_cmd(False), cwd=cwd).returncode == 0
     use_gpu = (not force_cpu) and has_nvenc()
@@ -324,11 +381,12 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             r = subprocess.run(build_cmd(False), cwd=cwd)
         return r.returncode == 0
     finally:
-        if tmp_ass is not None:
-            try:
-                tmp_ass.unlink()
-            except OSError:
-                pass
+        for p in (tmp_ass, fc_file):
+            if p is not None:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
 
 
 def ghep_outro(main_mp4, outro_mp4):
@@ -489,16 +547,29 @@ def main():
     parser.add_argument("--logo", default="",
                         help="Đóng ảnh PNG này (logo kênh) góc phải trên suốt "
                              "video, rộng ~12%% khung. Bỏ trống = không logo.")
+    parser.add_argument("--khung-vien", default="",
+                        help="Đè ảnh PNG KHUNG VIỀN này (lòng trong suốt, 16:9) lên "
+                             "toàn khung hình suốt video — trên hình, dưới chữ. "
+                             "Dựng bản dọc (--khung doc) thì tự lấy <tên>_doc.png "
+                             "cạnh file nếu có. Bỏ trống = không khung.")
     parser.add_argument("--outro", default="",
                         help="Nối video này vào CUỐI video thành phẩm (outro kêu "
                              "gọi đăng ký) — outro được encode khớp chuẩn rồi nối "
                              "-c copy, KHÔNG encode lại video chính.")
     parser.add_argument("--che-sub-goc", action="store_true",
-                        help="Tự dò dải sub gốc đốt sẵn (10 khung hình) rồi LÀM MỜ "
-                             "dải đó suốt video, sub Việt đè lên trên dải mờ.")
+                        help="Tự dò dải sub gốc đốt sẵn rồi LÀM MỜ dải đó suốt video, "
+                             "sub Việt đè lên trên dải mờ. Khung dò: 5 khung bốc "
+                             "ngẫu nhiên lúc CÓ GIỌNG NÓI theo <video>.srt của bước "
+                             "①, khung nào cũng kiểm có chữ (xem timvungsub.py).")
     parser.add_argument("--vung", default="",
                         help="Ghi đè vùng che bằng tay: 'y0:y1' theo pixel video "
                              "(vd 920:1010) — dùng khi tự dò bị lệch.")
+    parser.add_argument("--che-khe", type=float, default=timvungsub.KHE_KHONG_CHE,
+                        help="Chỉ che mờ LÚC CÓ TIẾNG GỐC (theo <video>.srt của "
+                             "bước ①): khe không thoại dài hơn bấy nhiêu giây thì "
+                             "KHÔNG che, hình giữ nguyên nét — cảnh võ thuật / "
+                             "không thoại thường không có hardsub (mặc định 1). "
+                             "0 = che suốt video như cũ.")
     parser.add_argument("--cpu", action="store_true",
                         help="Ép encode CPU — dùng khi GPU đang bận việc khác.")
     args = parser.parse_args()
@@ -546,7 +617,7 @@ def main():
     else:
         print("✍️  Không vẽ sub — giữ hình sạch chữ.")
 
-    # Vùng che sub Trung: --vung tay > tự dò 10 khung > không che.
+    # Vùng che sub Trung: --vung tay > tự dò (5 khung lúc có giọng nói) > không che.
     vung = None
     if args.vung:
         try:
@@ -564,6 +635,25 @@ def main():
             print(f"⚠️ Lỗi dò vùng sub ({e}) — burn không che.")
         if vung is None:
             print("🫥 Không thấy dải sub gốc nào — burn bình thường, không che.")
+    # Chỉ che lúc có tiếng gốc: khe không thoại > --che-khe giây để nguyên hình.
+    che_khoang = None
+    if vung and args.che_khe > 0:
+        srt_tieng = timvungsub.tim_srt(video)
+        if srt_tieng is None:
+            print("⚠️ Không có SRT giọng nói cạnh video (bước ①) — che mờ suốt video.")
+        else:
+            try:
+                _dur = timvungsub._probe(video)[2]
+            except Exception:
+                _dur = 0.0
+            che_khoang = timvungsub.khoang_co_tieng(srt_tieng, _dur, khe=args.che_khe)
+            if che_khoang:
+                _co = sum(b - a for a, b in che_khoang)
+                print(f"⏱ Che mờ theo tiếng gốc ({srt_tieng.name}): {len(che_khoang)} "
+                      f"khoảng, {_co / 60:.1f}/{_dur / 60:.1f} phút; khe không thoại "
+                      f"> {args.che_khe:g}s để nguyên hình.")
+            else:
+                print(f"⚠️ {srt_tieng.name} không có câu nào — che mờ suốt video.")
 
     out_path = Path(args.out) if args.out else video.with_name(
         video.stem + ("_doc.mp4" if doc else "_sub.mp4"))
@@ -615,6 +705,22 @@ def main():
         logo = None
     if logo:
         print(f"🏷 Logo kênh: {Path(logo).name} (góc phải trên)")
+    khung_vien = args.khung_vien or None
+    if khung_vien and not Path(khung_vien).is_file():
+        print(f"⚠️ Không thấy khung viền: {khung_vien} — dựng không khung.")
+        khung_vien = None
+    if khung_vien and doc:
+        # Bản dọc 9:16 cần khung vẽ riêng (<tên>_doc.png) — kéo méo bản 16:9
+        # thì dải viền dọc dày gấp đôi dải ngang, nhìn lệch ngay.
+        p = Path(khung_vien)
+        p_doc = p.with_name(p.stem + "_doc" + p.suffix)
+        if p_doc.is_file():
+            khung_vien = str(p_doc)
+        else:
+            print(f"⚠️ Không có khung bản dọc {p_doc.name} — bản dọc dựng không khung.")
+            khung_vien = None
+    if khung_vien:
+        print(f"🖼 Khung viền: {Path(khung_vien).name}")
     outro = args.outro or None
     if outro and not Path(outro).is_file():
         print(f"⚠️ Không thấy outro: {outro} — dựng không outro.")
@@ -637,18 +743,18 @@ def main():
 
     # Bỏ hết thì file ra y hệt file vào — chặn sớm cho đỡ tốn công.
     # (goc_db=0/goc_norm tắt mà không có gì khác cũng tính là "bỏ hết".)
-    if not any((ve_sub, vung, audio, zoom, doc, nhac, logo, outro,
+    if not any((ve_sub, vung, audio, zoom, doc, nhac, logo, khung_vien, outro,
                 goc_norm, goc_db)):
         print("❌ Không vẽ sub, không che mờ, không thay tiếng, không zoom, "
-              "không khung dọc, không nhạc/logo/outro, không chỉnh tiếng gốc "
-              "— chẳng có gì để làm.")
+              "không khung dọc, không nhạc/logo/khung viền/outro, không chỉnh "
+              "tiếng gốc — chẳng có gì để làm.")
         sys.exit(1)
 
     if not burn(video, out_path, ass_path=ass_path, audio=audio,
                 force_cpu=args.cpu, vung=vung, zoom=zoom, doc=doc,
-                nhac=nhac, nhac_db=args.nhac_db, logo=logo,
+                nhac=nhac, nhac_db=args.nhac_db, logo=logo, khung_vien=khung_vien,
                 goc_db=goc_db, goc_norm=goc_norm,
-                tts_db=tts_db, tts_lufs=tts_lufs):
+                tts_db=tts_db, tts_lufs=tts_lufs, che_khoang=che_khoang):
         print("❌ ffmpeg lỗi khi vẽ phụ đề.")
         sys.exit(1)
     if outro:
