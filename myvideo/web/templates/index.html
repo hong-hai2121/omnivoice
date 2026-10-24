@@ -258,8 +258,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     <div class="phead">
       <span class="num">3</span><h2>Giọng OmniVoice + xếp timeline</h2>
       <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav, xếp chống đè →
-        <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>. Chạy lại tự bỏ qua
-        câu đã có audio.</p>
+        <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>; rồi như myvoice:
+        cân mức giữa các câu, tông giọng + bộ lọc, nén nhẹ + chuẩn −14 LUFS.
+        Chạy lại tự bỏ qua câu đã có audio.</p>
     </div>
     <div class="grid">
       <label class="field">
@@ -281,6 +282,29 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
         {# Danh sách ⭐ do trang tự sửa, đi kèm form lúc lưu/chạy. #}
         <input type="hidden" name="voice_stars" id="voiceStars"
                value="{{ voice_stars|join('\n') }}">
+      </label>
+      {# 🎵🔔🧒 mang từ myvoice sang (24/10/2026) — cùng tên khoá bên đó; áp lên
+         audio tổng _vi_audio.wav cùng lúc với 🔆 (một lần ffmpeg) rồi nén nhẹ +
+         chuẩn −14 LUFS như bài thật. 0 = như cũ. Nghe thử các mức bằng
+         myvoice/voice/thu_giong.py (cùng lõi hieuung_giong). #}
+      <label class="field">
+        <span>🎵 Tông giọng (bán cung: + cao, − trầm, 0 = giữ; giữ tốc độ)</span>
+        <input name="pitch" value="{{ settings.pitch }}" inputmode="decimal"
+               title="Như ô Tông giọng bên myvoice (bước 0,5; ±6). Áp lên audio tổng của bước ③ nên video nào cũng theo.">
+      </label>
+      <label class="field">
+        <span>🔔 Tiếng vang – trường độ / cường độ (0–100; cường độ 0 = tắt)</span>
+        <span style="display:flex; gap:6px">
+          <input name="vang_truong_do" value="{{ settings.vang_truong_do }}" inputmode="numeric"
+                 style="flex:1; min-width:0" title="Độ dài đuôi vang: 0 phòng nhỏ → 100 hội trường.">
+          <input name="vang_cuong_do" value="{{ settings.vang_cuong_do }}" inputmode="numeric"
+                 style="flex:1; min-width:0" title="Mức vang trộn vào giọng; 0 = không vang.">
+        </span>
+      </label>
+      <label class="field">
+        <span>🧒 Giọng thiếu niên – cường độ (0–100, 0 = tắt)</span>
+        <input name="thieu_nien" value="{{ settings.thieu_nien }}" inputmode="numeric"
+               title="Giọng trẻ hơn: dời formant + nhỉnh cao độ (100 = formant ×1,18 và +4 bán cung).">
       </label>
     </div>
     {# 🔆 SÁNG GIỌNG (23/10/2026; 24/10 dời từ tab 🔊 về đây vì nó là cài đặt của

@@ -364,6 +364,12 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             # EQ giọng mẫu lúc dựng prompt + EQ audio tổng. Gửi luôn để script khỏi
             # đoán; đổi mức là script tự đọc lại toàn bộ câu (sổ _vanban.json).
             argv += ["--sang", str(s.get("sanggiong") or "80").strip()]
+            # 🎵 Tông giọng + 🔔 tiếng vang + 🧒 thiếu niên — mang từ myvoice sang
+            # 24/10/2026, cùng tên khoá bên đó; mặc định 0 = như cũ.
+            argv += ["--pitch", str(s.get("pitch") or "0").strip(),
+                     "--vang", str(s.get("vang_truong_do") or "0").strip(),
+                     str(s.get("vang_cuong_do") or "0").strip(),
+                     "--thieunien", str(s.get("thieu_nien") or "0").strip()]
             if s.get("redotts"):
                 argv.append("--redo-tts")
         elif k == "seo":

@@ -87,6 +87,12 @@ INSET = 6           # thu vào trong vài px để không đè lên viền
 ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa khít, 1.25 = 125%)
 OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
                     # luồn xuống dưới viền khung1 — khử viền đen quanh video
+# 🎞 Video nguồn (24/10/2026, build_video(source_video=…)): MỘT video — video tải
+# xuống của tập — thay kho clip. Thời lượng được kéo/nén (setpts) cho khớp audio vì
+# lời đọc là bản dịch của chính video đó; kẹp trong [KEO_MIN, KEO_MAX] để hình không
+# giật (quá chậm) hay lướt (quá nhanh) — lệch hơn thì -stream_loop/-t lặp hoặc cắt.
+NGUON_FPS = 30              # ép fps sau khi kéo thời lượng (chậm → lặp khung, nhanh → bỏ bớt)
+KEO_MIN, KEO_MAX = 0.5, 2.0
 
 # GUI chạy bằng pythonw.exe (không có console), nên MỖI lần gọi ffmpeg/ffprobe
 # Windows phải cấp một cửa sổ console mới → màn hình NHẤP NHÁY liên tục khi quét
@@ -320,6 +326,18 @@ def find_audio() -> Path:
     sys.exit(1)
 
 
+def ti_le_keo(video_dur: float, audio_dur: float) -> float:
+    """Hệ số setpts để video nguồn dài bằng audio (= audio/video), kẹp [KEO_MIN,
+    KEO_MAX]. Thiếu/0 số đo → 1.0 (giữ nguyên tốc độ)."""
+    try:
+        video_dur, audio_dur = float(video_dur), float(audio_dur)
+    except (TypeError, ValueError):
+        return 1.0
+    if video_dur <= 0 or audio_dur <= 0:
+        return 1.0
+    return max(KEO_MIN, min(audio_dur / video_dur, KEO_MAX))
+
+
 def build_playlist(videos, durations, target):
     """
     Trả về (danh sách video theo thứ tự ngẫu nhiên có lặp, tổng thời lượng).
@@ -480,7 +498,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 progress=None, skip_existing=False, output: Path | None = None,
                 source_dir: Path | None = None, frame: Path | None = None,
                 logo: Path | None = None, goc_out: Path | None = None,
-                bg: Path | None = None) -> Path:
+                bg: Path | None = None, source_video: Path | None = None,
+                source_zoom: float = 1.0) -> Path:
     """
     Dựng video nền + khung từ một file audio cụ thể.
 
@@ -519,6 +538,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
 
     bg: file nền Khung0*.png cụ thể. None (mặc định) → chọn NGẪU NHIÊN một kiểu nền
         trong Backbround/ (xem random_bg; vẽ thêm kiểu bằng video_khung0_tao.py).
+
+    source_video: (24/10/2026) MỘT video làm nguồn hình thay cho kho clip (video tải
+        xuống của tập): tiếng gốc KHÔNG map vào đầu ra (= tắt tiếng), thời lượng kéo/
+        nén khớp audio (ti_le_keo), phần thiếu/thừa lặp hoặc cắt. Không đọc được file
+        → ghép clip kho như cũ. source_zoom: phóng to nội dung bấy nhiêu lần rồi cắt
+        giữa (1.2 = 120%) — thay cho ZOOM mặc định của kho clip.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -540,18 +565,37 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
         effect = None
 
+    # 🎞 Video nguồn: một file thay cho kho clip; không đọc được thì lùi về kho.
+    nguon = Path(source_video) if source_video else None
+    nguon_dur = 0.0
+    if nguon:
+        if not nguon.is_file():
+            log(f"[Cảnh báo] Không thấy video nguồn {nguon} → ghép clip kho như cũ.")
+            nguon = None
+        else:
+            try:
+                nguon_dur = get_duration(nguon)
+            except Exception as e:
+                log(f"[Cảnh báo] Không đọc được video nguồn {nguon.name} ({e}) → ghép clip kho như cũ.")
+                nguon = None
+            if nguon and nguon_dur <= 0.5:
+                log(f"[Cảnh báo] Video nguồn {nguon.name} quá ngắn ({nguon_dur:.2f}s) → ghép clip kho như cũ.")
+                nguon = None
     src_dir = Path(source_dir) if source_dir else VIDEO_DIR
-    videos = sorted(src_dir.glob("*.mp4"))
-    if not videos and not source_dir:
-        # Kho gốc videongang/ rỗng (đã dồn clip vào thư mục con theo chủ đề) → khi
-        # chọn "tất cả" thì gom MỌI clip trong các thư mục con thay vì báo lỗi.
-        videos = sorted(src_dir.rglob("*.mp4"))
-        if videos:
-            log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
-    if not videos:
-        raise RuntimeError(f"Không có file .mp4 nào trong: {src_dir}")
-    if source_dir:
-        log(f"📁 Nguồn video ngang: {src_dir.name}/ ({len(videos)} clip)")
+    if nguon:
+        videos = [nguon]
+    else:
+        videos = sorted(src_dir.glob("*.mp4"))
+        if not videos and not source_dir:
+            # Kho gốc videongang/ rỗng (đã dồn clip vào thư mục con theo chủ đề) → khi
+            # chọn "tất cả" thì gom MỌI clip trong các thư mục con thay vì báo lỗi.
+            videos = sorted(src_dir.rglob("*.mp4"))
+            if videos:
+                log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
+        if not videos:
+            raise RuntimeError(f"Không có file .mp4 nào trong: {src_dir}")
+        if source_dir:
+            log(f"📁 Nguồn video ngang: {src_dir.name}/ ({len(videos)} clip)")
 
     audio_file = Path(audio_file)
     if not audio_file.exists():
@@ -569,18 +613,26 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     )
     bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch), frame, logo, bg)
 
-    # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
-    durations = probe_durations(videos, log)
-    videos = [v for v in videos if v in durations]
-    if not videos:
-        raise RuntimeError(f"Không đọc được clip nào trong: {src_dir}")
-    seq, total = build_playlist(videos, durations, audio_dur)
+    concat_list = None
+    keo = 1.0
+    if nguon:
+        # Một video: kéo/nén thời lượng cho khớp audio (lời đọc là bản dịch của chính
+        # video này nên hình đi cùng lời); lệch quá mức kẹp thì lặp/cắt phần còn lại.
+        keo = ti_le_keo(nguon_dur, audio_dur)
+        seq, total = [nguon], nguon_dur * keo
+    else:
+        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
+        durations = probe_durations(videos, log)
+        videos = [v for v in videos if v in durations]
+        if not videos:
+            raise RuntimeError(f"Không đọc được clip nào trong: {src_dir}")
+        seq, total = build_playlist(videos, durations, audio_dur)
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
-                                     delete=False, encoding="utf-8") as f:
-        concat_list = Path(f.name)
-        for v in seq:
-            f.write(f"file '{v.as_posix()}'\n")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
+                                         delete=False, encoding="utf-8") as f:
+            concat_list = Path(f.name)
+            for v in seq:
+                f.write(f"file '{v.as_posix()}'\n")
 
     log(f"Khung gốc  : {source_w}x{source_h}")
     log(f"Nền khung  : {bg.name}")
@@ -588,9 +640,20 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     log(f"Logo       : {logo.name if logo.exists() else '(không thấy) ' + str(logo)}")
     log(f"Video xuất : {cw}x{ch} (tối thiểu {MIN_OUTPUT_HEIGHT}p)")
     log(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
-    log(f"Chế độ     : {mode}  (zoom {ZOOM:g}x, nới {OVERSCAN}px)")
+    # Phóng to nội dung: video nguồn theo source_zoom (ô 🎞 bên GUI/web), kho clip
+    # theo ZOOM cố định như trước.
+    try:
+        zoom = max(1.0, min(float(source_zoom or 1.0), 3.0)) if nguon else ZOOM
+    except (TypeError, ValueError):
+        zoom = ZOOM
+    log(f"Chế độ     : {mode}  (zoom {zoom:g}x, nới {OVERSCAN}px)")
     log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
-    log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+    if nguon:
+        log(f"Video nguồn: {nguon.name} ({nguon_dur:.2f}s) → kéo x{keo:.3f} = {total:.2f}s, "
+            f"tắt tiếng gốc, phóng to {zoom * 100:.0f}%"
+            + ("" if total >= audio_dur - 0.05 else " (ngắn hơn audio → lặp lại từ đầu)"))
+    else:
+        log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
     log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
     log(f"Đầu ra     : {output}")
 
@@ -600,12 +663,17 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     # hiệu ứng cũng bị cắt theo đúng vùng khung1 (không tràn ra nền/khung).
     src_label = "[0:v]"
     pre = ""
+    if nguon:
+        # Kéo/nén thời lượng (setpts) rồi ép fps cho đều khung hình; tiếng gốc không
+        # map ra đầu ra nên tự TẮT (file tải về giữ nguyên tiếng).
+        pre = f"[0:v]setpts=PTS*{keo:.6f},fps={NGUON_FPS}[nguon];"
+        src_label = "[nguon]"
     if effect:
         vw, vh = get_resolution(seq[0])   # các clip đã chuẩn hoá cùng độ phân giải
-        pre = (
+        pre += (
             f"[5:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
             f"crop={vw}:{vh},format=rgba[fx];"
-            f"[0:v][fx]overlay=0:0:shortest=0[srcfx];"
+            f"{src_label}[fx]overlay=0:0:shortest=0[srcfx];"
         )
         src_label = "[srcfx]"
 
@@ -621,7 +689,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         bw = min(iw + 2 * overscan_x, cw - bx)
         bh = min(ih + 2 * overscan_y, ch - by)
         # Phủ kín vùng (đã nới); ZOOM>1 thì phóng nội dung rồi cắt giữa về đúng vùng.
-        zw, zh = round(bw * ZOOM), round(bh * ZOOM)
+        zw, zh = round(bw * zoom), round(bh * zoom)
         noi_dung = (f"{src_label}scale={zw}:{zh}:force_original_aspect_ratio=increase,"
                     f"crop={bw}:{bh}")
         dat = f"pad={cw}:{ch}:{bx}:{by}:black[vid];"
@@ -676,7 +744,9 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         cmd = [
             "ffmpeg", "-y",
             "-stream_loop", "-1",                       # lặp video nền: không hết frame trước audio
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),   # 0: video ghép
+            # 0: video nguồn (một file, 🎞) hoặc danh sách clip ghép
+            *(["-i", str(nguon)] if nguon
+              else ["-f", "concat", "-safe", "0", "-i", str(concat_list)]),
             "-loop", "1", "-i", str(bg_path),    # 1: khung0 (nền) đã pre-scale
             "-loop", "1", "-i", str(top_path),   # 2: khung1+khung2 gộp, đã pre-scale
             "-loop", "1", "-i", str(mask_path),  # 3: mask bo góc đã pre-scale
@@ -712,6 +782,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log, progress=progress)
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
     for tmp_path in (concat_list, bg_path, top_path, mask_path):
+        if tmp_path is None:          # video nguồn: không có danh sách ghép
+            continue
         try:
             tmp_path.unlink(missing_ok=True)
         except OSError:
@@ -728,6 +800,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 "frame": frame.name, "bg": bg.name, "canvas": [cw, ch],
                 "inner": [int(ix), int(iy), int(iw), int(ih)],
                 "box": [int(v) for v in goc_box], "audio": audio_file.name,
+                "source_video": nguon.name if nguon else "",
             }, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception as e:
             log(f"[Cảnh báo] Không ghi được {goc_out.with_suffix('.json').name}: {e}")

@@ -1633,6 +1633,7 @@ _NUM_KEYS = {"chunk": int,
              "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "sang_giong": int,   # 🔆 sáng giọng (bớt ồm; EQ cả giọng mẫu lúc dựng prompt)
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
+             "ngang_nguon_zoom": int,   # 🎞 % phóng to video nguồn (video tải xuống)
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
 _TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
               "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",

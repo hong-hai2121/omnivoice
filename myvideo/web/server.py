@@ -130,6 +130,11 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 #   Mặc định 80 (user chốt sau khi nghe demo); đổi mức là bước ③ đọc
                 #   lại toàn bộ câu. Ô 🔊 Nghe thử khối ③ phát bản mẫu đã EQ theo mức.
                 sanggiong="80",
+                # • 🎵 TÔNG GIỌNG (bán cung) + 🔔 TIẾNG VANG (trường độ / cường độ) +
+                #   🧒 THIẾU NIÊN — mang từ myvoice sang 24/10/2026, cùng tên khoá bên
+                #   đó, cũng ở khối ③; áp lên audio tổng bước ③ (taogiong_srt.py
+                #   --pitch / --vang / --thieunien). Mặc định 0 = y như trước.
+                pitch="0.0", vang_truong_do="0", vang_cuong_do="0", thieu_nien="0",
                 # 🏷 Đóng logo / đè khung viền / nối outro của HỒ SƠ KÊNH đang
                 # chọn (kenh/<tên>/logo.png · khung.png · outro.mp4; logo + khung
                 # vẽ bằng myvideo/kenh_thietke.py) — mặc định tắt cả ba.
@@ -905,6 +910,11 @@ def _settings_from_form(form) -> dict:
         voice=g("voice") or "",
         # 🔆 Sáng giọng (khối ③): 0–100, mặc định 80; ô vắng (trang cũ còn mở) → 80.
         sanggiong=_clamp(g("sanggiong"), 0, 100, 80),
+        # 🎵🔔🧒 (khối ③, như myvoice): tông kẹp ±6 bán cung làm tròn 0,5; bộ lọc 0–100.
+        pitch=f"{hu.parse_pitch(g('pitch'), 0.0):.1f}",
+        vang_truong_do=_clamp(g("vang_truong_do"), 0, 100, 0),
+        vang_cuong_do=_clamp(g("vang_cuong_do"), 0, 100, 0),
+        thieu_nien=_clamp(g("thieu_nien"), 0, 100, 0),
         subchars=_clamp(g("subchars"), 10, 120, 50),
         kieusub=g("kieusub") or "hopbo",
         subfont=g("subfont") or "",

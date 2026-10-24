@@ -97,6 +97,10 @@ def main(argv=None) -> int:
     common = dict(
         effect=effect,
         ngang_speed=ts.get("ngang_speed", 1.0), ngang_source=ts.get("ngang_source"),
+        # 🎞 video tải xuống làm nguồn hình (24/10/2026) — run_tts tự tra manifest theo
+        # thư mục output để tìm video của tập.
+        ngang_tu_nguon=ts.get("ngang_tu_nguon", False),
+        ngang_nguon_zoom=ts.get("ngang_nguon_zoom", 120),
         ngang_out=out_dir / "YOUTUBE.mp4",
         pitch=ts.get("pitch", 0.0),               # tông giọng (bán cung) áp lên audio gốc
         fx=ts.get("fx"),                          # bộ lọc giọng (tiếng vang / thiếu niên)

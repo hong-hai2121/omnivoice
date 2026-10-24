@@ -90,6 +90,15 @@ SEO_DOCX   = SCRIPT_DIR / "seoYoutube.docx"           # SEO YouTube (Gemini) —
 CHINESE_DOCX = SCRIPT_DIR / "tiengTrung.docx"         # văn bản tiếng Trung (nguồn để dịch Gemini)
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"                    # nơi chứa seo_youtube_gemini.py
 DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải từ link
+# 24/10/2026: 🎞 LẤY VIDEO TẢI XUỐNG LÀM VIDEO NGUỒN cho video ngang (tuỳ chọn
+# ngang_tu_nguon) — thay vì ghép clip kho videongang/. Link Bilibili tải qua app
+# Bili23 về Downloads/<mã BV>.mp4 (cùng chỗ với myvideo — xem web/runners/
+# run_episode.py); file local dùng thẳng. Tiếng gốc chỉ TẮT lúc dựng video (file
+# tải về giữ nguyên: bước nhận diện + dịch vẫn nghe tiếng gốc trước đó).
+TAI_VE_DIR = Path.home() / "Downloads"
+BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
+BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".ts", ".m4v"}
 DRIVE_SCRIPT_FOLDER_ID = "1cDUrHiQmzyIK7a8rqY3pFspHsizaceei"  # thư mục Drive "kịch bản"
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
 EFFECT_FAV_FILE = BASE_DIR / "effect_favorites.json"  # danh sách hiệu ứng yêu thích (★)
@@ -204,6 +213,10 @@ OPTS_DEFAULTS = dict(
     # dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn).
     sang_giong=80,   # mặc định 80 — user chốt 23/10/2026 sau khi nghe demo các mức
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
+    # 24/10/2026: 🎞 video ngang lấy VIDEO TẢI XUỐNG của tập làm nguồn hình (tắt tiếng
+    # gốc lúc dựng, phóng to ngang_nguon_zoom % rồi cắt giữa, kéo thời lượng khớp
+    # giọng đọc) thay vì ghép clip videongang/. Mặc định tắt = ghép clip như cũ.
+    ngang_tu_nguon=False, ngang_nguon_zoom=120,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
     doc_from_subfolder=False,
@@ -316,6 +329,85 @@ def resolve_ngang_source(name: str, log=print):
         log(f"[video ngang] Thư mục con '{name}' không có .mp4 → dùng cả kho videongang/.")
         return None
     return sub
+
+
+def ten_tai_bilibili(src: str) -> str:
+    """Link Bilibili → tên file (không đuôi) sẽ tải về: mã BV/av; link rút gọn b23.tv
+    lấy phần đuôi. Cùng quy ước với myvideo/web/steps.py để hai bên dùng chung file."""
+    m = BILI_ID_RE.search(src or "")
+    if m:
+        return m.group(1)
+    duoi = re.sub(r"[^0-9A-Za-z]+", "",
+                  (src or "").rstrip("/").rsplit("/", 1)[-1].split("?")[0])
+    return f"b23_{duoi[:24]}" if duoi else ""
+
+
+def nguon_video_path(source: str):
+    """Nguồn của tập (link/file) → file VIDEO đã có trên máy, KHÔNG tải mới.
+
+    Trả (Path, "") khi có; (None, lý do) khi không: nguồn rỗng, file local là audio,
+    link Bilibili chưa tải (Downloads/<mã BV>.mp4 chưa có), link khác (yt-dlp chỉ
+    lấy mp3 nên không có hình)."""
+    src = (source or "").strip().strip('"').strip("'")
+    if not src:
+        return None, "tập không có nguồn"
+    if os.path.isfile(src):
+        p = Path(src)
+        if p.suffix.lower() in VIDEO_EXTS:
+            return p, ""
+        return None, f"file nguồn là audio ({p.name}), không có hình"
+    if BILI_LINK_RE.match(src):
+        ten = ten_tai_bilibili(src)
+        if not ten:
+            return None, f"không nhận ra mã BV/av trong link: {src}"
+        for ext in (".mp4", ".mkv", ".flv"):
+            p = TAI_VE_DIR / f"{ten}{ext}"
+            if p.is_file():
+                return p, ""
+        return None, f"chưa thấy {ten}.mp4 trong {TAI_VE_DIR} (chạy bước tải trước)"
+    if src.lower().startswith(("http://", "https://")):
+        return None, "link không phải Bilibili → chỉ tải được mp3, không có hình"
+    return None, f"nguồn không hợp lệ: {src}"
+
+
+def nguon_video_cua_tap(folder, episode=None):
+    """Thư mục tập → video nguồn đã tải (tra manifest tìm nguồn của tập).
+
+    Trả (Path, "") / (None, lý do). Khớp theo đường dẫn thư mục trước, rồi theo
+    số tập (episode truyền vào, hoặc số lấy từ tên thư mục)."""
+    folder = Path(folder)
+
+    def _key(p) -> str:
+        try:
+            return os.path.normcase(str(Path(p).resolve()))
+        except Exception:
+            return os.path.normcase(str(p))
+
+    key = _key(folder)
+    ep = str(episode).strip().zfill(2) if episode else (episode_of(folder.name) or "")
+    hits = []
+    for entry in load_manifest().values():
+        if not isinstance(entry, dict):
+            continue
+        f = entry.get("folder") or ""
+        if f and _key(f) == key:
+            hits.insert(0, entry)
+        elif ep and str(entry.get("episode", "")).strip().zfill(2) == ep:
+            hits.append(entry)
+    if not hits:
+        return None, f"không thấy tập {folder.name} trong manifest (không biết nguồn)"
+    return nguon_video_path(hits[0].get("source") or "")
+
+
+def _video_nguon_cho_ngang(explicit, folder):
+    """Video nguồn cho video ngang: đường dẫn truyền thẳng (runner web biết nguồn
+    của tập) nếu file còn; không thì tra manifest theo thư mục tập."""
+    if explicit:
+        p = Path(explicit)
+        if p.is_file():
+            return p, ""
+        logging.info(f"🎞 Video nguồn đã chỉ định không còn ({p.name}) → tra manifest.")
+    return nguon_video_cua_tap(folder)
 
 # ── BẢNG MÀU GIAO DIỆN (nền trắng) ───────────────────────────────────────────
 UI = dict(
@@ -1075,6 +1167,23 @@ FADE_OUT_SEC = 0.01
 
 # Cứ ngần này đoạn thì trả các khối VRAM đã giữ mà không dùng lại về cho driver.
 VRAM_CLEAN_EVERY = 20
+
+
+def load_omnivoice(device=None):
+    """Nạp OmniVoice fp16 lên thiết bị tốt nhất → (model, sample_rate).
+
+    MỘT chỗ nạp cho cả bài thật (run_tts, kể cả lượt nạp lại sau khi ASR kiểm
+    mất chữ), app Thử giọng (voice/thu_giong.py) và myvideo/taogiong_srt.py —
+    trước 24/10/2026 mỗi nơi tự gọi from_pretrained một kiểu (gộp theo yêu cầu:
+    code trùng hai bản thì giữ một bản dùng chung)."""
+    import torch
+    from omnivoice.models.omnivoice import OmniVoice
+    from omnivoice.utils.common import get_best_device
+    device = device or get_best_device()
+    logging.info(f"⏳ Đang tải model OmniVoice ({device})…")
+    model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device,
+                                      dtype=torch.float16)
+    return model, model.sampling_rate
 
 
 def _tra_vram(ly_do=""):
@@ -2188,7 +2297,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2297,10 +2406,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("Đang tải model...")
 
             device = get_best_device()
-            model = OmniVoice.from_pretrained(
-                "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
-            )
-            sr = model.sampling_rate
+            model, sr = load_omnivoice(device)
 
             for i, chunk in enumerate(chunks):
                 # Chờ nếu đang tạm dừng
@@ -2409,9 +2515,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     _mc.giai_phong()
                     status_var.set("Nạp lại OmniVoice để render lại...")
                     logging.info("↩ Nạp lại OmniVoice để render các đoạn lỗi...")
-                    model = OmniVoice.from_pretrained(
-                        "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16
-                    )
+                    model, _ = load_omnivoice(device)
                     for i in sorted(miss):
                         logging.info(f"  [{i:04d}] lỗi: {' | '.join(miss[i])}")
                         status_var.set(f"Render lại đoạn lỗi {i+1}/{total} "
@@ -2528,6 +2632,20 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 from video_khung import build_video
                 progress_var.set(0)
                 ngang_src_dir = resolve_ngang_source(ngang_source, log=logging.info)
+                # 🎞 Lấy video tải xuống làm video nguồn (24/10/2026): hình = chính
+                # video của tập (tiếng gốc TẮT lúc dựng — nhận diện/dịch đã xong trước
+                # đó), phóng to ngang_nguon_zoom % cắt giữa, kéo thời lượng khớp giọng
+                # đọc; không ghép clip videongang/. Không thấy video → ghép clip như cũ.
+                ngang_src_video = None
+                if ngang_tu_nguon:
+                    ngang_src_video, ly_do = _video_nguon_cho_ngang(
+                        ngang_source_video, output_path.parent)
+                    if ngang_src_video:
+                        logging.info(f"🎞 Video ngang dùng VIDEO NGUỒN đã tải: {ngang_src_video.name} "
+                                     f"(tắt tiếng gốc, phóng to {int(ngang_nguon_zoom or 100)}%).")
+                    else:
+                        logging.warning(f"⚠️ Bật 'lấy video tải xuống làm video nguồn' nhưng {ly_do} "
+                                        "→ ghép clip videongang/ như cũ.")
                 # 08/09/2026: bản dọc dựng từ VIDEO GỐC (trước khi lồng khung) → xuất
                 # thêm YOUTUBE_goc.mp4 ngay trong lượt dựng ngang (xem video_doc_khung).
                 goc_out = None
@@ -2537,7 +2655,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
                                         skip_existing=skip_video, output=ngang_out,
-                                        source_dir=ngang_src_dir, goc_out=goc_out)
+                                        source_dir=ngang_src_dir, goc_out=goc_out,
+                                        source_video=ngang_src_video,
+                                        source_zoom=float(ngang_nguon_zoom or 100) / 100.0)
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
@@ -3358,6 +3478,24 @@ class App(tk.Tk):
         self.btn_run_ngang = ttk.Button(video_row, text="▶ Dựng lại", width=11,
                                         command=lambda: self._rebuild_video("ngang"))
         self.btn_run_ngang.pack(side="right")
+
+        # 🎞 Lấy VIDEO TẢI XUỐNG của tập làm video nguồn (24/10/2026) — thay ghép clip
+        # videongang/: tắt tiếng gốc lúc dựng (sau khi đã nhận diện + dịch), phóng to
+        # N% cắt giữa (che logo/chữ mép hình), kéo thời lượng khớp giọng đọc.
+        nguon_row = ttk.Frame(sec_opt)
+        nguon_row.pack(anchor="w", fill="x", pady=(4, 0))
+        self.var_ngang_tu_nguon = tk.BooleanVar(
+            value=bool(self._opt_settings.get("ngang_tu_nguon", False)))
+        ttk.Checkbutton(nguon_row,
+                        text="🎞  Lấy video tải xuống làm video nguồn (thay ghép clip)",
+                        variable=self.var_ngang_tu_nguon).pack(side="left", padx=(26, 0))
+        ttk.Label(nguon_row, text="Phóng to:").pack(side="left", padx=(12, 2))
+        self.var_ngang_nguon_zoom = tk.StringVar(
+            value=str(self._parse_nguon_zoom(self._opt_settings.get("ngang_nguon_zoom"))))
+        ttk.Spinbox(nguon_row, from_=100, to=200, increment=5, width=5,
+                    textvariable=self.var_ngang_nguon_zoom).pack(side="left")
+        ttk.Label(nguon_row, text="% (cắt giữa, tắt tiếng gốc, kéo khớp giọng đọc)",
+                  style="Hint.TLabel").pack(side="left", padx=(4, 0))
 
         # ── Phụ đề cho video ngang (YouTube) — BẬT/TẮT được ──────────────────
         # Dùng lại video_gansub.py: Whisper nghe audio CỦA CHÍNH VIDEO để lấy mốc
@@ -5614,6 +5752,8 @@ class App(tk.Tk):
                 make_video=self.var_make_video.get(),
                 ngang_speed=self.var_ngang_speed.get(),
                 ngang_source=self.var_ngang_source.get(),
+                ngang_tu_nguon=self.var_ngang_tu_nguon.get(),
+                ngang_nguon_zoom=self._parse_nguon_zoom(self.var_ngang_nguon_zoom.get()),
                 effect=self._current_effect(),
                 make_video_doc=self.var_make_video_doc.get(),
                 doc_speed=self.var_doc_speed.get(),
@@ -6746,6 +6886,8 @@ class App(tk.Tk):
             doc_speed=doc_speed,
             doc_percent=self._parse_percent(self.var_doc_percent, 100),
             ngang_speed=ngang_speed, ngang_source=self.var_ngang_source.get(),
+            ngang_tu_nguon=self.var_ngang_tu_nguon.get(),   # 🎞 video tải xuống làm nguồn
+            ngang_nguon_zoom=self._parse_nguon_zoom(self.var_ngang_nguon_zoom.get()),
             doc_from_ngang=self.var_doc_from_ngang.get(),
             doc_from_subfolder=self.var_doc_from_subfolder.get(),
             doc_no_effect=self.var_doc_no_effect.get(),
@@ -7019,6 +7161,11 @@ class App(tk.Tk):
             ts["doc_from_ngang"], ts["doc_no_effect"],  # lại audio/video đã có, chỉ
             doc_from_subfolder=ts.get("doc_from_subfolder", False),
             ngang_source=ts.get("ngang_source"),   # nguồn clip video ngang theo chủ đề
+            # 🎞 Video tải xuống làm nguồn hình (24/10/2026); runner web đưa sẵn đường
+            # dẫn (ngang_source_video), thiếu thì run_tts tự tra manifest theo thư mục.
+            ngang_tu_nguon=ts.get("ngang_tu_nguon", False),
+            ngang_nguon_zoom=ts.get("ngang_nguon_zoom", 120),
+            ngang_source_video=ts.get("ngang_source_video"),
             pitch=ts.get("pitch", 0.0),            # tông giọng (bán cung) áp lên audio gốc
             fx=ts.get("fx"),                       # bộ lọc giọng (tiếng vang / thiếu niên)
             # Bản tự động: đặt tên riêng cho các video kết quả trong thư mục tập.
@@ -8331,6 +8478,8 @@ class App(tk.Tk):
                     "tiktok_music_loop": load_opt_settings().get("tiktok_music_loop", False),
                     "doc_from_subfolder": doc_from_subfolder,   # ghép video dọc từ thư mục con videodoc
                     "ngang_source": ngang_source,               # nguồn clip video ngang theo chủ đề
+                    "ngang_tu_nguon": self.var_ngang_tu_nguon.get(),   # 🎞 video tải xuống làm nguồn
+                    "ngang_nguon_zoom": self._parse_nguon_zoom(self.var_ngang_nguon_zoom.get()),
                     "pitch": pitch,                             # tông giọng (bán cung) áp lên audio gốc
                     "fx": fx,                                   # bộ lọc giọng (tiếng vang / thiếu niên)
                     # Quy tắc đặt tên 3 video (giống bản tự động).
@@ -8354,6 +8503,15 @@ class App(tk.Tk):
                     "make_sub_doc": self.var_make_sub_doc.get()},
             daemon=True,
         ).start()
+
+    @staticmethod
+    def _parse_nguon_zoom(value, default: int = 120) -> int:
+        """% phóng to video nguồn (🎞) → int kẹp [100, 200]; rỗng/lỗi → mặc định 120."""
+        try:
+            v = int(float(str(value).replace(",", ".").strip()))
+        except (TypeError, ValueError):
+            return default
+        return max(100, min(v, 200))
 
     @staticmethod
     def _parse_percent(var, default: int = 50) -> int:
@@ -8629,6 +8787,8 @@ class App(tk.Tk):
                 video_only=True, reuse=True, effect=effect_path,
                 make_video=(kind == "ngang"), ngang_speed=self._parse_speed(self.var_ngang_speed),
                 ngang_source=self.var_ngang_source.get(),
+                ngang_tu_nguon=self.var_ngang_tu_nguon.get(),   # 🎞 video tải xuống làm nguồn
+                ngang_nguon_zoom=self._parse_nguon_zoom(self.var_ngang_nguon_zoom.get()),
                 ngang_out=ngang_out,
                 make_video_doc=(kind == "doc"),
                 doc_speed=self._parse_speed(self.var_doc_speed),

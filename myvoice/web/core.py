@@ -1441,6 +1441,10 @@ def tts_settings() -> tuple[dict | None, str]:
         doc_percent=_i(opts.get("doc_percent"), 100, 1, 100),
         ngang_speed=_f(opts.get("ngang_speed"), 1.0, 0.5, 2.0),
         ngang_source=opts.get("ngang_source") or NGANG_SOURCE_ALL,
+        # 🎞 Video ngang lấy VIDEO TẢI XUỐNG của tập làm nguồn hình (24/10/2026): tắt
+        # tiếng gốc lúc dựng, phóng to % rồi cắt giữa; tắt = ghép clip videongang/.
+        ngang_tu_nguon=bool(opts.get("ngang_tu_nguon")),
+        ngang_nguon_zoom=_i(opts.get("ngang_nguon_zoom"), 120, 100, 200),
         doc_from_ngang=bool(opts.get("doc_from_ngang")),
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),

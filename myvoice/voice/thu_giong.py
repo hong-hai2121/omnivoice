@@ -50,6 +50,7 @@ import hieuung_giong as hu         # noqa: E402  bộ lọc giọng + lõi đổ
 
 import re
 import json
+import logging
 import queue
 import shutil
 import subprocess
@@ -197,6 +198,24 @@ def default_fx() -> dict:
         return hu.fx_from(None)
 
 
+class _LogTap(logging.Handler):
+    """Đưa logging.info/warning của các hàm DÙNG CHUNG với bài thật (nạp model,
+    dựng prompt, cân mức, chuẩn độ to, trả VRAM — amain_taogiong_gui) vào ô Nhật
+    ký của app: nghe thử thấy đủ diễn biến y như bài thật."""
+
+    def __init__(self, q):
+        super().__init__(logging.INFO)
+        self._q = q
+
+    def emit(self, record):
+        try:
+            lv = ("err" if record.levelno >= logging.ERROR
+                  else "warn" if record.levelno >= logging.WARNING else "info")
+            self._q.put(("log", (lv, record.getMessage())))
+        except Exception:
+            pass
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -212,6 +231,8 @@ class App:
         self._model = None          # nạp 1 lần, dùng lại
         self._sr = None
         self.q = queue.Queue()      # (kind, payload) từ thread nền
+        logging.getLogger().addHandler(_LogTap(self.q))   # log hàm dùng chung → Nhật ký
+        logging.getLogger().setLevel(logging.INFO)
 
         self._build_styles()
         self._build_ui()
@@ -469,55 +490,29 @@ class App:
         """Nạp model OmniVoice 1 lần (lần đầu sẽ chậm), giữ lại cho các lượt sau."""
         if self._model is not None:
             return
-        import torch
-        from omnivoice.models.omnivoice import OmniVoice
-        from omnivoice.utils.common import get_best_device
-        device = get_best_device()
-        self._log(f"📦 Đang tải model OmniVoice (device={device})... lần đầu hơi lâu.")
+        self._log("📦 Đang tải model OmniVoice... lần đầu hơi lâu.")
         self._set_status("Đang tải model...")
-        self._model = OmniVoice.from_pretrained(
-            "k2-fsa/OmniVoice", device_map=device, dtype=torch.float16)
-        self._sr = self._model.sampling_rate
+        self._model, self._sr = tts.load_omnivoice()   # một chỗ nạp chung với bài thật
         self._log("✅ Đã tải model.", "ok")
 
-    @staticmethod
-    def _don_vram():
-        """gc + empty_cache. Chỉ gọi khi đã bỏ HẾT tham chiếu tới thứ cần xả —
-        dọn lúc model còn sống thì torch chẳng trả được khối nào cho driver."""
-        import gc
-        gc.collect()
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-
+    # (_don_vram / _xa_whisper_con / _nha_model trước đây tự viết lại gc +
+    #  empty_cache y như amain; 24/10/2026 gộp về bản dùng chung _tra_vram /
+    #  _free_asr / _do_omnivoice — log của chúng vào ô Nhật ký qua _LogTap.)
     def _xa_whisper_con(self):
-        """Xả Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu (~1.6 GB fp16).
-
-        Từ khi dùng chung _generate_chunk, Whisper chỉ vào VRAM ở LẦN ĐẦU gặp
-        một giọng mẫu (lúc dựng .prompt.pt); các lần sau nạp thẳng file .pt nên
-        không đụng tới nó. _voice_prompt cũng tự xả ngay sau khi dựng — hàm này
-        giữ lại làm lưới, phòng lần đầu đó và các bản prompt hỏng phải dựng lại.
-        Tham chiếu duy nhất nằm ở thuộc tính này nên gán None là chết hẳn.
-        """
-        if getattr(self._model, "_asr_pipe", None) is None:
-            return
-        self._model._asr_pipe = None
-        self._don_vram()
-        self._log("🧹 Đã xả Whisper phiên âm giọng mẫu khỏi VRAM (~1.6 GB).")
+        """Xả Whisper mà OmniVoice tự nạp để phiên âm giọng mẫu (~1.6 GB) — bản
+        dùng chung tts._free_asr: tự trả VRAM và ghi log. Chỉ là lưới dự phòng:
+        từ khi dùng chung _voice_prompt, dựng prompt xong là đã xả ngay."""
+        if self._model is not None:
+            tts._free_asr(self._model)
 
     def _nha_model(self):
         """Nhả hẳn OmniVoice khỏi VRAM (đóng cửa sổ). Bấm tạo lại thì tự nạp lại.
-
-        Bỏ tham chiếu TRƯỚC (self._model = None) rồi mới dọn — làm ngược thứ tự
-        thì trọng số vẫn còn sống, dọn xong không trả được gì cho driver.
-        """
+        Dùng chung tts._do_omnivoice (bỏ tham chiếu TRƯỚC) rồi tts._tra_vram (dọn
+        SAU) — ngược thứ tự thì trọng số còn sống, dọn chẳng trả được gì."""
         if self._model is None:
             return
-        self._xa_whisper_con()
-        self._model = None
-        self._don_vram()
+        self._model = tts._do_omnivoice(self._model, "đóng cửa sổ Thử giọng")
+        tts._tra_vram()
 
     def _synthesize(self, text, voice_path, sang=0):
         """Sinh audio clone cho 1 giọng; ghép các đoạn nếu kịch bản dài.

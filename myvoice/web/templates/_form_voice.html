@@ -58,6 +58,7 @@
 
 <datalist id="speeds">{% for s in ["1.0","1.05","1.1","1.15","1.2","1.25"] %}<option value="{{ s }}">{% endfor %}</datalist>
 <datalist id="percents">{% for p in ["25","30","40","50","60","70","75","80","90","100"] %}<option value="{{ p }}">{% endfor %}</datalist>
+<datalist id="nguon_zooms">{% for z in ["100","110","120","130","150"] %}<option value="{{ z }}">{% endfor %}</datalist>
 <datalist id="pitches">{% for p in ["-3","-2","-1","0","1","1.5","2","2.5","3","4"] %}<option value="{{ p }}">{% endfor %}</datalist>
 
 {# id để ô "Số tập" đặt bên khối Thumbnail vẫn gửi kèm được (xem
@@ -187,6 +188,22 @@
         </select>
       </label>
     </div>
+    {# 🎞 Lấy VIDEO TẢI XUỐNG của tập làm video nguồn (24/10/2026) thay ghép clip
+       videongang/: file tải về giữ nguyên tiếng cho bước nhận diện + dịch; tới lúc
+       dựng video mới tắt tiếng gốc, phóng to N% cắt giữa, kéo thời lượng khớp giọng. #}
+    <div class="chks">
+      {{ chk('ngang_tu_nguon', '🎞 Lấy video tải xuống làm video nguồn (thay ghép clip)', opts) }}
+    </div>
+    <div class="grid">
+      <label class="field">
+        <span>🔎 Phóng to video nguồn (%)</span>
+        <input name="ngang_nguon_zoom" value="{{ opts.ngang_nguon_zoom or 120 }}" list="nguon_zooms" inputmode="numeric"
+               title="Phóng to video nguồn bấy nhiêu % rồi cắt giữa (120 = to gấp 1,2 lần) để che logo/chữ ở mép hình. 100 = vừa khít khung.">
+      </label>
+    </div>
+    <p class="hint">Chỉ có tác dụng khi tập có video tải về (link Bilibili → Downloads/&lt;mã BV&gt;.mp4, hoặc file video chọn từ máy).
+      Tiếng gốc chỉ tắt lúc dựng video — bước nhận diện và dịch vẫn nghe tiếng gốc trước đó. Hình được kéo/nén cho vừa độ dài
+      giọng đọc (kẹp 0,5–2×; lệch hơn thì lặp/cắt). Không có video → ghép clip theo “Nguồn clip ngang” như cũ.</p>
     <div class="actions"><button name="action" value="ngang">▶ Dựng lại video ngang</button></div>
   </div>
 

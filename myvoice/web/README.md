@@ -45,6 +45,19 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🎙 Nhận diện** | Nhận diện | ① nhận diện link → bảng tập tick chọn → các nút hàng loạt ②③④⑤ |
 | **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
+
+**🎞 Lấy video tải xuống làm video nguồn** (khối ④ Video ngang, 24/10/2026; khoá
+`ngang_tu_nguon` + `ngang_nguon_zoom` trong `taogiong_options.json`, GUI có cùng ô):
+thay vì ghép clip `videongang/`, video ngang lấy hình từ CHÍNH video của tập — link
+Bilibili đã tải về `Downloads/<mã BV>.mp4` (bước ⬇ tải / nhận diện), hoặc file video
+chọn từ máy. File tải về **không bị sửa**: bước nhận diện + dịch vẫn nghe tiếng gốc,
+tới lúc dựng video (bước `tts`) tiếng gốc mới bị tắt (không map audio), hình phóng to
+N % (mặc định 120) rồi cắt giữa để che logo/chữ ở mép, và kéo/nén thời lượng cho khớp
+giọng đọc (kẹp 0,5–2×, lệch hơn thì lặp/cắt). Không có video (link yt-dlp chỉ mp3,
+chưa tải…) → ghi cảnh báo rồi ghép clip theo “Nguồn clip ngang” như cũ. Bản dọc
+(`doc_khung`) dựng từ `YOUTUBE_goc.mp4` nên cũng lấy hình này. Runner `run_episode.py`
+đưa thẳng đường dẫn video (`ngang_source_video`), còn nút ▶ Dựng lại / GUI tra
+`batch_manifest.json` theo thư mục tập (`gui.nguon_video_cua_tap`).
 | **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
 | **📤 Đăng bài** (`/dangbai`) | — | Hàng đợi + **đúng hai khối "Đăng YouTube" và "Đăng Facebook" của Home** cho lúc chỉ ngồi canh việc đăng |
 

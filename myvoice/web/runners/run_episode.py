@@ -23,7 +23,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 import subprocess
 import sys
 import traceback
@@ -75,8 +74,10 @@ GIU_MAN_HINH = {"recognize", "translate", "seo"}
 # Downloads/<mã BV>.mp4, TRÙNG chỗ với bên myvideo: video nào bên kia tải rồi
 # thì bên này nhặt lại luôn. Link KHÔNG phải bilibili vẫn đi yt-dlp lấy mp3 như cũ.
 TAIBILI_SCRIPT = _BASE_DIR.parent / "myvideo" / "video_taibilibili.py"
-_BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
-_BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+# Mẫu link/mã + tên file tải về đặt ở amain_taogiong_gui (24/10/2026): bước tts tra
+# lại đúng file này khi bật 🎞 "lấy video tải xuống làm video nguồn".
+_BILI_LINK_RE = gui.BILI_LINK_RE
+_BILI_ID_RE = gui.BILI_ID_RE
 # Link tải lỗi NOTE vào đây (giờ · tập · link · lý do) — log web chỉ nằm RAM,
 # chạy đêm hỏng link nào sáng ra còn tra lại được.
 LINK_LOI_FILE = _BASE_DIR / "kịch_bản" / "link_tai_loi.txt"
@@ -99,11 +100,7 @@ def note_link_loi(src: str, ly_do: str, episode: str = "") -> None:
 def _ten_tai_bilibili(src: str) -> str:
     """Link → tên file sẽ tải về (mã BV/av; link rút gọn b23.tv lấy mã rút gọn).
     Cùng quy ước với myvideo/web/steps.py để hai bên dùng chung một file."""
-    m = _BILI_ID_RE.search(src or "")
-    if m:
-        return m.group(1)
-    duoi = re.sub(r"[^0-9A-Za-z]+", "", src.rstrip("/").rsplit("/", 1)[-1].split("?")[0])
-    return f"b23_{duoi[:24]}" if duoi else ""
+    return gui.ten_tai_bilibili(src)
 
 
 def _tai_video_bilibili(src: str) -> tuple[str, str]:
@@ -404,11 +401,22 @@ def step_thumbnail(app, folder: Path, episode: str, state: dict) -> int:
     return 0
 
 
-def step_tts(app, folder: Path, episode: str, state: dict) -> int:
+def step_tts(app, folder: Path, episode: str, state: dict, source: str = "") -> int:
     ts = state.get("tts")
     if not ts:
         logging.error("❌ Thiếu cài đặt tạo giọng (--tts-json).")
         return ERROR
+    if ts.get("ngang_tu_nguon") and ts.get("make_video") and source:
+        # 🎞 Video tải xuống làm nguồn hình (24/10/2026): nguồn của tập biết ngay tại
+        # đây (--source) → đưa thẳng đường dẫn cho run_tts. Không có video (link
+        # yt-dlp chỉ mp3, file chưa tải) → báo rồi run_tts ghép clip như cũ. Tiếng
+        # gốc KHÔNG đụng tới file tải về: nhận diện + dịch đã dùng xong trước đó.
+        nguon, ly_do = gui.nguon_video_path(source)
+        if nguon:
+            ts = dict(ts, ngang_source_video=str(nguon))
+            logging.info(f"🎞 Video nguồn cho video ngang: {nguon}")
+        else:
+            logging.warning(f"⚠️ Không có video nguồn ({ly_do}) → video ngang ghép clip như cũ.")
     marker = folder / core.DOC_CHO_SEO
     seo_ok = app._seo_docx_valid(folder / "seoYoutube.docx")
     hoan = []                     # phần để dành tới khi có SEO
@@ -552,7 +560,7 @@ def main(argv=None) -> int:
                 elif name == "thumbnail":
                     code = step_thumbnail(app, folder, episode, state)
                 elif name == "tts":
-                    code = step_tts(app, folder, episode, state)
+                    code = step_tts(app, folder, episode, state, args.source.strip())
             # Ghi tiến độ vào manifest sau MỖI bước: web tải lại trang là thấy ngay,
             # và lỡ mất điện giữa chừng vẫn biết tập này đã tới đâu.
             if args.source.strip():
