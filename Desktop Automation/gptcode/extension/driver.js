@@ -78,6 +78,14 @@ export class TabDriver {
   async dom(action, data = {}, object = false) {
     return this.evaluate(this.current, action, data, object);
   }
+  // A trusted click for controls that ignore synthetic events; x / y are CSS pixels of the current frame.
+  async clickAt(x, y) {
+    const session = this.current?.sessionId || "";
+    for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+      await this.command("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left",
+        buttons: type === "mousePressed" ? 1 : 0, clickCount: type === "mouseMoved" ? 0 : 1 }, session);
+    }
+  }
   async publicationState() {
     // A redirect may destroy the upload iframe; inspect the new top-level document first.
     const content = await this.evaluate(null, 'contentPosts');

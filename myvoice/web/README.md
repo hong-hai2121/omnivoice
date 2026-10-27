@@ -153,8 +153,8 @@ song (nếu chung thì Page phải đợi video YouTube tải xong mới tới l
 cùng lúc sẽ cùng đọc “giờ lên lịch xa nhất” rồi cùng xếp vào ĐÚNG MỘT khung giờ.
 
 Ô 📘 đọc lại mỗi lần dùng nên bật/tắt giữa mẻ đang chạy là tập kế tiếp theo ngay.
-`fb_runner` cũng được tính vào `heavy_busy` của 🌙/⏻ và vào `upload_busy` của
-`/api/trangthai` — đang tải video lên Page mà máy ngủ là hỏng.
+`fb_runner` cũng được tính vào `heavy_busy` của ô ⏻ và vào `upload_busy` của
+`/api/trangthai` — đang tải video lên Page mà tắt máy là hỏng.
 
 Ngày dự kiến tính bằng **đúng hàm** mà lúc chạy thật sẽ dùng (`plan_slots` của
 script, khung bận suy từ file qua `known_busy`) — bảng nói một đằng Facebook nhận
@@ -171,7 +171,7 @@ câu dính đuôi), nên muốn đổi bộ hashtag thì sửa ở SEO như mọ
 Cả ba nút chạy `myvoice/FACEBOOK/dang_video_facebook.py` trong **hàng đợi đăng**
 nên kế hoạch/tiến trình hiện ở nhật ký hàng đợi đăng, trang không tải lại. Hai
 việc 🔍/🔄 xếp hàng dạng **light** (xem `JobRunner.heavy_busy`) nên KHÔNG kích
-hoạt 🌙/⏻ — bấm xem kế hoạch xong máy không tự ngủ sau 3 phút.
+hoạt ô ⏻ — bấm xem kế hoạch xong máy không tự tắt sau 5 phút.
 
 Trang không gọi Graph API lúc render (chậm theo đường truyền): danh sách tập đã
 có trên Page đọc từ `FACEBOOK/page_cache.json` mà script ghi ra mỗi lần chạy —
@@ -259,22 +259,24 @@ script từ chối đăng đồng thời **không ghi đè** `page_cache.json`. 
 thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiếp là đăng trùng lên
 Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
-**🌙 Xong hết thì cho máy ngủ** — ô tick ngay đầu khối *Hàng đợi*, **mặc định
-TẮT mỗi lần mở server** (tick tay trên web hoặc cửa sổ desktop; phải từng thấy
-hàng đợi bận rồi mới đếm ngủ — tick suông lúc chưa chạy gì thì không úp máy). Chạy xong CẢ
-hàng đợi chính lẫn hàng đợi đăng YouTube, rảnh thêm 3 phút thì máy ngủ; có việc
-mới chen vào là huỷ đếm; ngủ xong tự bỏ tick (một lần duy nhất). Bỏ tick là huỷ,
-kể cả lúc đang đếm ngược. Ngủ chứ không tắt máy: sáng chạm chuột là server, hàng
-đợi và các phiên đăng nhập còn nguyên.
+**⏻ Xong hết thì tắt máy** — ô tick ngay đầu khối *Hàng đợi*, **mặc định TẮT
+mỗi lần mở server** (tick tay trên web hoặc cửa sổ desktop `chay.py` — ô bên đó là
+công tắc từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm — tick
+suông lúc chưa chạy gì thì không tắt máy). Chạy xong CẢ hàng đợi chính lẫn hàng đợi
+đăng YouTube/Facebook, rảnh thêm `SHUTDOWN_DELAY_MIN` (5) phút thì phát
+`shutdown /s /f /t 0`; có việc mới chen vào là huỷ đếm; hết giờ tự bỏ tick (một lần
+duy nhất). Bộ đếm nằm TRONG server nên bỏ tick là huỷ, kể cả lúc đang đếm ngược —
+không cần `shutdown /a`. Trước khi đếm còn tập dựng xong CHƯA đăng thì ghi cảnh báo
+vào nhật ký đăng (chỉ báo, không tự đăng).
 
-Code ở `power.py`, nhưng **lệnh ngủ + số phút chờ nằm bên GUI**
-(`suspend_computer` / `SLEEP_DELAY_MIN` trong `amain_taogiong_gui.py`) — ô 🌙 bên
-GUI và ô 🌙 trên web phải cư xử y hệt nhau. Máy nào bật sẵn ngủ đông có thể vào
-hibernate thay vì sleep — muốn ngủ thật thì `powercfg -h off`.
+Code ở `power.py`, nhưng **số phút chờ nằm bên GUI** (`SHUTDOWN_DELAY_MIN` trong
+`amain_taogiong_gui.py`) — ô ⏻ bên GUI và ô ⏻ trên web cùng một con số. Chế độ 🌙
+“cho máy ngủ” đã bỏ 26/10/2026 ở cả web, `chay.py` lẫn GUI — user chỉ giữ tắt máy,
+đừng thêm lại.
 
-Không port sang web: ô “⏻ xong thì TẮT MÁY” (web chỉ cho ngủ, không tắt máy bạn)
-và “⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Hai tuỳ chọn đó vẫn còn
-nguyên bên GUI và không bị trang web ghi đè.
+Không port sang web: ô “⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Ô ⏻
+của GUI ghi ra `taogiong_pipeline.json`, còn ô ⏻ của web chỉ nhớ trong bộ nhớ
+server — trang web không ghi đè khoá `shutdown` của GUI.
 
 ## Cấu trúc
 
@@ -283,7 +285,7 @@ web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
   jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
-  power.py       ô “🌙 xong hết thì cho máy ngủ” — luồng nền canh hai hàng đợi
+  power.py       ô “⏻ xong hết thì tắt máy” — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/
     run_episode.py    chạy các bước của một tập

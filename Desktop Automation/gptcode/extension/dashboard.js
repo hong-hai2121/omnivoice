@@ -1,4 +1,4 @@
-import { importQueue, isTikTok, episodeKey, rowKey, mergeScan, pruneMissingFolders, syncStatuses, videoKind, switchVariants, statusGroup, queueSkipReason, NO_VIDEO, TIKTOK_UPLOAD_URL } from "./model.js";
+import { importQueue, isTikTok, episodeKey, rowKey, mergeScan, pruneMissingFolders, syncStatuses, videoKind, switchVariants, statusGroup, queueSkipReason, dropPosted, formatDuration, videoDuration, NO_VIDEO, TIKTOK_UPLOAD_URL, TIKTOK_MAX_SECONDS } from "./model.js";
 import { syncSchedule, episodeNumber } from "./schedule.js";
 import { applyPostList, postAnchors } from "./posts.js";
 
@@ -15,6 +15,7 @@ let rows = [], selected = "", busy = false, selectors = {};
 let checkedIds = [];
 let scanBusy = false, variantBusy = false, initialized = false, ignoredFolders = [];
 let scheduleSource = null, tiktokList = null;
+// Full by default; the scanner swaps in the half video on its own when the Full file is over an hour.
 let scanSettings = { auto: true, kind: "dai", hashtags: "#truyenaudio #truyenfull #audio #fyp" };
 let saveChain = Promise.resolve();
 // Rows left out of the last publish queue (no video, already on TikTok); shown above every log update of that run.
@@ -46,18 +47,27 @@ function setBusy(value) {
   for (const id of ["import", "add", "inspect", "tab", "schedule", "publish", "select-all", "clear-selection"]) $(id).disabled = locked;
   $("repost").disabled = locked || !$("publish").checked;
   for (const id of ["import", "add"]) $(id).disabled = locked || scanBusy;
-  // Scripts still waiting for their video stay selectable (variants, review) but never enter a run.
+  // Scripts still waiting for their video (or holding a file over 60 minutes) stay selectable
+  // (variants, review) but never enter a run.
   const checked = rows.filter(row => checkedIds.includes(row.id));
-  const runnable = checked.filter(row => row.video && statusGroup(row) !== "novideo");
-  const reason = value ? "Đang xử lý video" : variantBusy ? "Đang đổi phiên bản video" : checkedIds.length === 0 ? "Chưa chọn video"
-    : !runnable.length ? "Dòng đã chọn chưa có video; dựng video xong bấm Cập nhật kịch bản"
+  const runnable = checked.filter(row => !queueSkipReason(row, { repost: true }));
+  // The reason names the panel's own list: TikTok's "Chọn video" box is not what is missing.
+  const reason = value ? "Đang xử lý video" : variantBusy ? "Đang đổi phiên bản video"
+    : checkedIds.length === 0 ? (rows.length ? "Chưa tích chọn video nào trong danh sách bên dưới: tích ô vuông đầu dòng video cần đăng rồi bấm Nạp & điền."
+      : "Danh sách trống: bấm Cập nhật kịch bản hoặc Thêm dòng trước.")
+    : !runnable.length ? (checked.length === 1 && checked[0].video ? queueSkipReason(checked[0], { repost: true }) : "Dòng đã chọn chưa có video; dựng video xong bấm Cập nhật kịch bản")
     : checkedIds.length > 1 && !$("publish").checked ? `Đang chọn ${checkedIds.length} video; bật Bấm Đăng / Lên lịch để chạy hàng đợi` : "";
   for (const id of ["prepare", "fill"]) { $(id).disabled = !!reason; $(id).title = reason; }
+  $("action-state").classList.toggle("blocked", !!reason);
   $("fill").disabled ||= checkedIds.length !== 1;
   $("check-posts").disabled = locked || !checkedIds.length;
-  const skipped = checked.length - runnable.length;
+  const tooLong = checked.filter(row => videoDuration(row) > TIKTOK_MAX_SECONDS).length;
+  const skipped = checked.length - runnable.length - tooLong;
+  // Rows TikTok already lists run only with "Cho phép đăng lại"; otherwise the queue skips them.
+  const posted = runnable.filter(row => queueSkipReason(row, { repost: $("repost").checked })).length;
+  const skippedText = [posted ? `${posted} đã đăng / lên lịch` : "", skipped ? `${skipped} chưa có video` : "", tooLong ? `${tooLong} quá 60 phút` : ""].filter(Boolean).join(", ");
   $("action-state").textContent = reason || (checkedIds.length > 1
-    ? `Sẵn sàng chạy ${runnable.length} video` + (skipped ? ` · bỏ qua ${skipped} chưa có video` : "")
+    ? `Sẵn sàng chạy ${runnable.length - posted} video` + (skippedText ? ` · bỏ qua ${skippedText}` : "")
     : `Sẵn sàng: ${rows.find(row => row.id === checkedIds[0])?.tieu_de || "video đã chọn"}`);
   for (const id of ["reviewed", "variant-half", "variant-full", "variant-short"]) $(id).disabled = value || scanBusy || checkedIds.length === 0;
   $("stop").disabled = !value;
@@ -105,8 +115,16 @@ function render() {
     if (row.thu_muc) title.placeholder = row.thu_muc.split(/[\\/]/).at(-1);
     cell().append(episode, title, field("hashtag"));
     const variant = document.createElement("select"); variant.className = "video-select"; variant.setAttribute("aria-label", "Phiên bản video");
-    for (const [value, title] of [["dai", "Full"], ["nua", "Nửa video"], ["ngan", "Short"]]) variant.add(new Option(title, value));
     const kind = videoKind(row);
+    for (const [value, title] of [["dai", "Full"], ["nua", "Nửa video"], ["ngan", "Short"]]) {
+      // Each option shows its length; a file over 60 minutes is named but cannot be chosen.
+      const seconds = row.thoi_luong?.[value], tooLong = seconds > TIKTOK_MAX_SECONDS;
+      const detail = Number.isFinite(seconds) ? ` (${formatDuration(seconds)}${tooLong ? " · quá 60 phút" : ""})`
+        : Object.keys(row.variants || {}).length && !row.variants[value] ? " (chưa có)" : "";
+      const option = new Option(title + detail, value);
+      option.disabled = tooLong && kind !== value;
+      variant.add(option);
+    }
     if (!kind) variant.add(new Option(row.video ? "File tùy chọn" : "Chưa có video", ""));
     variant.value = kind;
     variant.addEventListener("change", () => changeVariant(variant.value, [row.id]).catch(showError));
@@ -160,9 +178,12 @@ async function refreshTabs() {
 function progress(value, restored = false) {
   if (!value) return;
   const history = restored ? `Lần chạy trước · bản ${value.version || "không rõ"}` : "";
-  $("operation-error").hidden = value.status !== "error";
-  $("operation-error").textContent = value.status === "error" ? [history, value.log.at(-1)].filter(Boolean).join("\n") : "";
-  $("state").textContent = (restored ? "Lần chạy trước: " : "") + (names[value.status] || value.status);
+  // A queue summary (no row id) lists every skipped video; a single failure shows its last line.
+  const failed = value.failed || [];
+  const alert = value.status === "error" || failed.length ? [history, ...(value.queue ? value.log : [value.log.at(-1)])].filter(Boolean).join("\n") : "";
+  $("operation-error").hidden = !alert;
+  $("operation-error").textContent = alert;
+  $("state").textContent = (restored ? "Lần chạy trước: " : "") + (names[value.status] || value.status) + (failed.length ? ` · bỏ qua ${failed.length} video lỗi` : "");
   $("log").textContent = [history, restored ? "" : queueNote, ...value.log].filter(Boolean).join("\n");
   $("log").scrollTop = $("log").scrollHeight;
   const row = rows.find(item => item.id === value.rowId);
@@ -194,7 +215,13 @@ async function execute(type) {
         if (reason) skipped.push(`${item.tieu_de || item.thu_muc?.split(/[\\/]/).at(-1) || item.video || "(dòng trống)"}: ${reason}`);
         return !reason;
       });
-      if (!request.rows.length) throw new Error("Không có video nào chạy được:\n" + skipped.join("\n"));
+      if (!request.rows.length) {
+        // Everything selected is already posted, scheduled or still without its video: nothing goes to TikTok.
+        queueNote = `Bỏ qua ${skipped.length} dòng, không còn video để chạy:\n` + skipped.join("\n");
+        $("state").textContent = "Không có video để chạy";
+        $("log").textContent += "\n" + queueNote;
+        return;
+      }
       request.row = request.rows[0];
       if (skipped.length) {
         queueNote = `Bỏ qua ${skipped.length} dòng, chạy ${request.rows.length} video:\n` + skipped.join("\n");
@@ -292,6 +319,20 @@ async function judgeRows(targets) {
     submissions[key] = { ...receipt, state: "success", postEvidence: row.postEvidence };
     update.submissions = submissions;
   }
+  // The list read may stop before an older episode (virtualized table, newest posts only).
+  // A success receipt then keeps its verdict instead of the row dropping back to "chưa thấy".
+  for (const row of targets) {
+    const receipt = row.video && submissions[episodeKey(row.video) || row.video.toLowerCase()];
+    if (judged.verdicts[row.id] !== "unknown" || receipt?.state !== "success" || statusGroup(row) === "done") continue;
+    const scheduled = receipt.postEvidence ? receipt.postEvidence.kind === "scheduled" : receipt.schedule === true;
+    row.trang_thai = scheduled ? "đã lên lịch" : "đã đăng";
+    row.ghi_chu = `Biên nhận ${receipt.at ? new Date(receipt.at).toLocaleString("vi-VN") : "đã lưu"}: `
+      + ([receipt.postEvidence?.stage, receipt.postEvidence?.url].filter(Boolean).join(" · ") || "đã bấm Đăng / Lên lịch") + " · TikTok chưa đọc tới tập này";
+    row.statusOrigin = "receipt";
+    if (!row.gio_dang && receipt.date) row.gio_dang = receipt.date;
+    rowResults[row.id] = { trang_thai: row.trang_thai, ghi_chu: row.ghi_chu, statusOrigin: row.statusOrigin };
+    update.rowResults = rowResults; judged.changedIds.push(row.id);
+  }
   if (Object.keys(update).length) await chrome.storage.local.set(update);
   return judged;
 }
@@ -304,10 +345,11 @@ async function changeVariant(kind, ids = checkedIds) {
     await persist();
     const name = ({ dai: "full", nua: "nửa video", ngan: "short" })[kind];
     $("log").textContent = `Đã đổi ${result.changed} video sang bản ${name}.`;
+    if (result.fallback.length) $("log").textContent += `\nBản full quá 60 phút, TikTok không nhận nên dùng nửa video:\n` + result.fallback.join("\n");
     if (result.missing.length) $("log").textContent += `\nKhông có bản ${name}:\n` + result.missing.join("\n");
   } finally { scanBusy = false; variantBusy = false; render(); if (pendingAdopt) adoptSaved().catch(showError); }
 }
-/* manual: a button press, so rows deleted from the list come back.
+/* manual: a button press, so rows deleted from the list come back (unless TikTok already has them).
    withTikTok: Cập nhật kịch bản, which also reads the scheduled/published posts on TikTok. */
 async function scan(manual = false, withTikTok = false) {
   if (busy || scanBusy) return;
@@ -322,7 +364,8 @@ async function scan(manual = false, withTikTok = false) {
       $("scan-status").textContent = "Chờ hoàn tất thao tác để cập nhật danh sách."; return;
     }
     const incoming = importQueue(data);
-    const restored = manual ? ignoredFolders.filter(key => incoming.some(item => rowKey(item) === key)).length : 0;
+    const checkedBefore = [...checkedIds];
+    const ignoredBefore = ignoredFolders;
     if (manual) ignoredFolders = [];
     const removed = pruneMissingFolders(rows, data);
     checkedIds = checkedIds.filter(id => rows.some(row => row.id === id));
@@ -344,9 +387,14 @@ async function scan(manual = false, withTikTok = false) {
     // A fresh read judges every row; an older cached list only labels rows added just now,
     // so it cannot undo a post the extension made after that list was read.
     const judged = await judgeRows(withTikTok && !tiktokError ? rows : rows.filter(row => !known.has(row.id)));
+    // Episodes TikTok already has never come back onto the list, not even after Cập nhật kịch bản.
+    const { submissions = {} } = await chrome.storage.local.get("submissions");
+    const dropped = dropPosted(rows, known, submissions);
+    const restored = manual ? ignoredBefore.filter(key => rows.some(row => !known.has(row.id) && rowKey(row) === key)).length : 0;
     const scheduling = updateSchedule();
     if (removed || result.added || result.updated || scheduling.changed || statusChanges || judged.changedIds.length || manual) { await persist(); render(); }
-    $("scan-status").textContent = `${data.muc.length} kịch bản · thêm ${result.added} · cập nhật ${result.updated} · ${new Date().toLocaleTimeString("vi-VN")} · ${data.root}`;
+    $("scan-status").textContent = `${data.muc.length} kịch bản · thêm ${result.added - dropped} · cập nhật ${result.updated} · ${new Date().toLocaleTimeString("vi-VN")} · ${data.root}`;
+    if (dropped) $("scan-status").textContent += ` · bỏ ${dropped} tập đã đăng`;
     if (restored) $("scan-status").textContent += ` · lấy lại ${restored} dòng đã xóa`;
     if (withTikTok && tiktokError) $("scan-status").textContent += ` · Chưa đối chiếu được TikTok: ${tiktokError}`;
     else if (withTikTok) {
@@ -354,6 +402,9 @@ async function scan(manual = false, withTikTok = false) {
         + (judged.review ? ` · cần xem ${judged.review}` : "") + (judged.unknown ? ` · ${judged.unknown} tập cũ chưa đọc tới` : "");
     } else if (tiktokList?.readAt) $("scan-status").textContent += ` · TikTok đọc lúc ${new Date(tiktokList.readAt).toLocaleString("vi-VN")}`;
     if (removed) $("scan-status").textContent += ` · bỏ ${removed} dòng có thư mục đã xóa`;
+    // A checked row that the scan dropped leaves the buttons locked; say why instead of going quiet.
+    const lostSelection = checkedBefore.filter(id => !rows.some(row => row.id === id)).length;
+    if (lostSelection) $("scan-status").textContent += ` · ${lostSelection} dòng đang chọn không còn trong danh sách, tích chọn lại video cần đăng`;
     if (data.folders_complete === undefined) $("scan-status").textContent += " · Khởi động lại chay_quet.py để đồng bộ thư mục đã xóa";
     if (scheduling.restored || scheduling.assigned) $("scan-status").textContent += ` · lấy lại ${scheduling.restored} lịch · xếp mới ${scheduling.assigned} lịch`;
     if (data.ghi_chu?.length) $("scan-status").textContent += " · " + data.ghi_chu.join("; ");
@@ -388,6 +439,7 @@ for (const id of ["scan-kind", "scan-hashtags", "auto-scan"]) {
 }
 on("refresh", refreshTabs);
 $("publish").addEventListener("change", () => { if (!$("publish").checked) $("repost").checked = false; setBusy(busy); });
+$("repost").addEventListener("change", () => setBusy(busy));
 on("popout", () => chrome.windows.create({ url: chrome.runtime.getURL("dashboard.html"), type: "popup", width: 1080, height: 820 }));
 on("last-diagnostic", async () => {
   const { lastDiagnostic } = await chrome.storage.local.get("lastDiagnostic");

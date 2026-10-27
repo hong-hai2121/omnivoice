@@ -32,7 +32,7 @@ export function pageTask(action, data = {}) {
     const state = { present: !!el, text: "", focused: captionFocused(el),
       active: active ? { tag: active.tagName, role: active.getAttribute('role'), id: active.id } : null,
       pageFocused: document.hasFocus(), visibility: document.visibilityState,
-      dialogOpen: all('[role="dialog"], [aria-modal="true"], dialog[open]').some(visible) };
+      dialogOpen: blockingDialogs().length > 0 };
     if (!el) return state;
     const identities = globalThis.__omniVoiceCaptionNodes ||= new WeakMap();
     if (!identities.has(el)) identities.set(el, crypto.randomUUID());
@@ -51,10 +51,49 @@ export function pageTask(action, data = {}) {
   // "Bay gio" is a radio label, not a time input.
   const fields = () => all('input').filter(el => ['text', 'date', 'time'].includes(el.type) &&
     !el.matches('[role="radio"], [role="checkbox"], [role="switch"]') && visible(el));
+  // TikTok has shown the schedule as readonly inputs (.scheduled-picker) and, since October 2026, as plain
+  // boxes: <div class="… date-picker-input">2026-10-27</div> and <div class="… time-picker-input"><span>20:00</span></div>.
+  // A field is either kind; its text is read with fieldText and a box always needs its popup.
+  const fieldText = el => el.matches('input, textarea') ? el.value : (el.textContent || '').replace(/\s+/g, ' ').trim();
+  const fieldReadOnly = el => !el.matches('input, textarea') || el.readOnly;
+  const outermost = elements => elements.filter(el => !elements.some(other => other !== el && other.contains(el)));
+  const inPopup = el => !!el.closest('.calendar-wrapper, [class*="timepicker"], [role="dialog"], [role="listbox"]');
+  const pickerBox = kind => unique(outermost(all(`[class*="${kind}-picker-input"]`).filter(el => visible(el) && !inPopup(el))));
+  const looksLikeDate = text => /^(\d{4}[-/]\d{2}[-/]\d{2}|\d{2}\/\d{2}\/\d{4}|\d{1,2} (thg|thang) \d{1,2},? \d{4}|[a-z]{3,9} \d{1,2}, \d{4}|\d{1,2} [a-z]{3,9} \d{4})$/.test(normalize(text));
+  const looksLikeTime = text => /^\d{1,2}:\d{2}$/.test(String(text || '').trim());
+  // Since late October 2026 the boxes are TikTok's Picker component: <div class="Picker__root schedule-picker">
+  // <div role="combobox" aria-label="Select date" aria-haspopup="true" aria-expanded="false" data-open="false"
+  // class="Picker__trigger …"><span class="Picker__value">24 tháng 10, 2026</span></div></div>. Only the
+  // combobox carries the click handler; a click on its wrapper does nothing, so clicks go through clickTarget.
+  const triggerSelector = '[role="combobox"], [aria-haspopup], button, [role="button"]';
+  const clickTarget = el => el.matches(triggerSelector) || el.matches('input, textarea') ? el : (el.querySelector(triggerSelector) || el);
+  const pickerTrigger = kind => unique(all('[role="combobox"], [aria-haspopup]').filter(el => visible(el) && !inPopup(el) && !el.matches('input, textarea') &&
+    !el.isContentEditable && (kind === 'date' ? /\b(date|ngay|lich)\b/.test(normalize(el.getAttribute('aria-label'))) || looksLikeDate(el.textContent)
+      : /\b(time|gio)\b/.test(normalize(el.getAttribute('aria-label'))) || looksLikeTime(el.textContent))));
+  // aria-expanded / data-open of the box's trigger; null when the markup carries neither.
+  const pickerExpanded = el => {
+    const target = clickTarget(el), value = target.getAttribute('aria-expanded') ?? target.getAttribute('data-open');
+    return value === null ? null : value === 'true';
+  };
+  // Boxes whose whole text is a date or a time, after the Lên lịch radio: the innermost element with
+  // that text, widened to the outermost ancestor that shows nothing else (the clickable box).
+  const textBoxes = test => {
+    const control = scheduleControl();
+    const leaves = all('div, span, button, [role="button"]').filter(el => test(el.textContent) && visible(el) && !inPopup(el) &&
+      (!control || !!(control.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) &&
+      ![...el.children].some(child => test(child.textContent)));
+    return [...new Set(leaves.map(el => {
+      let box = el;
+      while (box.parentElement && box.parentElement !== document.body && normalize(box.parentElement.textContent) === normalize(el.textContent)) box = box.parentElement;
+      return box;
+    }))];
+  };
   const dateField = () => data.selectors?.date ? custom("date") : unique(fields().filter(el =>
-    el.type === "date" || /date|ngay/.test(normalize(label(el))) || /^\d{4}[-/]\d{2}[-/]\d{2}$/.test(el.value)));
+    el.type === "date" || /date|ngay/.test(normalize(label(el))) || /^\d{4}[-/]\d{2}[-/]\d{2}$/.test(el.value))) ||
+    pickerTrigger('date') || pickerBox('date') || unique(textBoxes(looksLikeDate));
   const timeField = () => data.selectors?.time ? custom("time") : unique(fields().filter(el =>
-    el.type === "time" || /time|gio/.test(normalize(label(el))) || /^\d{2}:\d{2}$/.test(el.value)));
+    el.type === "time" || /time|gio/.test(normalize(label(el))) || /^\d{2}:\d{2}$/.test(el.value))) ||
+    pickerTrigger('time') || pickerBox('time') || unique(textBoxes(looksLikeTime));
   const scheduleControls = () => {
     if (data.selectors?.schedule) return all(data.selectors.schedule).filter(visible);
     const wanted = text => /^(schedule|schedule video|len lich|hen gio)$/.test(normalize(text));
@@ -82,7 +121,7 @@ export function pageTask(action, data = {}) {
   };
   const setValue = (el, value) => {
     if (!el || el.disabled) throw new Error("Khong tim thay o nhap duy nhat hoac o dang bi khoa.");
-    if (el.readOnly) throw new Error("Bo chon ngay/gio chi doc. Can bo chon lich DOM phu hop; xuat chan doan de kiem tra.");
+    if (fieldReadOnly(el)) throw new Error("Bo chon ngay/gio chi doc. Can bo chon lich DOM phu hop; xuat chan doan de kiem tra.");
     const prototype = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(prototype, "value").set.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -101,9 +140,92 @@ export function pageTask(action, data = {}) {
   const usable = el => visible(el) && !el.disabled && !el.closest('[aria-disabled="true"], [data-disabled="true"]') &&
     ![...el.classList].some(name => /disabled|outside|other-month/.test(name) && !name.endsWith('-false'));
   const calendars = () => all('.calendar-wrapper').filter(visible);
+  // --- Popups of unknown markup (TikTok's Picker component since late October 2026) ---
+  // Elements showing one number only (a day, an hour, a minute): the text node's parent, so a cell's
+  // own label wins over the wrappers around it. TikTok's known popups are read by their own classes.
+  const numberLeaves = () => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), leaves = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const el = node.parentElement;
+      if (el && /^\s*\d{1,2}\s*$/.test(node.data) && el.textContent.trim() === node.data.trim() && visible(el) &&
+          !el.closest('.calendar-wrapper, .tiktok-timepicker-time-picker-container, script, style, [contenteditable="true"]')) leaves.push(el);
+    }
+    return leaves;
+  };
+  const ancestorsOf = leaves => {
+    const found = new Set();
+    for (const leaf of leaves) for (let el = leaf.parentElement; el && el !== document.body; el = el.parentElement) found.add(el);
+    return [...found];
+  };
+  // The schedule boxes and the radio: a popup never contains them, the page around them does.
+  const formAnchors = () => [scheduleControl(), dateField(), timeField()].filter(Boolean);
+  const innermost = elements => elements.filter(el => !elements.some(other => other !== el && el.contains(other)));
+  const monthNames = {
+    en: Array.from({ length: 12 }, (_, i) => normalize(new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(2026, i, 1)))),
+    vi: ['mot', 'hai', 'ba', 'tu', 'nam', 'sau', 'bay', 'tam', 'chin', 'muoi', 'muoi mot', 'muoi hai'],
+  };
+  // The words of an element without its number cells: "Tháng 10, 2026", "Tháng Mười 2026", "October 2026", "10/2026".
+  const headingText = root => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT), parts = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) if (!/^\s*\d{1,2}\s*$/.test(node.data)) parts.push(node.data);
+    return parts.join(' ');
+  };
+  const headingMonthYear = text => {
+    const value = normalize(text), year = value.match(/\b(20\d{2})\b/);
+    const numeric = value.match(/\bthang\s+(\d{1,2})\b/) || value.match(/\b(\d{1,2})\s*[/-]\s*20\d{2}\b/) || value.match(/\b20\d{2}\s*[/-]\s*(\d{1,2})\b/);
+    const named = value.match(/\bthang\s+(muoi hai|muoi mot|muoi|mot|hai|ba|tu|nam|sau|bay|tam|chin)\b/);
+    const month = numeric ? Number(numeric[1]) : named ? monthNames.vi.indexOf(named[1]) + 1
+      : monthNames.en.findIndex(name => new RegExp(`\\b${name.slice(0, 3)}[a-z]*\\b`).test(value)) + 1;
+    return year && month >= 1 && month <= 12 ? { month, year: Number(year[1]) } : null;
+  };
+  // An open calendar of unknown markup: the smallest element holding a month-and-year heading and at
+  // least 28 day numbers, outside the schedule form itself.
+  const genericCalendars = () => {
+    const leaves = numberLeaves(), anchors = formAnchors();
+    const roots = ancestorsOf(leaves).filter(el => !anchors.some(anchor => el.contains(anchor)) &&
+      leaves.filter(leaf => el.contains(leaf)).length >= 28 && headingMonthYear(headingText(el)));
+    return innermost(roots);
+  };
+  const genericCells = root => numberLeaves().filter(el => root.contains(el));
+  const genericCalendarState = root => {
+    const heading = headingMonthYear(headingText(root));
+    const state = { count: 1, month: heading.month, year: heading.year, index: heading.year * 12 + heading.month - 1, gridValid: false, generic: true };
+    const numbers = genericCells(root).map(el => Number(el.textContent.trim()));
+    const days = new Date(heading.year, heading.month, 0).getDate();
+    // The days of adjacent months surround the month; the run 1..days is the month itself.
+    const start = numbers.findIndex((value, i) => value === 1 && i + days <= numbers.length && numbers.slice(i, i + days).every((n, k) => n === k + 1));
+    if (start >= 0) Object.assign(state, { offset: start, gridValid: true });
+    return state;
+  };
+  const usableChain = (el, root) => {
+    for (let node = el; node && node !== root.parentElement; node = node.parentElement) if (!usable(node)) return false;
+    return true;
+  };
+  // Hour and minute columns of an unknown time popup: the smallest elements whose numbers are exactly
+  // 0–23 (or 1–12) and 0–59 (or every 5 minutes).
+  const numberColumns = () => {
+    const leaves = numberLeaves(), anchors = formAnchors(), columns = [];
+    const run = (values, from, to, step) => {
+      const want = [];
+      for (let v = from; v <= to; v += step) want.push(v);
+      return values.length === want.length && want.every(v => values.includes(v));
+    };
+    for (const el of ancestorsOf(leaves)) {
+      if (anchors.some(anchor => el.contains(anchor))) continue;
+      const cells = leaves.filter(leaf => el.contains(leaf)), values = [...new Set(cells.map(leaf => Number(leaf.textContent.trim())))];
+      if (values.length !== cells.length) continue;
+      const kind = run(values, 0, 23, 1) || run(values, 1, 12, 1) ? 'hour' : run(values, 0, 59, 1) || run(values, 0, 55, 5) ? 'minute' : null;
+      if (kind) columns.push({ root: el, kind, cells });
+    }
+    return columns.filter(column => !columns.some(other => other !== column && other.kind === column.kind && column.root.contains(other.root)));
+  };
   const calendarState = () => {
     const roots = calendars(), root = unique(roots);
     const state = { count: roots.length, month: null, year: null, index: null, gridValid: false };
+    if (!roots.length) {
+      const generic = genericCalendars();
+      return generic.length === 1 ? genericCalendarState(generic[0]) : { ...state, count: generic.length, generic: generic.length > 0 };
+    }
     if (!root) return state;
     const monthText = normalize(root.querySelector('.month-title')?.textContent);
     const months = ['mot', 'hai', 'ba', 'tu', 'nam', 'sau', 'bay', 'tam', 'chin', 'muoi', 'muoi mot', 'muoi hai'];
@@ -128,14 +250,26 @@ export function pageTask(action, data = {}) {
     return state;
   };
   const timePickers = () => all('.tiktok-timepicker-time-picker-container:not(.tiktok-timepicker-invisible)').filter(visible);
-  const datePickerReady = () => calendars().length > 0 || all('[role="gridcell"], [data-date], [class*="calendar"], button[aria-label]').filter(visible)
+  const datePickerReady = () => calendars().length > 0 || genericCalendars().length > 0 || all('[role="gridcell"], [data-date], [class*="calendar"], button[aria-label]').filter(visible)
     .some(el => el.matches('[role="gridcell"], [data-date], [class*="calendar"]') || dateMatches(el.getAttribute('aria-label'), data.date || '2000-01-01'));
-  const timePickerReady = () => timePickers().length > 0 || all('[role="listbox"]').filter(visible).length > 0;
-  const openPicker = el => {
+  const timePickerReady = () => timePickers().length > 0 || all('[role="listbox"]').filter(visible).length > 0 || numberColumns().some(column => column.kind === 'hour');
+  const openPicker = (el, strategy = 'click') => {
     if (!usable(el)) throw new Error('O ngay/gio dang bi khoa tren TikTok.');
     const wrapper = el.closest('.TUXFormField')?.parentElement;
     // The supplied TikTok popup opens from this wrapper, not from a writable input.
-    const target = wrapper?.closest('.scheduled-picker') && wrapper.querySelectorAll('input').length === 1 ? wrapper : el;
+    const target = wrapper?.closest('.scheduled-picker') && wrapper.querySelectorAll('input').length === 1 ? wrapper : clickTarget(el);
+    target.scrollIntoView({ block: 'center', inline: 'nearest' });
+    if (strategy === 'events') {
+      // A component that listens to pointer / mouse events instead of click.
+      const rect = target.getBoundingClientRect();
+      const init = { bubbles: true, cancelable: true, composed: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+        button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+      target.dispatchEvent(new PointerEvent('pointerdown', init)); target.dispatchEvent(new MouseEvent('mousedown', init));
+      target.focus?.();
+      target.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 })); target.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }));
+      target.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }));
+      return true;
+    }
     target.click(); return true;
   };
   const uploadState = () => {
@@ -146,7 +280,8 @@ export function pageTask(action, data = {}) {
   };
   const scheduleMatches = (expectedDate, expectedTime) => {
     const date = dateField(), time = timeField(), control = scheduleControl();
-    return scheduleControls().length <= 1 && (!control || checked(control) === true) && dateMatches(date?.value, expectedDate) && time?.value === expectedTime;
+    return scheduleControls().length <= 1 && (!control || checked(control) === true) && !!date && !!time &&
+      dateMatches(fieldText(date), expectedDate) && fieldText(time) === expectedTime;
   };
   const immediateMode = () => {
     const control = scheduleControl();
@@ -163,8 +298,19 @@ export function pageTask(action, data = {}) {
     const clean = value => String(value || '').normalize('NFC').replace(/\s+/g, ' ').trim();
     return !!el && clean(el.value ?? el.innerText) === clean(text);
   };
+  // TikTok's date / time popups are not dialogs to wait for: the old calendar-wrapper / tiktok-timepicker,
+  // and since late October 2026 the Picker popover <div role="dialog"><div class="Picker__panel">
+  // <div class="TimePicker__panel"><div role="listbox" aria-label="Hours">…, which stays open after the
+  // last choice. An open one never blocks the caption or the Lên lịch button.
+  const isPickerPopup = el => !!el.querySelector('.calendar-wrapper, [class*="timepicker"], [class*="Picker__panel"], [class*="TimePicker"], [class*="DatePicker"], [class*="Calendar__"]') ||
+    [...el.querySelectorAll('[role="listbox"], [role="grid"], [role="group"]')].some(part => /\b(hours?|minutes?|gio|phut|time|date|ngay|calendar|lich)\b/.test(normalize(part.getAttribute('aria-label')))) ||
+    genericCalendars().some(root => el.contains(root)) || numberColumns().some(column => el.contains(column.root));
+  const nonPickerDialogs = selector => all(selector).filter(el => visible(el) && !isPickerPopup(el));
+  const blockingDialogs = () => nonPickerDialogs('[role="dialog"], [aria-modal="true"], dialog[open]');
+  const pickerPopups = () => all('[role="dialog"], [class*="Picker__panel"], [class*="popover"], [class*="Popover"]').filter(el => visible(el) && isPickerPopup(el));
+  const openPickerFields = () => [dateField(), timeField()].filter(el => el && pickerExpanded(el) === true);
   const publishDialogs = () => {
-    const dialogs = all('[role="dialog"], [role="alertdialog"], dialog[open]').filter(visible);
+    const dialogs = nonPickerDialogs('[role="dialog"], [role="alertdialog"], dialog[open]');
     return dialogs.filter(el => !dialogs.some(other => other !== el && el.contains(other)));
   };
   const pendingChecksConfirmation = () => {
@@ -183,10 +329,38 @@ export function pageTask(action, data = {}) {
     return { dialog, button, kind, ready: usable(button) && button.getAttribute('aria-busy') !== 'true' && button.getAttribute('data-loading') !== 'true' };
   };
   const scheduleSnapshot = () => {
-    const field = el => el ? { value: el.value, label: label(el), readonly: el.readOnly, disabled: el.disabled, type: el.type } : null;
+    const field = el => el ? { value: fieldText(el), label: label(el).slice(0, 160), readonly: fieldReadOnly(el), disabled: !!el.disabled,
+      type: el.type || el.tagName.toLowerCase(), class: typeof el.className === "string" ? el.className.slice(0, 200) : "", expanded: pickerExpanded(el) } : null;
     const controls = scheduleControls();
     return { controls: controls.map(el => ({ label: label(el), checked: checked(el), disabled: !!el.disabled })),
       date: field(dateField()), time: field(timeField()), calendar: calendarState() };
+  };
+  // The block around the Lên lịch radio up to the timezone row (SVG bodies dropped), so a changed
+  // TikTok layout can be read from a diagnostic instead of guessed.
+  const scheduleHtml = () => {
+    const timezone = all('div, span, p, label, button').filter(el => visible(el) && /\bgmt\b/.test(normalize(el.textContent)) && el.textContent.length < 120)
+      .find(el => ![...el.children].some(child => /\bgmt\b/.test(normalize(child.textContent))));
+    const anchors = [scheduleControl(), dateField(), timeField(), timezone].filter(Boolean);
+    let box = anchors[0];
+    if (!box) return null;
+    // The smallest element holding every anchor; without other anchors, a few levels above the radio.
+    if (anchors.length > 1) while (box !== document.documentElement && !anchors.every(el => box.contains(el))) box = box.parentElement;
+    else for (let depth = 0; depth < 6 && box.parentElement && box.parentElement !== document.body; depth++) box = box.parentElement;
+    return box.outerHTML.replace(/<svg[\s\S]*?<\/svg>/g, '<svg/>').slice(0, 40_000);
+  };
+  // Every open popup (calendar, time columns, dialogs, Picker / popover containers) outside the schedule
+  // boxes, so an unrecognised picker can be read from a diagnostic instead of guessed.
+  const popupHtml = () => {
+    const anchors = formAnchors();
+    const named = all('[role="dialog"], [role="listbox"], [role="grid"], [class*="Picker"], [class*="picker"], [class*="alendar"], [class*="timepicker"], [class*="opover"], [class*="opup"], [class*="ropdown"]')
+      .filter(el => visible(el) && !anchors.some(anchor => el.contains(anchor) || anchor.contains(el)) && !el.closest('[contenteditable="true"]'));
+    const roots = [...new Set([...named, ...genericCalendars(), ...numberColumns().map(column => column.root)])];
+    let html = '';
+    for (const el of roots.filter(el => !roots.some(other => other !== el && other.contains(el)))) {
+      if (html.length >= 60_000) break;
+      html += el.outerHTML.replace(/<svg[\s\S]*?<\/svg>/g, '<svg/>') + '\n';
+    }
+    return html ? html.slice(0, 60_000) : null;
   };
   const fileInputs = () => all(data.selectors?.file || 'input[type="file"]').filter(el => el.type === "file" && !el.disabled &&
     (data.selectors?.file || !el.accept || /video|mp4|mov|webm|m4v|avi/i.test(el.accept)));
@@ -292,11 +466,11 @@ export function pageTask(action, data = {}) {
     button.click(); return true;
   }
   if (action === "inspect") {
-    return { url: location.origin + location.pathname, title: document.title, caption: captionSnapshot(), schedule: scheduleSnapshot(), upload: uploadState(), content: contentPosts(),
+    return { url: location.origin + location.pathname, title: document.title, caption: captionSnapshot(), schedule: scheduleSnapshot(), scheduleHtml: scheduleHtml(), popupHtml: popupHtml(), upload: uploadState(), content: contentPosts(),
       dialogs: publishDialogs().map(el => ({ text: el.innerText.slice(0, 4000), buttons: [...el.querySelectorAll('button, [role="button"]')].map(button => ({
         label: label(button), disabled: !!button.disabled, ariaDisabled: button.getAttribute('aria-disabled'), loading: button.getAttribute('data-loading'),
       })) })),
-      controls: all('input, textarea, [contenteditable="true"], [role="radio"], [role="switch"], [role="checkbox"], .Radio__innerCircle, .info-progress, [role="option"], [role="gridcell"], button, [class*="calendar"], [class*="timepicker"]')
+      controls: all('input, textarea, [contenteditable="true"], [role="radio"], [role="switch"], [role="checkbox"], [role="button"], .Radio__innerCircle, .info-progress, [role="option"], [role="gridcell"], button, [class*="calendar"], [class*="timepicker"], [class*="picker"]')
         .filter(el => visible(el) || el.type === "file").slice(0, 200).map(el => ({
           tag: el.tagName, type: el.type, role: el.getAttribute("role"), id: el.id,
           class: typeof el.className === "string" ? el.className : "", label: label(el).slice(0, 160),
@@ -367,21 +541,86 @@ export function pageTask(action, data = {}) {
   }
   if (action === "scheduleReady") return !!dateField() && !!timeField();
   if (action === "scheduleSnapshot") return scheduleSnapshot();
-  if (action === "dateCheck") return dateMatches(dateField()?.value, data.date);
+  if (action === "disarmUnload") {
+    // A queue leaves this draft on purpose: keep the page's "leave site?" handlers from running.
+    window.onbeforeunload = null;
+    window.addEventListener("beforeunload", event => event.stopImmediatePropagation(), true);
+    return true;
+  }
+  if (action === "revealSchedule") {
+    // Scroll the schedule block into the viewport before a diagnostic screenshot.
+    const el = scheduleControl() || dateField() || timeField();
+    if (!el) return false;
+    el.scrollIntoView({ block: "center", inline: "nearest" }); return true;
+  }
+  if (action === "dateCheck") { const el = dateField(); return !!el && dateMatches(fieldText(el), data.date); }
   if (action === "calendarState") return calendarState();
   if (action === "datePickerReady") return datePickerReady();
   if (action === "timePickerReady") return timePickerReady();
-  if (action === "timeCheck") return timeField()?.value === data.time;
-  if (action === "timePartCheck") return timeField()?.value.split(':')[data.part === 'hour' ? 0 : 1] === data.value;
+  if (action === "timeCheck") { const el = timeField(); return !!el && fieldText(el) === data.time; }
+  if (action === "timePartCheck") { const el = timeField(); return !!el && fieldText(el).split(':')[data.part === 'hour' ? 0 : 1] === data.value; }
   if (action === "immediateCheck") {
     return immediateMode();
   }
   if (action === "openDate") {
     const el = dateField();
     if (!el) throw new Error("Khong tim thay o ngay.");
-    if (!el.readOnly) return false;
+    if (!fieldReadOnly(el)) return false;
     if (datePickerReady()) return true;
-    return openPicker(el);
+    return openPicker(el, data.strategy);
+  }
+  if (action === "pickerExpanded") { const el = data.field === "time" ? timeField() : dateField(); return el ? pickerExpanded(el) : null; }
+  if (action === "pickersClosed") return !pickerPopups().length && !openPickerFields().length;
+  if (action === "closePickers") {
+    // Dismiss an open date / time popover the way a user would: a press outside it, then Escape. The page
+    // closes it asynchronously; the caller polls pickersClosed.
+    const open = pickerPopups();
+    if (!open.length && !openPickerFields().length) return true;
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: 1, clientY: 1, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    for (const [type, Event] of [['pointerdown', PointerEvent], ['mousedown', MouseEvent], ['pointerup', PointerEvent], ['mouseup', MouseEvent], ['click', MouseEvent]]) {
+      document.body.dispatchEvent(new Event(type, { ...init, buttons: type.endsWith('down') ? 1 : 0 }));
+    }
+    const escape = { bubbles: true, cancelable: true, composed: true, key: 'Escape', code: 'Escape', keyCode: 27 };
+    for (const target of new Set([activeElement(), ...open, document.body])) {
+      if (target) { target.dispatchEvent(new KeyboardEvent('keydown', escape)); target.dispatchEvent(new KeyboardEvent('keyup', escape)); }
+    }
+    return false;
+  }
+  if (action === "togglePicker") {
+    const el = data.field === "time" ? timeField() : dateField();
+    if (!el || pickerExpanded(el) !== true) return false;
+    clickTarget(el).click(); return true;
+  }
+  if (action === "pickHashtagSuggestion") {
+    // TikTok lists suggestions while a tag is typed; Enter takes the highlighted one, which can be another
+    // tag (#audioviral for #audio). The row showing exactly the typed tag is clicked instead when it exists.
+    const editor = caption(), wanted = normalize(data.tag);
+    if (!editor || !wanted.startsWith('#')) return { found: false, clicked: false, options: [] };
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT), leaves = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const el = node.parentElement, text = normalize(node.data);
+      if (el && text.startsWith('#') && !editor.contains(el) && !el.closest('[contenteditable="true"], script, style') && visible(el)) leaves.push({ el, tag: text.split(' ')[0] });
+    }
+    const options = [...new Set(leaves.map(leaf => leaf.tag))].slice(0, 12);
+    const exact = leaves.filter(leaf => leaf.tag === wanted);
+    if (exact.length !== 1) return { found: exact.length > 0, clicked: false, options };
+    const target = exact[0].el;
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const rect = target.getBoundingClientRect();
+    const init = { bubbles: true, cancelable: true, composed: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    target.dispatchEvent(new PointerEvent('pointerdown', { ...init, buttons: 1 })); target.dispatchEvent(new MouseEvent('mousedown', { ...init, buttons: 1 }));
+    target.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 })); target.dispatchEvent(new MouseEvent('mouseup', { ...init, buttons: 0 }));
+    target.dispatchEvent(new MouseEvent('click', { ...init, buttons: 0 }));
+    return { found: true, clicked: true, options };
+  }
+  if (action === "fieldRect") {
+    // Viewport centre of the box's clickable part, for a real mouse click through the debugger.
+    const el = data.field === "time" ? timeField() : dateField();
+    if (!el) return null;
+    const target = clickTarget(el);
+    target.scrollIntoView({ block: "center", inline: "nearest" });
+    const rect = target.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }
   if (action === "pickDate") {
     const state = calendarState();
@@ -391,6 +630,11 @@ export function pageTask(action, data = {}) {
       const [year, month, day] = data.value.split('-').map(Number);
       if (year !== state.year || month !== state.month) return 'missing';
       if (!Number.isInteger(day) || day < 1 || day > new Date(year, month, 0).getDate()) throw new Error('Ngay can chon khong hop le.');
+      if (state.generic) {
+        const root = genericCalendars()[0], cell = genericCells(root)[state.offset + day - 1];
+        if (!cell || !usableChain(cell, root)) throw new Error('Ngay ' + data.value + ' bi TikTok khoa (o ngay bi vo hieu). Chua chon ngay.');
+        cell.scrollIntoView({ block: 'nearest', inline: 'nearest' }); cell.click(); return 'picked';
+      }
       const root = unique(calendars());
       const cell = root.querySelectorAll('.days-wrapper .day-span-container > .day')[state.offset + day - 1];
       if (!cell?.classList.contains('valid') || !usable(cell) || !usable(cell.parentElement)) throw new Error('Ngay ' + data.value + ' bi TikTok khoa (khong co day.valid). Chua chon ngay.');
@@ -428,6 +672,27 @@ export function pageTask(action, data = {}) {
       if (!arrow) return false;
       arrow.click(); return true;
     }
+    const generic = genericCalendars();
+    if (generic.length) {
+      if (generic.length !== 1 || !calendarState().gridValid) throw new Error('Popup lich chua san sang de chuyen thang.');
+      // The arrows: labelled, named by their icon / class, rotated like TikTok's old ones, or simply the
+      // only two buttons that hold no day.
+      const root = generic[0], cells = genericCells(root);
+      const hint = el => normalize([el.getAttribute('aria-label'), el.getAttribute('title'), typeof el.className === 'string' ? el.className : '',
+        ...[...el.querySelectorAll('[data-icon], [class]')].map(x => (x.getAttribute('data-icon') || '') + ' ' + (typeof x.className === 'string' ? x.className : ''))].join(' '));
+      const sign = el => {
+        const text = hint(el), turn = (el.querySelector('svg')?.style.transform || '').replace(/\s+/g, '');
+        if (/left|prev|truoc|back/.test(text) || turn === 'rotate(90deg)') return -1;
+        if (/right|next|sau|tiep|forward/.test(text) || turn === 'rotate(-90deg)') return 1;
+        return 0;
+      };
+      const buttons = [...root.querySelectorAll('button, [role="button"], [class*="arrow"], [class*="Arrow"], [class*="prev"], [class*="next"], [class*="Prev"], [class*="Next"]')]
+        .filter(el => usable(el) && !cells.some(cell => el.contains(cell)));
+      const outer = buttons.filter(el => !buttons.some(other => other !== el && other.contains(el)));
+      const arrow = unique(outer.filter(el => sign(el) === direction)) || (outer.length === 2 && outer.every(el => !sign(el)) ? outer[direction === 1 ? 1 : 0] : null);
+      if (!arrow) return false;
+      arrow.click(); return true;
+    }
     const next = unique(all('button, [role="button"]').filter(usable).filter(el =>
       (direction === 1 ? /^(next month|thang tiep theo|thang sau)$/ : /^(previous month|prev month|thang truoc)$/).test(normalize(el.getAttribute("aria-label") || el.getAttribute("title")))));
     if (!next) return false;
@@ -436,9 +701,9 @@ export function pageTask(action, data = {}) {
   if (action === "openTime") {
     const el = timeField();
     if (!el) throw new Error("Khong tim thay o gio.");
-    if (!el.readOnly) return false;
+    if (!fieldReadOnly(el)) return false;
     if (timePickerReady()) return true;
-    return openPicker(el);
+    return openPicker(el, data.strategy);
   }
   if (action === "pickTime") {
     const pickers = timePickers();
@@ -456,18 +721,24 @@ export function pageTask(action, data = {}) {
     const lists = all('[role="listbox"]').filter(visible);
     const labeled = lists.filter(el => (data.part === "hour" ? /hour|gio/ : /minute|phut/).test(normalize(label(el))));
     const list = unique(labeled) || (lists.length === 2 ? lists[data.part === "hour" ? 0 : 1] : null);
-    if (!list) return false;
+    if (!list) {
+      const column = unique(numberColumns().filter(item => item.kind === data.part));
+      const option = column ? unique(column.cells.filter(el => Number(el.textContent.trim()) === Number(data.value) && usableChain(el, column.root))) : null;
+      if (!option) return false;
+      option.scrollIntoView({ block: "nearest", inline: "nearest" }); option.click(); return true;
+    }
     const option = unique([...list.querySelectorAll('[role="option"]')].filter(usable).filter(el => /^\d{1,2}$/.test(el.textContent.trim()) && Number(el.textContent.trim()) === Number(data.value)));
     if (!option) return false;
     option.click(); return true;
   }
   if (action === "setDate") {
     const el = dateField();
+    const current = el ? fieldText(el) : "";
     let value = data.value;
-    if (el?.type !== "date" && /^\d{2}\/\d{2}\/\d{4}$/.test(el?.value || "")) {
+    if (el?.type !== "date" && /^\d{2}\/\d{2}\/\d{4}$/.test(current)) {
       throw new Error("Dinh dang ngay mo ho (dd/mm hay mm/dd). Can bo chon lich DOM phu hop.");
     }
-    if (el?.value.includes("/")) value = value.replaceAll("-", "/");
+    if (current.includes("/")) value = value.replaceAll("-", "/");
     setValue(el, value); return true;
   }
   if (action === "setTime") { setValue(timeField(), data.value); return true; }

@@ -3,6 +3,8 @@ export const TIKTOK_CONTENT_URL = 'https://www.tiktok.com/tiktokstudio/content';
 export const NO_VIDEO = "chưa có video";
 // Rows in these states are not rewritten by folder scans or generated schedules.
 export const LOCKED_STATUSES = ["done", "review", "running", "đã đăng", "đã chốt lịch", "đã lên lịch"];
+// TikTok Studio rejects uploads longer than one hour; the scanner never offers such files.
+export const TIKTOK_MAX_SECONDS = 60 * 60;
 
 export function importQueue(data) {
   const rows = Array.isArray(data) ? data : data.muc;
@@ -17,6 +19,8 @@ export function importQueue(data) {
     trang_thai: String(row.trang_thai || "cho"),
     ghi_chu: String(row.ghi_chu || ""),
     variants: Object.fromEntries(Object.entries(row.variants || {}).filter(([key, value]) => ["dai", "nua", "ngan"].includes(key) && typeof value === "string")),
+    // Seconds per variant from the scanner, including files it refused for being too long.
+    thoi_luong: Object.fromEntries(Object.entries(row.thoi_luong || {}).filter(([key, value]) => ["dai", "nua", "ngan"].includes(key) && Number.isFinite(value))),
     statusOrigin: row.statusOrigin === "receipt" ? "receipt" : "",
   }));
 }
@@ -27,6 +31,8 @@ export function validateJob(row, schedule, now = Date.now()) {
   if (!/^(?:[a-z]:[\\/]|\\\\)/i.test(row.video) || !/\.(mp4|mov|webm)$/i.test(row.video)) {
     throw new Error("Can duong dan day du den video tren Windows (mp4, mov, webm).");
   }
+  const seconds = videoDuration(row);
+  if (seconds > TIKTOK_MAX_SECONDS) throw new Error(`${row.tieu_de || "Tập này"}: video dài ${formatDuration(seconds)}, quá 60 phút TikTok không nhận. Chọn bản Nửa video hoặc Short.`);
   if (schedule) {
     const value = row.gio_dang;
     const date = new Date(value);
@@ -93,6 +99,7 @@ export function mergeScan(rows, incoming, ignored = []) {
     }
     const before = JSON.stringify(current);
     current.variants = item.variants || {};
+    current.thoi_luong = item.thoi_luong || {};
     if (item.thu_muc) current.thu_muc = item.thu_muc;
     if (LOCKED_STATUSES.includes(current.trang_thai)) {
       if (JSON.stringify(current) !== before) updated++;
@@ -100,7 +107,8 @@ export function mergeScan(rows, incoming, ignored = []) {
     }
     for (const field of ["video", "tieu_de", "hashtag"]) {
       if (field === "video" && current.variantChoice) {
-        if (item.variants?.[current.variantChoice]) current.video = item.variants[current.variantChoice];
+        const pick = chooseVariant(item, current.variantChoice);
+        if (pick) current.video = pick.video;
         continue;
       }
       // A folder that lost its file keeps the last known video path.
@@ -144,21 +152,59 @@ export function videoKind(row) {
   return "";
 }
 
+// Length in seconds of the row's chosen file, as read by the last scan (null when unknown).
+export function videoDuration(row) {
+  const kind = videoKind(row);
+  const value = kind ? row.thoi_luong?.[kind] : undefined;
+  return Number.isFinite(value) ? value : null;
+}
+
+export function formatDuration(seconds) {
+  const total = Math.round(seconds), pad = value => String(value).padStart(2, "0");
+  const hours = Math.floor(total / 3600), minutes = Math.floor(total % 3600 / 60), rest = total % 60;
+  return hours ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${minutes}:${pad(rest)}`;
+}
+
+/* Rows a scan just (re)added for episodes TikTok already has (its post list, a success receipt
+   or tiktok_upload.json) leave the list again, so Cập nhật kịch bản shows only work still to
+   do. Rows listed before the scan stay: a finished row keeps its place until it is deleted. */
+export function dropPosted(rows, keepIds, submissions = {}) {
+  let dropped = 0;
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index];
+    if (keepIds.has(row.id)) continue;
+    const key = rowKey(row);
+    if (statusGroup(row) === "done" || (key && submissions[key]?.state === "success")) { rows.splice(index, 1); dropped++; }
+  }
+  return dropped;
+}
+
+/* The file of the wanted kind. TikTok refuses anything over an hour, so a Full file that
+   long gives way to the Nửa video automatically (the user's rule: Full under 60 minutes,
+   otherwise the half); the choice itself stays "dai" so a shorter remake is picked up later. */
+export function chooseVariant(item, kind) {
+  const variants = item?.variants || {};
+  if (variants[kind]) return { video: variants[kind], kind };
+  if (kind === "dai" && item?.thoi_luong?.dai > TIKTOK_MAX_SECONDS && variants.nua) return { video: variants.nua, kind: "nua", fallback: true };
+  return null;
+}
+
 export function switchVariants(rows, ids, kind, available) {
   const catalog = new Map(available.map(row => [rowKey(row), row]));
   const selected = new Set(ids);
   let changed = 0;
-  const missing = [];
+  const missing = [], fallback = [];
   for (const row of rows) {
     if (!selected.has(row.id)) continue;
     const source = catalog.get(rowKey(row));
-    const video = source?.variants?.[kind];
-    if (!video) { missing.push(row.tieu_de || row.video || row.thu_muc); continue; }
-    if (row.video !== video) changed++;
-    row.video = video; row.variantChoice = kind; row.variants = source.variants;
+    const pick = chooseVariant(source, kind);
+    if (!pick) { missing.push(row.tieu_de || row.video || row.thu_muc); continue; }
+    if (pick.fallback) fallback.push(row.tieu_de || row.video || row.thu_muc);
+    if (row.video !== pick.video) changed++;
+    row.video = pick.video; row.variantChoice = kind; row.variants = source.variants; row.thoi_luong = source.thoi_luong || {};
     if (row.trang_thai === NO_VIDEO) { row.trang_thai = "cho"; row.ghi_chu = ""; }
   }
-  return { changed, missing };
+  return { changed, missing, fallback };
 }
 
 export function statusGroup(row) {
@@ -179,6 +225,8 @@ export function queueSkipReason(row, { repost = false, submissions = {} } = {}) 
   const group = statusGroup(row);
   if (!row.video || group === "novideo") return "chưa có video";
   if (group === "running") return "đang chạy";
+  const seconds = videoDuration(row);
+  if (seconds > TIKTOK_MAX_SECONDS) return `video dài ${formatDuration(seconds)}, quá 60 phút TikTok không nhận`;
   if (repost) return "";
   if (group === "done") return "đã đăng / đã lên lịch trên TikTok";
   if (submissions[episodeKey(row.video) || row.video.toLowerCase()]) return "đã có biên nhận bấm Đăng / Lên lịch; bật Cho phép đăng lại nếu muốn đăng thêm";

@@ -156,7 +156,7 @@ class Job:
     steps: list[Step]
     # Việc NHẸ (xem trước, kiểm tra nhanh): vẫn xếp hàng chạy bình thường nhưng
     # KHÔNG tính vào heavy_busy() — bấm một nút xem kế hoạch mà bị coi là "đã
-    # chạy xong mẻ" rồi 3 phút sau 🌙 úp máy thì vô lý.
+    # chạy xong mẻ" rồi 5 phút sau ⏻ tắt máy thì vô lý.
     light: bool = False
     # Các số tập việc này làm (nếu biết lúc xếp) — để ⏩ Chạy tiếp không xếp thêm
     # việc cho tập ĐÃ nằm trong hàng đợi (bấm ⏩ hai lần, hay nút ⏩ ở ô Nguồn rồi ⏩
@@ -291,8 +291,8 @@ class JobRunner:
             return self._current is not None or bool(self._pending)
 
     def heavy_busy(self) -> bool:
-        """busy() nhưng BỎ QUA các việc `light` — nguồn sự thật cho 🌙/⏻
-        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt ngủ/tắt máy."""
+        """busy() nhưng BỎ QUA các việc `light` — nguồn sự thật cho ô ⏻
+        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt tắt máy."""
         with self._lock:
             if self._current is not None and not self._current.light:
                 return True

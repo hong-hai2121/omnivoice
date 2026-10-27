@@ -19,6 +19,9 @@ QUEUE_FILE = Path(__file__).resolve().parent.parent / "danh_sach.json"
 EPISODE_FOLDER = re.compile(r"^[A-Za-z]?(\d+)")
 NO_VIDEO = "chưa có video"
 KIND_NAMES = {"dai": "Full", "nua": "Nửa video", "ngan": "Short"}
+# TikTok Studio rejects uploads longer than one hour; such files are never offered.
+TIKTOK_MAX_SECONDS = 60 * 60
+VARIANTS = ("dai", "nua", "ngan")
 
 
 def pick_video(folder, kind):
@@ -33,6 +36,61 @@ def pick_video(folder, kind):
             if item.name.startswith(prefix) and item.name.lower().endswith(suffix or prefix.lower()):
                 return item
     return None
+
+
+def video_duration(path):
+    """Seconds from the MP4 movie header (mvhd); None when unreadable (not MP4, truncated).
+
+    Walks the top-level boxes with seeks, so a multi-gigabyte file costs a few reads.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            offset = 0
+            while offset + 8 <= size:
+                handle.seek(offset)
+                header = handle.read(8)
+                if len(header) < 8:
+                    return None
+                length, kind = struct.unpack(">I4s", header)
+                header_size = 8
+                if length == 1:
+                    length = struct.unpack(">Q", handle.read(8))[0]
+                    header_size = 16
+                elif length == 0:
+                    length = size - offset
+                if length < header_size:
+                    return None
+                if kind == b"moov":
+                    # mvhd is the first child of moov in practice; read more only if needed.
+                    body, index = b"", -1
+                    for chunk in (64 * 1024, 8 * 1024 * 1024):
+                        handle.seek(offset + header_size)
+                        body = handle.read(min(length - header_size, chunk))
+                        index = body.find(b"mvhd")
+                        if index >= 0 or len(body) >= length - header_size:
+                            break
+                    if index < 0 or index + 36 > len(body):
+                        return None
+                    version = body[index + 4]
+                    if version == 1:
+                        scale = struct.unpack(">I", body[index + 24:index + 28])[0]
+                        duration = struct.unpack(">Q", body[index + 28:index + 36])[0]
+                    else:
+                        scale = struct.unpack(">I", body[index + 16:index + 20])[0]
+                        duration = struct.unpack(">I", body[index + 20:index + 24])[0]
+                    return duration / scale if scale else None
+                offset += length
+    except (OSError, struct.error):
+        return None
+    return None
+
+
+def hms(seconds):
+    seconds = int(round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
@@ -51,11 +109,26 @@ def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
             folders.append(str(folder))
             if not folder.resolve().is_relative_to(root):
                 continue
-            video = pick_video(folder, kind)
-            if video is not None and (not video.resolve().is_relative_to(root) or video.stat().st_size == 0):
-                video = None
+            # Every variant once: its file, its length, and whether TikTok would accept it.
+            candidates, durations, variants, too_long = {}, {}, {}, {}
+            for variant in VARIANTS:
+                candidate = pick_video(folder, variant)
+                if candidate is None or not candidate.resolve().is_relative_to(root) or candidate.stat().st_size == 0:
+                    continue
+                candidates[variant] = candidate
+                seconds = video_duration(candidate)
+                if seconds is not None:
+                    durations[variant] = int(round(seconds))
+                if seconds is not None and seconds > TIKTOK_MAX_SECONDS:
+                    too_long[variant] = seconds
+                    notes.append(f"{folder.name}: bỏ bản {KIND_NAMES[variant]} dài {hms(seconds)} (quá 60 phút, TikTok không nhận)")
+                else:
+                    variants[variant] = str(candidate)
+            # The wanted kind; a Full file over the limit falls back to Nửa video on its own.
+            chosen = kind if kind in variants else "nua" if kind == "dai" and "dai" in too_long and "nua" in variants else None
+            video = candidates.get(chosen) if chosen else None
             # New scripts are listed before their video is rendered; other folders need a video.
-            if video is None and not EPISODE_FOLDER.match(folder.name):
+            if not candidates and not EPISODE_FOLDER.match(folder.name):
                 continue
             title, episode = "", ""
             metadata = folder / "youtube_upload.json"
@@ -73,23 +146,28 @@ def scan_episodes(root=ROOT, kind="dai", hashtags=DEFAULT_HASHTAGS):
             if title and not title.lower().startswith("full \u1edf"):
                 title = f"Full \u1edf {title}"
             uploaded = (folder / "tiktok_upload.json").is_file()
-            variants = {}
-            for variant in ("dai", "nua", "ngan"):
-                candidate = pick_video(folder, variant)
-                if candidate and candidate.resolve().is_relative_to(root) and candidate.stat().st_size > 0:
-                    variants[variant] = str(candidate)
             if uploaded:
                 status, note = "\u0111\u00e3 \u0111\u0103ng", "Da co bien nhan tiktok_upload.json"
             elif video is None:
                 status = NO_VIDEO
-                note = f"Chua co ban {KIND_NAMES[kind]}" + (" (co ban khac, doi o Phien ban video)" if variants else "")
+                if kind in too_long:
+                    note = f"Bản {KIND_NAMES[kind]} dài {hms(too_long[kind])}, quá 60 phút TikTok không nhận"
+                else:
+                    note = f"Chua co ban {KIND_NAMES[kind]}"
+                if variants:
+                    note += " (co ban khac, doi o Phien ban video)"
+            elif chosen != kind:
+                status = "cho"
+                note = f"Bản {KIND_NAMES[kind]} dài {hms(too_long[kind])} quá 60 phút, dùng {KIND_NAMES[chosen]}"
+                if chosen in durations:
+                    note += f" {hms(durations[chosen])}"
             else:
                 status, note = "cho", ""
             rows.append({
                 "video": str(video) if video else "", "thu_muc": str(folder), "tieu_de": title,
                 "hashtag": ((f"#MimiAudioSo{episode} " if episode else "") + hashtags).strip(),
                 "gio_dang": "", "trang_thai": status, "ghi_chu": note,
-                "variants": variants, "statusOrigin": "receipt" if uploaded else "",
+                "variants": variants, "thoi_luong": durations, "statusOrigin": "receipt" if uploaded else "",
             })
         except OSError as error:
             folders_complete = False

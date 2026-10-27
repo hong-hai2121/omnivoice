@@ -27,7 +27,7 @@ chrome.debugger.onDetach.addListener(source => {
 async function run(request, token) {
   const log = [];
   const captionTrace = [];
-  let stage = "Kiểm tra dữ liệu";
+  let stage = "Kiểm tra dữ liệu", committed = false;
   const report = async (status, message) => {
     log.push(new Date().toLocaleTimeString("vi-VN") + "  " + message);
     await chrome.storage.local.set({ progress: { status, rowId: request.type === "inspect" ? undefined : request.row?.id,
@@ -74,6 +74,38 @@ async function run(request, token) {
       await sleep(500);
     }
     throw new Error(message);
+  };
+  // The box was clicked; if its popup does not show, click again with pointer events, then with a real
+  // mouse click through the debugger. A box reporting aria-expanded without a recognisable popup is a
+  // markup change, not a missed click.
+  const openPopup = async (field, ready, message) => {
+    const unknown = () => new Error(`Popup ${field === "date" ? "ngay" : "gio"} da mo (aria-expanded) nhung chua nhan dien duoc lich/gio ben trong. Xuat chan doan de kiem tra.`);
+    const settled = timeout => waitFor(ready, timeout, "").then(() => true, () => false);
+    if (await settled(2500)) return;
+    for (const strategy of ["events", "mouse"]) {
+      if (await dom("pickerExpanded", { field }) === true) throw unknown();
+      if (strategy === "mouse") {
+        await dom("fieldRect", { field }); await sleep(300);
+        const rect = await dom("fieldRect", { field });
+        if (!rect) break;
+        await driver.clickAt(rect.x, rect.y);
+      } else await dom(field === "date" ? "openDate" : "openTime", { strategy });
+      if (await settled(3000)) return;
+    }
+    throw await dom("pickerExpanded", { field }) === true ? unknown() : new Error(message);
+  };
+  // TikTok's Picker popover stays open after the last choice and would read as a dialog. It is dismissed
+  // like a user would (press outside, Escape) and, failing that, through its own trigger.
+  const closePickers = async () => {
+    const closed = () => dom("pickersClosed");
+    if (await closed()) return true;
+    const settled = () => waitFor(closed, 2000, "").then(() => true, () => false);
+    await dom("closePickers");
+    if (await settled()) return true;
+    await key("Escape", "Escape", 27);
+    if (await settled()) return true;
+    for (const field of ["time", "date"]) if (await dom("togglePicker", { field }) && await settled()) return true;
+    return closed();
   };
   const onContentPage = async () => {
     const tab = await chrome.tabs.get(token.tabId).catch(() => null);
@@ -187,6 +219,7 @@ async function run(request, token) {
     if (request.type !== "inspect" && !/\/(tiktokstudio|creator-center)\/upload/.test(new URL(tab.url).pathname)) {
       throw new Error("Mo trang Tai len TikTok Studio truoc khi chay.");
     }
+    stage = "Kết nối tab TikTok";
     await report("running", "Ket noi tab TikTok...");
     await driver.attach();
     if (request.type === "inspect") {
@@ -198,6 +231,7 @@ async function run(request, token) {
       stage = 'Tiếp tục xác nhận Đăng ngay';
       await waitFor(() => driver.findEditor(), 8000, 'Khong con ban nhap de xac nhan. Kiem tra ket qua tren TikTok.');
       await report('running', 'Tiếp tục hộp thoại của lần bấm trước; không nạp video, điền lại nội dung hoặc bấm lại Lên lịch.');
+      committed = true;
       await finishSubmission(receiptKey, previousSubmission, true);
       return {};
     }
@@ -208,6 +242,7 @@ async function run(request, token) {
       if (outcome.state === 'confirmation') {
         if (!canResumeConfirmation({ ...previousSubmission, state: 'uncertain', confirmation: undefined }, request)) throw new Error('Hop thoai dang mo khong khop video, tab hoac lich cua lan truoc. Chua bam xac nhan.');
         await report('running', 'Đã xác nhận thử lại Đăng ngay; giữ nguyên video, mô tả và lịch. Biên nhận cũ được giữ trong lịch sử.');
+        committed = true;
         await finishSubmission(receiptKey, newSubmission(previousSubmission), true);
         return {};
       }
@@ -252,6 +287,16 @@ async function run(request, token) {
     if (request.publish && !await dom("draftCheck", { video: request.row.video })) throw new Error("Chua xac nhan ban nhap nay duoc nap tu video da chon. Khong tu dong dang; kiem tra video tren TikTok.");
     const knownDraft = await dom("draftCheck", { video: request.row.video });
     const tags = request.row.hashtag.trim().split(/\s+/).filter(Boolean);
+    const suggestionNotes = [];
+    // A tag is in: the editor shows it followed by a space, or as TikTok's hashtag entity. The markup is
+    // read rather than innerText, which drops a trailing space.
+    const committedTag = (value, tag) => {
+      const text = String(value?.html ?? value?.text ?? "").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ")
+        .normalize("NFC").replace(/[\u200b-\u200d\ufeff]/g, "");
+      if (/\s$/.test(text) && text.trimEnd().toLowerCase().endsWith(tag.normalize("NFC").toLowerCase())) return true;
+      const escaped = tag.normalize("NFC").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp('class="mention"[^>]*>(?:<span[^>]*>)*' + escaped + '</span>', "i").test(value?.html || "");
+    };
     const sameEditor = (a, b) => a?.present && b?.present && a.editorId === b.editorId && a.editorKey === b.editorKey;
     const neutralFocus = state => !state.dialogOpen && (state.focused || ['BODY', 'HTML'].includes(state.active?.tag));
     const focusError = () => new Error("Ô mô tả đã mất focus hoặc có hộp thoại. Dừng để không gửi phím nhầm vào nút đăng / ô khác.");
@@ -321,9 +366,21 @@ async function run(request, token) {
       await settleCaption();
       await snapshot("Trước Enter " + tag);
       await verifyEditor();
-      await key("Enter", "Enter", 13, 0, "\r");
-      await settleCaption();
-      const value = await snapshot("Sau Enter " + tag);
+      // Enter takes TikTok's highlighted suggestion, which may be another tag (#audioviral for #audio):
+      // the suggestion that is exactly this tag is clicked first when the list shows it.
+      const suggestion = await dom("pickHashtagSuggestion", { tag });
+      let value;
+      if (suggestion.clicked) {
+        await settleCaption();
+        value = await snapshot("Sau chọn gợi ý " + tag);
+        suggestionNotes.push(`${tag}: bấm đúng gợi ý (danh sách: ${suggestion.options.join(" ") || "trống"})`);
+      }
+      if (!committedTag(value, tag)) {
+        if (suggestion.clicked) await verifyEditor();
+        await key("Enter", "Enter", 13, 0, "\r");
+        await settleCaption();
+        value = await snapshot("Sau Enter " + tag);
+      }
       await verifyEditor(false);
       return value;
     };
@@ -376,7 +433,8 @@ async function run(request, token) {
             state = auditCaption(value, request.row.tieu_de, completed);
             verifyTitle(state);
           }
-          if (!state.tagsMatch) throw new Error(`Sau Enter ${tag}, hashtag chưa được giữ đủ. Thiếu: ${state.missing.join(" ")}; thừa/sai: ${state.extra.join(" ")}. Đã lưu từng bước để kiểm tra.`);
+          if (!state.tagsMatch) throw new Error(`Sau Enter ${tag}, hashtag chưa được giữ đủ. Thiếu: ${state.missing.join(" ")}; thừa/sai: ${state.extra.join(" ")}`
+            + (state.extra.length ? ` (TikTok tự chọn gợi ý khác thay cho ${tag})` : "") + `. Đã lưu từng bước để kiểm tra.`);
         }
         await verifyEditor(false);
         const filled = auditCaption(await snapshot("Kiểm tra tiêu đề sau hashtag"), request.row.tieu_de, tags);
@@ -398,7 +456,8 @@ async function run(request, token) {
       }
     }
     await report("running", "Đã điền và đọc lại đúng tiêu đề/hashtag.");
-    if (tags.length) await report("running", `Hashtag: đã nhập ${tags.length} mục, mỗi mục cách trước, chờ 1 giây rồi Enter; đã đọc lại nội dung.`);
+    if (tags.length) await report("running", `Hashtag: đã nhập ${tags.length} mục, mỗi mục cách trước, chờ 1 giây rồi bấm đúng gợi ý hoặc Enter; đã đọc lại nội dung.`
+      + (suggestionNotes.length ? " " + suggestionNotes.join("; ") : ""));
     if (request.schedule) {
       stage = "Bật lên lịch";
       const state = await dom("schedule");
@@ -410,7 +469,7 @@ async function run(request, token) {
       if (await dom("dateCheck", { date })) {
         await report("running", "Ngày trên TikTok đã khớp, giữ nguyên.");
       } else if (await dom("openDate", { date })) {
-        await waitFor(() => dom("datePickerReady", { date }), 4000, "Popup ngay chua mo sau khi bam o ngay.");
+        await openPopup("date", () => dom("datePickerReady", { date }), "Popup ngay chua mo sau khi bam o ngay.");
         const [year, month] = date.split('-').map(Number);
         const targetMonth = year * 12 + month - 1;
         let picked = false;
@@ -438,15 +497,17 @@ async function run(request, token) {
       if (await dom("timeCheck", { time })) {
         await report("running", "Giờ trên TikTok đã khớp, giữ nguyên.");
       } else if (await dom("openTime")) {
-        await waitFor(() => dom("timePickerReady"), 4000, "Popup gio chua mo sau khi bam o gio.");
+        await openPopup("time", () => dom("timePickerReady"), "Popup gio chua mo sau khi bam o gio.");
         const [hour, minute] = time.split(":");
         if (!await dom("pickTime", { part: "hour", value: hour })) throw new Error("Chua nhan dien duoc cot gio. Xuat chan doan khi bang gio dang mo.");
         await waitFor(() => dom("timePartCheck", { part: "hour", value: hour }), 4000, "Gio doc lai khong khop sau khi chon.");
         await dom("openTime");
-        await waitFor(() => dom("timePickerReady"), 4000, "Popup phut chua san sang sau khi chon gio.");
+        await openPopup("time", () => dom("timePickerReady"), "Popup phut chua san sang sau khi chon gio.");
         if (!await dom("pickTime", { part: "minute", value: minute })) throw new Error("Chua nhan dien duoc cot phut. Xuat chan doan khi bang gio dang mo.");
       } else await dom("setTime", { value: time });
       await sleep(500);
+      stage = "Đóng bảng chọn ngày / giờ";
+      if (!await closePickers()) await report("running", "Bảng chọn ngày / giờ vẫn mở sau khi chọn; tiếp tục vì giá trị đã đọc đúng.");
       stage = "Đọc lại ngày / giờ";
       await waitFor(() => dom("scheduleCheck", { date, time }), 4000, "Ngay/gio doc lai khong khop. Chua xac nhan lich.");
       await report("running", "Da doc lai dung ngay/gio tren bieu mau.");
@@ -455,6 +516,7 @@ async function run(request, token) {
       stage = "Đăng / lên lịch";
       await report("running", "Dang cho tai/xu ly video: cần thanh tải success 100% và nút Đăng / Lên lịch sẵn sàng...");
       await waitFor(() => dom("publishReady", { schedule: request.schedule }), 30 * 60_000, "Chưa xác nhận tải success 100% hoặc nút Đăng / Lên lịch chưa sẵn sàng sau 30 phút.");
+      await closePickers();
       const verified = await verifySubmission("Trước khi đăng");
       const priorOutcome = await dom('publishOutcome');
       if (priorOutcome.state !== 'waiting') throw new Error('Trang dang co thong bao/hoi thoai can kiem tra. Khong bam dang khi ket qua mo ho: ' + priorOutcome.message);
@@ -462,6 +524,7 @@ async function run(request, token) {
       receipt.caption = verified.caption;
       // Persist before clicking: a worker restart must never repeat a submission.
       await saveSubmission(receiptKey, receipt);
+      committed = true;
       await dom("publish", { schedule: request.schedule, authorized: true });
       await finishSubmission(receiptKey, receipt);
     } else await report("review", "Cho kiem tra tren TikTok. Chua bam Dang / Len lich; video co the van dang tai hoac xu ly.");
@@ -471,11 +534,23 @@ async function run(request, token) {
       expectedCaption: request.row && { title: request.row.tieu_de, hashtag: request.row.hashtag }, captionTrace,
       expectedSchedule: request.schedule ? request.row?.gio_dang : null, capturedAt: new Date().toISOString() };
     if (driver.attached && !token.cancelled) {
+      // A failed schedule step is below the fold: bring that block into the screenshot first.
+      if (request.schedule && /ngày|giờ|lịch/i.test(stage)) await dom("revealSchedule").catch(() => {});
       try { diagnostic = { ...diagnostic, ...await driver.inspect(true) }; } catch (captureError) { diagnostic.captureError = captureError.message; }
     }
     if (!token.cancelled) {
       await chrome.storage.local.set({ lastDiagnostic: diagnostic });
       error.message = `[${stage}] ${error.message}`;
+    }
+    // The queue decides whether the next video still runs: a tab or page problem is not this video's
+    // fault, and a click whose outcome is unknown must leave the page untouched.
+    error.stage = stage; error.committed = committed;
+    error.fatal = token.cancelled || ["Mở trang tải lên", "Kết nối tab TikTok"].includes(stage)
+      || /Tab khong con o TikTok Studio|Mo trang Tai len TikTok Studio truoc khi chay/.test(error.message);
+    if (request.queued && driver.attached && !error.fatal && !committed) {
+      // The next video reloads the upload page on purpose: silence this draft's "leave site?" prompt.
+      await driver.evaluate(null, "disarmUnload").catch(() => {});
+      if (driver.current?.sessionId) await dom("disarmUnload").catch(() => {});
     }
     await report(token.cancelled ? "stopped" : "error", error.message);
     throw error;
@@ -605,7 +680,8 @@ async function readPostList(request) {
         const before = found.size;
         for (const post of (await read("postList"))?.posts || []) found.set(post.id, post);
         idle = found.size > before ? 0 : idle + 1;
-        if (step?.atEnd && idle >= 2) complete = true;
+        // The end of the scroll proves completeness only when the heading's total is unknown.
+        if (step?.atEnd && idle >= 2) { if (total === null) complete = true; break; }
         else if (!step?.moved && idle >= 3) break;
       }
     } catch (error) {
@@ -615,7 +691,8 @@ async function readPostList(request) {
         probe: await read("postProbe").catch(() => null) } });
       throw error;
     }
-    if (total !== null && found.size >= total) complete = true;
+    // "Bài đăng 141" with 7 rows read means the table never loaded the rest: older episodes stay unjudged.
+    if (total !== null) complete = found.size >= total;
     const posts = [...found.values()];
     await chrome.storage.local.set({ lastPostRead: { at: new Date().toISOString(), version: chrome.runtime.getManifest().version,
       ok: true, found: posts.length, total, complete, sample: posts.slice(0, 3), probe: posts.length ? null : await read("postProbe") } });
@@ -651,12 +728,48 @@ async function runQueue(request) {
       if (Object.entries(approvals).some(([key, receipt]) => !keys.includes(key) || !submissions[key] || !sameReceipt(submissions[key], receipt))) throw new Error('Bien nhan da thay doi hoac khong thuoc video da chon. Xac nhan lai yeu cau dang lai.');
       if (keys.some((key, index) => submissions[key] && !Object.hasOwn(approvals, key) && !(rows.length === 1 && canResumeConfirmation(submissions[key], { ...request, row: rows[index] })))) throw new Error("Hang doi co video da bam Dang / Len lich. Kiem tra TikTok; chon Cho phep dang lai va xac nhan neu muon dang them lan nua.");
     }
-    let result;
+    // A video that fails is written to its own row and the queue moves on; it stops only when the page may
+    // already hold a submission, when the tab or page itself is the problem, or when two videos in a row fail
+    // the same step after their upload (a layout change: every further upload would fail the same way).
+    const queued = rows.length > 1;
+    const failed = [], completed = [];
+    const title = row => row.tieu_de || row.thu_muc?.split(/[\\/]/).at(-1) || row.video;
+    const shape = message => String(message || "").replace(/\d+/g, "#");
+    const lines = () => failed.map(item => ` - ${item.title}: ${item.message.split("\n")[0]}`);
+    // The queue outcome is stored once more without a row id, so the panel shows the whole picture.
+    const summarize = (status, head) => chrome.storage.local.set({ progress: { status, version: chrome.runtime.getManifest().version,
+      updatedAt: new Date().toISOString(), queue: { completed: completed.length, failed: failed.length }, failed, log: [head, ...lines()] } });
+    let result, previous = null;
     for (const [index, row] of rows.entries()) {
       if (token.cancelled) throw new Error("Da dung hang doi.");
-      result = await run({ ...request, row, freshUpload: index > 0 }, token);
+      try {
+        result = await run({ ...request, row, freshUpload: index > 0, queued }, token);
+        completed.push(row); previous = null;
+      } catch (error) {
+        if (!queued || token.cancelled) throw error;
+        const entry = { id: row.id, title: title(row), message: error.message, stage: error.stage };
+        failed.push(entry);
+        const stop = async reason => {
+          const head = `Hàng đợi dừng: ${completed.length} video đã chạy, ${failed.length} video lỗi, ${rows.length - index - 1} video chưa chạy. ${reason}`;
+          await summarize("error", head);
+          throw new Error([head, ...lines()].join("\n"));
+        };
+        if (error.fatal) await stop("Lỗi ở tab / trang TikTok, không thuộc riêng video này.");
+        if (error.committed) await stop("Đã bấm Đăng / Lên lịch mà chưa rõ kết quả; video có thể đã được đăng. Kiểm tra TikTok trước khi chạy tiếp.");
+        if (previous && !["Kiểm tra dữ liệu", "Nạp video"].includes(error.stage) && shape(previous.message) === shape(error.message)) {
+          await stop("Hai video liên tiếp lỗi ở cùng bước; có thể TikTok đổi giao diện. Xuất chẩn đoán lỗi để sửa.");
+        }
+        previous = entry;
+      }
     }
-    return result;
+    if (queued && failed.length) {
+      const head = completed.length
+        ? `Hàng đợi xong: ${completed.length} video đã chạy, bỏ qua ${failed.length} video lỗi (dòng đỏ trong bảng):`
+        : `Hàng đợi xong: cả ${failed.length} video đều lỗi, chưa video nào được đăng:`;
+      await summarize(completed.length ? "done" : "error", head);
+      if (!completed.length) throw new Error([head, ...lines()].join("\n"));
+    }
+    return queued ? { ...result, queue: { completed: completed.length, failed } } : result;
   } finally { if (running === token) running = null; }
 }
 

@@ -472,7 +472,7 @@ audio { max-width: 100%; height: 36px; }
 .chip.done { background: var(--ok-bg); color: var(--ok); }
 #epnote:empty { display: none; }
 
-/* Hàng “🌙 Xong hết thì cho máy ngủ” — nằm trên cùng khối hàng đợi. */
+/* Hàng “⏻ Xong hết thì tắt máy” — nằm trên cùng khối hàng đợi. */
 /* ── 📊 Đồng hồ VRAM trên khối hàng đợi (cùng khuôn với myvideo) ──────────── */
 .vramrow {
   display: flex; gap: 8px; align-items: center;
@@ -486,11 +486,11 @@ audio { max-width: 100%; height: 36px; }
 .vramrow.vram-warn { color: var(--warn); font-weight: 600; }
 .vramrow.vram-warn .vrambar i { background: var(--warn); }
 
-.sleeprow {
+.shutrow {
   display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   margin: -2px 0 6px; padding-bottom: 8px; border-bottom: 1px dashed var(--line);
 }
-.sleeprow .chk { margin-left: -7px; }
+.shutrow .chk { margin-left: -7px; }
 
 /* Hàng đợi ĐĂNG — chạy song song với hàng đợi chính, tách khối cho khỏi lẫn. */
 .uploadq { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }

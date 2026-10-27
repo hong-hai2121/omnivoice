@@ -218,6 +218,34 @@ test("adds a space before every hashtag, waits one second, then sends a trusted 
   assert.equal(await task("captionCheck", { text: 'Test\n#first #second' }), true);
 });
 
+test('the suggestion that is exactly the typed hashtag is clicked when Enter would take another tag', async () => {
+  await tab.evaluate(() => {
+    window.enters = 0; window.picked = [];
+    const caption = document.querySelector('[role="textbox"]');
+    const list = document.createElement('div'); list.id = 'suggest'; list.hidden = true; document.body.append(list);
+    const commit = tag => { window.picked.push(tag); caption.textContent = caption.textContent.replace(/#\w+$/, tag + ' '); render(''); };
+    const render = typed => {
+      list.hidden = !typed;
+      list.innerHTML = typed ? ['viral', '', 'book'].map(suffix => '<div class="hashtag-item" role="button"><span class="hashtag-name">#' + typed + suffix +
+        '</span><span class="hashtag-count">' + (suffix ? '2.1M' : '300K') + ' lượt xem</span></div>').join('') : '';
+      for (const item of list.querySelectorAll('.hashtag-item')) item.addEventListener('mousedown', event => { event.preventDefault(); commit(item.querySelector('.hashtag-name').textContent); });
+    };
+    caption.addEventListener('input', () => render(caption.innerText.match(/#(\w+)$/)?.[1] || ''));
+    caption.addEventListener('keydown', event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault(); window.enters++;
+      const first = list.querySelector('.hashtag-name'); if (first) commit(first.textContent);
+    });
+  });
+  const request = job({ schedule: false }); request.row.hashtag = '#audio #fyp';
+  const result = await message(request); assert.equal(result.ok, true, result.error);
+  assert.deepEqual(await tab.evaluate(() => window.picked), ['#audio', '#fyp']);
+  assert.equal(await tab.evaluate(() => window.enters), 0, 'Enter would have taken #audioviral');
+  assert.equal(await task('captionCheck', { text: 'Test #audio #fyp' }), true);
+  const { progress } = await dashboard.evaluate(() => chrome.storage.local.get('progress'));
+  assert.ok(progress.log.some(line => line.includes('#audio: bấm đúng gợi ý')), progress.log.join('\n'));
+});
+
 test("Enter is not sent when focus moves from the caption to a publish button", async () => {
   await tab.evaluate(() => document.querySelector('[role="textbox"]').addEventListener('input', event => {
     if (event.target.innerText.includes('#first')) document.querySelector('#publish').focus();
@@ -862,6 +890,93 @@ test('a selected script without its video is left out of the publish queue inste
   await dashboard.reload(); await expect(dashboard.locator('#prepare')).toBeDisabled();
   assert.match(await dashboard.locator('#prepare').getAttribute('title'), /chưa có video/);
   assert.equal(await tab.evaluate(() => window.clicks), 1);
+});
+
+test('a video failing before its upload is skipped and the queue moves on to the next one', async () => {
+  const folder = path.join(directory, 'episode-skip'); await mkdir(folder, { recursive: true });
+  const goodVideo = path.join(folder, 'good.mp4'); await writeFile(goodVideo, 'good fixture');
+  const broken = { ...job().row, id: 'x', video: path.join(directory, 'missing-queue.mp4'), tieu_de: 'Missing one' };
+  const good = { ...job().row, id: 'y', video: goodVideo, tieu_de: 'Good one' };
+  const result = await message(job({ rows: [broken, good], publish: true }));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.queue.completed, 1); assert.equal(result.queue.failed.length, 1);
+  assert.equal(result.queue.failed[0].id, 'x'); assert.match(result.queue.failed[0].message, /^\[Nạp video\]/);
+  assert.equal(await tab.locator('[type="file"]').evaluate(el => el.files[0].name), 'good.mp4');
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+  const results = await dashboard.evaluate(async () => (await chrome.storage.local.get('rowResults')).rowResults);
+  assert.equal(results.x.trang_thai, 'error'); assert.match(results.x.ghi_chu, /Nạp video/); assert.equal(results.y.trang_thai, 'done');
+  const progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
+  assert.equal(progress.status, 'done'); assert.equal(progress.rowId, undefined); assert.deepEqual(progress.queue, { completed: 1, failed: 1 });
+  assert.match(progress.log.join('\n'), /Hàng đợi xong: 1 video đã chạy, bỏ qua 1 video lỗi/);
+  await expect(dashboard.locator('#state')).toHaveText('Đã xử lý · bỏ qua 1 video lỗi');
+  await expect(dashboard.locator('#operation-error')).toBeVisible();
+  assert.match(await dashboard.locator('#operation-error').innerText(), /Missing one: \[Nạp video\]/);
+});
+
+test('two videos failing the same step after their upload stop the queue before the remaining videos', async () => {
+  // One folder per video: files sharing a folder count as one episode.
+  const files = [];
+  for (const name of ['r1', 'r2', 'r3']) {
+    const folder = path.join(directory, 'episode-' + name); await mkdir(folder, { recursive: true });
+    const file = path.join(folder, name + '.mp4'); await writeFile(file, name); files.push(file);
+  }
+  // The date box swallows every value, so each video fails while its date is chosen.
+  body = fixture + `<script>const box = document.querySelector('[type="date"]'); Object.defineProperty(box, 'value', { get: () => '', set() {} });</script>`;
+  await tab.goto('https://www.tiktok.com/tiktokstudio/upload');
+  const rows = files.map((video, index) => ({ ...job().row, id: 'r' + (index + 1), video, tieu_de: 'Repeat ' + (index + 1) }));
+  const result = await message(job({ rows, publish: true }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Hàng đợi dừng: 0 video đã chạy, 2 video lỗi, 1 video chưa chạy/);
+  assert.match(result.error, /cùng bước/);
+  assert.equal(await tab.locator('[type="file"]').evaluate(el => el.files[0].name), 'r2.mp4');
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+  const results = await dashboard.evaluate(async () => (await chrome.storage.local.get('rowResults')).rowResults);
+  assert.equal(results.r1.trang_thai, 'error'); assert.equal(results.r2.trang_thai, 'error'); assert.equal(results.r3, undefined);
+  const progress = await dashboard.evaluate(async () => (await chrome.storage.local.get('progress')).progress);
+  assert.equal(progress.status, 'error'); assert.equal(progress.failed.length, 2);
+  await expect(dashboard.locator('#state')).toHaveText('Lỗi · bỏ qua 2 video lỗi');
+});
+
+test('a publish click with an unclear outcome stops the queue without touching the next video', async () => {
+  const folder = path.join(directory, 'episode-unclear'); await mkdir(folder, { recursive: true });
+  const nextVideo = path.join(folder, 'next.mp4'); await writeFile(nextVideo, 'next fixture');
+  await tab.evaluate(() => {
+    document.querySelector('#publish').onclick = () => {
+      window.clicks++;
+      const modal = document.createElement('div'); modal.setAttribute('role', 'dialog'); modal.textContent = 'Confirm account'; document.body.append(modal);
+    };
+  });
+  const first = job().row, second = { ...first, id: 'b', video: nextVideo, tieu_de: 'Next' };
+  const result = await message(job({ rows: [first, second], publish: true }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Confirm account/); assert.match(result.error, /có thể đã được đăng/);
+  assert.match(result.error, /Hàng đợi dừng: 0 video đã chạy, 1 video lỗi, 1 video chưa chạy/);
+  assert.equal(await tab.evaluate(() => window.clicks), 1);
+  assert.equal(await tab.locator('[type="file"]').evaluate(el => el.files[0].name), 'fixture.mp4');
+  const results = await dashboard.evaluate(async () => (await chrome.storage.local.get('rowResults')).rowResults);
+  assert.equal(results.a.trang_thai, 'error'); assert.equal(results.b, undefined);
+  const submissions = await dashboard.evaluate(async () => (await chrome.storage.local.get('submissions')).submissions);
+  assert.equal(Object.values(submissions)[0].state, 'uncertain');
+});
+
+test('selecting only videos TikTok already lists runs nothing and says so without an error', async () => {
+  const folder = path.join(directory, 'episode-posted'); await mkdir(folder, { recursive: true });
+  const otherVideo = path.join(folder, 'other.mp4'); await writeFile(otherVideo, 'other fixture');
+  const posted = { ...job().row, id: 'p', trang_thai: 'done', ghi_chu: '' };
+  const listed = { ...job().row, id: 'q', video: otherVideo, tieu_de: 'Other', trang_thai: 'đã lên lịch', statusOrigin: 'tiktok', ghi_chu: '' };
+  await dashboard.evaluate(({ rows, ids }) => chrome.storage.local.set({ rows, checkedIds: ids, selected: ids[0], scanSettings: { auto: false } }), { rows: [posted, listed], ids: ['p', 'q'] });
+  await dashboard.reload(); await expect(dashboard.locator('#prepare')).toBeEnabled();
+  await dashboard.locator('#publish').check();
+  await expect(dashboard.locator('#action-state')).toHaveText('Sẵn sàng chạy 0 video · bỏ qua 2 đã đăng / lên lịch');
+  await dashboard.locator('#prepare').click();
+  await expect(dashboard.locator('#state')).toHaveText('Không có video để chạy');
+  await expect(dashboard.locator('#operation-error')).toBeHidden();
+  assert.match(await dashboard.locator('#log').innerText(), /Bỏ qua 2 dòng, không còn video để chạy:\nTest: đã đăng \/ đã lên lịch trên TikTok/);
+  assert.equal(await tab.evaluate(() => window.clicks), 0);
+  await expect(dashboard.locator('#prepare')).toBeEnabled();
+  await dashboard.locator('#repost').check();
+  await expect(dashboard.locator('#action-state')).toHaveText('Sẵn sàng chạy 2 video');
+  await dashboard.locator('#repost').uncheck();
 });
 
 test("queue advances only after success and stores every row result", async () => {

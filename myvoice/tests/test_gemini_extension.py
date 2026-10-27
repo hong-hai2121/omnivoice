@@ -320,7 +320,7 @@ class BackendSyncAcrossWindowsTests(unittest.TestCase):
         app = self.gui.App.__new__(self.gui.App)
         values = dict(var_auto2=True, var_auto3=True, var_auto_tts=False, var_seo=True,
                       pipe_var_model="medium", pipe_var_speed="0.7",
-                      var_shutdown=False, var_sleep=False, var_upload=False,
+                      var_shutdown=False, var_upload=False,
                       var_gemini_backend=backend_in_memory)
         for name, value in values.items():
             holder = {"v": value}
@@ -400,7 +400,7 @@ class WebChoiceTests(unittest.TestCase):
         from myvoice.web import server
         from starlette.datastructures import FormData
         original = {"gemini_backend": "firefox", "model": "medium", "speed": "0.7",
-                    "upload": True, "sleep": True}
+                    "upload": True, "shutdown": True}
         for save in (server._save_pipe_from_form, server._save_model_speed):
             with patch.object(server.core, "load_pipeline", return_value=dict(original)), \
                     patch.object(server.core, "save_pipeline") as write:
@@ -408,7 +408,7 @@ class WebChoiceTests(unittest.TestCase):
                 saved = write.call_args.args[0]
                 self.assertEqual(saved["gemini_backend"], "extension")
                 self.assertTrue(saved["upload"])
-                self.assertTrue(saved["sleep"])
+                self.assertTrue(saved["shutdown"])
 
     def test_queued_translation_and_retry_freeze_the_browser_choice(self):
         from myvoice.web import core, steps

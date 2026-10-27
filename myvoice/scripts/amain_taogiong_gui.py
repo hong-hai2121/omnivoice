@@ -108,13 +108,11 @@ OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài
 # upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
 # khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False, sleep=False, upload=False, gemini_backend="extension")
-# Số phút chờ trước khi tắt máy khi bật ô "Xong thì tắt máy" (huỷ bằng: shutdown /a).
+                     shutdown=False, upload=False, gemini_backend="extension")
+# Số phút chờ trước khi tắt máy khi bật ô "⏻ Xong thì tắt máy" (huỷ bằng: shutdown /a).
+# NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py đọc lại hằng này).
+# (Ô 🌙 "cho máy ngủ" + suspend_computer đã bỏ 26/10/2026 — chỉ còn tắt máy.)
 SHUTDOWN_DELAY_MIN = 5
-# Số phút chờ trước khi CHO MÁY NGỦ khi bật ô "🌙 Xong thì cho máy ngủ". Ngắn hơn
-# tắt máy vì ngủ dễ huỷ hơn nhiều: bỏ tick là xong, mà lỡ ngủ rồi thì chạm chuột
-# là dậy — không mất gì cả.
-SLEEP_DELAY_MIN = 3
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -135,34 +133,6 @@ DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn s�
 #     tốn thêm dung lượng đĩa bằng đúng một bản video nữa trong lúc ghi đè.
 SUB_MODE_SRT  = "file .srt rời"
 SUB_MODE_BURN = "vẽ cứng vào hình"
-
-
-def suspend_computer() -> str:
-    """Đưa máy vào chế độ NGỦ ngay. Trả "" nếu gọi được, hoặc mô tả lỗi.
-
-    Hàm chỉ trả về khi máy đã DẬY lại (SetSuspendState chặn tại đó).
-
-    Tham số (bHibernate=0, bForce=1, bWakeupEventsDisabled=0): số 0 đầu là xin NGỦ
-    chứ không ngủ đông. Máy nào đang bật sẵn ngủ đông vẫn có thể vào hibernate thay
-    vì sleep — muốn ngủ thật thì tắt nó một lần bằng:  powercfg -h off
-
-    NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py gọi lại hàm này).
-    """
-    import ctypes
-    import subprocess
-    try:
-        if ctypes.windll.powrprof.SetSuspendState(0, 1, 0):
-            return ""
-    except Exception as e:
-        logging.warning(f"⚠️ Gọi SetSuspendState không được ({e}) — thử lại bằng rundll32.")
-    # Dự phòng: đúng lệnh ngủ Windows vẫn dùng, chạy ở tiến trình riêng nên không
-    # dính chuyện quyền/hàm nạp hỏng của tiến trình đang chạy.
-    try:
-        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
-                       check=False, creationflags=CREATE_NO_WINDOW)
-        return ""
-    except Exception as e:
-        return str(e)
 
 
 def _ensure_youtube_path():
@@ -3032,15 +3002,9 @@ class App(tk.Tk):
         self._last_output = None
         self._pipe_busy = False
         self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
-        # ⏻ Xong thì tắt máy / 🌙 Xong thì cho máy ngủ — mỗi ô DÙNG CHUNG cho 2 chỗ
-        # tick (tab Giọng nói + bước ③), nên tạo ở đây, TRƯỚC khi dựng panel: tick ở
-        # đâu cũng là một cài đặt duy nhất. Hai ô loại trừ nhau (xem _pick_power_mode).
+        # ⏻ Xong thì tắt máy — ô DÙNG CHUNG cho 2 chỗ tick (tab Giọng nói + bước ③),
+        # nên tạo ở đây, TRƯỚC khi dựng panel: tick ở đâu cũng là một cài đặt duy nhất.
         self.var_shutdown = tk.BooleanVar(value=self._pipe_settings.get("shutdown", False))
-        self.var_sleep = tk.BooleanVar(value=self._pipe_settings.get("sleep", False))
-        # Đếm ngược giờ ngủ bằng threading.Timer chứ không phải after(): cờ bận được
-        # hạ ở LUỒNG CHẠY VIỆC (finally của các _pipe_set_busy(False)), mà gọi after()
-        # từ luồng khác là chuyện Tk không hứa.
-        self._sleep_timer = None
         self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
         self._effect_favorites = load_effect_favorites()
@@ -3787,9 +3751,8 @@ class App(tk.Tk):
         #               qua video đã dựng — chỉ dựng phần còn thiếu. Mặc định TẮT
         #               (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
         #  ⬆️ hiện cửa sổ: tới bước clone giọng thì GUI tự bật lên trên (mỗi link 1 lần).
-        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a);
-        #  🌙 ngủ    : cho máy ngủ sau SLEEP_DELAY_MIN phút khi xong (huỷ: bỏ tick).
-        #               Cả hai dùng CHUNG biến với ô tick ở bước ③.
+        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a).
+        #               Dùng CHUNG biến với ô tick ở bước ③.
         # Cột giữa có weight=0 (co theo nội dung) nên hàng này phải ngắn, kẻo cột
         # giữa phình ra lấn sang cột video bên phải.
         act2 = ttk.Frame(left)
@@ -3801,10 +3764,7 @@ class App(tk.Tk):
         ttk.Checkbutton(act2, text="⬆️  Hiện cửa sổ khi tạo giọng",
                         variable=self.var_bring_front).pack(side="left", padx=(14, 0))
         ttk.Checkbutton(act2, text="⏻  Xong thì tắt máy", variable=self.var_shutdown,
-                        command=lambda: self._pick_power_mode("shutdown")
-                        ).pack(side="left", padx=(14, 0))
-        ttk.Checkbutton(act2, text="🌙  Xong thì ngủ", variable=self.var_sleep,
-                        command=lambda: self._pick_power_mode("sleep")
+                        command=self._save_shutdown_choice
                         ).pack(side="left", padx=(14, 0))
 
         # ── Tiến trình ── GỘP LÀM 1 với thanh dưới bước 3: self.progress/self.status
@@ -6320,25 +6280,16 @@ class App(tk.Tk):
                            "mỗi ngày 2 tập)",
                   style="Hint.TLabel").grid(row=8, column=0, sticky="w", pady=(2, 0))
 
-        # TẮT MÁY / CHO MÁY NGỦ khi chạy xong — để chạy batch qua đêm. Một lần duy
-        # nhất: xong là tự bỏ tick, khỏi lỡ tắt/ngủ ở lần chạy sau. Biến dùng chung
-        # với ô tick bên tab Giọng nói (tạo ở __init__), và hai ô loại trừ nhau —
-        # hẹn tắt máy rồi lại cho ngủ thì lệnh tắt nổ ngay lúc máy dậy.
+        # TẮT MÁY khi chạy xong — để chạy batch qua đêm. Một lần duy nhất: xong là
+        # tự bỏ tick, khỏi lỡ tắt ở lần chạy sau. Biến dùng chung với ô tick bên tab
+        # Giọng nói (tạo ở __init__). (Ô 🌙 cho máy ngủ đã bỏ 26/10/2026.)
         ttk.Checkbutton(
             s3, text=f"⏻  Xong hết thì TẮT MÁY (sau {SHUTDOWN_DELAY_MIN} phút)",
             variable=self.var_shutdown,
-            command=lambda: self._pick_power_mode("shutdown")
+            command=self._save_shutdown_choice
         ).grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Label(s3, text="Huỷ bất cứ lúc nào: mở CMD gõ  shutdown /a",
                   style="Hint.TLabel").grid(row=4, column=0, sticky="w")
-        ttk.Checkbutton(
-            s3, text=f"🌙  Xong hết thì CHO MÁY NGỦ (sau {SLEEP_DELAY_MIN} phút)",
-            variable=self.var_sleep,
-            command=lambda: self._pick_power_mode("sleep")
-        ).grid(row=5, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(s3, text="Huỷ: bỏ tick ô này. Ngủ rồi thì chạm chuột là dậy, "
-                           "mọi thứ còn nguyên.",
-                  style="Hint.TLabel").grid(row=6, column=0, sticky="w")
 
         self._pipe_steps = (s1, s2, s3)
 
@@ -6427,7 +6378,7 @@ class App(tk.Tk):
 
     def _run_tts_then_shutdown(self, *args, **kwargs):
         """Bọc run_tts cho các luồng ở tab Giọng nói (không đi qua _pipe_set_busy):
-        chạy xong/lỗi thì xét ô tick ⏻/🌙 để hẹn tắt máy hoặc cho máy ngủ. Gọi lại trên luồng Tk
+        chạy xong/lỗi thì xét ô tick ⏻ để hẹn tắt máy. Gọi lại trên luồng Tk
         bằng after() vì BooleanVar không an toàn khi đụng từ thread khác."""
         try:
             run_tts(*args, **kwargs)
@@ -6437,100 +6388,22 @@ class App(tk.Tk):
             except Exception:
                 pass
 
-    def _pick_power_mode(self, which: str):
-        """⏻ và 🌙 loại trừ nhau — tick ô này thì bỏ ô kia.
-
-        Hẹn tắt máy rồi lại cho máy ngủ là kiểu hỏng nhất: lệnh `shutdown /s` vẫn
-        nằm đó và nổ ngay khi máy vừa dậy, giữa lúc bạn đang ngồi làm việc.
-        """
-        if which == "sleep" and self.var_sleep.get():
-            self.var_shutdown.set(False)
-        elif which == "shutdown" and self.var_shutdown.get():
-            self.var_sleep.set(False)
-        if not self.var_sleep.get():        # vừa bỏ tick 🌙 → huỷ luôn lệnh đang đếm
-            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
+    def _save_shutdown_choice(self):
+        """Bấm ô ⏻ (ở tab Giọng nói hay bước ③) → nhớ ngay vào taogiong_pipeline.json."""
         try:
             self._save_pipe_settings()
         except Exception as e:
             logging.warning(f"⚠️ Không lưu được cài đặt pipeline: {e}")
 
-    def _sleep_status(self, msg: str):
-        """Ghi dòng trạng thái, bỏ qua nếu cửa sổ đã đóng — mấy hàm dưới đây chạy ở
-        luồng Timer, không được phép chết vì một dòng chữ."""
-        try:
-            self.pipe_status.set(msg)
-        except Exception:
-            pass
-
-    def _cancel_sleep(self, msg: str = "") -> bool:
-        """Huỷ đếm ngược giờ ngủ nếu đang có. True = vừa huỷ được một lệnh."""
-        timer, self._sleep_timer = self._sleep_timer, None
-        if timer is None:
-            return False
-        try:
-            timer.cancel()
-        except Exception:
-            pass
-        if msg:
-            logging.warning(msg)
-            self._sleep_status(msg)
-        return True
-
-    def _schedule_sleep(self):
-        """Đếm ngược SLEEP_DELAY_MIN phút rồi cho máy ngủ.
-
-        KHÔNG bỏ tick ngay như ô ⏻: lệnh tắt máy còn huỷ được bằng `shutdown /a`,
-        còn lệnh ngủ này là của chính app — giữ tick lại chính là nút huỷ. Tick chỉ
-        tự bỏ khi máy đã thật sự ngủ (một lần duy nhất).
-        """
-        if self._sleep_timer is not None:      # đang đếm rồi, đừng chồng lệnh
-            return
-        timer = threading.Timer(SLEEP_DELAY_MIN * 60, self._do_sleep)
-        timer.daemon = True                    # đóng app là lệnh ngủ cũng tan theo
-        self._sleep_timer = timer
-        timer.start()
-        logging.warning(f"🌙 ĐÃ HẸN CHO MÁY NGỦ sau {SLEEP_DELAY_MIN} phút — "
-                        "muốn huỷ thì bỏ tick ô 🌙.")
-        self._sleep_status(f"🌙 Máy ngủ sau {SLEEP_DELAY_MIN} phút — huỷ: bỏ tick 🌙")
-
-    def _do_sleep(self):
-        """Tới giờ ngủ (chạy ở luồng của Timer nên không treo cửa sổ lúc máy ngủ)."""
-        self._sleep_timer = None
-        try:
-            if not self.var_sleep.get():       # vừa bỏ tick sát giờ
-                return
-            if self._pipe_busy:                # có việc mới chen vào → để lượt sau
-                logging.warning("🌙 Có việc đang chạy → hoãn cho máy ngủ.")
-                return
-            self.var_sleep.set(False)          # một lần duy nhất
-            self._save_pipe_settings()
-        except Exception as e:
-            # Cửa sổ vừa đóng / Tk không trả lời → KHÔNG ngủ. Đọc không ra ý người
-            # dùng mà vẫn úp máy xuống thì phiền hơn nhiều so với bỏ qua lượt này.
-            logging.warning(f"⚠️ Bỏ qua lệnh cho máy ngủ: {e}")
-            return
-        logging.warning("🌙 Cho máy ngủ… (chạm chuột/bàn phím là dậy, mọi thứ còn nguyên)")
-        self._sleep_status("🌙 Đang cho máy ngủ…")
-        err = suspend_computer()               # chỉ trả về khi máy đã DẬY
-        if err:
-            logging.error(f"Không cho máy ngủ được: {err}")
-            self._sleep_status("❌ Không cho máy ngủ được — xem nhật ký.")
-            return
-        logging.warning("☀️ Máy đã dậy — app chạy tiếp bình thường.")
-        self._sleep_status("☀️ Máy đã dậy — sẵn sàng chạy tiếp.")
-
     def _maybe_schedule_shutdown(self):
-        """Xong hết thì TẮT MÁY (ô ⏻) hoặc CHO MÁY NGỦ (ô 🌙) — để chạy batch qua đêm.
-        Chỉ hẹn khi KHÔNG còn tiến trình nào chạy.
+        """Xong hết thì TẮT MÁY (ô ⏻) — để chạy batch qua đêm. Chỉ hẹn khi KHÔNG còn
+        tiến trình nào chạy.
 
-        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt/ngủ ngoài ý
+        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt ngoài ý
         muốn. Vẫn hẹn khi luồng kết thúc do LỖI — máy đằng nào cũng rảnh, log đã ghi
-        lại lỗi. Huỷ: `shutdown /a` (tắt máy) hoặc bỏ tick 🌙 (ngủ).
+        lại lỗi. Huỷ: `shutdown /a`.
         """
         if self._pipe_busy:
-            return
-        if getattr(self, "var_sleep", None) is not None and self.var_sleep.get():
-            self._schedule_sleep()
             return
         var = getattr(self, "var_shutdown", None)
         if var is None or not var.get():
@@ -6557,10 +6430,6 @@ class App(tk.Tk):
 
     def _pipe_set_busy(self, busy: bool):
         self._pipe_busy = busy
-        # Việc mới chen vào giữa lúc đang đếm ngược giờ ngủ → huỷ đếm, chờ xong hết
-        # đã. Ô tick 🌙 vẫn giữ nguyên nên xong việc này là hẹn lại từ đầu.
-        if busy:
-            self._cancel_sleep("🌙 Có việc mới → huỷ đếm ngược ngủ, chờ xong hết đã.")
         state = "disabled" if busy else "normal"
         for button in getattr(self, "_backend_buttons", ()):
             button.config(state=state)
@@ -6589,7 +6458,6 @@ class App(tk.Tk):
             # chỉ đổi qua ô chọn (_save_backend_choice) hoặc nút reset.
             gemini_backend=self._sync_backend_from_file(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
-            sleep=getattr(self, "var_sleep", tk.BooleanVar()).get(),
             upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
         ))
 
@@ -6618,9 +6486,6 @@ class App(tk.Tk):
         set_backend(PIPE_DEFAULTS["gemini_backend"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
-        if hasattr(self, "var_sleep"):
-            self.var_sleep.set(PIPE_DEFAULTS["sleep"])
-            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
         if hasattr(self, "var_upload"):
             self.var_upload.set(PIPE_DEFAULTS["upload"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])

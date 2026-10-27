@@ -200,7 +200,7 @@ test('reading the post list scrolls a virtualized table only as far as the oldes
   contentHtml = contentPage(posts, { initial: 5 });
   const read = targets => dashboard.evaluate(targets => chrome.runtime.sendMessage({ type: 'readPosts', targets }), targets);
   const near = await read([{ title: title(113) }]);
-  assert.equal(near.ok, true);
+  assert.equal(near.ok, true, near.error);
   assert.ok(near.list.posts.length < 15, 'stops once the wanted title is found');
   const all = await read([{ title: title(101) }]);
   assert.equal(all.list.posts.length, 15);
@@ -223,10 +223,18 @@ test('the side panel and a separate window stay in sync, and a newly opened wind
   await dashboard.evaluate(() => chrome.storage.local.set({ scanSettings: { auto: false } }));
   await dashboard.reload();
   const url = dashboard.url();
-  const second = await context.newPage(); await second.goto(url);
   const date = (page, n) => page.locator('#rows tr').filter({ hasText: `TẬP ${n}` }).locator('input[type="datetime-local"]').inputValue();
-  await dashboard.locator('#update').click();
-  await dashboard.waitForFunction(() => /TikTok: đọc/.test(document.querySelector('#update-status').textContent) && !document.querySelector('#update').disabled);
+  const updated = () => dashboard.waitForFunction(() => /TikTok: đọc/.test(document.querySelector('#update-status').textContent) && !document.querySelector('#update').disabled);
+  // An episode TikTok already lists never enters an empty list through Cập nhật kịch bản.
+  await dashboard.locator('#update').click(); await updated();
+  assert.match(await dashboard.locator('#update-status').innerText(), /thêm 1 .*bỏ 1 tập đã đăng/);
+  assert.deepEqual(await dashboard.evaluate(() => [...document.querySelectorAll('#rows .episode')].map(el => el.textContent)), ['TẬP 125']);
+  // Rows already on the list are judged and kept, so both windows show them.
+  await dashboard.evaluate(rows => chrome.storage.local.set({ rows, rowsStamp: 'test:0' }), [124, 125].map(n => ({ id: `r${n}`, gio_dang: '', ghi_chu: '', ...item(n) })));
+  await dashboard.reload();
+  const second = await context.newPage(); await second.goto(url);
+  await dashboard.locator('#update').click(); await updated();
+  assert.doesNotMatch(await dashboard.locator('#update-status').innerText(), /bỏ \d+ tập đã đăng/);
   assert.equal(await date(dashboard, 125), day(2) + 'T08:00');
   // The already open window takes the new list without a reload.
   await second.waitForFunction(() => document.querySelectorAll('#rows tr').length === 2);

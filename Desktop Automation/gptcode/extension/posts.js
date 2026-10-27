@@ -31,7 +31,8 @@ export function postAnchors(list, now = new Date()) {
    title on TikTok -> scheduled / published; absent -> not posted, unless the list was cut
    before this episode's number range, in which case the row is left as it was. */
 export function applyPostList(rows, list, now = new Date()) {
-  const result = { scheduled: 0, published: 0, waiting: 0, review: 0, unknown: 0, changedIds: [] };
+  // verdicts: per row id, scheduled / published / review / waiting / unknown (running rows get none).
+  const result = { scheduled: 0, published: 0, waiting: 0, review: 0, unknown: 0, changedIds: [], verdicts: {} };
   if (!Array.isArray(list?.posts)) return result;
   const posts = list.posts.map(post => {
     const info = postInfo(post, now);
@@ -58,6 +59,7 @@ export function applyPostList(rows, list, now = new Date()) {
       row.postEvidence = { id: post.id, url: post.url, stage: post.stage, kind: scheduled ? 'scheduled' : 'published', source: 'content-list', matchedBy: 'title', checkedAt };
       if (post.date) { row.gio_dang = post.date; row.scheduleKind = 'tiktok'; }
       result[scheduled ? 'scheduled' : 'published']++;
+      result.verdicts[row.id] = scheduled ? 'scheduled' : 'published';
     } else if (matches.length || sameNumber.length) {
       // Processing posts and reused episode numbers need a human look, not a guess.
       const post = matches[0] || sameNumber[0];
@@ -66,8 +68,10 @@ export function applyPostList(rows, list, now = new Date()) {
         : `TikTok có bài Số ${episode} nhưng tiêu đề khác: ${captionText(post.caption).slice(0, 90)} · ${post.url}`;
       row.statusOrigin = 'tiktok';
       result.review++;
+      result.verdicts[row.id] = 'review';
     } else if (!list.complete && episode !== null && oldest !== null && episode < oldest) {
       result.unknown++;
+      result.verdicts[row.id] = 'unknown';
       continue;
     } else {
       row.trang_thai = row.video ? 'cho' : NO_VIDEO;
@@ -76,6 +80,7 @@ export function applyPostList(rows, list, now = new Date()) {
       delete row.postEvidence;
       if (row.scheduleKind === 'tiktok') row.scheduleKind = 'auto';
       result.waiting++;
+      result.verdicts[row.id] = 'waiting';
     }
     if (JSON.stringify(row) !== before) result.changedIds.push(row.id);
   }

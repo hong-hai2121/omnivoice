@@ -24,7 +24,7 @@ Chrome sẽ báo quyền debugger và hiển thị thanh thông báo khi extensi
 với tab. Đó là cơ chế chính thức của Chrome. Không mở DevTools trên tab đang chạy
 vì có thể ngắt kết nối debugger. Khi nâng cấp mã, bấm Reload ở `chrome://extensions`
 rồi tải lại bảng điều khiển.
-Số phiên bản nằm cạnh tên bảng (hiện tại `v0.6.4`). Nhật ký khôi phục khi mở lại
+Số phiên bản nằm cạnh tên bảng (hiện tại `v0.6.8`). Nhật ký khôi phục khi mở lại
 được ghi rõ **Lần chạy trước**, không phải lỗi vừa phát sinh. Lần chạy mới thay
 nhật ký cũ và lưu thời điểm cùng phiên bản đã xử lý. Nếu vẫn thấy giao diện cũ,
 đóng bảng/cửa sổ tiện ích, Reload chính tiện ích rồi mở lại; F5 TikTok không cập nhật tiện ích.
@@ -39,17 +39,25 @@ nhật ký cũ và lưu thời điểm cùng phiên bản đã xử lý. Nếu v
 2. Bấm **Reload** trong `chrome://extensions` (bản 0.6.0 xin thêm quyền `scripting`
    và `nativeMessaging`), rồi mở lại bảng điều khiển.
 3. Bấm **Cập nhật kịch bản** (nút xanh trên danh sách): quét lại `kịch_bản`, lấy lại
-   cả các dòng đã xóa, thêm kịch bản mới làm, rồi đối chiếu với danh sách bài trên
-   TikTok (xem mục dưới). **Quét thư mục** trong *Nguồn video & lịch* chỉ quét thư mục,
+   các dòng đã xóa, thêm kịch bản mới làm, rồi đối chiếu với danh sách bài trên
+   TikTok (xem mục dưới). Từ bản 0.6.6, tập TikTok đã có (đã đăng, đã lên lịch, có biên
+   nhận bấm Đăng thành công hoặc `tiktok_upload.json`) không được thêm lại vào bảng;
+   dòng đang có sẵn vẫn giữ chỗ cho tới khi bạn xóa. **Quét thư mục** trong *Nguồn video & lịch* chỉ quét thư mục,
    không mở TikTok. Khi bật **Tự cập nhật**, bảng tự quét thư mục lúc mở và mỗi 30 giây.
    Vẫn dùng được cách cũ: để `chay_quet.py` chạy trên cổng 8771 nếu chưa đăng ký.
 
 Thư mục mặc định là `myvoice\kịch_bản` trong cùng repo. Bộ quét chọn `[Full] *.mp4`,
 nếu không có thì lấy `facebook*.mp4`, giống bản cũ. Chọn **Đoạn ngắn** để lấy
 `short.mp4`. Chọn **Nửa video** để lấy `Full ở … .mp4`, hoặc `tiktok*.mp4` nếu chưa
-đổi tên. Đây là bản đã dựng sẵn theo tỷ lệ ở công cụ tạo video, không cắt mới và
-không mặc định coi `short.mp4` là nửa tập. File rỗng được bỏ qua; cần đợi render
-hoàn tất trước khi nạp lên TikTok.
+đổi tên. Từ bản 0.6.6 bộ quét đọc thời lượng từng file (header MP4, vài lần đọc đĩa mỗi
+file) vì TikTok Studio không nhận video dài hơn 60 phút: tập nào bản Full dưới 60 phút
+thì vẫn dùng bản Full; bản Full quá 60 phút thì **tự động** lấy bản Nửa video của tập đó
+(dòng ghi `Bản Full dài 1:00:13 quá 60 phút, dùng Nửa video 30:07`), không có Nửa video
+thì dòng thành **Chưa có video**. Menu **Phiên bản video** hiện thời lượng từng bản,
+bản quá dài không chọn được; hàng đợi cũng bỏ qua dòng đang trỏ file quá 60 phút. Đây
+là bản đã dựng sẵn theo tỷ lệ ở công cụ tạo video, không cắt mới và không mặc định coi
+`short.mp4` là nửa tập. File rỗng được bỏ qua; cần đợi render hoàn tất trước khi nạp
+lên TikTok.
 Thư mục tập (`<chữ><số> - …`, ví dụ `D125 - …`) chưa có video vẫn hiện thành dòng
 **Chưa có video**, kể cả khi chưa có `youtube_upload.json`. Không nạp lên TikTok được
 cho tới khi dựng xong; lần quét sau tự điền đường dẫn video và chuyển sang **Chờ**.
@@ -104,6 +112,12 @@ cần tìm hoặc đã qua số tập cũ nhất cần kiểm tra (tối đa 40 
   cập nhật thư mục và báo *Chưa đối chiếu được TikTok* (kèm địa chỉ trang đang mở) ngay
   dưới nút. Mỗi lần đọc lưu `lastPostRead` trong kho extension (lỗi, số link video,
   nhãn ngày, đoạn chữ đầu trang) để chẩn đoán khi TikTok đổi giao diện.
+- Bản 0.6.6: đọc được ít bài hơn tổng **Bài đăng N** ở đầu trang thì không coi là đọc
+  đủ (bản trước coi là đủ khi cuộn tới đáy, nên 7/141 bài vẫn kết luận "chưa thấy").
+  Tập cũ hơn bài cũ nhất đã đọc giữ nguyên trạng thái; tập có biên nhận bấm Đăng thành
+  công hiện **Đã đăng / Đã lên lịch** nguồn *Biên nhận* kèm ghi chú *TikTok chưa đọc
+  tới tập này*, không rơi về *Chưa thấy trên TikTok* và không chạy lại. Chỉ khi đọc đủ
+  tới tập đó mà không thấy thì mới chuyển về Chờ.
 - Kho extension (`progress`, `rowResults`, `submissions`, `lastDiagnostic` kèm ảnh chụp,
   `lastPostRead`, `lastCaptionTrace`, `rows`) đọc được không cần mở Chrome bằng
   `python doc_kho_extension.py <thư mục đã chép> --keys` rồi `... <khóa> [ra.json]`;
@@ -140,6 +154,7 @@ biên nhận đã đăng được giữ lại, không bị lần quét sau ghi �
 - Hoặc đổi bằng menu **Phiên bản video** ngay trên từng dòng. Lựa chọn được giữ qua
   các lần quét và khi mở lại bảng, không đổi mô tả, trạng thái hoặc giờ đăng.
 - Nếu thiếu bản được chọn, giữ file hiện tại và báo rõ video bị thiếu trong nhật ký.
+  Bản dài hơn 60 phút cũng tính là thiếu.
 - Ô chọn đầu bảng chọn/bỏ chọn các dòng đang hiển thị theo bộ lọc. Ô tìm kiếm và bộ
   lọc trạng thái giúp tìm tập đang cần xử lý. **Điền tiếp** yêu cầu đúng một dòng.
   **Nạp & điền** chạy nhiều dòng khi bật **Bấm Đăng / Lên lịch**; nếu không bật,
@@ -256,12 +271,25 @@ bản nháp vẫn được nhận diện. Không nạp video hoặc bấm Lên l
 Đăng ngay cũng được lưu trước khi thực hiện; nếu kết quả không rõ, không tự bấm lại.
 
 Khi chọn nhiều dòng và bật bấm nút cuối, hàng đợi chạy theo thứ tự trong danh sách.
-Chỉ mở trang tải mới cho video kế tiếp sau khi video trước được xác nhận thành công.
+Chỉ mở trang tải mới cho video kế tiếp sau khi video trước được xác nhận thành công
+hoặc bị bỏ qua vì lỗi (xem dưới).
 Từ bản 0.6.5, dòng đã chọn mà **chưa có video** (kịch bản mới chưa dựng), dòng TikTok đã
 liệt kê là đã đăng / đã lên lịch, hoặc dòng đã có biên nhận bấm Đăng (khi chưa bật
 **Cho phép đăng lại**) được bỏ qua chứ không làm hỏng cả hàng đợi; nhật ký ghi
-"Bỏ qua N dòng" cùng lý do, ô trạng thái nút ghi "bỏ qua N chưa có video". Chỉ chọn
-toàn dòng chưa có video thì nút **Nạp & điền** bị khóa.
+"Bỏ qua N dòng" cùng lý do, ô trạng thái nút ghi "bỏ qua N đã đăng / lên lịch, M chưa có
+video". Chỉ chọn toàn dòng chưa có video thì nút **Nạp & điền** bị khóa; chỉ chọn toàn
+dòng đã đăng / lên lịch thì bấm chạy chỉ ghi "Không có video để chạy", không báo lỗi.
+Từ bản 0.6.8, một video **lỗi giữa chừng** (file không đọc được, ngày giờ không hợp lệ,
+không điền được mô tả, không chọn được lịch...) được ghi lỗi vào dòng đó rồi hàng đợi
+**tự chuyển sang video kế tiếp**: trang tải lên được mở lại (bản nháp lỗi bị bỏ, hộp
+"rời trang?" của TikTok được tắt trước); cuối hàng đợi nhật ký tổng kết "Hàng đợi xong:
+N video đã chạy, bỏ qua M video lỗi" kèm từng dòng, ô trạng thái ghi "Đã xử lý · bỏ qua M
+video lỗi". Chẩn đoán lưu (`tiktok-dom-error.json`) là của lần lỗi cuối. Hàng đợi vẫn
+**dừng** trong ba trường hợp: đã bấm Đăng / Lên lịch mà chưa rõ kết quả (video có thể đã
+đăng, phải kiểm tra TikTok), lỗi tab / trang không thuộc riêng video nào (tab rời TikTok,
+trang tải lên không mở được, không nối được debugger), hoặc hai video liên tiếp lỗi ở
+cùng một bước sau khi đã nạp file (dấu hiệu TikTok đổi giao diện; chạy tiếp chỉ tốn thời
+gian tải từng video). Nhật ký ghi số video đã chạy, lỗi và chưa chạy.
 Từ bản 0.5.14, nếu tab đang ở **Nội dung**, bấm **Nạp & điền** cho video mới sẽ
 tự chuyển cùng tab về `https://www.tiktok.com/tiktokstudio/upload?from=creator_center&tab=video`,
 chờ trang tải xong rồi mới nạp file. Video tiếp theo trong hàng đợi và nút **Mở Studio**
@@ -354,6 +382,30 @@ hoặc mở hộp thoại vẫn làm tiện ích dừng để không gửi phím
   Bản 0.5.8 không nhận radio **Bây giờ** hoặc checkbox/switch là ô nhập giờ.
   Popup còn lớp `.tiktok-timepicker-invisible` được coi là đóng, dù vẫn tồn tại
   trong DOM; extension phải mở popup rồi mới chọn giờ/phút.
+- Từ tháng 10/2026 TikTok Studio hiện ngày/giờ lên lịch bằng khung chữ thường
+  (`div.date-picker-input` chứa `2026-10-27`, `div.time-picker-input` chứa `20:00`),
+  không còn ô `input` readonly, nên bản 0.6.5 dừng ở **Tìm ô ngày / giờ**. Bản 0.6.6
+  nhận cả hai dạng: tìm `input` như cũ, rồi khung mang lớp `*-picker-input`, rồi phần
+  tử đứng sau radio **Lên lịch** mà toàn bộ chữ là một ngày (`2026-10-27`,
+  `27/10/2026`, `27 tháng 10, 2026`…) hoặc một giờ (`20:00`). Bấm khung để mở popup
+  lịch/giờ rồi chọn như trước; đọc lại chữ trong khung để kiểm tra. Chẩn đoán lỗi
+  (`tiktok-dom-error.json`) nay có thêm `scheduleHtml` (HTML khối lịch từ radio tới
+  dòng múi giờ, bỏ thân SVG) và ảnh chụp đã cuộn tới khối lịch, để sửa selector khi
+  TikTok đổi giao diện lần nữa.
+- Cuối tháng 10/2026 TikTok đổi tiếp sang khối **Picker**: `div.Picker__root.schedule-picker`
+  bọc `div[role="combobox"][aria-label="Select date"]` (có `aria-expanded`, `data-open`,
+  chữ `24 tháng 10, 2026`) và `[aria-label="Select time"]` (`15:10`). Bản 0.6.6 nhận ra
+  khối ngoài theo chữ nhưng bấm vào khối ngoài nên popup không mở (lỗi "Popup ngay chua
+  mo sau khi bam o ngay"). Bản 0.6.7 tìm thẳng combobox theo `aria-label`/chữ và luôn
+  bấm vào phần tử nhận click bên trong khung; popup chưa hiện sau 2,5 giây thì bấm lại
+  bằng sự kiện pointer/mouse, rồi bằng click thật qua debugger. Popup lịch/giờ chưa biết
+  cấu trúc được đọc theo số: khối nhỏ nhất có tiêu đề tháng + năm và từ 28 số trở lên
+  là lịch (dãy 1..N liên tiếp là tháng đang xem; nút không chứa ngày, có nhãn/icon
+  trái-phải hoặc đúng hai nút, là mũi tên), cột đúng 0–23 là giờ, 0–59 (hoặc bước 5) là
+  phút; ngày/giờ bị `aria-disabled` hoặc lớp `disabled` không bấm. Ô báo
+  `aria-expanded="true"` mà không đọc được nội dung thì dừng với lỗi "Popup … da mo
+  (aria-expanded) nhung chua nhan dien duoc"; chẩn đoán có thêm `popupHtml` (HTML mọi
+  popup đang mở, bỏ thân SVG) và `schedule.date.expanded` để sửa tiếp.
 - Không bấm Đăng/Lên lịch nếu thiếu thanh tiến trình, chưa đủ `100%`, chưa có
   `success` hoặc nút còn loading/disabled. Kiểm tra lại các điều kiện ngay lúc bấm.
 - Chờ ô tải xuất hiện tối đa 30 giây, bỏ qua ô tải ảnh, tìm cả iframe TikTok và

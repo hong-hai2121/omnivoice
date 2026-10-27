@@ -133,9 +133,9 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.setdefault("qf", fb_runner.state())
     ctx.setdefault("flog", fb_log.tail(8))
     ctx.setdefault("slots", core.upload_slots_text())
-    # Ô "🌙 Xong hết thì cho máy ngủ" nằm trong khối hàng đợi → trang nào có khối
-    # đó cũng cần trạng thái này.
-    ctx.setdefault("sleepq", power.watcher.state())
+    # Ô "⏻ Xong hết thì tắt máy" nằm trong khối hàng đợi → trang nào có khối đó
+    # cũng cần trạng thái này.
+    ctx.setdefault("shutq", power.watcher.state())
     # Đồng hồ 📊 VRAM cũng nằm trong khối hàng đợi — đưa vào từ lượt tải đầu,
     # khỏi đợi htmx làm mới 2 giây sau mới hiện (có cache 5s nên không tốn gì).
     ctx.setdefault("vram", _vram())
@@ -319,9 +319,9 @@ def page_script(request: Request):
 def _save_pipe_from_form(form) -> dict:
     """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
 
-    KHÔNG đụng hai khoá "shutdown"/"sleep": trang web không có ô “xong thì tắt máy”,
-    còn ô “🌙 xong thì cho máy ngủ” của nó chỉ nhớ trong bộ nhớ server chứ không ghi
-    ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻/🌙 của GUI.
+    KHÔNG đụng khoá "shutdown": đó là ô ⏻ của GUI Tkinter (ghi ra file), còn ô ⏻
+    “xong hết thì tắt máy” của trang web chỉ nhớ trong bộ nhớ server (power.py) chứ
+    không ghi ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻ của GUI.
     """
     pipe = core.load_pipeline()
     if form.get("gemini_backend") in ("firefox", "extension"):
@@ -380,7 +380,7 @@ def _auto_upload_wanted(chain: list[str]) -> bool:
 
     KHÔNG chặn theo tình trạng đăng nhập như trước. Lý do: mẻ chạy đêm mất hàng
     GIỜ, mà chốt đăng nhập lại kiểm ngay lúc bấm nút — chỉ cần một lần mạng chập
-    hay token vừa hết hạn là cả mẻ mất luôn phần đăng, hàng đợi rỗng, máy ngủ theo
+    hay token vừa hết hạn là cả mẻ mất luôn phần đăng, hàng đợi rỗng, máy tắt theo
     lịch, sáng ra video nằm im trong thư mục mà nhật ký báo “xong” hết. Đăng nhập
     hỏng thật thì run_upload.py phát hiện ĐÚNG LÚC đăng và việc đó báo lỗi đỏ ở
     hàng đợi đăng — thấy được, chứ không âm thầm biến mất.
@@ -1169,7 +1169,7 @@ async def run_recog(request: Request):
 
     # Nút ④ dựng video hàng loạt cũng phải TÔN TRỌNG ô '⬆ tự động đăng', y như chuỗi
     # ①→③ và nút ⏩ chạy tiếp. Trước đây chỗ này quên truyền upload= nên bấm ④ là mẻ
-    # đó KHÔNG BAO GIỜ tự đăng dù ô tick đang bật — dựng xong, hàng đợi rỗng, máy ngủ.
+    # đó KHÔNG BAO GIỜ tự đăng dù ô tick đang bật — dựng xong, hàng đợi rỗng, máy tắt.
     upload = _auto_upload_wanted(chain)
 
     for r in sorted(targets, key=lambda r: int(r["episode"])):
@@ -1334,8 +1334,8 @@ async def run_facebook_schedule(request: Request):
 async def preview_facebook_schedule(request: Request):
     """Nút '🔍 Xem kế hoạch': chạy bản --dry-run — chỉ in kế hoạch, không đăng."""
     picked = _fb_picked(await request.form())
-    # light=True: việc xem trước không được tính vào heavy_busy — kẻo ô 🌙 (mặc
-    # định bật) thấy "bận rồi rảnh" mà đếm 3 phút cho máy ngủ chỉ vì một cú bấm.
+    # light=True: việc xem trước không được tính vào heavy_busy — kẻo ô ⏻ thấy
+    # "bận rồi rảnh" mà đếm giờ tắt máy chỉ vì một cú bấm.
     fb_runner.enqueue("📘 Kế hoạch Facebook (xem trước, không đăng)",
                       steps_mod.facebook_steps(dry_run=True, episodes=picked),
                       light=True)
@@ -1357,7 +1357,7 @@ def scan_facebook_page(request: Request):
 async def toggle_facebook_auto(request: Request):
     """Ô "📘 Dựng xong thì tự lên lịch Facebook".
 
-    Form này CHỈ có mỗi ô đó nên suy được "vắng mặt = bỏ tick" (giống ô 🌙)."""
+    Form này CHỈ có mỗi ô đó nên suy được "vắng mặt = bỏ tick" (giống ô ⏻)."""
     on = bool((await request.form()).get("on"))
     core.save_web_settings({"fb_auto": on})
     log("📘 Bật tự động lên lịch Facebook: dựng xong video tập nào là xếp lịch "
@@ -1475,25 +1475,27 @@ def episode_thumbnail_doc(episode: str):
 # ── Hàng đợi ────────────────────────────────────────────────────────────────
 @app.get("/api/trangthai")
 def api_state():
-    """Trạng thái gọn dạng JSON — cho cửa sổ bật server (myvoice/chay.py) biết còn
-    việc đang chạy không, phục vụ ô '⏻ Tự động tắt máy khi xong'. Chỉ coi là RẢNH
-    khi CẢ hàng đợi chính lẫn hàng đợi đăng YouTube đều hết việc.
+    """Trạng thái gọn dạng JSON — cho cửa sổ bật server (myvoice/chay.py) và tiến
+    trình khác biết còn việc đang chạy không. Chỉ coi là RẢNH khi CẢ hàng đợi chính
+    lẫn hàng đợi đăng YouTube/Facebook đều hết việc.
 
-    Kèm luôn trạng thái chế độ ngủ: ô 🌙 bên cửa sổ đó chỉ là công tắc từ xa của ô 🌙
-    trên trang web, nên nó cần soi lại chỗ này để vẽ đúng tick + đếm ngược."""
+    Kèm luôn trạng thái ô ⏻ “xong hết thì tắt máy”: ô ⏻ bên cửa sổ chay.py chỉ là
+    công tắc từ xa của ô ⏻ trên trang web (bộ đếm nằm ở power.py), nên nó cần soi
+    lại chỗ này để vẽ đúng tick + đếm ngược."""
     q = runner.state()
-    sleep = power.watcher.state()
+    shut = power.watcher.state()
     return {
-        # heavy_busy: việc "light" (xem kế hoạch Facebook…) không tính — kẻo ô ⏻
-        # bên cửa sổ launcher coi đó là mẻ thật rồi hẹn tắt máy.
+        # heavy_busy: việc "light" (xem kế hoạch Facebook…) không tính — một cú
+        # bấm xem trước không phải là "mẻ đã chạy xong".
         "busy": runner.heavy_busy(),
-        # Gộp hàng đợi Facebook vào đây: cửa sổ launcher chỉ đọc hai khoá này, mà
-        # đang tải video lên Page thì TUYỆT ĐỐI không được tắt/ngủ máy.
+        # Gộp hàng đợi Facebook vào đây: đang tải video lên Page thì TUYỆT ĐỐI
+        # không được tắt máy.
         "upload_busy": upload_runner.heavy_busy() or fb_runner.heavy_busy(),
         "current": (q.get("current") or {}).get("title", ""),
         "pending": len(q.get("pending") or []),
-        "sleep_armed": sleep["armed"],
-        "sleep_left": sleep["left"],
+        "shutdown_armed": shut["armed"],
+        "shutdown_left": shut["left"],
+        "shutdown_delay_min": shut["delay_min"],
     }
 
 
@@ -1532,7 +1534,7 @@ def partial_queue(request: Request):
         {"q": runner.state(), "qu": upload_runner.state(),
          "ulog": upload_log.tail(8), "upct": upload_log.percent,
          "qf": fb_runner.state(), "flog": fb_log.tail(8),
-         "sleepq": power.watcher.state(), "vram": _vram()})
+         "shutq": power.watcher.state(), "vram": _vram()})
 
 
 @app.get("/api/nhatky-dang")
@@ -1549,9 +1551,9 @@ def api_upload_log(since: int = -1):
     return JSONResponse({"next": seq, "lines": lines, "percent": upload_log.percent})
 
 
-@app.post("/hangdoi/ngu", response_class=HTMLResponse)
-async def queue_sleep(request: Request):
-    """Ô "🌙 Xong hết thì cho máy ngủ".
+@app.post("/hangdoi/tatmay", response_class=HTMLResponse)
+async def queue_shutdown(request: Request):
+    """Ô "⏻ Xong hết thì tắt máy" (thay ô 🌙 cho máy ngủ từ 26/10/2026).
 
     Form này CHỈ có mỗi ô đó, nên ở đây suy được "vắng mặt = bỏ tick" — điều
     không làm được ở các form nhiều ô khác trong file này.
@@ -1876,7 +1878,7 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    log("🌙 “Xong hết thì cho máy ngủ” mặc định TẮT — muốn thì tick trên trang web.")
+    log("⏻ “Xong hết thì tắt máy” mặc định TẮT — muốn thì tick trên trang web.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

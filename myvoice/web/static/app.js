@@ -53,7 +53,7 @@
 // MỘT form trong bốn form gửi đi, gom dữ liệu ba form còn lại gửi vào đúng đường
 // 💾 của từng khối (ngữ nghĩa y hệt tự tay bấm 💾), xong xuôi mới cho chạy thật.
 // Nút 💾 htmx không qua đây (htmx tự gửi, không có sự kiện submit) — mỗi nút 💾
-// vẫn chỉ lưu đúng khối của nó như nhãn ghi. Form hàng đợi/🌙 không nằm trong
+// vẫn chỉ lưu đúng khối của nó như nhãn ghi. Form hàng đợi/⏻ không nằm trong
 // danh sách nên không bị đụng.
 (function () {
   // [selector của form, đường 💾 của CHÍNH khối đó]
