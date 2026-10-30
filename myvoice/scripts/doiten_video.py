@@ -66,7 +66,9 @@ TARGET_FPS = 30          # khung hình/giây
 OUT_EXT = ".mp4"         # đuôi file đầu ra
 NUM_DIGITS = 3           # số chữ số khi đánh số (3 -> 001, 002, ...)
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm", ".m4v", ".wmv", ".ts"}
-# Ưu tiên dùng GPU (NVIDIA NVENC); tự fallback về CPU (libx264) nếu GPU lỗi.
+# GPU (NVIDIA NVENC) bắt buộc (27/10/2026): ffmpeg không có h264_nvenc → báo lỗi rồi
+# dừng cả lượt; NVENC lỗi ở một clip → clip đó lỗi, KHÔNG thử lại bằng libx264.
+# USE_GPU=False mới là chủ ý dùng CPU.
 USE_GPU = True
 # --------------------------------------------------------------------------------
 
@@ -138,7 +140,8 @@ def normalize(src_path, dst_path, target_w, target_h, codec, w, h, log=print):
     - Clip ĐÃ đúng (h264 + đúng kích thước)  -> chỉ COPY + bỏ tiếng (giữ nguyên fps, ~tức thì).
     - Clip CẦN convert, CÙNG tỉ lệ           -> full GPU (scale_cuda), ép 30fps.
     - Clip CẦN convert, KHÁC tỉ lệ           -> CPU scale + pad (letterbox), ép 30fps.
-    Khi convert: ưu tiên NVENC, lỗi thì fallback libx264.
+    Khi convert: mã hoá NVENC (USE_GPU); scale_cuda lỗi thì scale bằng CPU nhưng VẪN
+    mã hoá NVENC — không còn fallback libx264 (GPU bắt buộc, 27/10/2026).
     """
     # 1) Đã đúng định dạng đích -> copy nguyên luồng video, chỉ bỏ tiếng. Giữ nguyên fps.
     if codec == "h264" and w == target_w and h == target_h:
@@ -161,7 +164,7 @@ def normalize(src_path, dst_path, target_w, target_h, codec, w, h, log=print):
             "-movflags", "+faststart", dst_path])
         if ok:
             return True, "scale GPU, ép 30fps"
-        log(f"    [GPU scale lỗi -> CPU] {err}")
+        log(f"    [scale_cuda lỗi -> scale CPU, vẫn mã hoá NVENC] {err}")
         if os.path.exists(dst_path):
             os.remove(dst_path)
 
@@ -206,8 +209,11 @@ def run_rename(mode, log=print):
         return 0
 
     HAVE_NVENC = has_nvenc()
-    log("Encoder: GPU (h264_nvenc), fallback CPU (libx264)"
-        if (USE_GPU and HAVE_NVENC) else "Encoder: CPU (libx264)")
+    if USE_GPU and not HAVE_NVENC:
+        # GPU bắt buộc (27/10/2026): báo lỗi rồi dừng, không âm thầm chuyển sang CPU.
+        log("❌ ffmpeg không có encoder h264_nvenc (GPU) → DỪNG, không chuẩn hoá bằng CPU.")
+        return 0
+    log("Encoder: GPU (h264_nvenc)" if USE_GPU else "Encoder: CPU (libx264)")
 
     entries = [f for f in os.listdir(video_dir)
                if os.path.isfile(os.path.join(video_dir, f))

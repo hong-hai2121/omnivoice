@@ -2,15 +2,24 @@
 <div class="gemini-backend">
   <div class="chks">
     <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"{% if bform %} form="{{ bform }}"{% endif %}
-      {{ 'checked' if pipe.get('gemini_backend', 'extension') != 'firefox' }}> Dịch bằng Chrome Extension (mặc định)</label>
+      {{ 'checked' if pipe.get('gemini_backend', 'extension') not in ('firefox', 'cli') }}> Dịch bằng Chrome Extension (mặc định)</label>
     <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"{% if bform %} form="{{ bform }}"{% endif %}
       {{ 'checked' if pipe.get('gemini_backend') == 'firefox' }}> Dịch bằng Firefox / Selenium (dự phòng)</label>
+    {# 🤖 GPT CLI (27/10/2026): codex exec, tài khoản ChatGPT, không trình duyệt. Mỗi đoạn là
+       một lệnh riêng nên câu hướng dẫn dịch gửi kèm từng đoạn (dich_gptcli.GptCliDriver).
+       Cùng khoá gemini_backend → tick ở đây là đổi cho cả GUI lẫn bảng myvideo. #}
+    <label class="chk"><input type="checkbox" name="gemini_backend" value="cli"{% if bform %} form="{{ bform }}"{% endif %}
+      {{ 'checked' if pipe.get('gemini_backend') == 'cli' }}> 🤖 Dịch bằng GPT CLI (Codex, tài khoản ChatGPT — không cần trình duyệt)</label>
   </div>
   {# Home: bỏ đoạn giải thích (user yêu cầu 03/10/2026) — trang riêng vẫn giữ. #}
   {% if not on_home %}
   <p class="hint">Áp dụng cho dịch, dịch lại đoạn trống và SEO.
     Extension: giữ Chrome đã cài extension và đăng nhập Gemini mở; không kết nối được thì
     tự mở Firefox thay. Firefox: đóng Firefox trước khi chạy.
-    <a href="/gemini-extension" target="_blank" rel="noopener">Hướng dẫn cài extension</a>.</p>
+    <a href="/gemini-extension" target="_blank" rel="noopener">Hướng dẫn cài extension</a>.
+    GPT CLI: cài <code>npm i -g @openai/codex</code> rồi <code>codex login</code> (ChatGPT) một
+    lần trong terminal; chọn model / mức cố gắng, kiểm tra kết nối, nhắn thử ở
+    <a href="/gpt-cli" target="_blank" rel="noopener">tab 🤖 GPT CLI</a>.
+    Mỗi đoạn là một lệnh riêng nên câu hướng dẫn dịch được gửi kèm từng đoạn.</p>
   {% endif %}
 </div>

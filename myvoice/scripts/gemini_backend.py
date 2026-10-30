@@ -8,6 +8,11 @@ Cách dịch qua Gemini (01/10/2026):
     (Chrome đóng, chưa bấm Kết nối, chưa đăng nhập Gemini, cổng bận...), dich_gemini
     tự mở Firefox để việc đang chạy không đứng — tắt bằng
     OMNI_GEMINI_EXTENSION_FALLBACK=0.
+  • "cli" (27/10/2026) — GPT CLI: OpenAI Codex CLI (`codex exec`, đăng nhập tài khoản
+    ChatGPT bằng `codex login`). KHÔNG mở trình duyệt nào: dich_gemini.init_firefox trả
+    về dich_gptcli.GptCliDriver, mỗi đoạn/SEO là MỘT lệnh riêng, không có hội thoại nên
+    câu hướng dẫn dịch được gửi lại KÈM TỪNG đoạn. Chọn ở cùng ô với hai cách trên
+    (web myvoice, web myvideo, GUI) — một lựa chọn cho tất cả.
 """
 import json
 import os
@@ -23,8 +28,10 @@ BRIDGE_PORT = 17863
 # không phải dán gì. Muốn mã riêng: ghi vào TOKEN_FILE hoặc đặt OMNI_GEMINI_EXTENSION_TOKEN
 # rồi dán cùng mã vào popup extension.
 DEFAULT_TOKEN = "omnivoice-gemini-local"
-BACKENDS = ("extension", "firefox")
+BACKENDS = ("extension", "firefox", "cli")
 DEFAULT_BACKEND = "extension"
+# Giá trị chọn được ngoài mặc định; giá trị lạ trong file/biến môi trường → mặc định.
+_CHON_DUOC = ("firefox", "cli")
 # Số giây chờ Chrome (extension) hỏi lệnh lần đầu trước khi coi là chưa kết nối.
 # Service worker ngủ thì alarm 30 s đánh thức, nên phải hơn 30 s một chút.
 EXTENSION_CONNECT_TIMEOUT = 40
@@ -37,7 +44,7 @@ def get_backend():
             value = json.loads(PIPE_FILE.read_text(encoding="utf-8")).get("gemini_backend")
         except (OSError, ValueError, AttributeError):
             value = None
-    return "firefox" if value == "firefox" else DEFAULT_BACKEND
+    return value if value in _CHON_DUOC else DEFAULT_BACKEND
 
 
 def saved_backend():
@@ -47,13 +54,13 @@ def saved_backend():
         value = json.loads(PIPE_FILE.read_text(encoding="utf-8")).get("gemini_backend")
     except (OSError, ValueError, AttributeError):
         value = None
-    return "firefox" if value == "firefox" else DEFAULT_BACKEND
+    return value if value in _CHON_DUOC else DEFAULT_BACKEND
 
 
 def set_backend(value):
     """Ghi RIÊNG khoá gemini_backend, giữ nguyên mọi cài đặt khác trong file (02/10/2026:
     GUI ghi cả file từ biến trong bộ nhớ nên lặng lẽ đè lựa chọn vừa đổi trên web)."""
-    value = "firefox" if value == "firefox" else DEFAULT_BACKEND
+    value = value if value in _CHON_DUOC else DEFAULT_BACKEND
     try:
         data = json.loads(PIPE_FILE.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -72,10 +79,14 @@ def fallback_enabled():
 
 
 def browser_label():
-    return "Chrome Extension" if get_backend() == "extension" else "Firefox"
+    return {"extension": "Chrome Extension", "cli": "GPT CLI (Codex)"}.get(get_backend(), "Firefox")
 
 
 def browser_hint():
+    if get_backend() == "cli":
+        return ("Dịch bằng GPT CLI (Codex): cần `codex login` (tài khoản ChatGPT) một lần, "
+                "không cần trình duyệt. Mỗi đoạn là một lệnh riêng — câu hướng dẫn dịch gửi "
+                "kèm từng đoạn.")
     if get_backend() == "extension":
         hint = "Mở Chrome, đăng nhập Gemini và bật kết nối trong extension OmniVoice Gemini."
         if fallback_enabled():
@@ -92,7 +103,8 @@ def backend_picker(parent, variable, on_change, horizontal=False):
     place = dict(side="left", padx=(0, 8)) if horizontal else dict(anchor="w")
     buttons = []
     for value, title in (("extension", "Dịch bằng Chrome Extension (mặc định)"),
-                         ("firefox", "Dịch bằng Firefox / Selenium (dự phòng)")):
+                         ("firefox", "Dịch bằng Firefox / Selenium (dự phòng)"),
+                         ("cli", "Dịch bằng GPT CLI (Codex, tài khoản ChatGPT)")):
         button = ttk.Checkbutton(frame, text=title, variable=variable,
                                  onvalue=value, offvalue=value, command=on_change)
         button.pack(**place)

@@ -53,7 +53,7 @@ for _p in (_SCRIPTS_DIR, BASE_DIR / "YOUTUBE"):
         sys.path.insert(0, str(_p))
 
 from video_khung import (get_duration, get_resolution, has_nvenc,   # noqa: E402
-                         run_ffmpeg_progress)
+                         run_ffmpeg_progress, nvenc_batbuoc, dung_neu_nvenc_loi)
 
 BG_DIR = BASE_DIR / "Backbround"
 KHUNGDOC_DIR = BG_DIR / "khungdoc"                   # bộ khung dọc tạo sẵn
@@ -96,6 +96,7 @@ NEN_CAM = (253, 246, 234)                            # màu giấy
 CHU_TOI = (74, 28, 46)                               # chữ tối trên thẻ trắng
 TIEU_DE_MAU = (123, 26, 43)                          # màu tiêu đề (như thumbnail)
 
+# GPU (NVENC) bắt buộc (27/10/2026): không có / lỗi → GpuLoi, dừng, không rớt về CPU.
 USE_GPU = True
 NVENC_CQ = 18
 X264_CRF = 18
@@ -551,15 +552,12 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                 "-c:a", "aac", "-b:a", "192k", str(output)]
         return cmd
 
-    use_gpu = USE_GPU and has_nvenc()
+    use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
     log("Đang dựng video dọc từ video gốc... (GPU - h264_nvenc)" if use_gpu
         else "Đang dựng video dọc từ video gốc... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log,
                                        label="Dựng video dọc (khung)", progress=progress)
-    if rc != 0 and use_gpu:
-        log("GPU lỗi, chuyển sang CPU (libx264)...")
-        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
-                                           label="Dựng video dọc (khung)", progress=progress)
+    dung_neu_nvenc_loi(rc, err_tail, use_gpu)   # NVENC lỗi → GpuLoi, KHÔNG thử lại bằng CPU
     if rc != 0:
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
     final_dur = get_duration(output)

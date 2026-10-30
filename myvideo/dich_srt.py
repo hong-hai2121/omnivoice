@@ -31,6 +31,16 @@ không tắt — màn hình tắt là Chrome bóp tab Gemini, đoạn dịch th�
 LƯU Ý: dùng đường Firefox (dự phòng hoặc chọn tay) thì Firefox đang mở phải
 ĐÓNG trước (Selenium cần khoá profile).
 
+--cli: dịch bằng GPT CLI (OpenAI Codex CLI `codex exec`, đăng nhập tài khoản
+ChatGPT một lần bằng `codex login`; lớp gọi ở myvoice/scripts/dich_gptcli.py). Không
+có --cli mà ô cách dịch dùng chung (gemini_backend) đang chọn "cli" thì cũng đi đường này.
+Không cần Chrome/Firefox, không cần giữ màn hình sáng. Khác Gemini ở chỗ CLI
+chỉ nhận MỘT lệnh rồi quên: không có hội thoại, không nhớ lời dặn hay lô trước —
+nên MỖI lô gửi lại trọn gói yêu cầu dịch (cùng luật với Gemini) + lời dặn riêng
+cho CLI + vài câu đã dịch của lô trước làm ngữ cảnh (xem cli_prompt). Tiến độ
+dùng chung file partial với đường Gemini: đổi cách dịch giữa chừng vẫn dịch tiếp.
+Chất lượng tương đương Gemini (model theo ~/.codex/config.toml), ~36 s / 10 câu.
+
 --offline: dịch bằng opus-mt (dich_hanmt: opus-mt-zh-vi cho tiếng Trung,
 opus-mt-en-vi cho tiếng Anh) — nhanh, không cần trình duyệt, nhưng chất lượng
 thô hơn hẳn (chỉ nên dùng làm nháp). Model nào chưa có trong scripts/mt_cache
@@ -39,6 +49,7 @@ thì lần đầu tự tải (~300MB).
 Cách dùng:
     python dich_srt.py "duong_dan/phude.srt"
     python dich_srt.py "phude.srt" --lang en
+    python dich_srt.py "phude.srt" --cli
     python dich_srt.py "phude.srt" --offline
 
 Kết quả (cạnh file gốc):
@@ -310,6 +321,97 @@ def _pack_chunks(idxs, texts, max_chars=1200, max_lines=60):
     return chunks
 
 
+
+class TienDo:
+    """Tiến độ dịch theo câu — DÙNG CHUNG cho đường Gemini và đường GPT CLI.
+
+    Lưu <tên>_vi.partial.json sau MỖI lô; chạy lại (kể cả đổi cách dịch giữa
+    chừng: Gemini ↔ GPT CLI) là dịch tiếp phần còn thiếu. Chữ ký = số câu + tổng
+    ký tự: đổi cách cắt câu (gộp/không gộp, sửa SRT gốc) là chỉ số câu lệch hết
+    → bỏ tiến độ cũ, kẻo bản dịch gắn nhầm mốc giờ."""
+
+    def __init__(self, texts, partial_path, lang):
+        self.texts, self.path, self.lang = texts, partial_path, lang
+        self.chu_ky = f"{len(texts)}|{sum(len(t) for t in texts)}"
+        self.done = {}
+        if os.path.exists(partial_path):
+            try:
+                with open(partial_path, encoding="utf-8") as f:
+                    d = json.load(f)
+                if d.get("chu_ky") == self.chu_ky:
+                    self.done = {int(k): v for k, v in d.get("cau", {}).items()}
+                    print(f"♻ Tiếp tục phiên trước: đã có {len(self.done)}/{len(texts)} câu.")
+                else:
+                    print("♻ Bỏ tiến độ dịch cũ: cách cắt câu đã khác, dịch lại từ đầu.")
+            except Exception:
+                self.done = {}
+
+    def save(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"chu_ky": self.chu_ky,
+                       "cau": {str(k): v for k, v in self.done.items()}},
+                      f, ensure_ascii=False)
+
+    def ok(self, i, v=None):
+        """Bản dịch dùng được: có chữ, và không phải là câu gốc chép lại.
+
+        Trung: đo tỉ lệ chữ Hán còn sót. Anh: cùng bảng chữ nên không đo được
+        như vậy — so thẳng với câu gốc, y hệt nghĩa là mô hình bỏ qua dòng đó."""
+        if v is None:
+            v = self.done.get(i)
+        if not (v and v.strip()):
+            return False
+        if self.lang == "zh":
+            return han_ratio(v) <= 0.3
+        return v.strip().casefold() != self.texts[i].strip().casefold()
+
+    def todo(self):
+        return [i for i in range(len(self.texts)) if not self.ok(i)]
+
+    def so_xong(self):
+        return sum(1 for i in range(len(self.texts)) if self.ok(i))
+
+    def nhan(self, chunk, parsed):
+        """Gắn kết quả một lô ({số thứ tự 1-based: bản dịch}) vào các câu của lô;
+        trả số câu nhận được. Chỉ nhận mã THUỘC lô — mã lạ (mô hình bịa thêm hay
+        in lại câu ngữ cảnh) bị bỏ."""
+        got = 0
+        for i in chunk:
+            v = (parsed.get(i + 1) or "").strip()
+            if v:
+                self.done[i] = v
+                got += 1
+        return got
+
+    def ngu_canh(self, i0, n=4):
+        """Tối đa n cặp (gốc, dịch) NGAY TRƯỚC câu i0 đã dịch xong, theo thứ tự —
+        gửi kèm lô GPT CLI để tên riêng / xưng hô nối tiếp lô trước (CLI không
+        nhớ gì giữa hai lệnh). Gặp câu chưa dịch là dừng (không nhảy cóc)."""
+        cap = []
+        for i in range(i0 - 1, max(i0 - n, 0) - 1, -1):
+            if not self.ok(i):
+                break
+            cap.append((self.texts[i], self.done[i]))
+        return cap[::-1]
+
+    def ket_qua(self):
+        """Danh sách bản dịch cùng độ dài texts (câu hỏng giữ nguyên tiếng gốc);
+        xong trọn vẹn thì xoá file tiến độ."""
+        n_total = len(self.texts)
+        missing = [i for i in range(n_total) if not (self.done.get(i) or "").strip()]
+        if missing:
+            print(f"⚠️ {len(missing)} câu không dịch được — giữ nguyên tiếng "
+                  f"{TEN_LANG.get(self.lang, 'Trung')} "
+                  f"(số thứ tự: {', '.join(str(i + 1) for i in missing[:20])}"
+                  f"{'...' if len(missing) > 20 else ''}).")
+        else:
+            try:
+                os.remove(self.path)   # xong trọn vẹn → bỏ file tiến độ
+            except Exception:
+                pass
+        return [(self.done.get(i) or "").strip() or self.texts[i] for i in range(n_total)]
+
+
 def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
     """Dịch qua Gemini web (Chrome Extension mặc định, Firefox dự phòng).
     Trả list cùng độ dài (câu hỏng giữ nguyên tiếng gốc)."""
@@ -317,40 +419,7 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
     from giu_man_hinh import giu_man_hinh
 
     prefix = gemini_prefix(lang)
-    ten = TEN_LANG.get(lang, "Trung")
-
-    # Chữ ký của ĐẦU VÀO: đổi cách cắt câu (gộp/không gộp, sửa SRT gốc) là chỉ
-    # số câu lệch hết → tiến độ cũ mà dùng lại thì bản dịch gắn nhầm mốc giờ.
-    chu_ky = f"{len(texts)}|{sum(len(t) for t in texts)}"
-    done = {}
-    if os.path.exists(partial_path):
-        try:
-            with open(partial_path, encoding="utf-8") as f:
-                d = json.load(f)
-            if d.get("chu_ky") == chu_ky:
-                done = {int(k): v for k, v in d.get("cau", {}).items()}
-                print(f"♻ Tiếp tục phiên trước: đã có {len(done)}/{len(texts)} câu.")
-            else:
-                print("♻ Bỏ tiến độ dịch cũ: cách cắt câu đã khác, dịch lại từ đầu.")
-        except Exception:
-            done = {}
-
-    def _save():
-        with open(partial_path, "w", encoding="utf-8") as f:
-            json.dump({"chu_ky": chu_ky,
-                       "cau": {str(k): v for k, v in done.items()}},
-                      f, ensure_ascii=False)
-
-    def _ok(i, v):
-        """Bản dịch dùng được: có chữ, và không phải là câu gốc chép lại.
-
-        Trung: đo tỉ lệ chữ Hán còn sót. Anh: cùng bảng chữ nên không đo được
-        như vậy — so thẳng với câu gốc, y hệt nghĩa là Gemini bỏ qua dòng đó."""
-        if not (v and v.strip()):
-            return False
-        if lang == "zh":
-            return dg.chinese_ratio(v) <= 0.3
-        return v.strip().casefold() != texts[i].strip().casefold()
+    td = TienDo(texts, partial_path, lang)   # tiến độ + kiểm câu, dùng chung với --cli
 
     n_total = len(texts)
     driver = None
@@ -393,7 +462,7 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
         with giu_man_hinh():
             # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
             for attempt in range(3):
-                todo = [i for i in range(n_total) if not _ok(i, done.get(i))]
+                todo = td.todo()
                 if not todo:
                     break
                 if attempt:
@@ -415,17 +484,10 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
                     if not ans:
                         print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
                         continue
-                    parsed = _parse_numbered(ans)
-                    got = 0
-                    for i in chunk:
-                        v = (parsed.get(i + 1) or "").strip()
-                        if v:
-                            done[i] = v
-                            got += 1
-                    _save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
-                    n_ok = sum(1 for k in range(n_total) if _ok(k, done.get(k)))
+                    got = td.nhan(chunk, _parse_numbered(ans))
+                    td.save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
                     print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
-                          f"— tổng {n_ok}/{n_total}.")
+                          f"— tổng {td.so_xong()}/{n_total}.")
     finally:
         if driver is not None:
             try:
@@ -433,17 +495,108 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
             except Exception:
                 pass
 
-    missing = [i for i in range(n_total) if not (done.get(i) or "").strip()]
-    if missing:
-        print(f"⚠️ {len(missing)} câu không dịch được — giữ nguyên tiếng {ten} "
-              f"(số thứ tự: {', '.join(str(i + 1) for i in missing[:20])}"
-              f"{'...' if len(missing) > 20 else ''}).")
-    else:
-        try:
-            os.remove(partial_path)   # xong trọn vẹn → bỏ file tiến độ
-        except Exception:
-            pass
-    return [(done.get(i) or "").strip() or texts[i] for i in range(n_total)]
+    return td.ket_qua()
+
+
+# ── Dịch bằng GPT CLI (--cli: `codex exec`, tài khoản ChatGPT) ──────────────
+# Khác Gemini web ở điểm CỐT LÕI: mỗi lô là MỘT LỆNH `codex exec` riêng, chạy
+# xong là hết — không có cuộc trò chuyện, không nhớ lô trước, không nhớ lời dặn
+# nào. Vì vậy MỖI lệnh phải mang đủ: (1) lời dặn riêng cho CLI (chạy một lần,
+# không đọc/ghi file, chỉ in dòng B[x]); (2) TOÀN BỘ yêu cầu dịch — cùng
+# gemini_prefix với đường Gemini, gửi lại nguyên vẹn ở từng lô; (3) vài cặp câu
+# gốc→dịch của lô TRƯỚC làm ngữ cảnh để tên riêng / xưng hô nối tiếp; (4) rồi
+# mới tới các dòng cần dịch. Kết quả vẫn parse theo mã B[x] như Gemini.
+NGU_CANH_SO_CAU = 4        # số cặp câu lô trước gửi kèm
+NGU_CANH_MAX_CHARS = 160   # mỗi câu ngữ cảnh cắt bớt — chỉ cần đủ để bắt giọng
+
+
+def _cat(s, n=NGU_CANH_MAX_CHARS):
+    s = " ".join((s or "").split())
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def cli_prompt(lang, body, ngu_canh=()):
+    """Đề bài TRỌN GÓI cho một lệnh GPT CLI. body = các dòng "B[x] câu gốc"."""
+    ten = TEN_LANG.get(lang, "Trung")
+    phan = [
+        "Bạn là bộ dịch phụ đề chạy MỘT LẦN qua dòng lệnh: không có hội thoại, "
+        "không nhớ gì từ các lệnh trước, nên toàn bộ yêu cầu nằm trong tin này. "
+        "Không đọc hay ghi file, không chạy lệnh nào, không hỏi lại — chỉ dịch các "
+        "dòng ở cuối tin và in kết quả.",
+        gemini_prefix(lang),
+    ]
+    if ngu_canh:
+        phan.append(
+            "NGỮ CẢNH — các câu ngay trước đã dịch xong, chỉ để giữ nhất quán tên "
+            "riêng, xưng hô và mạch chuyện. KHÔNG dịch lại, KHÔNG in lại các câu này:\n"
+            + "\n".join(f"  {_cat(goc)} → {_cat(vi)}" for goc, vi in ngu_canh))
+    phan.append(f"CÁC DÒNG PHỤ ĐỀ TIẾNG {ten.upper()} CẦN DỊCH:\n{body}")
+    phan.append("Câu trả lời CHỈ gồm các dòng B[x] đã dịch sang tiếng Việt, đúng thứ tự, "
+                "không lời mở đầu, không lời kết, không giải thích, không markdown.")
+    return "\n\n".join(phan)
+
+
+CLI_LOI_LIEN_TIEP = 3      # lỗi gọi CLI ngần này lô liên tiếp thì dừng (hỏng cả đường)
+
+
+def translate_cli(texts, partial_path, batch_chars=1200, lang="zh"):
+    """Dịch qua GPT CLI (codex exec). Mỗi lô một lệnh, đề bài gửi lại trọn gói
+    (cli_prompt); tiến độ + lượt bổ sung y như đường Gemini (TienDo). Trả list
+    cùng độ dài (câu hỏng giữ nguyên tiếng gốc), hoặc None nếu không gọi được
+    CLI / không dịch được câu nào (để bước ③ không đọc nhầm tiếng gốc)."""
+    import dich_gptcli as gc
+
+    try:
+        info = gc.kiem_tra()
+    except gc.GptCliError as e:
+        print(f"❌ {e}")
+        return None
+    print(f"🤖 GPT CLI: {info['path']} (codex-cli {info['version']}) — {info['login']}")
+    print(f"🎛 {gc.mo_ta_hieu_luc()}")
+    if not info["logged_in"]:
+        print("⚠️ Có vẻ chưa đăng nhập: mở terminal chạy `codex login` (tài khoản "
+              "ChatGPT) rồi chạy lại. Vẫn thử gửi...")
+
+    td = TienDo(texts, partial_path, lang)
+    n_total = len(texts)
+    loi = 0
+    dung = False
+    # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
+    for attempt in range(3):
+        todo = td.todo()
+        if not todo or dung:
+            break
+        if attempt:
+            print(f"🔁 Lượt bổ sung {attempt}: dịch lại {len(todo)} câu thiếu/chưa dịch...")
+        chunks = _pack_chunks(todo, texts, max_chars=batch_chars)
+        for ci, chunk in enumerate(chunks, 1):
+            body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
+            prompt = cli_prompt(lang, body, td.ngu_canh(chunk[0], NGU_CANH_SO_CAU))
+            print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu, đề bài "
+                  f"{len(prompt)} ký tự) qua GPT CLI...")
+            try:
+                ans = gc.goi(prompt, on_log=print)
+                loi = 0
+            except gc.GptCliError as e:
+                loi += 1
+                print(f"⚠️ Lô {ci} lỗi: {e}")
+                if loi >= CLI_LOI_LIEN_TIEP:
+                    print(f"❌ GPT CLI lỗi {loi} lô liên tiếp — dừng; tiến độ đã lưu, "
+                          "sửa xong (đăng nhập / model / hạn mức) thì chạy lại là dịch tiếp.")
+                    dung = True
+                    break
+                ans = None
+            if not ans:
+                print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
+                continue
+            got = td.nhan(chunk, _parse_numbered(ans))
+            td.save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
+            print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
+                  f"— tổng {td.so_xong()}/{n_total}.")
+    if td.so_xong() == 0:
+        print("❌ Không dịch được câu nào qua GPT CLI — không ghi file kết quả.")
+        return None
+    return td.ket_qua()
 
 
 # ── Dịch OFFLINE (--offline, opus-mt) — chất lượng thô, chỉ nên làm nháp ─────
@@ -469,21 +622,36 @@ def translate_offline(texts, batch=32, lang="zh"):
     return out
 
 
+def _backend_cli():
+    """Ô cách dịch dùng chung (gemini_backend: extension / firefox / cli) đang là GPT
+    CLI? — để chạy lẻ `python dich_srt.py x.srt` cũng theo đúng lựa chọn trên web."""
+    try:
+        import gemini_backend
+        return gemini_backend.get_backend() == "cli"
+    except Exception:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Dịch SRT (Trung/Anh) sang tiếng Việt (Gemini web, giữ mốc giờ).")
+        description="Dịch SRT (Trung/Anh) sang tiếng Việt — Gemini web (mặc định), "
+                    "GPT CLI (--cli) hay opus-mt (--offline); giữ nguyên mốc giờ.")
     parser.add_argument("srt", help="File .srt tiếng Trung hoặc tiếng Anh.")
     parser.add_argument("--lang", default="auto", choices=["auto", "zh", "en"],
                         help="Tiếng gốc của SRT (mặc định auto: tự đoán từ nội dung).")
     parser.add_argument("--giu-dong", action="store_true",
                         help="GIỮ nguyên từng dòng SRT thay vì gộp thành câu trọn "
                              "vẹn (bản dịch và giọng đọc sẽ theo đúng mẩu của bước ①).")
+    parser.add_argument("--cli", action="store_true",
+                        help="Dịch bằng GPT CLI (codex exec, tài khoản ChatGPT) thay vì "
+                             "Gemini web: không cần trình duyệt; mỗi lô là MỘT lệnh riêng "
+                             "nên toàn bộ yêu cầu dịch được gửi lại kèm từng lô.")
     parser.add_argument("--offline", action="store_true",
                         help="Dịch bằng opus-mt offline (nhanh, thô) thay vì Gemini.")
     parser.add_argument("--batch", type=int, default=32,
                         help="(offline) Số câu dịch mỗi lô (mặc định 32).")
     parser.add_argument("--batch-chars", type=int, default=1200,
-                        help="(gemini) Cỡ mỗi lô gửi, tính bằng ký tự (mặc định 1200).")
+                        help="(gemini/cli) Cỡ mỗi lô gửi, tính bằng ký tự (mặc định 1200).")
     args = parser.parse_args()
 
     if not os.path.isfile(args.srt):
@@ -511,6 +679,9 @@ def main():
               "Muốn giữ từng dòng thì thêm --giu-dong.")
     if args.offline:
         vi = translate_offline(texts, batch=args.batch, lang=lang)
+    elif args.cli or _backend_cli():
+        vi = translate_cli(texts, stem + "_vi.partial.json",
+                           batch_chars=args.batch_chars, lang=lang)
     else:
         vi = translate_gemini(texts, stem + "_vi.partial.json",
                               batch_chars=args.batch_chars, lang=lang)

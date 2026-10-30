@@ -5,7 +5,9 @@ Quy trình 4 bước, mỗi bước là một script CLI có sẵn trong myvideo
 xếp lệnh vào hàng đợi, không import logic nặng nào:
   ① video_chamlai_srt.py  chậm video + SRT tiếng gốc (luôn kèm --no-dich: dịch là bước ②)
   ② dich_srt.py           SRT gốc → SRT Việt qua Gemini (Chrome Extension,
-                          Firefox dự phòng — gemini_backend dùng chung myvoice)
+                          Firefox dự phòng — gemini_backend dùng chung myvoice);
+                          ô 🤖 GPT CLI (gemini_backend = "cli", cùng ô chọn) →
+                          --cli: codex exec, tài khoản ChatGPT, không cần trình duyệt
   ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
                           — cả vẽ sub, che mờ lẫn thay tiếng đều bỏ được
@@ -45,6 +47,11 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import kenh_hoso  # noqa: E402
 import doan  # noqa: E402       # video dài chia đoạn: nhận tên đoạn, đếm đoạn
+# Ô cách dịch (extension / firefox / cli) DÙNG CHUNG với myvoice — đọc lúc xếp hàng đợi.
+_MYVOICE_SCRIPTS = REPO_ROOT / "myvoice" / "scripts"
+if str(_MYVOICE_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_MYVOICE_SCRIPTS))
+import gemini_backend  # noqa: E402
 
 ORDER = ["cham", "dich", "giong", "gan"]
 # seo/thumb không nằm trong chuỗi ①→④ (ORDER) nhưng CÓ trong danh sách "còn
@@ -356,6 +363,12 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             if s.get("offline"):
                 argv.append("--offline")
                 label = "② Dịch offline opus-mt (nháp)"
+            elif gemini_backend.saved_backend() == "cli":
+                # 🤖 Ô "GPT CLI" (lựa chọn thứ ba cạnh Extension/Firefox, dùng chung
+                # myvoice): chốt lúc xếp hàng đợi → --cli, không cần Chrome/Firefox;
+                # đề bài gửi lại trọn gói từng lô (xem dich_srt.cli_prompt).
+                argv.append("--cli")
+                label = "② Dịch GPT CLI (Codex) → SRT tiếng Việt"
         elif k == "giong":
             argv = [_python(), "-u", str(BASE_DIR / "taogiong_srt.py"), f"{B}_vi.srt"]
             if s.get("voice"):

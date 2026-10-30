@@ -12,7 +12,7 @@ Hai cách dùng:
         - Đặt tên tuần tự: <tiền tố><số>.mp4 (vd nauan01.mp4, nauan02.mp4…),
           tự nối tiếp số lớn nhất đang có trong thư mục đích (chạy lại không đè).
         - GIỮ NGUYÊN file gốc trong Downloads (không xóa).
-        - Ưu tiên GPU (NVENC), tự fallback CPU (libx264).
+        - GPU (NVENC) bắt buộc: không có / lỗi thì báo lỗi, KHÔNG chuyển sang CPU.
 
   • --batch        → luồng CŨ: xóa tiếng + scale mọi .mp4 trong mp4/ sang
                      mp4_no_audio/ (đầu vào cho video_ghepcuoi.py). Giữ nguyên
@@ -51,7 +51,8 @@ TARGETS = {
     "Dọc 1080×1920":   (1080, 1920),
 }
 
-# Ưu tiên GPU; tự fallback CPU nếu GPU lỗi.
+# GPU (NVENC) bắt buộc (27/10/2026): không có h264_nvenc → báo lỗi rồi dừng cả lượt;
+# NVENC lỗi ở một file → file đó lỗi, KHÔNG thử lại bằng libx264. False = chủ ý CPU.
 USE_GPU     = True
 NVENC_ARGS  = ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "20"]
 X264_ARGS   = ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
@@ -138,7 +139,8 @@ def process_one(src: Path, dst: Path, tw: int, th: int, use_gpu: bool,
 
     - Không cắt + clip ĐÃ đúng (h264 + đúng kích thước) -> chỉ COPY + bỏ tiếng (~tức thì).
     - Còn lại: (cắt bằng -ss/-t chính xác) + scale phủ kín + crop giữa về tw×th,
-      ép 30fps, encode lại. Ưu tiên NVENC; lỗi thì thử không hwaccel, rồi libx264.
+      ép 30fps, encode lại. NVENC; hwaccel lỗi thì thử không hwaccel (vẫn NVENC),
+      KHÔNG lùi về libx264 (GPU bắt buộc, 27/10/2026).
     Trả về (ok: bool, mô tả: str).
     """
     info = probe_stream(src)
@@ -184,7 +186,8 @@ def process_one(src: Path, dst: Path, tw: int, th: int, use_gpu: bool,
     enc = NVENC_ARGS if use_gpu else X264_ARGS
     base = "-hide_banner", "-loglevel", "error"
 
-    # Lần lượt thử: GPU(hwaccel) → cùng encoder không hwaccel → CPU libx264.
+    # Lần lượt thử: GPU(hwaccel) → cùng encoder không hwaccel. (Bản cũ còn thử
+    # libx264 — bỏ 27/10/2026: GPU lỗi là báo lỗi, không âm thầm dựng bằng CPU.)
     attempts = []
     if use_gpu:
         attempts.append((["ffmpeg", "-y", *base, "-hwaccel", "cuda", *ss,
@@ -195,11 +198,6 @@ def process_one(src: Path, dst: Path, tw: int, th: int, use_gpu: bool,
                       "-vf", vf, "-an", *enc,
                       "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dst)],
                      f"crop {w}×{h} → {tw}×{th}{trim_desc}"))
-    if use_gpu:
-        attempts.append((["ffmpeg", "-y", *base, *ss, "-i", str(src), *tt,
-                          "-vf", vf, "-an", *X264_ARGS,
-                          "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(dst)],
-                         f"crop {w}×{h} → {tw}×{th}{trim_desc} (CPU)"))
 
     err = "ffmpeg lỗi"
     for cmd, desc in attempts:
@@ -222,9 +220,12 @@ def run_files(files, out_dir: Path, prefix: str, tw: int, th: int,
     Trả về (số ok, số lỗi).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    use_gpu = USE_GPU and has_nvenc()
-    log("Encoder: GPU (h264_nvenc), fallback CPU (libx264)"
-        if use_gpu else "Encoder: CPU (libx264)")
+    if USE_GPU and not has_nvenc():
+        # GPU bắt buộc (27/10/2026): báo lỗi rồi dừng, không âm thầm chuyển sang CPU.
+        log("❌ ffmpeg không có encoder h264_nvenc (GPU) → DỪNG, không xử lý bằng CPU.")
+        return 0, len(files)
+    use_gpu = USE_GPU
+    log("Encoder: GPU (h264_nvenc)" if use_gpu else "Encoder: CPU (libx264)")
     log(f"Khung hình: {tw}×{th}  ·  chế độ CẮT ĐẦY KHUNG (không viền đen)")
     if trim_start > 0 or trim_end > 0:
         log(f"Cắt bỏ    : {trim_start:g}s đầu · {trim_end:g}s cuối (mỗi video)")

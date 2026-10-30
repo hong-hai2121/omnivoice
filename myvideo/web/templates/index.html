@@ -216,14 +216,14 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
 
   <div class="panel">
     <div class="phead">
-      <span class="num">2</span><h2>Dịch Gemini → SRT tiếng Việt</h2>
+      <span class="num">2</span><h2>Dịch Gemini / GPT CLI → SRT tiếng Việt</h2>
       <p class="hint"><code>_x0.7.srt</code> → <code>_vi.srt</code> +
         <code class="l-zh">_zhvi.srt</code><code class="l-en">_envi.srt</code>
         (song ngữ), giữ nguyên mốc giờ; lô nào xong lưu lô đó, lỗi chạy lại là dịch tiếp.</p>
     </div>
     <div class="grid">
       <label class="field">
-        <span>Cỡ mỗi lô gửi Gemini (ký tự)</span>
+        <span>Cỡ mỗi lô gửi Gemini / GPT CLI (ký tự)</span>
         <input name="batchchars" type="number" min="200" max="5000" step="100"
                value="{{ settings.batchchars }}">
       </label>
@@ -238,9 +238,15 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
          cho cả hai bảng, đổi ở đâu cũng là đổi cả hai). JS cuối trang giữ cho
          hai ô loại trừ nhau như bên myvoice. #}
       <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"
-        {{ 'checked' if gemini_backend != 'firefox' }}> 🧩 Dịch bằng Chrome Extension (mặc định)</label>
+        {{ 'checked' if gemini_backend not in ('firefox', 'cli') }}> 🧩 Dịch bằng Chrome Extension (mặc định)</label>
       <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"
         {{ 'checked' if gemini_backend == 'firefox' }}> 🦊 Dịch bằng Firefox / Selenium (dự phòng)</label>
+      {# 🤖 GPT CLI = lựa chọn thứ ba của CÙNG ô gemini_backend (dùng chung myvoice):
+         dich_srt.py --cli — mỗi lô một lệnh `codex exec`, không hội thoại nên đề bài
+         gửi lại trọn gói từng lô; 📑 SEO cũng đi qua GPT CLI (GptCliDriver). #}
+      <label class="chk"><input type="checkbox" name="gemini_backend" value="cli"
+        {{ 'checked' if gemini_backend == 'cli' }}> 🤖 Dịch bằng GPT CLI (Codex, tài khoản ChatGPT)
+        — không cần trình duyệt, không cần giữ màn hình; chất lượng ngang Gemini</label>
       <label class="chk"><input type="checkbox" name="offline" {{ 'checked' if settings.offline }}>
         📴 Dịch offline bằng opus-mt
         <span class="l-zh">zh-vi</span><span class="l-en">en-vi (lần đầu tự tải model ~300MB)</span>
@@ -251,7 +257,10 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     <p class="hint">Lựa chọn dùng chung với myvoice — áp dụng cho bước ② và 📑 SEO.
       Extension: giữ Chrome (đã cài extension OmniVoice Gemini + đăng nhập Gemini) đang mở;
       không kết nối được thì tự mở Firefox thay. Firefox: <b>đóng Firefox</b> trước khi chạy.
-      Cài/thử extension ở tab 🧩 của bảng myvoice.</p>
+      Cài/thử extension ở tab 🧩 của bảng myvoice.
+      GPT CLI: cài <code>npm i -g @openai/codex</code> rồi <code>codex login</code> (ChatGPT)
+      một lần trong terminal; là lựa chọn thứ ba thay cho hai ô Gemini, áp dụng cho cả bước ②
+      lẫn 📑 SEO. Chọn model / mức cố gắng, kiểm tra kết nối, nhắn thử ở tab 🤖 GPT CLI của bảng myvoice.</p>
   </div>
 
   <div class="panel">

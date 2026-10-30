@@ -955,7 +955,7 @@ def _settings_from_form(form) -> dict:
     # Cách dịch Gemini KHÔNG nằm trong web_settings.json của myvideo: nó là lựa
     # chọn dùng chung hai bảng, ghi thẳng vào myvoice/taogiong_pipeline.json
     # (set_backend chỉ đụng đúng khoá này, giữ nguyên cài đặt khác của myvoice).
-    if g("gemini_backend") in ("extension", "firefox"):
+    if g("gemini_backend") in ("extension", "firefox", "cli"):
         gemini_backend.set_backend(g("gemini_backend"))
     return s
 

@@ -48,6 +48,7 @@ body.p-voice     { --accent: #db2777; --accent2: #fb7185; --accent-soft: #ffe9f2
 body.p-thumbnail { --accent: #ea580c; --accent2: #fbbf24; --accent-soft: #fff0e2; }
 body.p-seo       { --accent: #0d9488; --accent2: #34d399; --accent-soft: #e2f7f3; }
 body.p-ext       { --accent: #0891b2; --accent2: #22d3ee; --accent-soft: #e0f6fb; }
+body.p-cli       { --accent: #4f46e5; --accent2: #818cf8; --accent-soft: #eceafe; }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -857,3 +858,35 @@ button.badge-xem:hover { background: var(--ok-bg); box-shadow: 0 0 0 3px var(--o
 /* Tab 🧩 Extension: nhật ký lượt thử cuộn trong khung, kết quả xuống dòng. */
 #ext-log { max-height: 320px; overflow: auto; }
 #ext-log, #ext-result { white-space: pre-wrap; }
+
+/* ── Tab 🤖 GPT CLI (29/10/2026) ─────────────────────────────────────────── */
+/* ① bốn thẻ trạng thái: nhãn nhỏ · dòng chính · dòng phụ; màu theo ok/warn/loi. */
+.cli-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.cli-stat {
+  min-width: 0; padding: 9px 11px;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--sunken);
+}
+.cli-stat > span { display: block; margin-bottom: 2px; font-size: 11.5px; color: var(--muted); }
+.cli-stat > b { display: block; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.cli-stat > i { display: block; margin-top: 2px; font-style: normal; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.cli-stat > i:empty { display: none; }
+.cli-stat.ok   { border-color: transparent; background: var(--ok-bg); }
+.cli-stat.ok > b   { color: var(--ok); }
+.cli-stat.warn { border-color: transparent; background: var(--warn-bg); }
+.cli-stat.warn > b { color: var(--warn); }
+.cli-stat.loi  { border-color: transparent; background: var(--danger-soft); }
+.cli-stat.loi > b  { color: var(--danger); }
+/* ③ hội thoại: tin của bạn bên phải, trả lời của CLI bên trái, lỗi đỏ, đang chờ mờ. */
+.cli-chat { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.cli-chat > .empty { margin: 0; }
+.cli-msg {
+  max-width: 92%; padding: 10px 13px; border-radius: 14px;
+  font-size: 13.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  user-select: text;
+}
+.cli-msg.me  { align-self: flex-end; background: var(--accent-soft); border-bottom-right-radius: 4px; }
+.cli-msg.ai  { align-self: flex-start; background: var(--sunken); border: 1px solid var(--line);
+               border-left: 3px solid var(--accent); border-bottom-left-radius: 4px; }
+.cli-msg.loi { align-self: flex-start; background: var(--danger-soft); color: var(--danger); border-bottom-left-radius: 4px; }
+.cli-msg.cho { align-self: flex-start; color: var(--muted); font-style: italic; }
+.cli-msg small { display: block; margin-bottom: 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); }

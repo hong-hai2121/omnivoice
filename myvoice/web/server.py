@@ -34,7 +34,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     __package__ = "myvoice.web"
 
-from . import core, gemini_test, power, steps as steps_mod  # noqa: E402
+from . import core, gemini_test, gptcli_test, power, steps as steps_mod  # noqa: E402
 from .jobs import (capture as log_capture, fb_log, fb_runner,  # noqa: E402
                    log, runner, upload_log, upload_runner)
 
@@ -186,6 +186,98 @@ async def api_gemini_test_start(request: Request):
     return {"ok": True}
 
 
+@app.get("/gpt-cli", response_class=HTMLResponse)
+def gpt_cli_setup(request: Request):
+    """Tab 🤖 GPT CLI: ① thẻ trạng thái (app.js đổ từ /api/gptcli-info) · ② model + mức cố
+    gắng dùng cho MỌI lệnh dịch (tự lưu → /gpt-cli/luu) · ③ nhắn thử và đợi trả lời (gptcli_test)."""
+    import dich_gptcli as gc
+    import gemini_backend
+    cai_dat = gc.cai_dat()
+    models = gc.danh_sach_model()
+    return _page(request, "gpt_cli.html", active="cli",
+                 sample_text=gptcli_test.SAMPLE_TEXT,
+                 backend_is_cli=(gemini_backend.saved_backend() == "cli"),
+                 cai_dat=cai_dat, models=models, cfg=gc.config_mac_dinh(),
+                 model_khac=bool(cai_dat["model"])
+                 and cai_dat["model"] not in {m["slug"] for m in models},
+                 muc=[(k, *gc.MUC_CO_GANG_NHAN[k]) for k in gc.MUC_CO_GANG],
+                 # Câu hướng dẫn NGẮN viết riêng cho CLI (gửi kèm từng đoạn) — để soi ở ③.
+                 cli_header=gc.CLI_HEADER, cli_huongdan=_cli_huongdan())
+
+
+def _cli_huongdan() -> str:
+    import dich_gemini as g
+    return g.TRANSLATE_PREFIX_CLI.strip()
+
+
+@app.get("/api/gptcli-info")
+def api_gptcli_info():
+    """Thẻ trạng thái đầu tab 🤖: codex · đăng nhập · model/mức sẽ dùng · cách dịch đang chọn.
+    KHÔNG gọi model (chỉ `--version` + `login status`, ~1–2 s) — đọc lúc mở trang và sau
+    mỗi lần ô ② tự lưu."""
+    import dich_gptcli as gc
+    import gemini_backend
+    out = {"ok": True, "backend": gemini_backend.saved_backend(), **gc.hieu_luc()}
+    try:
+        out.update(gc.kiem_tra())
+    except gc.GptCliError as e:
+        out.update(ok=False, error=str(e))
+    return out
+
+
+@app.post("/gpt-cli/luu")
+async def gpt_cli_save(request: Request):
+    """Ô cài đặt khối ② tab 🤖 (tự lưu khi đổi). HAI form cùng gửi về đây:
+    • model / effort → dich_gptcli.luu_cai_dat (khoá gptcli_* trong taogiong_pipeline.json;
+      mọi lệnh codex exec từ giờ dùng: dịch truyện, 🔁, SEO, SRT myvideo);
+    • co_dung_cli (dấu của form ô tick) + dung_cli → gemini_backend: tick = "cli"; bỏ tick khi
+      đang "cli" = về mặc định extension; đang firefox mà không tick thì GIỮ firefox (form này
+      không biết gì về Firefox, đừng âm thầm đổi)."""
+    form = await request.form()
+    import dich_gptcli as gc
+    import gemini_backend
+    notes = []
+    if "effort" in form or "model" in form:
+        model = str(form.get("model") or "").strip()
+        if model == "__khac__":
+            model = str(form.get("model_khac") or "").strip()
+        saved = gc.luu_cai_dat(model=model, effort=str(form.get("effort") or ""))
+        notes.append(f"{saved['model'] or 'model theo config.toml'} · mức "
+                     f"{saved['effort'] or 'mặc định'}")
+    if "co_dung_cli" in form:
+        if "dung_cli" in form:
+            gemini_backend.set_backend("cli")
+            notes.append("cách dịch: GPT CLI")
+        elif gemini_backend.saved_backend() == "cli":
+            gemini_backend.set_backend(gemini_backend.DEFAULT_BACKEND)
+            notes.append("cách dịch: Chrome Extension")
+    tom_tat = " · ".join(notes) if notes else "không có gì đổi"
+    log(f"💾 GPT CLI: {tom_tat}.")
+    return _saved(request, "/gpt-cli", f"✓ Đã lưu — {tom_tat}")
+
+
+@app.get("/api/gptcli-test")
+def api_gptcli_test():
+    """Trạng thái + nhật ký lượt thử GPT CLI (tab 🤖 hỏi mỗi giây khi đang chạy)."""
+    return gptcli_test.tester.state()
+
+
+@app.post("/api/gptcli-test/chay")
+async def api_gptcli_test_start(request: Request):
+    """Bắt đầu một lượt thử: mode=check (tìm codex + đăng nhập + lệnh ngắn) hoặc send (gửi `text`)."""
+    form = await request.form()
+    mode = str(form.get("mode") or "")
+    try:
+        gptcli_test.tester.start(mode, str(form.get("text") or ""),
+                                 full_prefix=bool(form.get("full_prefix")))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    log(f"🤖 Thử GPT CLI ({mode}) — xem tab GPT CLI.")
+    return {"ok": True}
+
+
 # Trang Home gom cả bốn khối (giống view "Home (đầy đủ)" bên GUI) nên bốn hàm
 # này là NGUỒN DUY NHẤT: sửa một chỗ, cả Home lẫn trang riêng cùng đổi.
 def _script_ctx() -> dict:
@@ -324,7 +416,7 @@ def _save_pipe_from_form(form) -> dict:
     không ghi ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻ của GUI.
     """
     pipe = core.load_pipeline()
-    if form.get("gemini_backend") in ("firefox", "extension"):
+    if form.get("gemini_backend") in ("firefox", "extension", "cli"):
         pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
@@ -342,7 +434,7 @@ def _save_model_speed(form) -> dict:
     """Chỉ model + tốc độ. Dùng cho form hàng loạt — form đó KHÔNG có các ô ⛓,
     gọi _save_pipe_from_form sẽ tắt sạch chúng."""
     pipe = core.load_pipeline()
-    if form.get("gemini_backend") in ("firefox", "extension"):
+    if form.get("gemini_backend") in ("firefox", "extension", "cli"):
         pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
