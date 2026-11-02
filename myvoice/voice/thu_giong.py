@@ -19,6 +19,17 @@ lưu riêng _thu_giong/<tên_giọng>_sang<N>.wav — đổi mức thì bấm T�
 chia mỗi đoạn một câu (cỡ "chunk" trong taogiong_options.json) → sinh từng đoạn
 → cân mức to giữa các đoạn → ghép có khoảng nghỉ theo dấu câu → đệm im lặng
 cuối → nén nhẹ + chuẩn độ to. Nghe thử ra sao thì bài thật ra vậy.
+Từ 01/11/2026 các thanh chỉnh ở đây DÙNG CHUNG thông số với bài thật: tốc độ =
+ô "Tăng tốc" video ngang (ngang_speed), tông (pitch) và 4 bộ lọc đọc từ
+taogiong_options.json lúc mở, và khi bật 🔗 Đồng bộ (mặc định bật) thì nhả
+chuột / bấm ± là ghi ngay vào đúng khoá đó — GUI/web mở lại là thấy, khỏi chép
+tay từng số. Tắt 🔗 để thử tự do không đụng bài thật; "↻ Lấy từ bài thật" kéo
+các thanh về mức đang lưu.
+Từ 02/11/2026 có hàng nút NGHE để đối chiếu clone với người thật: 🎧 GIỌNG MẪU
+phát file gốc trong voice/ NGUYÊN BẢN (không qua thanh chỉnh; mp3/wav lạ được đổi
+sang wav 16-bit tạm ở _thu_giong/_giongmau/ vì winsound chỉ phát wav PCM),
+▶ GIỌNG CLONE phát bản thử theo thanh chỉnh (như trước), ⇄ MẪU → CLONE phát mẫu
+xong tự phát tiếp bản clone; ⏹ Dừng cắt cả chuỗi.
 
 Chạy:  python thu_giong.py   (tự chuyển sang python của venv)
 """
@@ -71,9 +82,10 @@ AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".opus", ".wma"}
 CHUNK_DEFAULT = 160                           # cỡ cắt câu dài khi chưa có taogiong_options.json
 
 # ── NHỚ LỰA CHỌN GIỮA CÁC LẦN CHẠY ──────────────────────────────────────────────
-# Chỉ để nhớ giọng đang chọn, nên để riêng một file nhỏ trong _thu_giong/ thay vì
-# đụng vào taogiong_options.json của bản tạo giọng thật (GUI bên đó ghi đè cả dict,
-# khoá lạ thêm vào sẽ bị xoá ở lần lưu kế tiếp).
+# File nhỏ riêng trong _thu_giong/ chỉ nhớ những gì CỦA RIÊNG app này (giọng đang
+# chọn, ô 🔗 Đồng bộ). Thông số giọng (tốc độ / tông / bộ lọc) KHÔNG nằm đây: chúng
+# là của bài thật, đọc/ghi thẳng taogiong_options.json (xem bai_that_doc/bai_that_luu;
+# tts.save_opt_settings gộp khoá nên không xoá cài đặt khác của GUI/web).
 SETTINGS_FILE = OUT_DIR / "thu_giong_settings.json"
 
 
@@ -105,7 +117,13 @@ def save_settings(**kv) -> None:
 # để riêng ở _thu_giong/_tocdo/, cache theo từng cặp (tốc độ, tông).
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 SPEED_DIR = OUT_DIR / "_tocdo"
-SPEED_MIN, SPEED_MAX, SPEED_STEP = 0.75, 1.60, 0.05
+# 🎧 Nghe giọng mẫu (02/11/2026): winsound chỉ phát wav PCM, mà mẫu thường là mp3
+# (hoặc wav float) → đổi sang wav 16-bit một lần, cache ở đây theo TÊN ĐẦY ĐỦ
+# ("hà chi.mp3" → "hà chi.mp3.wav") để "hà chi.mp3" và "hà chi.wav" không đè nhau.
+MAU_DIR = OUT_DIR / "_giongmau"
+# Tốc độ = ô "Tăng tốc" video ngang của bài thật (ngang_speed, atempo giữ cao độ, kẹp
+# 0,5–2,0 như App._parse_speed bên GUI) — cùng dải để đồng bộ hai chiều không bị kẹp.
+SPEED_MIN, SPEED_MAX, SPEED_STEP = 0.5, 2.0, 0.05
 PITCH_MIN, PITCH_MAX, PITCH_STEP = tts.PITCH_MIN, tts.PITCH_MAX, 0.5   # bán cung
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -167,6 +185,12 @@ def out_file(voice: str, sang: int = 0) -> Path:
     return OUT_DIR / f"{safe_stem(voice)}{f'_sang{sang}' if sang else ''}.wav"
 
 
+def mau_wav_file(voice: str) -> Path:
+    """Bản wav 16-bit để winsound phát được của giọng MẪU `voice` (tên file trong
+    voice/). Giữ nguyên tên gốc kèm đuôi rồi thêm .wav — xem MAU_DIR."""
+    return MAU_DIR / f"{Path(voice).name}.wav"
+
+
 # ── đổi tốc độ / tông / bộ lọc bằng ffmpeg ─────────────────────────────────────
 # Lõi (rubberband giữ formant, dự phòng asetrate+atempo; tiếng vang bằng afir +
 # đáp ứng xung tự sinh; thiếu niên = dời formant + nhỉnh cao độ) nằm ở
@@ -198,6 +222,49 @@ def default_fx() -> dict:
         return hu.fx_from(None)
 
 
+def parse_speed(value, default: float = 1.0) -> float:
+    """Đọc tốc độ ("1.2", "1,15", 1.2) → float kẹp [SPEED_MIN, SPEED_MAX], làm tròn
+    về bội SPEED_STEP — cùng cách đọc với ô Tăng tốc bên GUI/web."""
+    try:
+        v = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        v = default
+    v = round(v / SPEED_STEP) * SPEED_STEP
+    return round(max(SPEED_MIN, min(v, SPEED_MAX)), 2)
+
+
+def default_speed() -> float:
+    """Tốc độ mặc định = ô "Tăng tốc" video ngang của bài thật (ngang_speed) — mở app
+    lên là nghe đúng nhịp mà video ngang sẽ ra; kéo về 1.0 để nghe tốc độ gốc."""
+    try:
+        return parse_speed(tts.load_opt_settings().get("ngang_speed"), 1.0)
+    except Exception:
+        return 1.0
+
+
+# ── DÙNG CHUNG THÔNG SỐ GIỌNG VỚI BÀI THẬT (01/11/2026) ─────────────────────────
+# Ba nhóm thanh chỉnh ở đây ↔ đúng khoá GUI/web dùng trong taogiong_options.json:
+#   tốc độ nghe  ↔ ngang_speed (ô "Tăng tốc" video ngang, chuỗi "1.2")
+#   tông giọng   ↔ pitch (float bán cung)
+#   4 bộ lọc     ↔ vang_truong_do / vang_cuong_do / thieu_nien / sang_giong (int 0–100)
+def bai_that_doc() -> dict:
+    """Thông số giọng bài thật đang lưu → {"speed", "pitch", "fx"} (đã kẹp)."""
+    return dict(speed=default_speed(), pitch=default_pitch(), fx=default_fx())
+
+
+def bai_that_luu(speed: float, pitch: float, fx: dict | None) -> None:
+    """Ghi thông số giọng vào taogiong_options.json đúng khoá GUI/web đọc; các khoá
+    khác giữ nguyên (tts.save_opt_settings gộp dict)."""
+    tts.save_opt_settings(dict(ngang_speed=f"{parse_speed(speed):g}",
+                               pitch=tts.parse_pitch(pitch, 0.0),
+                               **hu.fx_from(fx)))
+
+
+def mo_ta_thong_so(speed: float, pitch: float, fx: dict | None) -> str:
+    """'1.20×, tông +1.0, bộ lọc sáng giọng 80' — dòng trạng thái đồng bộ."""
+    return f"{speed:.2f}×, tông {fmt_pitch(pitch)}, bộ lọc {hu.fx_describe(**hu.fx_from(fx))}"
+
+
 class _LogTap(logging.Handler):
     """Đưa logging.info/warning của các hàm DÙNG CHUNG với bài thật (nạp model,
     dựng prompt, cân mức, chuẩn độ to, trả VRAM — amain_taogiong_gui) vào ô Nhật
@@ -221,13 +288,15 @@ class App:
         self.root = root
         root.title("Thử giọng — OmniVoice")
         root.configure(bg=UI["bg"])
-        self._center(root, 1000, 790)
-        root.minsize(880, 690)
+        self._center(root, 1100, 830)
+        root.minsize(900, 730)
 
         self._busy = False
         self._playing = False
         self._last_src = None       # file wav GỐC vừa phát (để đổi tốc độ phát lại)
+        self._last_raw = False      # True = vừa phát GIỌNG MẪU nguyên bản → kéo thanh không phát lại
         self._play_until = 0.0      # mốc thời gian dự kiến phát xong (winsound không báo)
+        self._ab_token = 0          # ⇄ mẫu → clone: đổi số là huỷ lượt phát clone đang hẹn
         self._model = None          # nạp 1 lần, dùng lại
         self._sr = None
         self.q = queue.Queue()      # (kind, payload) từ thread nền
@@ -260,12 +329,17 @@ class App:
         st.configure("Accent.TButton", foreground="#ffffff", background=C["accent"],
                      padding=(16, 9), font=("Segoe UI", 10, "bold"))
         st.map("Accent.TButton", background=[("active", C["accent_dk"]), ("disabled", "#f0a8c6")])
+        st.configure("TCheckbutton", background=C["bg"], foreground=C["fg"], font=("Segoe UI", 10))
+        st.map("TCheckbutton", background=[("active", C["bg"])],
+               foreground=[("selected", C["accent_dk"])],
+               indicatorcolor=[("selected", C["accent"]), ("!selected", "#cfd3da")])
 
     def _build_ui(self):
         pad = dict(padx=16)
         ttk.Label(self.root, text="🎚️  Thử giọng — chọn giọng + kịch bản mẫu để nghe",
                   style="Title.TLabel").pack(anchor="w", pady=(14, 2), **pad)
-        ttk.Label(self.root, text="Tạo audio clone ngắn để so sánh xem giọng nào hợp. "
+        ttk.Label(self.root, text="Tạo audio clone ngắn để so sánh xem giọng nào hợp; 🎧 nghe lại "
+                                  "giọng mẫu gốc để đối chiếu clone với người thật. "
                                   "Kết quả lưu ở voice/_thu_giong/.",
                   style="Muted.TLabel").pack(anchor="w", pady=(0, 10), **pad)
 
@@ -298,7 +372,7 @@ class App:
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(8, weight=1)
+        right.rowconfigure(11, weight=1)     # ô Nhật ký co giãn, các hàng thanh chỉnh giữ nguyên
 
         ttk.Label(right, text="Kịch bản thử (sửa tay được):",
                   style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -314,23 +388,56 @@ class App:
         self.btn_make = ttk.Button(actions, text="🔊  Tạo & nghe giọng đã chọn",
                                    style="Accent.TButton", command=self._on_make_one)
         self.btn_make.pack(side="left")
-        self.btn_play = ttk.Button(actions, text="▶  Nghe lại", command=self._on_play_saved)
-        self.btn_play.pack(side="left", padx=(8, 0))
-        self.btn_stop = ttk.Button(actions, text="⏹  Dừng", command=self._stop_play)
-        self.btn_stop.pack(side="left", padx=(8, 0))
         self.btn_all = ttk.Button(actions, text="🔁  Tạo cho TẤT CẢ giọng",
                                   command=self._on_make_all)
         self.btn_all.pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="📁  Mở thư mục kết quả",
                    command=self._open_out).pack(side="right")
 
-        # ── Tốc độ nghe thử ──
+        # ── 🎧 Hàng NGHE (02/11/2026): đối chiếu giọng mẫu (người thật) với bản clone ──
+        # Mẫu phát NGUYÊN BẢN — thanh tốc độ/tông/bộ lọc không đụng vào, vì đó là thứ
+        # model nghe để học; clone phát theo thanh chỉnh = đúng thứ bài thật sẽ ra.
+        nghe = ttk.Frame(right)
+        nghe.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        ttk.Label(nghe, text="🎧  Nghe:", font=("Segoe UI Semibold", 10)).pack(side="left")
+        self.btn_mau = ttk.Button(nghe, text="🎤  Giọng mẫu (gốc)", command=self._on_play_sample)
+        self.btn_mau.pack(side="left", padx=(8, 0))
+        self.btn_play = ttk.Button(nghe, text="▶  Giọng clone", command=self._on_play_saved)
+        self.btn_play.pack(side="left", padx=(8, 0))
+        self.btn_ab = ttk.Button(nghe, text="⇄  Mẫu → clone", command=self._on_play_ab)
+        self.btn_ab.pack(side="left", padx=(8, 0))
+        self.btn_stop = ttk.Button(nghe, text="⏹  Dừng", command=self._stop_play)
+        self.btn_stop.pack(side="left", padx=(8, 0))
+        ttk.Label(nghe, text="mẫu = file gốc trong voice/, không qua thanh chỉnh  •  clone = bản thử theo thanh chỉnh",
+                  style="Muted.TLabel").pack(side="left", padx=(12, 0))
+
+        # ── 🔗 Thông số giọng dùng chung với bài thật (01/11/2026) ──
+        # Mở lên: các thanh ở đúng mức taogiong_options.json. Bật 🔗 (mặc định): nhả
+        # chuột / bấm ± là ghi ngay vào đó — GUI/web dùng chung file nên "chỉnh ở
+        # đây = chỉnh ở bài thật". Tắt 🔗 để thử thoải mái; ↻ kéo về mức đang lưu.
+        bt0 = bai_that_doc()
+        self._da_luu = dict(bt0)          # mức vừa đồng bộ — không đổi thì không ghi lại
+        sync_row = ttk.Frame(right)
+        sync_row.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        ttk.Label(sync_row, text="⚙️  Thông số giọng = bài thật:",
+                  font=("Segoe UI Semibold", 10)).pack(side="left")
+        self.var_sync = tk.BooleanVar(value=bool(load_settings().get("dong_bo", True)))
+        ttk.Checkbutton(sync_row, text="🔗 Đồng bộ (đổi là lưu vào bài thật)",
+                        variable=self.var_sync, command=self._on_sync_toggle).pack(side="left", padx=(10, 0))
+        ttk.Button(sync_row, text="↻ Lấy từ bài thật", command=self._lay_bai_that).pack(side="left", padx=(8, 0))
+        self.lbl_sync = ttk.Label(right, style="Muted.TLabel",
+                                  text=("🔗 đang ở mức bài thật (taogiong_options.json): " + mo_ta_thong_so(**bt0))
+                                  if self.var_sync.get() else
+                                  "tắt đồng bộ: chỉnh ở đây không đụng bài thật (mở lên vẫn lấy mức bài thật)")
+        self.lbl_sync.grid(row=5, column=0, sticky="w", pady=(2, 0))
+
+        # ── Tốc độ nghe thử (= ô Tăng tốc video ngang của bài thật) ──
         speed_row = ttk.Frame(right)
-        speed_row.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        ttk.Label(speed_row, text="⏩  Tốc độ nghe:", width=15).pack(side="left")
+        speed_row.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(speed_row, text="⏩  Tốc độ:", width=15).pack(side="left")
         ttk.Button(speed_row, text="−", width=3,
                    command=lambda: self._bump_speed(-SPEED_STEP)).pack(side="left", padx=(8, 0))
-        self.var_speed = tk.DoubleVar(value=1.0)
+        self.var_speed = tk.DoubleVar(value=bt0["speed"])
         self.scale_speed = ttk.Scale(speed_row, from_=SPEED_MIN, to=SPEED_MAX, length=280,
                                      orient="horizontal", variable=self.var_speed,
                                      command=lambda _v: self._update_speed_label())
@@ -338,21 +445,38 @@ class App:
         self.scale_speed.bind("<ButtonRelease-1>", self._on_speed_release)
         ttk.Button(speed_row, text="+", width=3,
                    command=lambda: self._bump_speed(SPEED_STEP)).pack(side="left")
-        self.lbl_speed = ttk.Label(speed_row, text="1.00×", width=6,
+        self.lbl_speed = ttk.Label(speed_row, text=f"{self._speed():.2f}×", width=6,
                                    font=("Segoe UI Semibold", 11))
         self.lbl_speed.pack(side="left", padx=(10, 0))
         ttk.Button(speed_row, text="↺ 1.0×", width=8,
                    command=lambda: self._set_speed(1.0)).pack(side="left", padx=(6, 0))
-        ttk.Label(speed_row, text="giữ nguyên cao độ  •  file gốc không đổi",
+        ttk.Label(speed_row, text="= ô Tăng tốc video ngang (giữ cao độ)  •  file gốc không đổi",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
+        # ── 🎚 Mẫu giọng cài sẵn (02/11/2026) + Tông giọng — chung một ô lưới ──
+        # Bấm một mẫu = đặt tông + 4 bộ lọc theo bảng hu.MAU_GIONG (cùng bảng với GUI
+        # và web); 🔗 bật thì ghi luôn vào bài thật. Kéo thanh lệch mẫu → nhãn thành
+        # "Tuỳ chỉnh". Sáng giọng đổi mức thì phải bấm Tạo lại mới nghe đúng (prompt
+        # dựng từ giọng mẫu đã EQ), các mức khác đổi là nghe ngay.
+        giong_box = ttk.Frame(right)
+        giong_box.grid(row=7, column=0, sticky="ew", pady=(6, 0))
+        mau_row = ttk.Frame(giong_box)
+        mau_row.pack(fill="x")
+        ttk.Label(mau_row, text="🎚  Mẫu giọng:", width=15).pack(side="left")
+        self.var_mau = tk.StringVar(value=hu.MAU_TUY_CHINH)
+        for ten in hu.mau_ten():
+            ttk.Radiobutton(mau_row, text=ten, value=ten, variable=self.var_mau,
+                            command=self._ap_mau).pack(side="left", padx=(8, 0))
+        self.lbl_mau = ttk.Label(mau_row, text="", style="Muted.TLabel")
+        self.lbl_mau.pack(side="left", padx=(12, 0))
+
         # ── Tông giọng nghe thử (cao độ theo bán cung, giữ tốc độ) ──
-        pitch_row = ttk.Frame(right)
-        pitch_row.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        pitch_row = ttk.Frame(giong_box)
+        pitch_row.pack(fill="x", pady=(6, 0))
         ttk.Label(pitch_row, text="🎵  Tông giọng:", width=15).pack(side="left")
         ttk.Button(pitch_row, text="−", width=3,
                    command=lambda: self._bump_pitch(-PITCH_STEP)).pack(side="left", padx=(8, 0))
-        self.var_pitch = tk.DoubleVar(value=default_pitch())
+        self.var_pitch = tk.DoubleVar(value=bt0["pitch"])
         self.scale_pitch = ttk.Scale(pitch_row, from_=PITCH_MIN, to=PITCH_MAX, length=280,
                                      orient="horizontal", variable=self.var_pitch,
                                      command=lambda _v: self._update_pitch_label())
@@ -365,24 +489,24 @@ class App:
         self.lbl_pitch.pack(side="left", padx=(10, 0))
         ttk.Button(pitch_row, text="↺ 0", width=8,
                    command=lambda: self._set_pitch(0.0)).pack(side="left", padx=(6, 0))
-        ttk.Label(pitch_row, text="bán cung: + cao, − trầm  •  giữ tốc độ  •  mở lên = mức bài thật",
+        ttk.Label(pitch_row, text="bán cung: + cao, − trầm  •  giữ tốc độ  •  = ô Tông giọng bài thật",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
         # ── Bộ lọc giọng kiểu CapCut (0–100, 0 = tắt): tiếng vang + thiếu niên ──
-        fx0 = default_fx()
+        fx0 = bt0["fx"]
         self.var_fx, self.lbl_fx = {}, {}
         vang_row = ttk.Frame(right)
-        vang_row.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        vang_row.grid(row=8, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(vang_row, text="🔔  Tiếng vang:", width=15).pack(side="left")
         self._fx_slider(vang_row, "vang_truong_do", "trường độ", fx0, length=140)
         self._fx_slider(vang_row, "vang_cuong_do", "cường độ", fx0, length=140)
         ttk.Button(vang_row, text="↺ tắt", width=6,
                    command=lambda: self._set_fx(vang_cuong_do=0)).pack(side="left", padx=(6, 0))
-        ttk.Label(vang_row, text="bật khi cường độ > 0  •  mở lên = mức bài thật",
+        ttk.Label(vang_row, text="bật khi cường độ > 0  •  = ô 🔔 bài thật",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
 
         tn_row = ttk.Frame(right)
-        tn_row.grid(row=6, column=0, sticky="ew", pady=(6, 0))
+        tn_row.grid(row=9, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(tn_row, text="🧒  Thiếu niên:", width=15).pack(side="left")
         self._fx_slider(tn_row, "thieu_nien", "cường độ", fx0, length=280)
         ttk.Button(tn_row, text="↺ 0", width=6,
@@ -393,7 +517,7 @@ class App:
         # 🔆 Sáng giọng (23/10/2026): EQ bớt ồm — bản phát áp ngay; lúc bấm Tạo còn
         # EQ cả giọng mẫu trong bộ nhớ khi dựng prompt (đúng đường bài thật).
         sang_row = ttk.Frame(right)
-        sang_row.grid(row=7, column=0, sticky="ew", pady=(6, 0))
+        sang_row.grid(row=10, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(sang_row, text="🔆  Sáng giọng:", width=15).pack(side="left")
         self._fx_slider(sang_row, "sang_giong", "cường độ", fx0, length=280)
         ttk.Button(sang_row, text="↺ 0", width=6,
@@ -401,15 +525,16 @@ class App:
         ttk.Label(sang_row, text="bớt ồm 150–500 Hz, thêm 3 kHz + dải cao  •  lúc Tạo: EQ cả giọng mẫu "
                                  "(file mẫu không đổi)",
                   style="Muted.TLabel").pack(side="left", padx=(12, 0))
+        self._cap_nhat_mau()          # radio 🎚 sáng đúng mẫu đang lưu (hoặc không cái nào)
 
         self.status = tk.StringVar(value="Sẵn sàng.")
         ttk.Label(right, textvariable=self.status, style="Muted.TLabel").grid(
-            row=9, column=0, sticky="w", pady=(8, 2))
+            row=12, column=0, sticky="w", pady=(8, 2))
         self.pb = ttk.Progressbar(right, mode="determinate", maximum=100)
-        self.pb.grid(row=10, column=0, sticky="ew")
+        self.pb.grid(row=13, column=0, sticky="ew")
 
         logf = ttk.LabelFrame(right, text="  Nhật ký  ", padding=6)
-        logf.grid(row=8, column=0, sticky="nsew", pady=(10, 6))
+        logf.grid(row=11, column=0, sticky="nsew", pady=(10, 6))
         logf.rowconfigure(0, weight=1)
         logf.columnconfigure(0, weight=1)
         self.logbox = scrolledtext.ScrolledText(logf, height=7, wrap="word", state="disabled",
@@ -482,7 +607,9 @@ class App:
     def _set_busy(self, busy):
         self._busy = busy
         state = "disabled" if busy else "normal"
-        for b in (self.btn_make, self.btn_all, self.btn_play):
+        # 🎤 Giọng mẫu vẫn bấm được lúc đang tạo: không đụng model, nghe lại mẫu trong
+        # lúc chờ là hợp lý (tạo xong thì bản clone tự phát và cắt mẫu).
+        for b in (self.btn_make, self.btn_all, self.btn_play, self.btn_ab):
             b.config(state=state)
 
     # ── model ──
@@ -668,7 +795,83 @@ class App:
     def _on_speed_release(self, _e=None):
         """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tốc độ mới để so sánh."""
         self._update_speed_label()
+        self._luu_bai_that()
         self._replay_if_playing()
+
+    # ── 🔗 dùng chung thông số với bài thật ──
+    def _thong_so(self) -> dict:
+        """Mức đang chọn trên 3 nhóm thanh — cùng dạng bai_that_doc()."""
+        return dict(speed=self._speed(), pitch=self._pitch(), fx=self._fx())
+
+    def _luu_bai_that(self):
+        """Bật 🔗 thì ghi mức đang chọn vào taogiong_options.json (đúng khoá GUI/web);
+        chưa đổi so với lần ghi trước thì thôi. Chỉ gọi từ luồng chính (đọc tk.Var)."""
+        if not self.var_sync.get():
+            return
+        ts = self._thong_so()
+        if ts == self._da_luu:
+            return
+        try:
+            bai_that_luu(**ts)
+        except Exception as e:
+            self._log(f"⚠️ Không lưu được vào taogiong_options.json: {e}", "warn")
+            return
+        self._da_luu = ts
+        self.lbl_sync.config(text="✓ đã lưu vào bài thật: " + mo_ta_thong_so(**ts))
+
+    def _lay_bai_that(self):
+        """↻: kéo 3 nhóm thanh về đúng mức taogiong_options.json đang lưu (GUI/web vừa
+        đổi thì bấm nút này). Không ghi ngược lại; đang phát thì phát lại cho nghe."""
+        bt = bai_that_doc()
+        self._da_luu = dict(bt)
+        self.var_speed.set(bt["speed"])
+        self.var_pitch.set(bt["pitch"])
+        for k, v in bt["fx"].items():
+            self.var_fx[k].set(v)
+        self._update_speed_label()
+        self._update_pitch_label()
+        self._update_fx_labels()
+        self._cap_nhat_mau()
+        self.lbl_sync.config(text="↻ đã lấy từ bài thật: " + mo_ta_thong_so(**bt))
+        self._replay_if_playing()
+
+    def _on_sync_toggle(self):
+        """Tick 🔗: đẩy ngay mức đang chọn sang bài thật; bỏ tick: từ giờ chỉnh tự do."""
+        save_settings(dong_bo=bool(self.var_sync.get()))
+        if self.var_sync.get():
+            self._da_luu = None
+            self._luu_bai_that()
+            if self._da_luu is None:      # không có gì để ghi (lỗi) → vẫn báo trạng thái
+                self.lbl_sync.config(text="🔗 đang đồng bộ với bài thật")
+        else:
+            self.lbl_sync.config(text="tắt đồng bộ: chỉnh ở đây không đụng bài thật")
+
+    # ── 🎚 mẫu giọng cài sẵn (bảng hu.MAU_GIONG, chung với GUI/web) ──
+    def _ap_mau(self):
+        """Bấm một mẫu: đặt tông + 4 bộ lọc theo bảng rồi đi đúng đường nhả chuột
+        (lưu vào bài thật nếu 🔗, phát lại nếu đang phát) — một lượt cho cả 5 số."""
+        ts = hu.mau_thong_so(self.var_mau.get())
+        if ts is None:
+            return
+        sang_cu = self._fx()["sang_giong"]
+        self.var_pitch.set(ts["pitch"])
+        for k, v in ts["fx"].items():
+            self.var_fx[k].set(v)
+        self._update_pitch_label()
+        self._on_fx_release()
+        if ts["fx"]["sang_giong"] != sang_cu:
+            self._log(f"ℹ️ Mẫu '{self.var_mau.get()}' đổi mức sáng giọng {sang_cu} → "
+                      f"{ts['fx']['sang_giong']}: bấm '🔊 Tạo & nghe' để dựng lại (prompt từ "
+                      "giọng mẫu đã EQ); tông/vang/thiếu niên thì nghe ngay.", "warn")
+
+    def _cap_nhat_mau(self):
+        """Nhãn mẫu đi theo thanh: khớp đúng bộ số mẫu nào thì chọn mẫu đó, không
+        thì "Tuỳ chỉnh" (không radio nào sáng)."""
+        if not hasattr(self, "lbl_mau"):
+            return
+        ten = hu.mau_khop(self._pitch(), self._fx())
+        self.var_mau.set(ten)
+        self.lbl_mau.config(text=hu.MAU_MO_TA.get(ten, "bộ số riêng — bấm một mẫu để điền lại"))
 
     # ── tông giọng nghe thử ──
     def _pitch(self) -> float:
@@ -690,6 +893,8 @@ class App:
     def _on_pitch_release(self, _e=None):
         """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tông mới để so sánh."""
         self._update_pitch_label()
+        self._cap_nhat_mau()
+        self._luu_bai_that()
         self._replay_if_playing()
 
     # ── bộ lọc giọng nghe thử (tiếng vang / thiếu niên) ──
@@ -722,9 +927,15 @@ class App:
     def _on_fx_release(self, _e=None):
         """Nhả chuột / bấm ↺: nếu đang phát dở thì phát lại luôn với bộ lọc mới."""
         self._update_fx_labels()
+        self._cap_nhat_mau()
+        self._luu_bai_that()
         self._replay_if_playing()
 
     def _replay_if_playing(self):
+        """Kéo thanh lúc đang phát CLONE → phát lại ngay với mức mới. Đang phát GIỌNG
+        MẪU thì thôi: mẫu luôn nguyên bản, thanh chỉnh không áp lên nó."""
+        if self._last_raw:
+            return
         if self._is_playing() and self._last_src and self._last_src.exists():
             self._play_file(self._last_src)
 
@@ -752,12 +963,10 @@ class App:
             raise RuntimeError((proc.stderr or "ffmpeg lỗi không rõ").strip()[-300:])
         return dst
 
-    # ── phát lại ──
-    def _on_play_saved(self):
-        voice = self._selected_voice()
-        if not voice:
-            messagebox.showwarning("Chưa chọn giọng", "Hãy chọn một giọng để nghe lại.")
-            return
+    # ── phát lại bản CLONE ──
+    def _clone_file(self, voice: str) -> Path | None:
+        """Bản thử (clone) của `voice` ứng với mức 🔆 đang chọn. Chưa có bản mức này
+        nhưng có bản mức 0 thì lùi về đó (báo rõ); chưa có gì → hộp thoại, trả None."""
         sang = self._fx()["sang_giong"]
         f = out_file(voice, sang)
         if not f.exists() and sang and out_file(voice, 0).exists():
@@ -769,13 +978,22 @@ class App:
         if not f.exists():
             messagebox.showinfo("Chưa có bản thử",
                                 f"Chưa tạo bản thử cho '{voice}'.\nBấm '🔊 Tạo & nghe' trước.")
+            return None
+        return f
+
+    def _on_play_saved(self):
+        voice = self._selected_voice()
+        if not voice:
+            messagebox.showwarning("Chưa chọn giọng", "Hãy chọn một giọng để nghe lại.")
             return
-        self._play_file(f)
+        f = self._clone_file(voice)
+        if f:
+            self._play_file(f)
 
     def _play_file(self, path: Path):
-        """Phát `path` (file GỐC) ở tốc độ + tông + bộ lọc đang chọn; file gốc không bị sửa."""
+        """Phát `path` (bản clone GỐC) ở tốc độ + tông + bộ lọc đang chọn; file gốc không bị sửa."""
         self._stop_play()
-        self._last_src = path
+        self._last_src, self._last_raw = path, False
         speed, pitch, fx = self._speed(), self._pitch(), self._fx()
         play_path = path
         if abs(speed - 1.0) > 1e-6 or abs(pitch) > 1e-9 or hu.fx_active(**fx):
@@ -787,6 +1005,63 @@ class App:
             except Exception as e:
                 self._log(f"⚠️ Không đổi được tốc độ/tông/bộ lọc ({e}) → phát bản gốc.", "warn")
                 speed, pitch, fx = 1.0, 0.0, hu.fx_from(None)
+        self._play_wav(play_path, lambda d: (
+            f"▶ Đang phát clone: {path.name}  ({speed:.2f}×, tông {fmt_pitch(pitch)}, "
+            f"bộ lọc: {hu.fx_describe(**fx)}, {d:.1f}s)"))
+
+    # ── 🎤 giọng MẪU nguyên bản (02/11/2026) ──
+    def _wav_giong_mau(self, src: Path) -> Path:
+        """Đổi giọng mẫu `src` (mp3 / wav bất kỳ) sang wav 16-bit cho winsound phát được;
+        cache ở MAU_DIR theo tên đầy đủ, còn mới hơn file mẫu thì dùng lại. Không áp
+        gì khác — mẫu phải nghe đúng như thứ model được nghe."""
+        dst = mau_wav_file(src.name)
+        if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+            return dst
+        MAU_DIR.mkdir(exist_ok=True)
+        proc = subprocess.run(
+            [FFMPEG, "-y", "-loglevel", "error", "-i", str(src), "-c:a", "pcm_s16le", str(dst)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+        if proc.returncode != 0 or not dst.exists():
+            raise RuntimeError((proc.stderr or "ffmpeg lỗi không rõ").strip()[-300:])
+        return dst
+
+    def _on_play_sample(self):
+        voice = self._selected_voice()
+        if not voice:
+            messagebox.showwarning("Chưa chọn giọng", "Hãy chọn một giọng để nghe mẫu.")
+            return
+        self._play_sample(voice)
+
+    def _play_sample(self, voice: str) -> float:
+        """Phát file giọng mẫu gốc trong voice/ NGUYÊN BẢN (không tốc độ / tông / bộ lọc).
+        Trả thời lượng (s) để ⇄ hẹn phát clone tiếp; 0 nếu không phát được."""
+        src = VOICE_DIR / voice
+        if not src.exists():
+            messagebox.showwarning("Thiếu file giọng mẫu", f"Không thấy file:\n{src}")
+            return 0.0
+        self._stop_play()
+        self._last_src, self._last_raw = src, True
+        sang = self._fx()["sang_giong"]
+        if sang:
+            self._log(f"ℹ️ Phát mẫu GỐC. Bài thật đang để 🔆 {sang} nên dựng prompt từ mẫu đã EQ "
+                      "sáng giọng — bản clone sẽ sáng hơn mẫu này một chút là đúng.")
+        try:
+            play_path = self._wav_giong_mau(src)
+        except Exception as e:
+            self._log(f"⚠️ Không đổi được giọng mẫu sang wav ({e}) → mở bằng trình phát mặc định.", "warn")
+            try:
+                os.startfile(str(src))  # type: ignore[attr-defined]
+            except Exception as e2:
+                messagebox.showerror("Lỗi phát giọng mẫu", str(e2))
+            return 0.0
+        return self._play_wav(play_path, lambda d: (
+            f"🎤 Đang phát giọng MẪU gốc: {voice}  ({d:.1f}s, không qua thanh chỉnh)"))
+
+    def _play_wav(self, play_path: Path, status_of) -> float:
+        """Phát wav `play_path` bằng winsound (không chặn); `status_of(giây)` → dòng trạng
+        thái. Trả thời lượng ước lượng để _is_playing / ⇄ biết lúc nào xong (winsound
+        không báo khi phát hết)."""
         try:
             duration = sf.info(str(play_path)).duration
         except Exception:
@@ -796,16 +1071,40 @@ class App:
             winsound.PlaySound(str(play_path), winsound.SND_FILENAME | winsound.SND_ASYNC)
             self._playing = True
             self._play_until = time.monotonic() + duration + 0.3
-            self.status.set(f"▶ Đang phát: {path.name}  "
-                            f"({speed:.2f}×, tông {fmt_pitch(pitch)}, "
-                            f"bộ lọc: {hu.fx_describe(**fx)}, {duration:.1f}s)")
+            self.status.set(status_of(duration))
         except Exception:
             try:
                 os.startfile(str(play_path))  # type: ignore[attr-defined]
             except Exception as e:
                 messagebox.showerror("Lỗi phát audio", str(e))
+        return duration
+
+    # ── ⇄ mẫu → clone: phát mẫu gốc, hết thì tự phát bản clone để đối chiếu ──
+    def _on_play_ab(self):
+        voice = self._selected_voice()
+        if not voice:
+            messagebox.showwarning("Chưa chọn giọng", "Hãy chọn một giọng để so sánh.")
+            return
+        clone = self._clone_file(voice)
+        if not clone:
+            return
+        dur = self._play_sample(voice)
+        if dur <= 0:
+            return
+        # Hẹn sau khi mẫu phát hết (+0,6 s nghỉ); _stop_play / phát thứ khác đổi token
+        # → lượt hẹn tự bỏ, không bất ngờ vang clone lên giữa việc khác.
+        self._ab_token += 1
+        token = self._ab_token
+        self._log(f"⇄ {voice}: mẫu gốc {dur:.1f}s → rồi tự phát clone {clone.name}.")
+        self.root.after(int((dur + 0.6) * 1000), lambda: self._ab_clone(token, clone))
+
+    def _ab_clone(self, token: int, clone: Path):
+        if token != self._ab_token:
+            return
+        self._play_file(clone)
 
     def _stop_play(self):
+        self._ab_token += 1          # huỷ lượt clone đang hẹn của ⇄ (nếu có)
         try:
             import winsound
             winsound.PlaySound(None, winsound.SND_PURGE)

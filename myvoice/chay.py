@@ -14,9 +14,9 @@ thiếu fastapi/uvicorn/torch.
 Cửa sổ nhỏ (mặc định) tự bật server rồi TỰ MỞ trình duyệt ngay khi server sẵn
 sàng — nút 🌐 vẫn còn để mở LẠI. Đóng cửa sổ = tắt server (nếu server do cửa sổ
 này bật). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
-Thùng rác) · và ô ⏻ "tắt máy khi hàng đợi web chạy xong hết". Bộ đếm ⏻ do SERVER
-giữ (web/power.py, mặc định TẮT) — ô ở đây là công tắc từ xa, cùng trạng thái với
-ô ⏻ trên trang web. (Chế độ 🌙 cho máy ngủ đã bỏ 26/10/2026.)
+Thùng rác) · hai ô ⏻ "tắt máy" / 🌙 "cho máy ngủ" khi hàng đợi web chạy xong hết.
+Bộ đếm do SERVER giữ (web/power.py, mặc định TẮT) — ô ở đây là công tắc từ xa, cùng
+trạng thái với ô trên trang web. (🌙 bỏ 26/10/2026, user cho quay lại 31/10/2026.)
 """
 
 from __future__ import annotations
@@ -37,10 +37,11 @@ LOG_LOI = ROOT / "myvoice" / "chay_loi.log"      # lỗi khi chạy bằng pytho
 # Server chạy nền, không cần cửa sổ console riêng (nhật ký đã hiện trong cửa sổ này).
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
-# Số phút chờ trước khi tắt máy khi bật ô "⏻ Tự động tắt máy" — CHỈ để ghi nhãn:
-# bộ đếm thật nằm trong server (web/power.py lấy từ amain_taogiong_gui.SHUTDOWN_DELAY_MIN),
-# đổi bên đó thì đổi cả đây cho nhãn khớp.
-SHUTDOWN_DELAY_MIN = 5
+# Số phút chờ trước khi tắt máy / cho máy ngủ khi bật ô ⏻ / 🌙 — CHỈ để ghi nhãn:
+# bộ đếm thật nằm trong server (web/power.py lấy từ amain_taogiong_gui.SHUTDOWN_DELAY_MIN
+# và SLEEP_DELAY_MIN), đổi bên đó thì đổi cả đây cho nhãn khớp.
+SHUTDOWN_DELAY_MIN = 1
+SLEEP_DELAY_MIN = 1
 
 # Console của VS Code / cmd hay là cp1252: in tiếng Việt sẽ nổ UnicodeEncodeError
 # NGAY dòng thông báo đầu tiên, chưa kịp bật gì cả. Ép UTF-8 trước mọi thứ.
@@ -247,9 +248,10 @@ def _run_launcher(port: int) -> int:
     owner = False                      # server có phải do cửa sổ này bật không
     lines: "queue.Queue[str]" = queue.Queue()
     # Cờ dùng CHUNG với luồng nền — không đọc biến Tk ngoài luồng Tk (không an toàn).
-    # armed/left: trạng thái ô ⏻ ĐỌC VỀ TỪ SERVER (server mới là nơi giữ bộ đếm),
-    # luồng nền ghi vào đây rồi _shutdown_sync bên luồng Tk đọc ra.
-    flags = {"armed": None, "left": ""}
+    # mode/left: trạng thái ô ⏻/🌙 ĐỌC VỀ TỪ SERVER (server mới là nơi giữ bộ đếm),
+    # luồng nền ghi vào đây rồi _shutdown_sync bên luồng Tk đọc ra. mode: None = chưa
+    # hỏi được server, "" = tắt, "shutdown" = ⏻ tắt máy, "sleep" = 🌙 cho máy ngủ.
+    flags = {"mode": None, "left": ""}
 
     root = tk.Tk()
     root.title("myvoice — bảng điều khiển web")
@@ -339,9 +341,10 @@ def _run_launcher(port: int) -> int:
     btn_quit = _nut(btns, "⏻  Tắt & thoát", MAU["do"], MAU["do_h"], fg=MAU["do_chu"])
     btn_quit.pack(side="left", padx=(10, 0))
 
-    # Ô ⏻ "xong hết thì tắt máy" — GIAO CHO SERVER: bảng web giữ bộ đếm (web/power.py),
-    # ở đây chỉ bật/tắt hộ (POST /hangdoi/tatmay) và soi lại trạng thái. Làm thêm một
-    # bộ đếm thứ hai ở đây thì hai bên đá nhau — xem khối ⏻ bên dưới.
+    # Ô ⏻ "xong hết thì tắt máy" / 🌙 "xong hết thì cho máy ngủ" — GIAO CHO SERVER:
+    # bảng web giữ bộ đếm (web/power.py), ở đây chỉ bật/tắt hộ (POST /hangdoi/tatmay)
+    # và soi lại trạng thái. Làm thêm một bộ đếm thứ hai ở đây thì hai bên đá nhau —
+    # xem khối ⏻/🌙 bên dưới. Hai ô loại trừ nhau: tick ô này là bỏ ô kia.
     def _chk(parent, text, var):
         return tk.Checkbutton(parent, text=text, variable=var, bg=MAU["bg"],
                               fg=MAU["fg"], activebackground=MAU["bg"],
@@ -355,10 +358,16 @@ def _run_launcher(port: int) -> int:
     sd_row.grid(row=3, column=0, sticky="w", pady=(0, 8))
     var_shutdown = tk.BooleanVar(value=False)
     chk_shutdown = _chk(
-        sd_row, f"⏻  Tự động tắt máy khi chạy xong (sau {SHUTDOWN_DELAY_MIN} phút)",
+        sd_row, f"⏻  Tự động tắt máy khi xong (sau {SHUTDOWN_DELAY_MIN} phút)",
         var_shutdown)
     chk_shutdown.config(state="disabled")
     chk_shutdown.pack(side="left")
+    var_sleep = tk.BooleanVar(value=False)
+    chk_sleep = _chk(
+        sd_row, f"🌙  Tự động ngủ khi xong (sau {SLEEP_DELAY_MIN} phút)",
+        var_sleep)
+    chk_sleep.config(state="disabled")
+    chk_sleep.pack(side="left", padx=(10, 0))
     shutdown_note = tk.StringVar(value="")
     tk.Label(sd_row, textvariable=shutdown_note, bg=MAU["bg"], fg=MAU["mo"],
              font=("Segoe UI", 8)).pack(side="left", padx=(10, 0))
@@ -413,7 +422,7 @@ def _run_launcher(port: int) -> int:
         status.set(f"Đang chạy — cổng {port}"
                    + ("" if owner else "  (tiến trình khác bật sẵn)"))
         _dot("#4ade80")
-        for wg in (btn_open, btn_copy, btn_clear, chk_shutdown):
+        for wg in (btn_open, btn_copy, btn_clear, chk_shutdown, chk_sleep):
             wg.config(state="normal")
         _doi_mau(btn_open, MAU["accent"], MAU["accent_h"])   # nút chính sáng lên
         btn_copy.config(fg="white")
@@ -422,7 +431,7 @@ def _run_launcher(port: int) -> int:
             btn_quit.config(text="✖  Đóng cửa sổ")
         log(f"🌐 Sẵn sàng: {url_var.get()}")
         _open()                 # tự mở luôn — nút 🌐 chỉ còn để mở LẠI khi lỡ đóng tab
-        _sync_shutdown_now()    # lấy trạng thái ⏻ của server → ô khớp ngay từ đầu
+        _sync_shutdown_now()    # lấy trạng thái ⏻/🌙 của server → ô khớp ngay từ đầu
 
     def _poll(n: int = 0) -> None:
         if _port_busy(port):
@@ -550,44 +559,56 @@ def _run_launcher(port: int) -> int:
 
         threading.Thread(target=work, daemon=True).start()
 
-    # ── ⏻ "Xong hết thì tắt máy" — công tắc từ xa của ô ⏻ trên trang web ─────
-    # Server (myvoice/web/power.py) mới là nơi canh hàng đợi + đếm ngược + phát lệnh
-    # tắt; cửa sổ này KHÔNG tự hẹn `shutdown /s` nữa (hai bộ đếm thì đá nhau). Bấm ô
-    # là POST /hangdoi/tatmay, rồi soi lại /api/trangthai để vẽ đúng khi người ta
-    # tick bên trang web hay server tự bỏ tick lúc hết giờ.
+    # ── ⏻ "Xong hết thì tắt máy" / 🌙 "cho máy ngủ" — công tắc từ xa của hai ô trên
+    # trang web. Server (myvoice/web/power.py) mới là nơi canh hàng đợi + đếm ngược +
+    # phát lệnh; cửa sổ này KHÔNG tự hẹn `shutdown /s` hay tự ngủ (hai bộ đếm thì đá
+    # nhau). Bấm ô là POST /hangdoi/tatmay (on=1 tắt máy, ngu=1 ngủ, không gì = tắt),
+    # rồi soi lại /api/trangthai để vẽ đúng khi người ta tick bên trang web hay
+    # server tự bỏ tick lúc hết giờ. Một "mode" duy nhất: "" / "shutdown" / "sleep".
     #
     # Chống "GET cũ ghi đè POST mới" (bài học 08/09/2026 với ô 🌙 cũ): seq tăng mỗi
     # lần bấm; kết quả GET chỉ được ghi khi seq lúc xin bằng seq hiện tại VÀ không
     # còn POST nào đang bay (pending). Bấm là ghi flags ngay (lạc quan), POST hỏng
     # thì thử lại một lần rồi mới hỏi lại server.
     sync_lock = threading.Lock()
-    flags.update(drawn=False, seq=0, pending=0)
+    flags.update(drawn="", seq=0, pending=0)
+    NHAN = {"shutdown": "tắt máy", "sleep": "cho máy ngủ"}
+    ICON = {"shutdown": "⏻", "sleep": "🌙"}
+
+    def _mode_of(st: dict) -> str:
+        """Chế độ server đang bật, đọc từ /api/trangthai. Server cũ (trước 31/10/2026)
+        không có "shutdown_mode" thì suy từ cờ armed."""
+        mode = st.get("shutdown_mode")
+        if mode is None:
+            mode = "shutdown" if st.get("shutdown_armed") else ""
+        return mode if mode in NHAN else ""
 
     def _apply_state(st: dict, seq: int) -> None:
-        """Ghi trạng thái ⏻ server trả về vào flags — BỎ QUA nếu đã cũ (xem trên)."""
+        """Ghi trạng thái ⏻/🌙 server trả về vào flags — BỎ QUA nếu đã cũ (xem trên)."""
         with sync_lock:
             if seq != flags["seq"] or flags["pending"]:
                 return
-            flags["armed"] = bool(st.get("shutdown_armed"))
+            flags["mode"] = _mode_of(st)
             flags["left"] = st.get("shutdown_left") or ""
 
-    def _post_shutdown(on: bool) -> None:
-        """Bật/tắt ô ⏻ ở server. Ghi flags NGAY (ô tick khớp tức thì), gọi mạng ở
-        luồng nền; hỏng thì thử lại một lần, vẫn hỏng thì hỏi lại server để ô tick
-        vẽ theo sự thật chứ không theo ý vừa bấm."""
+    def _post_shutdown(mode: str) -> None:
+        """Đặt chế độ ("" / "shutdown" / "sleep") ở server. Ghi flags NGAY (ô tick
+        khớp tức thì), gọi mạng ở luồng nền; hỏng thì thử lại một lần, vẫn hỏng thì
+        hỏi lại server để ô tick vẽ theo sự thật chứ không theo ý vừa bấm."""
         with sync_lock:
             flags["seq"] += 1
             flags["pending"] += 1
-            flags["armed"] = on
-            if not on:
+            flags["mode"] = mode
+            if not mode:
                 flags["left"] = ""
+        data = {"shutdown": {"on": "1"}, "sleep": {"ngu": "1"}}.get(mode, {})
 
         def work() -> None:
             import time
             err = None
             for lan in (1, 2):
                 try:
-                    _http("/hangdoi/tatmay", {"on": "1"} if on else {})
+                    _http("/hangdoi/tatmay", data)
                     err = None
                     break
                 except Exception as e:
@@ -597,8 +618,8 @@ def _run_launcher(port: int) -> int:
             with sync_lock:
                 flags["pending"] -= 1
             if err is not None:
-                lines.put(f"❌ Không đặt được chế độ tắt máy ở server ({err}) — "
-                          "ô ⏻ sẽ vẽ lại theo trạng thái thật của server.\n")
+                lines.put(f"❌ Không đặt được chế độ tắt máy/ngủ ở server ({err}) — "
+                          "ô ⏻/🌙 sẽ vẽ lại theo trạng thái thật của server.\n")
                 _sync_shutdown_now()
         threading.Thread(target=work, daemon=True).start()
 
@@ -618,40 +639,51 @@ def _run_launcher(port: int) -> int:
                 _apply_state(st, seq)
         threading.Thread(target=work, daemon=True).start()
 
-    def _draw(on: bool, source: str) -> None:
-        """Nơi DUY NHẤT đổi ô tick. Chạy trên luồng Tk.
+    def _draw(mode: str, source: str) -> None:
+        """Nơi DUY NHẤT đổi hai ô tick. Chạy trên luồng Tk.
 
+        mode: "" (tắt) / "shutdown" (⏻) / "sleep" (🌙) — hai ô loại trừ nhau nên vẽ
+        cả hai theo một giá trị, không bao giờ cùng tick.
         source="user"  : bấm ở cửa sổ này → đẩy lên server.
         source="server": server báo đổi (tick bên trang web, hoặc hết giờ tự bỏ tick)
                          → chỉ vẽ lại, KHÔNG POST ngược kẻo hai bên đá nhau vô tận.
         """
-        if on == flags["drawn"]:
+        if mode == flags["drawn"]:
             return
-        flags["drawn"] = on
-        var_shutdown.set(on)
+        prev, flags["drawn"] = flags["drawn"], mode
+        var_shutdown.set(mode == "shutdown")
+        var_sleep.set(mode == "sleep")
+        delay = SLEEP_DELAY_MIN if mode == "sleep" else SHUTDOWN_DELAY_MIN
+        nhan_cu = NHAN.get(prev, "tắt máy")
+        icon_cu = ICON.get(prev, "⏻")
         if source == "user":
-            _post_shutdown(on)
-            log(f"⏻ Bật tắt máy khi xong: hàng đợi web xong hết + rảnh "
-                f"{SHUTDOWN_DELAY_MIN} phút thì tắt máy (huỷ: bỏ tick)." if on
-                else "⏻ Đã tắt chế độ tự động tắt máy.")
+            _post_shutdown(mode)
+            log(f"{ICON[mode]} Bật {NHAN[mode]} khi xong: hàng đợi web xong hết + rảnh "
+                f"{delay} phút thì {NHAN[mode]} (huỷ: bỏ tick)." if mode
+                else f"{icon_cu} Đã tắt chế độ tự động {nhan_cu}.")
         else:
-            log("⏻ Server đang bật tắt máy khi xong — không muốn thì bỏ tick." if on
-                else "⏻ Server đã tắt chế độ tắt máy (bỏ tick bên trang web / đã hết giờ).")
+            log(f"{ICON[mode]} Server đang bật {NHAN[mode]} khi xong — không muốn thì bỏ tick."
+                if mode else
+                f"{icon_cu} Server đã tắt chế độ {nhan_cu} (bỏ tick bên trang web / đã hết giờ).")
 
     def _click_shutdown() -> None:
-        _draw(var_shutdown.get(), source="user")
+        _draw("shutdown" if var_shutdown.get() else "", source="user")
+
+    def _click_sleep() -> None:
+        _draw("sleep" if var_sleep.get() else "", source="user")
 
     def _shutdown_sync() -> None:
-        """Mỗi giây soi flags (luồng nền ghi) → vẽ ô ⏻ + dòng đếm ngược. Server là
+        """Mỗi giây soi flags (luồng nền ghi) → vẽ ô ⏻/🌙 + dòng đếm ngược. Server là
         nguồn sự thật, nhưng KHÔNG đụng gì khi còn POST của mình đang bay."""
         with sync_lock:
-            armed = flags["armed"]
+            mode = flags["mode"]
             left = flags["left"] or ""
             pending = flags["pending"]
-        if armed is not None and not pending and armed != flags["drawn"]:
-            _draw(armed, source="server")
-        shutdown_note.set(f"⏳ tắt máy sau {left} — huỷ: bỏ tick" if left and flags["drawn"]
-                          else ("chờ hàng đợi xong hết" if flags["drawn"] else ""))
+        if mode is not None and not pending and mode != flags["drawn"]:
+            _draw(mode, source="server")
+        drawn = flags["drawn"]
+        shutdown_note.set(f"⏳ {NHAN[drawn]} sau {left} — huỷ: bỏ tick" if left and drawn
+                          else ("chờ hàng đợi xong hết" if drawn else ""))
         root.after(1000, _shutdown_sync)
 
     def _state_watcher() -> None:
@@ -671,10 +703,11 @@ def _run_launcher(port: int) -> int:
 
     def _close() -> None:
         if flags["drawn"]:
-            # Bộ đếm ⏻ nằm TRONG server: đóng cửa sổ mà server do mình bật thì server
+            # Bộ đếm ⏻/🌙 nằm TRONG server: đóng cửa sổ mà server do mình bật thì server
             # tắt theo → hết hẹn; server của tiến trình khác thì vẫn đếm tiếp.
-            log("⏻ Tắt server = huỷ luôn lệnh tắt máy khi xong." if owner else
-                "⏻ Server vẫn chạy (tiến trình khác) nên vẫn tắt máy khi xong — "
+            nhan = NHAN.get(flags["drawn"], "tắt máy")
+            log(f"⏻ Tắt server = huỷ luôn lệnh {nhan} khi xong." if owner else
+                f"⏻ Server vẫn chạy (tiến trình khác) nên vẫn {nhan} khi xong — "
                 "huỷ: bỏ tick trên trang web.")
         if owner:
             log("⏹ Đang tắt server…")
@@ -687,6 +720,7 @@ def _run_launcher(port: int) -> int:
     btn_clear.config(command=_clear_output)
     btn_quit.config(command=_close)
     chk_shutdown.config(command=_click_shutdown)
+    chk_sleep.config(command=_click_sleep)
     root.protocol("WM_DELETE_WINDOW", _close)
     url_entry.bind("<Double-Button-1>", lambda _e: _open())
 

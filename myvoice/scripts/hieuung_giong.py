@@ -183,6 +183,58 @@ def fx_describe(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int
     return ", ".join(parts) or "không"
 
 
+# ── MẪU GIỌNG CÀI SẴN (02/11/2026) ──────────────────────────────────────────────
+# Một mẫu = bộ 5 số (tông + 4 bộ lọc) ghi vào ĐÚNG các khoá taogiong_options.json
+# mà bài thật đọc (pitch + FX_KEYS) — chọn mẫu ở app Thử giọng / GUI / web đều ra
+# cùng một bài. "Mặc định" = tắt hết = bản clone thuần (mức đang dùng tới
+# 02/11/2026 — nghe "ồm" vì giọng clone dồn 150–500 Hz). Các mẫu còn lại là gợi ý
+# trị ồm xếp từ nhẹ tới đậm; chọn xong vẫn kéo thanh chỉnh tiếp được, lúc đó
+# nhãn mẫu thành "Tuỳ chỉnh". Sáng giọng > 0 còn EQ giọng mẫu lúc dựng prompt
+# (xem _voice_prompt bên amain) → đổi mẫu là sinh lại các đoạn, không dùng lại được.
+MAU_MAC_DINH = "Mặc định"
+MAU_TUY_CHINH = "Tuỳ chỉnh"
+MAU_GIONG: dict[str, dict] = {
+    MAU_MAC_DINH:     dict(pitch=0.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=0),
+    "Sáng rõ":        dict(pitch=0.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=80),
+    "Sáng + cao nhẹ": dict(pitch=1.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=80),
+    "Trong trẻo":     dict(pitch=0.5, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=25, sang_giong=65),
+    "Kể chuyện ấm":   dict(pitch=0.0, vang_truong_do=25, vang_cuong_do=12, thieu_nien=0,  sang_giong=60),
+    "Sân khấu":       dict(pitch=0.0, vang_truong_do=45, vang_cuong_do=25, thieu_nien=0,  sang_giong=70),
+}
+MAU_MO_TA: dict[str, str] = {
+    MAU_MAC_DINH:     "bản clone thuần, không chỉnh gì (mức đang dùng tới 02/11/2026)",
+    "Sáng rõ":        "bớt ồm 150–500 Hz, nâng 3 kHz + dải cao — mức 80 đã chốt 23/10 (khuyên dùng)",
+    "Sáng + cao nhẹ": "như Sáng rõ + lên 1 bán cung (mặc định cũ 20–23/10)",
+    "Trong trẻo":     "sáng vừa + thiếu niên nhẹ + lên nửa cung: trẻ và thanh hơn",
+    "Kể chuyện ấm":   "sáng vừa + vang phòng nhỏ: kiểu radio kể chuyện đêm",
+    "Sân khấu":       "sáng + vang hội trường vừa: kịch tính hơn, hợp đoạn cao trào",
+}
+
+
+def mau_ten() -> list[str]:
+    """Tên các mẫu theo thứ tự hiển thị (Mặc định đứng đầu)."""
+    return list(MAU_GIONG)
+
+
+def mau_thong_so(ten: str) -> dict | None:
+    """Bộ số của mẫu `ten` → {"pitch": float, "fx": {4 khoá}} (bản sao, đã kẹp);
+    tên lạ / "Tuỳ chỉnh" → None (không có gì để áp)."""
+    m = MAU_GIONG.get(str(ten or "").strip())
+    if m is None:
+        return None
+    return dict(pitch=parse_pitch(m.get("pitch"), 0.0), fx=fx_from(m))
+
+
+def mau_khop(pitch, fx: dict | None) -> str:
+    """Tên mẫu có ĐÚNG bộ số đang chọn (tông + 4 bộ lọc); không mẫu nào khớp →
+    MAU_TUY_CHINH. Dùng để nhãn mẫu trên app/GUI/web đi theo thanh chỉnh."""
+    p, f = parse_pitch(pitch, 0.0), fx_from(fx)
+    for ten, m in MAU_GIONG.items():
+        if abs(parse_pitch(m.get("pitch"), 0.0) - p) < 1e-6 and fx_from(m) == f:
+            return ten
+    return MAU_TUY_CHINH
+
+
 # ── ĐỔI TÔNG / TỐC ĐỘ (chuyển từ amain_taogiong_gui sang, giữ nguyên hành vi) ──
 def has_rubberband() -> bool:
     """ffmpeg đang dùng có filter rubberband không (dò 1 lần, nhớ kết quả)."""

@@ -111,11 +111,15 @@ OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài
 # upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
 # khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False, upload=False, gemini_backend="extension")
+                     shutdown=False, sleep=False, upload=False, gemini_backend="extension")
 # Số phút chờ trước khi tắt máy khi bật ô "⏻ Xong thì tắt máy" (huỷ bằng: shutdown /a).
 # NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py đọc lại hằng này).
-# (Ô 🌙 "cho máy ngủ" + suspend_computer đã bỏ 26/10/2026 — chỉ còn tắt máy.)
-SHUTDOWN_DELAY_MIN = 5
+# 31/10/2026: user hạ 5 → 1 phút.
+SHUTDOWN_DELAY_MIN = 1
+# Số phút chờ trước khi CHO MÁY NGỦ khi bật ô "🌙 Xong thì cho máy ngủ" (ô này bị bỏ
+# 26/10/2026, user cho quay lại 31/10/2026 với 1 phút). Ngủ dễ huỷ: bỏ tick là xong,
+# lỡ ngủ rồi thì chạm chuột là dậy — không mất gì cả. Web (power.py) cũng đọc hằng này.
+SLEEP_DELAY_MIN = 1
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -136,6 +140,34 @@ DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn s�
 #     tốn thêm dung lượng đĩa bằng đúng một bản video nữa trong lúc ghi đè.
 SUB_MODE_SRT  = "file .srt rời"
 SUB_MODE_BURN = "vẽ cứng vào hình"
+
+
+def suspend_computer() -> str:
+    """Đưa máy vào chế độ NGỦ ngay. Trả "" nếu gọi được, hoặc mô tả lỗi.
+
+    Hàm chỉ trả về khi máy đã DẬY lại (SetSuspendState chặn tại đó).
+
+    Tham số (bHibernate=0, bForce=1, bWakeupEventsDisabled=0): số 0 đầu là xin NGỦ
+    chứ không ngủ đông. Máy nào đang bật sẵn ngủ đông vẫn có thể vào hibernate thay
+    vì sleep — muốn ngủ thật thì tắt nó một lần bằng:  powercfg -h off
+
+    NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py gọi lại hàm này).
+    """
+    import ctypes
+    import subprocess
+    try:
+        if ctypes.windll.powrprof.SetSuspendState(0, 1, 0):
+            return ""
+    except Exception as e:
+        logging.warning(f"⚠️ Gọi SetSuspendState không được ({e}) — thử lại bằng rundll32.")
+    # Dự phòng: đúng lệnh ngủ Windows vẫn dùng, chạy ở tiến trình riêng nên không
+    # dính chuyện quyền/hàm nạp hỏng của tiến trình đang chạy.
+    try:
+        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+                       check=False, creationflags=CREATE_NO_WINDOW)
+        return ""
+    except Exception as e:
+        return str(e)
 
 
 def _ensure_youtube_path():
@@ -285,23 +317,128 @@ def list_ngang_sources() -> list[str]:
         return []
 
 
-def resolve_ngang_source(name: str, log=print):
-    """TÊN thư mục con videongang/ → Path hợp lệ (có .mp4); None → dùng cả kho videongang/.
+def ngang_source_list(value) -> list[str]:
+    """Ô "Nguồn ngang" (taogiong_options.json / form web / tham số) → danh sách TÊN
+    thư mục con videongang/ đã chọn; [] = cả kho (tất cả).
 
-    name rỗng hoặc = NGANG_SOURCE_ALL → None. Thư mục con không tồn tại / không có
-    clip .mp4 cũng trả None (fallback dùng cả kho) để không chặn việc dựng video.
+    Nhận: None, 1 tên (chuỗi cũ như "nauan"), NGANG_SOURCE_ALL, chuỗi nhiều tên nối
+    bằng "|" (ký tự Windows không cho đặt tên thư mục), hoặc list/tuple tên. Bỏ
+    trống/trùng, giữ thứ tự. Từ 01/11/2026 tick được NHIỀU thư mục: clip của các thư
+    mục đã tick gom chung rồi xáo ngẫu nhiên lúc ghép (video_khung.gom_clip_kho).
     """
-    name = (name or "").strip()
-    if not name or name == NGANG_SOURCE_ALL:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.split("|")
+    else:
+        try:
+            parts = [str(p) for p in value]
+        except TypeError:
+            parts = [str(value)]
+    out: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if p and p != NGANG_SOURCE_ALL and p not in out:
+            out.append(p)
+    return out
+
+
+def ten_ngang_source(value, toi_da: int = 2) -> str:
+    """Chữ hiện trên ô chọn: "(tất cả)" / "nauan" / "nauan + vlog" / "nauan + vlog +1"."""
+    names = ngang_source_list(value)
+    if not names:
+        return NGANG_SOURCE_ALL
+    s = " + ".join(names[:toi_da])
+    if len(names) > toi_da:
+        s += f" +{len(names) - toi_da}"
+    return s
+
+
+def resolve_ngang_source(value, log=print):
+    """Ô "Nguồn ngang" → danh sách Path thư mục con videongang/ hợp lệ (có .mp4);
+    None → dùng cả kho videongang/.
+
+    Rỗng / NGANG_SOURCE_ALL → None. Thư mục con không tồn tại hoặc không có clip .mp4
+    bị bỏ (ghi log); bỏ hết thì trả None (fallback cả kho) để không chặn việc dựng.
+    Chuỗi 1 tên như trước vẫn nhận (xem ngang_source_list).
+    """
+    names = ngang_source_list(value)
+    if not names:
         return None
-    sub = VIDEONGANG_DIR / name
-    if not sub.is_dir():
-        log(f"[video ngang] Thư mục con '{name}' không có trong videongang/ → dùng cả kho.")
+    dirs = []
+    for name in names:
+        sub = VIDEONGANG_DIR / name
+        if not sub.is_dir():
+            log(f"[video ngang] Thư mục con '{name}' không có trong videongang/ → bỏ qua.")
+        elif not any(sub.glob("*.mp4")):
+            log(f"[video ngang] Thư mục con '{name}' không có .mp4 → bỏ qua.")
+        else:
+            dirs.append(sub)
+    if not dirs:
+        log("[video ngang] Không thư mục con nào đã chọn dùng được → dùng cả kho videongang/.")
         return None
-    if not any(sub.glob("*.mp4")):
-        log(f"[video ngang] Thư mục con '{name}' không có .mp4 → dùng cả kho videongang/.")
-        return None
-    return sub
+    return dirs
+
+
+class NguonNgangChon(ttk.Menubutton):
+    """Ô "Nguồn ngang" bên GUI: nút thả menu có ô tick, tick được NHIỀU thư mục con
+    của videongang/ (01/11/2026; trước là combobox chọn 1).
+
+    get() → list tên đã tick ([] = cả kho); set(value) nhận đúng dạng lưu trong
+    taogiong_options.json (chuỗi cũ 1 tên hoặc list). Mỗi lần mở menu là quét lại
+    thư mục con → tạo thư mục mới không cần mở lại app. Tick "(tất cả)" là bỏ tick
+    các thư mục; bỏ tick hết cũng = "(tất cả)". Thư mục đã tick nhưng không còn trên
+    đĩa vẫn hiện "(không thấy)" để bỏ tick được.
+    """
+
+    def __init__(self, master, value=None, width=16, **kw):
+        self._text = tk.StringVar()
+        # Style "Nguon.TMenubutton" (màu nhấn hồng, chữ trắng đậm) khai ở App._apply_theme.
+        kw.setdefault("style", "Nguon.TMenubutton")
+        super().__init__(master, textvariable=self._text, width=width, direction="below", **kw)
+        # Menu thả xuống cùng tông: nền trắng, dòng đang rê chuột + dấu tick màu nhấn.
+        self._menu = tk.Menu(self, tearoff=0, postcommand=self._dung_menu,
+                             bg=UI["field"], fg=UI["fg"], activeborderwidth=0,
+                             activebackground=UI["accent"], activeforeground="#ffffff",
+                             selectcolor=UI["accent"], font=("Segoe UI", 10),
+                             relief="flat", bd=1)
+        self.configure(menu=self._menu)
+        self._vars: dict[str, tk.BooleanVar] = {}
+        self._tat_ca = tk.BooleanVar(value=True)
+        self.set(value)
+
+    def get(self) -> list[str]:
+        return [n for n, v in self._vars.items() if v.get()]
+
+    def set(self, value):
+        chon = ngang_source_list(value)
+        for v in self._vars.values():
+            v.set(False)
+        for n in chon:
+            self._vars.setdefault(n, tk.BooleanVar()).set(True)
+        self._cap_nhat()
+
+    def _dung_menu(self):
+        self._menu.delete(0, "end")
+        self._menu.add_checkbutton(label=NGANG_SOURCE_ALL, variable=self._tat_ca,
+                                   command=self._chon_tat_ca)
+        self._menu.add_separator()
+        tren_dia = list_ngang_sources()
+        for name in sorted(set(tren_dia) | set(self.get())):
+            v = self._vars.setdefault(name, tk.BooleanVar())
+            self._menu.add_checkbutton(
+                label=name if name in tren_dia else f"{name} (không thấy)",
+                variable=v, command=self._cap_nhat)
+
+    def _chon_tat_ca(self):
+        for v in self._vars.values():
+            v.set(False)
+        self._cap_nhat()
+
+    def _cap_nhat(self):
+        chon = self.get()
+        self._tat_ca.set(not chon)
+        self._text.set(ten_ngang_source(chon))
 
 
 def ten_tai_bilibili(src: str) -> str:
@@ -2613,7 +2750,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             try:
                 from video_khung import build_video
                 progress_var.set(0)
-                ngang_src_dir = resolve_ngang_source(ngang_source, log=logging.info)
+                # list thư mục con đã tick (gộp clip, xáo chung) hoặc None = cả kho
+                ngang_src_dirs = resolve_ngang_source(ngang_source, log=logging.info)
                 # 🎞 Lấy video tải xuống làm video nguồn (24/10/2026): hình = chính
                 # video của tập (tiếng gốc TẮT lúc dựng — nhận diện/dịch đã xong trước
                 # đó), phóng to ngang_nguon_zoom % cắt giữa, kéo thời lượng khớp giọng
@@ -2637,7 +2775,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
                                         skip_existing=skip_video, output=ngang_out,
-                                        source_dir=ngang_src_dir, goc_out=goc_out,
+                                        source_dir=ngang_src_dirs, goc_out=goc_out,
                                         source_video=ngang_src_video,
                                         source_zoom=float(ngang_nguon_zoom or 100) / 100.0)
                 progress_var.set(100)
@@ -3025,9 +3163,15 @@ class App(tk.Tk):
         self._last_output = None
         self._pipe_busy = False
         self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
-        # ⏻ Xong thì tắt máy — ô DÙNG CHUNG cho 2 chỗ tick (tab Giọng nói + bước ③),
-        # nên tạo ở đây, TRƯỚC khi dựng panel: tick ở đâu cũng là một cài đặt duy nhất.
+        # ⏻ Xong thì tắt máy / 🌙 Xong thì cho máy ngủ — mỗi ô DÙNG CHUNG cho 2 chỗ
+        # tick (tab Giọng nói + bước ③), nên tạo ở đây, TRƯỚC khi dựng panel: tick ở
+        # đâu cũng là một cài đặt duy nhất. Hai ô loại trừ nhau (xem _pick_power_mode).
         self.var_shutdown = tk.BooleanVar(value=self._pipe_settings.get("shutdown", False))
+        self.var_sleep = tk.BooleanVar(value=self._pipe_settings.get("sleep", False))
+        # Đếm ngược giờ ngủ bằng threading.Timer chứ không phải after(): cờ bận được
+        # hạ ở LUỒNG CHẠY VIỆC (finally của các _pipe_set_busy(False)), mà gọi after()
+        # từ luồng khác là chuyện Tk không hứa.
+        self._sleep_timer = None
         self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
         self._effect_favorites = load_effect_favorites()
@@ -3135,6 +3279,17 @@ class App(tk.Tk):
         st.configure("Accent.TButton", background=C["accent"], foreground="#ffffff",
                      padding=(20, 9), font=("Segoe UI", 10, "bold"))
         st.map("Accent.TButton",
+               background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
+                           ("disabled", C["accent_soft"])],
+               foreground=[("disabled", "#ffffff")])
+
+        # Ô "Nguồn ngang" (NguonNgangChon): nút thả menu tô màu nhấn hồng + chữ trắng
+        # đậm như nút chính, để thấy ngay đang ghép clip từ thư mục nào (user 01/11/2026).
+        st.configure("Nguon.TMenubutton", background=C["accent"], foreground="#ffffff",
+                     arrowcolor="#ffffff", bordercolor=C["accent_dk"],
+                     lightcolor=C["accent"], darkcolor=C["accent"], relief="flat",
+                     focusthickness=0, padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        st.map("Nguon.TMenubutton",
                background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
                            ("disabled", C["accent_soft"])],
                foreground=[("disabled", "#ffffff")])
@@ -3402,17 +3557,29 @@ class App(tk.Tk):
         ttk.Label(chunk_row, text="(mỗi đoạn = 1 câu; câu dài hơn số này thì cắt thêm ở dấu ; : ,)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
-        # Nguồn clip VIDEO NGANG theo chủ đề = 1 thư mục con của videongang/
-        # (vd thiennhien, nauan). NGANG_SOURCE_ALL = ghép random từ CẢ kho videongang/.
-        # Dồn về PHẢI của hàng cho gọn.
-        self.var_ngang_source = tk.StringVar()
-        _ngang_sources = [NGANG_SOURCE_ALL] + list_ngang_sources()
-        _saved_src = self._opt_settings.get("ngang_source", NGANG_SOURCE_ALL)
-        self.var_ngang_source.set(_saved_src if _saved_src in _ngang_sources else NGANG_SOURCE_ALL)
-        self.cb_ngang_source = ttk.Combobox(chunk_row, textvariable=self.var_ngang_source,
-                                            values=_ngang_sources, width=14, state="readonly")
-        self.cb_ngang_source.pack(side="right")
+        # Nguồn clip VIDEO NGANG theo chủ đề = các thư mục con của videongang/
+        # (vd thiennhien, nauan). Tick được NHIỀU thư mục (01/11/2026): clip gom chung
+        # rồi xáo ngẫu nhiên lúc ghép; "(tất cả)" = cả kho. Dồn về PHẢI của hàng cho gọn.
+        # .get() trả list tên — lưu thẳng vào taogiong_options.json (chung với web).
+        self.var_ngang_source = NguonNgangChon(
+            chunk_row, value=self._opt_settings.get("ngang_source", NGANG_SOURCE_ALL))
+        self.var_ngang_source.pack(side="right")
         ttk.Label(chunk_row, text="Nguồn ngang:").pack(side="right", padx=(0, 6))
+
+        # 🎚 MẪU GIỌNG cài sẵn (02/11/2026): chọn một mẫu là điền luôn tông + 4 bộ lọc
+        # bên dưới theo bảng hu.MAU_GIONG (dùng chung app Thử giọng / web). Sửa tay ô
+        # nào thì nhãn tự về "Tuỳ chỉnh". "Mặc định" = tắt hết (bản clone thuần).
+        mau_row = ttk.Frame(sec_opt)
+        mau_row.pack(anchor="w", fill="x", pady=(8, 0))
+        ttk.Label(mau_row, text="🎚 Mẫu giọng:").pack(side="left", padx=(0, 8))
+        self.var_mau_giong = tk.StringVar()
+        self._dang_ap_mau = False
+        cb_mau = ttk.Combobox(mau_row, textvariable=self.var_mau_giong, width=16,
+                              state="readonly", values=hu.mau_ten() + [hu.MAU_TUY_CHINH])
+        cb_mau.pack(side="left")
+        cb_mau.bind("<<ComboboxSelected>>", lambda _e: self._ap_mau_giong())
+        self.lbl_mau_giong = ttk.Label(mau_row, text="", style="Hint.TLabel")
+        self.lbl_mau_giong.pack(side="left", padx=8)
 
         # Tông giọng (bán cung): áp lên output.wav ngay sau khi ghép, giữ tốc độ.
         # Cùng khoá "pitch" với ô bên web (chung taogiong_options.json).
@@ -3448,6 +3615,10 @@ class App(tk.Tk):
         ttk.Label(loc_row, text="0–100, 0 = tắt (vang bật khi cường độ > 0; sáng giọng = bớt ồm, "
                                "EQ cả giọng mẫu lúc dựng prompt); nghe thử bằng voice/thu_giong.py",
                   style="Hint.TLabel").pack(side="left", padx=8)
+        # Nhãn 🎚 đi theo 5 ô: gõ/quay ô nào là tính lại tên mẫu khớp (hoặc "Tuỳ chỉnh").
+        for v in (self.var_pitch, *self.var_fx.values()):
+            v.trace_add("write", lambda *_: self._cap_nhat_mau_giong())
+        self._cap_nhat_mau_giong()
 
         video_row = ttk.Frame(sec_opt)
         video_row.pack(anchor="w", fill="x", pady=(8, 0))
@@ -3774,8 +3945,9 @@ class App(tk.Tk):
         #               qua video đã dựng — chỉ dựng phần còn thiếu. Mặc định TẮT
         #               (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
         #  ⬆️ hiện cửa sổ: tới bước clone giọng thì GUI tự bật lên trên (mỗi link 1 lần).
-        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a).
-        #               Dùng CHUNG biến với ô tick ở bước ③.
+        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a);
+        #  🌙 ngủ    : cho máy ngủ sau SLEEP_DELAY_MIN phút khi xong (huỷ: bỏ tick).
+        #               Cả hai dùng CHUNG biến với ô tick ở bước ③.
         # Cột giữa có weight=0 (co theo nội dung) nên hàng này phải ngắn, kẻo cột
         # giữa phình ra lấn sang cột video bên phải.
         act2 = ttk.Frame(left)
@@ -3787,7 +3959,10 @@ class App(tk.Tk):
         ttk.Checkbutton(act2, text="⬆️  Hiện cửa sổ khi tạo giọng",
                         variable=self.var_bring_front).pack(side="left", padx=(14, 0))
         ttk.Checkbutton(act2, text="⏻  Xong thì tắt máy", variable=self.var_shutdown,
-                        command=self._save_shutdown_choice
+                        command=lambda: self._pick_power_mode("shutdown")
+                        ).pack(side="left", padx=(14, 0))
+        ttk.Checkbutton(act2, text="🌙  Xong thì ngủ", variable=self.var_sleep,
+                        command=lambda: self._pick_power_mode("sleep")
                         ).pack(side="left", padx=(14, 0))
 
         # ── Tiến trình ── GỘP LÀM 1 với thanh dưới bước 3: self.progress/self.status
@@ -5724,6 +5899,32 @@ class App(tk.Tk):
         giọng) đang chọn trên GUI, đã kẹp 0–100 — cùng dạng dict mà run_tts(fx=) nhận."""
         return {k: hu.parse_fx(v.get(), OPTS_DEFAULTS[k]) for k, v in self.var_fx.items()}
 
+    def _ap_mau_giong(self):
+        """Chọn mẫu ở ô 🎚 (02/11/2026): điền tông + 4 bộ lọc theo bảng hu.MAU_GIONG;
+        "Tuỳ chỉnh" thì giữ nguyên các ô. Lưu cùng mục Cài đặt khi bấm Chạy như mọi ô."""
+        ts = hu.mau_thong_so(self.var_mau_giong.get())
+        if ts is None:
+            self._cap_nhat_mau_giong()
+            return
+        self._dang_ap_mau = True        # 5 lần set bên dưới không tính lại nhãn từng lần
+        try:
+            self.var_pitch.set(f"{ts['pitch']:.1f}")
+            for k, v in ts["fx"].items():
+                self.var_fx[k].set(str(v))
+        finally:
+            self._dang_ap_mau = False
+        self._cap_nhat_mau_giong()
+
+    def _cap_nhat_mau_giong(self):
+        """Nhãn ô 🎚 = tên mẫu khớp ĐÚNG 5 ô đang chọn, không khớp → "Tuỳ chỉnh"."""
+        if getattr(self, "_dang_ap_mau", False) or not hasattr(self, "lbl_mau_giong"):
+            return
+        ten = hu.mau_khop(parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
+                          self._fx_from_vars())
+        self.var_mau_giong.set(ten)
+        self.lbl_mau_giong.config(
+            text=hu.MAU_MO_TA.get(ten, "bộ số riêng của bạn — chọn một mẫu để điền lại"))
+
     def _save_opt_settings(self):
         """Lưu cài đặt mục 'Cài đặt' hiện tại để lần sau mở lại dùng làm mặc định."""
         try:
@@ -6303,16 +6504,25 @@ class App(tk.Tk):
                            "mỗi ngày 2 tập)",
                   style="Hint.TLabel").grid(row=8, column=0, sticky="w", pady=(2, 0))
 
-        # TẮT MÁY khi chạy xong — để chạy batch qua đêm. Một lần duy nhất: xong là
-        # tự bỏ tick, khỏi lỡ tắt ở lần chạy sau. Biến dùng chung với ô tick bên tab
-        # Giọng nói (tạo ở __init__). (Ô 🌙 cho máy ngủ đã bỏ 26/10/2026.)
+        # TẮT MÁY / CHO MÁY NGỦ khi chạy xong — để chạy batch qua đêm. Một lần duy
+        # nhất: xong là tự bỏ tick, khỏi lỡ tắt/ngủ ở lần chạy sau. Biến dùng chung
+        # với ô tick bên tab Giọng nói (tạo ở __init__), và hai ô loại trừ nhau —
+        # hẹn tắt máy rồi lại cho ngủ thì lệnh tắt nổ ngay lúc máy dậy.
         ttk.Checkbutton(
             s3, text=f"⏻  Xong hết thì TẮT MÁY (sau {SHUTDOWN_DELAY_MIN} phút)",
             variable=self.var_shutdown,
-            command=self._save_shutdown_choice
+            command=lambda: self._pick_power_mode("shutdown")
         ).grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Label(s3, text="Huỷ bất cứ lúc nào: mở CMD gõ  shutdown /a",
                   style="Hint.TLabel").grid(row=4, column=0, sticky="w")
+        ttk.Checkbutton(
+            s3, text=f"🌙  Xong hết thì CHO MÁY NGỦ (sau {SLEEP_DELAY_MIN} phút)",
+            variable=self.var_sleep,
+            command=lambda: self._pick_power_mode("sleep")
+        ).grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(s3, text="Huỷ: bỏ tick ô này. Ngủ rồi thì chạm chuột là dậy, "
+                           "mọi thứ còn nguyên.",
+                  style="Hint.TLabel").grid(row=6, column=0, sticky="w")
 
         self._pipe_steps = (s1, s2, s3)
 
@@ -6401,7 +6611,7 @@ class App(tk.Tk):
 
     def _run_tts_then_shutdown(self, *args, **kwargs):
         """Bọc run_tts cho các luồng ở tab Giọng nói (không đi qua _pipe_set_busy):
-        chạy xong/lỗi thì xét ô tick ⏻ để hẹn tắt máy. Gọi lại trên luồng Tk
+        chạy xong/lỗi thì xét ô tick ⏻/🌙 để hẹn tắt máy hoặc cho máy ngủ. Gọi lại trên luồng Tk
         bằng after() vì BooleanVar không an toàn khi đụng từ thread khác."""
         try:
             run_tts(*args, **kwargs)
@@ -6411,22 +6621,100 @@ class App(tk.Tk):
             except Exception:
                 pass
 
-    def _save_shutdown_choice(self):
-        """Bấm ô ⏻ (ở tab Giọng nói hay bước ③) → nhớ ngay vào taogiong_pipeline.json."""
+    def _pick_power_mode(self, which: str):
+        """⏻ và 🌙 loại trừ nhau — tick ô này thì bỏ ô kia.
+
+        Hẹn tắt máy rồi lại cho máy ngủ là kiểu hỏng nhất: lệnh `shutdown /s` vẫn
+        nằm đó và nổ ngay khi máy vừa dậy, giữa lúc bạn đang ngồi làm việc.
+        """
+        if which == "sleep" and self.var_sleep.get():
+            self.var_shutdown.set(False)
+        elif which == "shutdown" and self.var_shutdown.get():
+            self.var_sleep.set(False)
+        if not self.var_sleep.get():        # vừa bỏ tick 🌙 → huỷ luôn lệnh đang đếm
+            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
         try:
             self._save_pipe_settings()
         except Exception as e:
             logging.warning(f"⚠️ Không lưu được cài đặt pipeline: {e}")
 
-    def _maybe_schedule_shutdown(self):
-        """Xong hết thì TẮT MÁY (ô ⏻) — để chạy batch qua đêm. Chỉ hẹn khi KHÔNG còn
-        tiến trình nào chạy.
+    def _sleep_status(self, msg: str):
+        """Ghi dòng trạng thái, bỏ qua nếu cửa sổ đã đóng — mấy hàm dưới đây chạy ở
+        luồng Timer, không được phép chết vì một dòng chữ."""
+        try:
+            self.pipe_status.set(msg)
+        except Exception:
+            pass
 
-        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt ngoài ý
+    def _cancel_sleep(self, msg: str = "") -> bool:
+        """Huỷ đếm ngược giờ ngủ nếu đang có. True = vừa huỷ được một lệnh."""
+        timer, self._sleep_timer = self._sleep_timer, None
+        if timer is None:
+            return False
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+        if msg:
+            logging.warning(msg)
+            self._sleep_status(msg)
+        return True
+
+    def _schedule_sleep(self):
+        """Đếm ngược SLEEP_DELAY_MIN phút rồi cho máy ngủ.
+
+        KHÔNG bỏ tick ngay như ô ⏻: lệnh tắt máy còn huỷ được bằng `shutdown /a`,
+        còn lệnh ngủ này là của chính app — giữ tick lại chính là nút huỷ. Tick chỉ
+        tự bỏ khi máy đã thật sự ngủ (một lần duy nhất).
+        """
+        if self._sleep_timer is not None:      # đang đếm rồi, đừng chồng lệnh
+            return
+        timer = threading.Timer(SLEEP_DELAY_MIN * 60, self._do_sleep)
+        timer.daemon = True                    # đóng app là lệnh ngủ cũng tan theo
+        self._sleep_timer = timer
+        timer.start()
+        logging.warning(f"🌙 ĐÃ HẸN CHO MÁY NGỦ sau {SLEEP_DELAY_MIN} phút — "
+                        "muốn huỷ thì bỏ tick ô 🌙.")
+        self._sleep_status(f"🌙 Máy ngủ sau {SLEEP_DELAY_MIN} phút — huỷ: bỏ tick 🌙")
+
+    def _do_sleep(self):
+        """Tới giờ ngủ (chạy ở luồng của Timer nên không treo cửa sổ lúc máy ngủ)."""
+        self._sleep_timer = None
+        try:
+            if not self.var_sleep.get():       # vừa bỏ tick sát giờ
+                return
+            if self._pipe_busy:                # có việc mới chen vào → để lượt sau
+                logging.warning("🌙 Có việc đang chạy → hoãn cho máy ngủ.")
+                return
+            self.var_sleep.set(False)          # một lần duy nhất
+            self._save_pipe_settings()
+        except Exception as e:
+            # Cửa sổ vừa đóng / Tk không trả lời → KHÔNG ngủ. Đọc không ra ý người
+            # dùng mà vẫn úp máy xuống thì phiền hơn nhiều so với bỏ qua lượt này.
+            logging.warning(f"⚠️ Bỏ qua lệnh cho máy ngủ: {e}")
+            return
+        logging.warning("🌙 Cho máy ngủ… (chạm chuột/bàn phím là dậy, mọi thứ còn nguyên)")
+        self._sleep_status("🌙 Đang cho máy ngủ…")
+        err = suspend_computer()               # chỉ trả về khi máy đã DẬY
+        if err:
+            logging.error(f"Không cho máy ngủ được: {err}")
+            self._sleep_status("❌ Không cho máy ngủ được — xem nhật ký.")
+            return
+        logging.warning("☀️ Máy đã dậy — app chạy tiếp bình thường.")
+        self._sleep_status("☀️ Máy đã dậy — sẵn sàng chạy tiếp.")
+
+    def _maybe_schedule_shutdown(self):
+        """Xong hết thì TẮT MÁY (ô ⏻) hoặc CHO MÁY NGỦ (ô 🌙) — để chạy batch qua đêm.
+        Chỉ hẹn khi KHÔNG còn tiến trình nào chạy.
+
+        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt/ngủ ngoài ý
         muốn. Vẫn hẹn khi luồng kết thúc do LỖI — máy đằng nào cũng rảnh, log đã ghi
-        lại lỗi. Huỷ: `shutdown /a`.
+        lại lỗi. Huỷ: `shutdown /a` (tắt máy) hoặc bỏ tick 🌙 (ngủ).
         """
         if self._pipe_busy:
+            return
+        if getattr(self, "var_sleep", None) is not None and self.var_sleep.get():
+            self._schedule_sleep()
             return
         var = getattr(self, "var_shutdown", None)
         if var is None or not var.get():
@@ -6453,6 +6741,10 @@ class App(tk.Tk):
 
     def _pipe_set_busy(self, busy: bool):
         self._pipe_busy = busy
+        # Việc mới chen vào giữa lúc đang đếm ngược giờ ngủ → huỷ đếm, chờ xong hết
+        # đã. Ô tick 🌙 vẫn giữ nguyên nên xong việc này là hẹn lại từ đầu.
+        if busy:
+            self._cancel_sleep("🌙 Có việc mới → huỷ đếm ngược ngủ, chờ xong hết đã.")
         state = "disabled" if busy else "normal"
         for button in getattr(self, "_backend_buttons", ()):
             button.config(state=state)
@@ -6481,6 +6773,7 @@ class App(tk.Tk):
             # chỉ đổi qua ô chọn (_save_backend_choice) hoặc nút reset.
             gemini_backend=self._sync_backend_from_file(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
+            sleep=getattr(self, "var_sleep", tk.BooleanVar()).get(),
             upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
         ))
 
@@ -6509,6 +6802,9 @@ class App(tk.Tk):
         set_backend(PIPE_DEFAULTS["gemini_backend"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
+        if hasattr(self, "var_sleep"):
+            self.var_sleep.set(PIPE_DEFAULTS["sleep"])
+            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
         if hasattr(self, "var_upload"):
             self.var_upload.set(PIPE_DEFAULTS["upload"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])

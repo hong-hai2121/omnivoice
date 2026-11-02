@@ -25,8 +25,9 @@ mã đó — mỗi mã nhận về gắn thẳng vào mốc giờ của câu tư
 vào <tên>_vi.partial.json sau MỖI lô: lỗi giữa chừng chạy lại là dịch tiếp,
 không mất phần đã xong. Câu thiếu / còn nhiều chữ Hán được tự gửi lại (tối đa
 2 lượt bổ sung); vẫn thiếu thì giữ nguyên tiếng Trung trong file kết quả.
-Trong lúc dịch, giu_man_hinh (myvoice) nhích chuột khi máy rảnh để màn hình
-không tắt — màn hình tắt là Chrome bóp tab Gemini, đoạn dịch thành trống.
+Màn hình tắt là Chrome bóp tab Gemini, đoạn dịch thành trống — nên driver extension
+(myvoice/scripts/gemini_extension.py) tự đánh thức/nhích chuột trong lúc gửi–đợi Gemini
+(02/11/2026); đường Firefox và --cli không giữ màn hình.
 
 LƯU Ý: dùng đường Firefox (dự phòng hoặc chọn tay) thì Firefox đang mở phải
 ĐÓNG trước (Selenium cần khoá profile).
@@ -416,7 +417,6 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
     """Dịch qua Gemini web (Chrome Extension mặc định, Firefox dự phòng).
     Trả list cùng độ dài (câu hỏng giữ nguyên tiếng gốc)."""
     import dich_gemini as dg
-    from giu_man_hinh import giu_man_hinh
 
     prefix = gemini_prefix(lang)
     td = TienDo(texts, partial_path, lang)   # tiến độ + kiểm câu, dùng chung với --cli
@@ -457,37 +457,34 @@ def translate_gemini(texts, partial_path, batch_chars=1200, lang="zh"):
             return None
 
     try:
-        # giu_man_hinh (myvoice): máy rảnh là nhích chuột 1 px — màn hình tắt thì
-        # Chrome bóp tab Gemini, lô dịch thành trống (bài học 03/10/2026 bên myvoice).
-        with giu_man_hinh():
-            # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
-            for attempt in range(3):
-                todo = td.todo()
-                if not todo:
-                    break
-                if attempt:
-                    print(f"🔁 Lượt bổ sung {attempt}: dịch lại {len(todo)} câu "
-                          "thiếu/chưa dịch...")
-                chunks = _pack_chunks(todo, texts, max_chars=batch_chars)
-                for ci, chunk in enumerate(chunks, 1):
-                    body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
-                    if driver is None or not dg.is_driver_alive(driver):
-                        driver = _mo()
-                    print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu)...")
+        # Lượt 1: dịch tất cả. Lượt 2-3: chỉ gửi lại các câu thiếu/còn Hán.
+        for attempt in range(3):
+            todo = td.todo()
+            if not todo:
+                break
+            if attempt:
+                print(f"🔁 Lượt bổ sung {attempt}: dịch lại {len(todo)} câu "
+                      "thiếu/chưa dịch...")
+            chunks = _pack_chunks(todo, texts, max_chars=batch_chars)
+            for ci, chunk in enumerate(chunks, 1):
+                body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
+                if driver is None or not dg.is_driver_alive(driver):
+                    driver = _mo()
+                print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu)...")
+                ans = _gui(body)
+                restarts = 0
+                while not ans and restarts < dg.MAX_TIMEOUT_RESTARTS:
+                    restarts += 1
+                    print(f"🔄 Không có kết quả — mở lại trình duyệt (lần {restarts})...")
+                    driver = dg.restart_firefox(driver)
                     ans = _gui(body)
-                    restarts = 0
-                    while not ans and restarts < dg.MAX_TIMEOUT_RESTARTS:
-                        restarts += 1
-                        print(f"🔄 Không có kết quả — mở lại trình duyệt (lần {restarts})...")
-                        driver = dg.restart_firefox(driver)
-                        ans = _gui(body)
-                    if not ans:
-                        print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
-                        continue
-                    got = td.nhan(chunk, _parse_numbered(ans))
-                    td.save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
-                    print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
-                          f"— tổng {td.so_xong()}/{n_total}.")
+                if not ans:
+                    print("⚠️ Lô này không nhận được kết quả — để lượt bổ sung xử lý.")
+                    continue
+                got = td.nhan(chunk, _parse_numbered(ans))
+                td.save()   # ← lưu ngay sau mỗi lô, lỗi giữa chừng không mất gì
+                print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
+                      f"— tổng {td.so_xong()}/{n_total}.")
     finally:
         if driver is not None:
             try:

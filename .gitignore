@@ -112,3 +112,7 @@ mt_cache/
 /myvideo/web/token.txt
 /myvideo/web/cong.txt
 /myvideo/web/web_settings.json
+
+# Token Playwright Extension + profile Chrome của máy này (myvoice/TRINHDUYET)
+/myvoice/TRINHDUYET/cau_hinh.json
+/myvoice/TRINHDUYET/*.png

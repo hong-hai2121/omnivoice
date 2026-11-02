@@ -585,9 +585,40 @@ def prepare_static_layers(pink, target_size: tuple[int, int], frame: Path = KHUN
     return bg_path, top_path, mask_path
 
 
+def gom_clip_kho(source_dir, log=print) -> tuple[list[Path], str]:
+    """Gom clip .mp4 để ghép random → (danh sách clip, tên kho để ghi log/lỗi).
+
+    source_dir: None/rỗng → cả videongang/ (kho gốc rỗng vì đã dồn clip vào thư mục
+    con thì gom MỌI thư mục con); 1 đường dẫn → thư mục đó; list/tuple đường dẫn
+    (01/11/2026, ô "Nguồn ngang" tick nhiều) → gộp clip của tất cả rồi build_playlist
+    xáo chung. Không có clip → RuntimeError.
+    """
+    if not source_dir:
+        dirs = []
+    elif isinstance(source_dir, (str, Path)):
+        dirs = [Path(source_dir)]
+    else:
+        dirs = [Path(d) for d in source_dir if d]
+    if not dirs:
+        ten = str(VIDEO_DIR)
+        videos = sorted(VIDEO_DIR.glob("*.mp4"))
+        if not videos:
+            videos = sorted(VIDEO_DIR.rglob("*.mp4"))
+            if videos:
+                log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
+    else:
+        ten = " + ".join(f"{d.name}/" for d in dirs)
+        videos = sorted({v for d in dirs for v in d.glob("*.mp4")})
+        if videos:
+            log(f"📁 Nguồn video ngang: {ten} ({len(videos)} clip)")
+    if not videos:
+        raise RuntimeError(f"Không có file .mp4 nào trong: {ten}")
+    return videos, ten
+
+
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 progress=None, skip_existing=False, output: Path | None = None,
-                source_dir: Path | None = None, frame: Path | None = None,
+                source_dir=None, frame: Path | None = None,
                 logo: Path | None = None, goc_out: Path | None = None,
                 bg: Path | None = None, source_video: Path | None = None,
                 source_zoom: float = 1.0) -> Path:
@@ -619,7 +650,8 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
 
     source_dir: thư mục kho clip ngang để ghép random. None (mặc định) → dùng cả
                 videongang/. Truyền 1 thư mục con (vd videongang/thiennhien) để chỉ
-                ghép clip theo chủ đề đó.
+                ghép clip theo chủ đề đó, hoặc LIST thư mục con (01/11/2026) → gộp
+                clip của tất cả rồi xáo chung (xem gom_clip_kho).
 
     frame: file viền khung (khung1*.png) cụ thể. None (mặc định) → chọn NGẪU NHIÊN
            một màu trong Backbround/ (xem random_frame).
@@ -672,21 +704,12 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             if nguon and nguon_dur <= 0.5:
                 log(f"[Cảnh báo] Video nguồn {nguon.name} quá ngắn ({nguon_dur:.2f}s) → ghép clip kho như cũ.")
                 nguon = None
-    src_dir = Path(source_dir) if source_dir else VIDEO_DIR
+    ten_kho = ""
     if nguon:
         videos = [nguon]
     else:
-        videos = sorted(src_dir.glob("*.mp4"))
-        if not videos and not source_dir:
-            # Kho gốc videongang/ rỗng (đã dồn clip vào thư mục con theo chủ đề) → khi
-            # chọn "tất cả" thì gom MỌI clip trong các thư mục con thay vì báo lỗi.
-            videos = sorted(src_dir.rglob("*.mp4"))
-            if videos:
-                log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
-        if not videos:
-            raise RuntimeError(f"Không có file .mp4 nào trong: {src_dir}")
-        if source_dir:
-            log(f"📁 Nguồn video ngang: {src_dir.name}/ ({len(videos)} clip)")
+        # Kho clip: cả videongang/, 1 thư mục con, hay nhiều thư mục con gộp lại.
+        videos, ten_kho = gom_clip_kho(source_dir, log)
 
     audio_file = Path(audio_file)
     if not audio_file.exists():
@@ -716,7 +739,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         durations = probe_durations(videos, log)
         videos = [v for v in videos if v in durations]
         if not videos:
-            raise RuntimeError(f"Không đọc được clip nào trong: {src_dir}")
+            raise RuntimeError(f"Không đọc được clip nào trong: {ten_kho}")
         seq, total = build_playlist(videos, durations, audio_dur)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
