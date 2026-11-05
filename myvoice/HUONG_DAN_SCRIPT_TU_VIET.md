@@ -20,7 +20,7 @@ OmniVoice/                 ← repo gốc GitHub (omnivoice/, docs/, venv/, pypr
     │   ├── video_ghepcuoi.py
     │   └── video_khung.py
     ├── HUONG_DAN_SCRIPT_TU_VIET.md   (file này)
-    ├── voice/             ← file giọng mẫu
+    ├── voice/giong_mau/   ← file giọng mẫu + .prompt.pt (voice/ chỉ còn thu_giong.py, VieNeu-TTS/)
     ├── kịch_bản/          ← input.docx, output.wav, output_chunks/, final_video.mp4
     ├── Backbround/        ← khung trang trí (Khung0/khung1/khung3.png)
     ├── mp4/               ← video nguồn (có tiếng) cho video_xoatieng.py

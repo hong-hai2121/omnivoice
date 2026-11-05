@@ -234,7 +234,9 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     # Chuỗi filter GIỌNG ĐỌC: chuẩn hoá về tts_lufs (mặc định -14 — chuẩn
     # YouTube, đúng hành vi xưa nay) rồi chỉnh thêm tts_db. Tăng (+dB) thì
     # chặn đỉnh -1.5 dBFS — limiter chỉ cắn khi chạm trần, giảm thì vô hại.
-    LOUD = f"loudnorm=I={float(tts_lufs):g}:TP=-1.5:LRA=11"
+    # tts_lufs = 0 (05/11/2026, ô 🔉 Chuẩn âm tắt): KHÔNG loudnorm giọng đọc — giữ nguyên
+    # mức của audio bước ③; anull để chuỗi filter phía sau vẫn hợp lệ.
+    LOUD = f"loudnorm=I={float(tts_lufs):g}:TP=-1.5:LRA=11" if tts_lufs else "anull"
     if tts_db:
         LOUD += f",volume={float(tts_db):g}dB"
         if float(tts_db) > 0:
@@ -543,7 +545,8 @@ def main():
                              "chỉnh ĐỘC LẬP với --goc-db của tiếng gốc.")
     parser.add_argument("--tts-lufs", type=float, default=-14.0,
                         help="Mức chuẩn hoá giọng đọc, LUFS (mặc định -14 — "
-                             "chuẩn YouTube như xưa nay; -23 = EBU R128).")
+                             "chuẩn YouTube như xưa nay; -23 = EBU R128; 0 = KHÔNG chuẩn hoá, "
+                             "giữ nguyên mức audio bước ③ — ô 🔉 Chuẩn âm tắt).")
     parser.add_argument("--logo", default="",
                         help="Đóng ảnh PNG này (logo kênh) góc phải trên suốt "
                              "video, rộng ~12%% khung. Bỏ trống = không logo.")
@@ -731,7 +734,8 @@ def main():
     # 🗣 Giọng đọc: kênh chỉnh riêng, chỉ có nghĩa khi --audio.
     tts_db, tts_lufs = args.tts_db, args.tts_lufs
     if audio and (tts_db or tts_lufs != -14.0):
-        print(f"🗣 Giọng đọc: chuẩn hoá {tts_lufs:g} LUFS"
+        print((f"🗣 Giọng đọc: chuẩn hoá {tts_lufs:g} LUFS" if tts_lufs
+               else "🗣 Giọng đọc: KHÔNG chuẩn hoá (giữ mức gốc)")
               + (f", chỉnh thêm {tts_db:+g}dB" if tts_db else ""))
     if audio and goc_db is not None:
         print(f"🔉 Giữ tiếng gốc dưới giọng đọc: {goc_db:g}dB"

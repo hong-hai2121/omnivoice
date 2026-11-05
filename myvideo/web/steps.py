@@ -30,12 +30,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent       # myvideo/
 REPO_ROOT = BASE_DIR.parent
 OUTPUT_DIR = BASE_DIR / "output"
 VENV_PY = REPO_ROOT / "venv" / "Scripts" / "python.exe"
-# Kho giọng: từ 24/10/2026 DÙNG CHUNG DANH SÁCH với myvoice (myvoice/voice — user
-# soạn danh sách giọng mới ở đó; .prompt.pt / .sang<N>.prompt.pt bên đó dùng lại
-# được vì cùng cách lưu). Kho cũ myvideo/voice vẫn đọc thêm để giọng đã chọn
-# không mất; trùng tên thì myvoice/voice thắng. CÀI ĐẶT (giọng đang chọn, ⭐) vẫn
-# riêng trong web_settings.json của myvideo — chỉ dùng chung kho FILE.
-VOICE_DIRS = (REPO_ROOT / "myvoice" / "voice", BASE_DIR / "voice")
+# Kho giọng: từ 24/10/2026 DÙNG CHUNG DANH SÁCH với myvoice (user soạn danh sách giọng
+# mới ở đó; .prompt.pt / .sang<N>.prompt.pt bên đó dùng lại được vì cùng cách lưu); từ
+# 04/11/2026 kho đó là myvoice/voice/giong_mau (giọng mẫu gom riêng, voice/ chỉ còn code).
+# Kho cũ myvideo/voice vẫn đọc thêm để giọng đã chọn không mất; trùng tên thì myvoice
+# thắng. CÀI ĐẶT (giọng đang chọn, ⭐) vẫn riêng trong web_settings.json của myvideo —
+# chỉ dùng chung kho FILE.
+VOICE_DIRS = (REPO_ROOT / "myvoice" / "voice" / "giong_mau", BASE_DIR / "voice")
 VOICE_DIR = BASE_DIR / "voice"     # kho cũ — còn dùng làm chỗ cache nghe thử (_nghe_thu)
 # Kho NHẠC NỀN: bỏ file mp3/wav vào đây là ô chọn ở khối ④ thấy ngay.
 NHAC_DIR = BASE_DIR / "nhac"
@@ -65,7 +66,7 @@ TEN_LANG = {"zh": "Trung", "en": "Anh"}
 LABELS = {
     "cham": "① Chậm video + SRT tiếng gốc",
     "dich": "② Dịch Gemini → SRT tiếng Việt",
-    "giong": "③ Giọng OmniVoice + xếp timeline",
+    "giong": "③ Tạo giọng (VieNeu / OmniVoice) + xếp timeline",
     "gan": "④ Vẽ sub cứng + thay tiếng",
     "seo": "📑 Sinh SEO (Gemini)",
     "thumb": "🖼 Vẽ thumbnail",
@@ -115,7 +116,7 @@ def _audio_in(d: Path) -> list[str]:
 
 
 def list_voices() -> list[str]:
-    """Giọng mẫu cho ô chọn của bước ③: danh sách myvoice/voice trước, rồi các
+    """Giọng mẫu cho ô chọn của bước ③: danh sách myvoice/voice/giong_mau trước, rồi các
     file CHỈ có trong kho cũ myvideo/voice (trùng tên thì bỏ qua bản cũ)."""
     out: list[str] = []
     for d in VOICE_DIRS:
@@ -371,12 +372,16 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                 label = "② Dịch GPT CLI (Codex) → SRT tiếng Việt"
         elif k == "giong":
             argv = [_python(), "-u", str(BASE_DIR / "taogiong_srt.py"), f"{B}_vi.srt"]
+            # 04/11/2026: engine — khoá engine ("vieneu" mặc định | "omni") + giong_vieneu
+            # (tên giọng dựng sẵn). --voice vẫn gửi để chuyển về omni là có giọng mẫu.
+            argv += ["--engine", "omni" if s.get("engine") == "omni" else "vieneu",
+                     "--giong-vieneu", str(s.get("giong_vieneu") or "Ngọc Huyền").strip() or "Ngọc Huyền"]
             if s.get("voice"):
                 argv += ["--voice", s["voice"]]
-            # 🔆 Sáng giọng (khối ③ trang chính, khoá sanggiong, mặc định 80, "0" = tắt):
+            # 🔆 Sáng giọng (khối ③ trang chính, khoá sanggiong, mặc định 0 từ 05/11/2026, "0" = tắt):
             # EQ giọng mẫu lúc dựng prompt + EQ audio tổng. Gửi luôn để script khỏi
             # đoán; đổi mức là script tự đọc lại toàn bộ câu (sổ _vanban.json).
-            argv += ["--sang", str(s.get("sanggiong") or "80").strip()]
+            argv += ["--sang", str(s.get("sanggiong") or "0").strip()]
             # 🎵 Tông giọng + 🔔 tiếng vang + 🧒 thiếu niên — mang từ myvoice sang
             # 24/10/2026, cùng tên khoá bên đó; mặc định 0 = như cũ.
             argv += ["--pitch", str(s.get("pitch") or "0").strip(),
@@ -385,6 +390,9 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                      "--thieunien", str(s.get("thieu_nien") or "0").strip()]
             if s.get("redotts"):
                 argv.append("--redo-tts")
+            # 🔉 Chuẩn âm (05/11/2026, khoá chuanam, mặc định tắt) → --chuan-am khi bật.
+            if s.get("chuanam"):
+                argv.append("--chuan-am")
         elif k == "seo":
             # Trong chuỗi ⏩: SEO đứng ngay sau dịch (cùng cần Gemini/màn hình
             # sáng), script tự bỏ qua video đã có SEO nên chạy lại vô hại.
@@ -433,7 +441,11 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             # tiếng — không có --audio thì script tự bỏ qua.
             if str(s.get("ttsdb") or "").strip() not in ("", "0"):
                 argv += ["--tts-db", str(s["ttsdb"]).strip()]
-            if s.get("ttsnorm"):
+            if not s.get("chuanam"):
+                # 🔉 ô Chuẩn âm (khối ③) TẮT → bước ④ cũng không loudnorm lại giọng đọc
+                # (0 = giữ nguyên mức audio bước ③ đã giữ gốc); ttsdb vẫn áp nếu có.
+                argv += ["--tts-lufs", "0"]
+            elif s.get("ttsnorm"):
                 argv += ["--tts-lufs", "-23"]
             # 🏷 Logo / khung viền / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi
             # khi ô bật VÀ file có thật trong myvideo/kenh/<tên>/ (thiếu file thì

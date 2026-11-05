@@ -10,6 +10,10 @@ trên 127.0.0.1 — không có chế độ mở ra mạng LAN. Vẫn giữ một
 Nhật ký chạy in thẳng ra cửa sổ console của server. Riêng hàng đợi ĐĂNG có thêm
 vài dòng cuối ngay trong khối hàng đợi trên trang, và /api/nhatky-dang để GUI
 (tiến trình khác) chiếu sang ô Nhật ký của nó.
+
+Từ 05/11/2026 mọi dòng nhật ký còn được chép ra tệp web/nhatky/hangdoi_<ngày>.log
+(jobs.bat_nhat_ky_tep, bật trong main()) — console chỉ nằm trong RAM, mẻ chạy đêm xong
+ô ⏻ tắt máy là mất hết. Xem lại ở trang /nhatky (nút 📜 Nhật ký trên khối hàng đợi).
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, gemini_test, gptcli_test, power, steps as steps_mod  # noqa: E402
-from .jobs import (capture as log_capture, fb_log, fb_runner,  # noqa: E402
-                   log, runner, upload_log, upload_runner)
+from .jobs import (NHATKY_GIU_NGAY, bat_nhat_ky_tep, cac_ngay_nhat_ky,  # noqa: E402
+                   capture as log_capture, doc_nhat_ky, fb_log, fb_runner,
+                   log, runner, thu_muc_nhat_ky, upload_log, upload_runner)
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -322,10 +327,15 @@ def _voice_ctx() -> dict:
     starred = next((v["name"] for v in voices if v["fav"]), "")
     opts = core.load_options()
     hu = core.gui.hu
+    vn = core.gui.vn
     return {
         "opts": opts, "web": web, "voices": voices,
         "current_voice": (saved if saved in names
                           else starred or (voices[0]["name"] if voices else "")),
+        # 04/11/2026: chế độ 🗣 VieNeu — 25 giọng dựng sẵn (danh sách tĩnh, worker bật lúc chạy).
+        "vieneu_voices": list(vn.GIONG_DUNG_SAN),
+        "current_vieneu_voice": core.giong_vieneu_hop_le(web.get("vieneu_voice")),
+        "vieneu_da_cai": vn.trang_thai()["da_cai"],
         "effects": core.list_effects(),
         # 🎚 Mẫu giọng cài sẵn (02/11/2026): bảng hu.MAU_GIONG (chung GUI + app Thử giọng)
         # → ô <select> điền tông + 4 bộ lọc; mau_hien_tai = mẫu khớp đúng số đang lưu.
@@ -1669,6 +1679,30 @@ def partial_queue(request: Request):
          "shutq": power.watcher.state(), "vram": _vram()})
 
 
+@app.get("/nhatky", response_class=HTMLResponse)
+def page_nhatky(request: Request, ngay: str = "", daydu: int = 0):
+    """📜 Nhật ký hàng đợi đọc lại từ TỆP (web/nhatky/hangdoi_<ngày>.log, 05/11/2026).
+
+    Console của server chỉ nằm trong RAM: mẻ chạy đêm xong ô ⏻ tắt máy là mất hết, sáng
+    ra không biết vì sao dừng. Mặc định chỉ hiện các MỐC CHÍNH (việc bắt đầu/xong/lỗi,
+    bước, tắt máy) của ngày mới nhất; ?daydu=1 hiện mọi dòng, ?ngay=YYYY-MM-DD chọn
+    ngày (ngày lạ → ngày mới nhất; doc_nhat_ky chỉ nhận ngày CÓ tệp nên không lọt đường
+    dẫn tuỳ ý)."""
+    ngay, raw, tong = doc_nhat_ky(ngay, chi_moc=not daydu)
+    lines = []
+    for ln in raw:                      # mỗi dòng trong tệp: "HH:MM:SS  nội dung"
+        text = ln[10:]
+        dau = text.lstrip()
+        lines.append({"gio": ln[:8], "text": text,
+                      "cls": ("l-loi" if dau.startswith(("❌", "⛔", "Lỗi")) else
+                              "l-canh" if dau.startswith("⚠") else "")})
+    thu_muc = thu_muc_nhat_ky()
+    return _page(request, "nhatky.html", active="log", ngay=ngay, lines=lines, tong=tong,
+                 daydu=bool(daydu), cac_ngay=cac_ngay_nhat_ky(), giu_ngay=NHATKY_GIU_NGAY,
+                 thu_muc=str(thu_muc) if thu_muc else "",
+                 tep=str(thu_muc / f"hangdoi_{ngay}.log") if thu_muc and ngay else "")
+
+
 @app.get("/api/nhatky-dang")
 def api_upload_log(since: int = -1):
     """Nhật ký hàng đợi ĐĂNG cho tiến trình khác (GUI) đọc.
@@ -1809,8 +1843,9 @@ def _save_voice_from_form(form) -> None:
     + chế độ/giọng/tệp của riêng bản web (web_settings.json)."""
     _save_opts_from_form(form)
     core.save_web_settings({
-        "mode": str(form.get("mode", "clone")),
+        "mode": str(form.get("mode", core.WEB_DEFAULTS["mode"])),
         "voice": str(form.get("voice", "")),
+        "vieneu_voice": core.giong_vieneu_hop_le(form.get("vieneu_voice")),
         "instruct": str(form.get("instruct", "")),
         "input": str(form.get("input_txt", "")),
         "output": str(form.get("output_wav", "")),
@@ -2003,7 +2038,13 @@ def main() -> None:
     print("  Chỉ mở được trên máy này (không nghe trên mạng LAN).")
     print(f"  Token nằm ở: {TOKEN_FILE}  (xoá file này = đổi token)")
     print("  Nhật ký chạy hiện ngay trong cửa sổ này. Đóng cửa sổ = tắt server.")
+    print(f"  Nhật ký còn được lưu ra tệp: {WEB_DIR / 'nhatky'}  (xem lại: trang 📜 Nhật ký)")
     print("=" * 68)
+
+    # Chép nhật ký hàng đợi ra tệp (05/11/2026): console chỉ nằm trong RAM, mẻ chạy đêm
+    # xong ô ⏻ tắt máy là mất hết lý do dừng. Bật Ở ĐÂY chứ không phải lúc import module:
+    # test và script lẻ import server/jobs thì không sinh tệp.
+    bat_nhat_ky_tep(WEB_DIR / "nhatky")
 
     if _should_open_browser():
         threading.Thread(target=_open_browser_when_ready, args=(port,),

@@ -68,7 +68,10 @@
   <div class="panel">
     <div class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></div>
     <div class="modes">
-      {% for value, label, desc in [("clone", "🎙 Clone", "Nhái giọng mẫu"),
+      {# 04/11/2026: 🗣 VieNeu (giọng dựng sẵn, SDK trong .venv riêng — nhanh gấp 5–10 lần
+         clone) đứng đầu và là mặc định; chế độ nhớ trong web_settings.json. #}
+      {% for value, label, desc in [("vieneu", "🗣 VieNeu", "Giọng dựng sẵn · nhanh"),
+                                    ("clone", "🎙 Clone", "OmniVoice nhái giọng mẫu"),
                                     ("design", "🎨 Thiết kế", "Mô tả giọng"),
                                     ("default", "🔊 Mặc định", "Model tự chọn")] %}
         <label class="mode {{ 'on' if web.mode == value }}">
@@ -77,6 +80,16 @@
         </label>
       {% endfor %}
     </div>
+
+    <label class="field">
+      <span>Giọng VieNeu (chế độ VieNeu)
+        {% if not vieneu_da_cai %}<b class="muted">⚠ chưa cài — app Thử giọng → tab 🗣️ → ⬇ Cài GPU</b>{% endif %}</span>
+      <select name="vieneu_voice">
+        {% for v in vieneu_voices %}
+          <option value="{{ v }}" {{ 'selected' if current_vieneu_voice == v }}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </label>
 
     <label class="field">
       <span>Giọng mẫu (chế độ Clone)</span>
@@ -196,6 +209,11 @@
         <input name="thieu_nien" value="{{ opts.thieu_nien }}" inputmode="numeric"
                title="Giọng trẻ hơn: dời formant + nhỉnh cao độ theo mức (100 = formant ×1,18 và +4 bán cung). Nghe thử trước bằng voice/thu_giong.py.">
       </label>
+      {# 🔉 Chuẩn âm (05/11/2026, mặc định TẮT): nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS
+         trên output.wav. Tắt = giữ mức gốc của giọng (chỉ cân mức giữa các đoạn). #}
+      <div class="chks">
+        {{ chk('chuan_am', '🔉 Chuẩn âm giọng (nén nhẹ + loudnorm −14 LUFS; tắt = giữ mức gốc)', opts) }}
+      </div>
       <label class="field">
         <span>🔆 Sáng giọng – cường độ (0–100, 0 = tắt)</span>
         <input name="sang_giong" value="{{ opts.sang_giong }}" inputmode="numeric"

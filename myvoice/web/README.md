@@ -98,6 +98,26 @@ hồng · thumbnail cam · SEO xanh ngọc. Tông màu khai báo ở đầu `sta
 **Nhật ký nằm ở cửa sổ console của server**, không còn panel dưới trang web:
 mọi dòng của tiến trình con in thẳng ra đó.
 
+**Nhật ký còn được chép ra tệp** (05/11/2026): `web/nhatky/hangdoi_<ngày>.log`, mỗi
+ngày một tệp, mỗi dòng kèm giờ, xả ra đĩa theo từng dòng, giữ 14 ngày
+(`jobs.NHATKY_GIU_NGAY`). Console chỉ nằm trong RAM — mẻ chạy đêm xong ô ⏻ tắt máy là
+mất hết, sáng ra không biết vì sao dừng (sự cố đêm 05/11/2026). Xem lại ở trang
+**📜 Nhật ký** (`/nhatky`, nút cạnh chữ *Hàng đợi*): mặc định chỉ các mốc chính (việc
+bắt đầu / xong / lỗi, bước, tắt máy), bấm *Đầy đủ* để xem mọi dòng; dòng lỗi tô đỏ.
+Chỉ server thật bật ghi tệp (`jobs.bat_nhat_ky_tep` trong `main()`), test import
+module thì không sinh tệp. myvideo dùng chung `JobRunner` nên cũng ghi, vào
+`myvideo/web/nhatky/`.
+
+**Lỗi GPU → hàng đợi TẠM DỪNG** (05/11/2026): runner trả mã thoát **79**
+(`gpu_batbuoc.MA_THOAT_GPU`) khi lượt chạy dừng vì `GpuLoi` — không có CUDA, thiếu
+VRAM, NVENC chết, worker VieNeu mất GPU. Các bước dùng GPU khai `Step.halt_codes`, hàng
+đợi thấy mã này thì đánh dấu việc lỗi rồi **tạm dừng, giữ nguyên việc còn chờ** (kể cả
+bước `continue_on_fail` trong một đợt) thay vì chạy tiếp các tập sau để hỏng y hệt.
+Đầu khối hàng đợi hiện băng đỏ nêu lý do + cách chạy lại; bấm *▶ Tiếp* là chạy tiếp
+việc còn chờ, tập vừa lỗi thì ⏩ Chạy tiếp để làm lại. Chế độ 🗣 VieNeu cũng **ép GPU**:
+worker bật với `--device cuda`, không dùng được CUDA là dừng ngay chứ không lặng lẽ
+chạy ONNX/CPU (chậm ~4 lần rồi vẫn dừng ở bước ASR kiểm tra).
+
 **Nút 💾 lưu tại chỗ, không tải lại trang** — mọi nút "💾 Lưu…" (và hai form
 Tập bỏ qua / Câu mở đầu) gửi qua htmx: lưu xong hiện mẩu "✓ đã lưu" cạnh nút
 rồi tự mờ đi, chỗ đang cuộn và các ô đang gõ dở giữ nguyên. Trình duyệt tắt JS
@@ -282,6 +302,9 @@ bỏ tick là huỷ, kể cả lúc đang đếm ngược — không cần `shut
 còn tập dựng xong CHƯA đăng thì ghi cảnh báo vào nhật ký đăng (chỉ báo, không tự
 đăng). Route `/hangdoi/tatmay`: `on=1` tắt máy, `ngu=1` ngủ, không gì = tắt;
 `/api/trangthai` trả thêm `shutdown_mode` ("" / "shutdown" / "sleep").
+Hàng đợi chính **dừng vì lỗi GPU** cũng tính là "hết việc" (việc còn chờ không tự chạy
+được nữa — `JobRunner.heavy_busy()` bỏ qua chúng): ⏻/🌙 vẫn tắt/ngủ đúng như đã tick,
+và dòng đếm ngược ghi rõ lý do dừng vào tệp nhật ký.
 
 Code ở `power.py`, nhưng **số phút chờ + lệnh ngủ nằm bên GUI** (`SHUTDOWN_DELAY_MIN`,
 `SLEEP_DELAY_MIN`, `suspend_computer` trong `amain_taogiong_gui.py`) — ô bên GUI và ô
@@ -297,7 +320,8 @@ server — trang web không ghi đè khoá `shutdown`/`sleep` của GUI.
 web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
-  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
+  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console + tệp nhatky/; mã 79 (lỗi GPU) → tạm dừng hàng đợi
+  nhatky/        hangdoi_<ngày>.log — nhật ký hàng đợi chép ra tệp (tự sinh, giữ 14 ngày)
   power.py       ô “⏻ tắt máy” / “🌙 cho máy ngủ” khi xong hết — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown/ngủ
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/

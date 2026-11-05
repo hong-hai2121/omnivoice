@@ -265,13 +265,48 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
 
   <div class="panel">
     <div class="phead">
-      <span class="num">3</span><h2>Giọng OmniVoice + xếp timeline</h2>
-      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav, xếp chống đè →
+      <span class="num">3</span><h2>Tạo giọng + xếp timeline</h2>
+      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🗣 VieNeu giọng dựng sẵn — mặc
+        định, hoặc 🎙 OmniVoice clone giọng mẫu), xếp chống đè →
         <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>; rồi như myvoice:
         cân mức giữa các câu, tông giọng + bộ lọc, nén nhẹ + chuẩn −14 LUFS.
         Chạy lại tự bỏ qua câu đã có audio.</p>
     </div>
-    <div class="grid">
+    {# 04/11/2026: ENGINE bước ③ — 🗣 VieNeu đứng đầu và là mặc định (user chốt); chọn
+       🎙 OmniVoice thì hiện lại ô giọng mẫu + ⭐ + nghe thử như trước. Lưu cùng form
+       chính (khoá engine / giong_vieneu trong web_settings.json); JS cuối trang
+       (veEngine) ẩn/hiện hai khối. taogiong_srt.py nhận --engine / --giong-vieneu. #}
+    <div class="inline" id="engineRow" style="gap:18px; margin-bottom:8px">
+      <label style="display:flex; gap:6px; align-items:center">
+        <input type="radio" name="engine" value="vieneu" {{ 'checked' if settings.engine != 'omni' }}>
+        <b>🗣 VieNeu</b><span class="hint">giọng dựng sẵn · nhanh · 48 kHz</span>
+      </label>
+      <label style="display:flex; gap:6px; align-items:center">
+        <input type="radio" name="engine" value="omni" {{ 'checked' if settings.engine == 'omni' }}>
+        <b>🎙 OmniVoice</b><span class="hint">clone giọng mẫu (chậm hơn 5–10 lần)</span>
+      </label>
+    </div>
+    <div class="grid" id="khoiVieneu">
+      <label class="field">
+        <span>Giọng VieNeu — 25 giọng dựng sẵn v3 Turbo (worker SDK trong
+          <code>myvoice/voice/VieNeu-TTS/.venv</code>; bật lúc chạy bước ③)
+          {% if not vieneu_da_cai %}<b>⚠ chưa cài — app Thử giọng (myvoice/voice/thu_giong.py) → tab 🗣️ → ⬇ Cài GPU</b>{% endif %}</span>
+        <select name="giong_vieneu" id="vieneuSel">
+          {% for v in vieneu_giong %}
+            <option value="{{ v }}" {{ 'selected' if settings.giong_vieneu == v }}
+                    data-nghe="{{ '1' if v in vieneu_nghe }}">{{ v }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="inline">
+        <span class="hint">🔊 Nghe thử giọng VieNeu đang chọn:</span>
+        <audio id="vNghe" controls preload="none"></audio>
+        <span class="hint" id="vNgheTrong" style="display:none">— chưa có bản nghe thử giọng
+          này: mở app Thử giọng → tab 🗣️ → 🎧 chọn giọng, bấm Tạo &amp; nghe (lưu vào
+          <code>_thu_giong/vieneu/</code>), rồi tải lại trang</span>
+      </div>
+    </div>
+    <div class="grid" id="khoiClone">
       <label class="field">
         <span>Giọng đọc — danh sách dùng chung với myvoice (<code>myvoice/voice</code>,
           cộng các file chỉ có trong kho cũ <code>myvideo/voice</code>); bấm ⭐ để
@@ -326,13 +361,19 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     <div class="cc-row">
       <span class="cc-ten">🔆 Sáng giọng</span>
       <input type="range" class="cc-keo" name="sanggiong" id="sanggiongKeo"
-             min="0" max="100" step="5" value="{{ settings.sanggiong or '80' }}">
+             min="0" max="100" step="5" value="{{ settings.sanggiong or '0' }}">
       <input type="number" class="cc-so" id="sanggiongSo" min="0" max="100" step="5">
       <span class="cc-dv">/100</span>
       <button type="button" class="small" id="sanggiongReset"
-              title="Về mặc định (80)">↺</button>
+              title="Về mặc định (0 — tắt)">↺</button>
     </div>
     <p class="cc-nhan" id="sanggiongNhan"></p>
+    {# 🔉 Chuẩn âm (05/11/2026, mặc định TẮT): bật = bước ③ nén nhẹ + loudnorm −14 LUFS + neo
+       −18 dBFS và bước ④ loudnorm lại giọng; tắt = giữ mức gốc của giọng (như mẫu VieNeu). #}
+    <label class="chk" style="margin-top:6px">
+      <input type="checkbox" name="chuanam" {{ 'checked' if settings.chuanam }}>
+      🔉 Chuẩn âm giọng đọc (nén nhẹ + loudnorm −14 LUFS ở bước ③ và ④; tắt = giữ mức gốc)
+    </label>
     {# 🔊 Nghe thử NGAY TRÊN TRANG (mang từ myvoice sang): đổi ô chọn là audio
        trỏ sang file giọng đó — hết cảnh chọn giọng "mù" rồi tốn một lượt chạy
        mới biết giọng ra sao. Từ 24/10/2026 kèm &sang=<mức> để nghe bản mẫu ĐÃ
@@ -863,9 +904,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const sSo = document.getElementById("sanggiongSo");
   const sNhan = document.getElementById("sanggiongNhan");
   const sangNhan = v => v === 0
-    ? "0 — tắt (giọng mẫu nguyên bản; mẫu tối thì clone nghe ồm)"
+    ? "0 — tắt (mặc định từ 05/11/2026: giọng VieNeu dựng sẵn đã sáng; chỉ clone mẫu tối mới cần bật)"
     : v + "/100 — bớt ồm 150–500 Hz, thêm 3 kHz + dải cao"
-      + (v >= 50 ? ", có họa âm dải cao" : "") + (v === 80 ? " (mặc định)" : "")
+      + (v >= 50 ? ", có họa âm dải cao" : "")
       + " · đổi mức là bước ③ đọc lại toàn bộ câu";
   const veSang = () => {
     const v = +sKeo.value;
@@ -884,7 +925,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     doiSang();
   });
   document.getElementById("sanggiongReset").addEventListener("click", () => {
-    sKeo.value = 80;
+    sKeo.value = 0;
     doiSang();
   });
 
@@ -931,6 +972,33 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       }
     }
   };
+  // ── 🗣/🎙 Engine bước ③: ẩn/hiện khối VieNeu ↔ khối giọng mẫu; ô 🔊 VieNeu trỏ
+  // sang /nghe/vieneu?ten= nếu đã có bản nghe thử (data-nghe), không thì báo cách tạo.
+  const engR = [...document.querySelectorAll("#engineRow input[name=engine]")];
+  const vSel = document.getElementById("vieneuSel");
+  const veEngine = () => {
+    const omni = engR.some(r => r.checked && r.value === "omni");
+    document.getElementById("khoiVieneu").style.display = omni ? "none" : "";
+    document.getElementById("khoiClone").style.display = omni ? "" : "none";
+  };
+  const veVieneu = () => {
+    const nghe = document.getElementById("vNghe");
+    const trong = document.getElementById("vNgheTrong");
+    const o = vSel.options[vSel.selectedIndex];
+    nghe.pause();
+    if (o && o.dataset.nghe === "1") {
+      nghe.src = "/nghe/vieneu?ten=" + encodeURIComponent(vSel.value);
+      nghe.style.display = ""; trong.style.display = "none";
+    } else {
+      nghe.removeAttribute("src");
+      nghe.style.display = "none"; trong.style.display = "";
+    }
+  };
+  engR.forEach(r => r.addEventListener("change", () => { veEngine(); danhDauDoi(true); }));
+  vSel.addEventListener("change", () => { veVieneu(); danhDauDoi(true); });
+  veEngine();
+  veVieneu();
+
   gSao.addEventListener("click", () => {
     const v = gSel.value;
     if (!v) { nhan("Chọn một giọng trong danh sách rồi bấm ⭐ để ghim."); return; }

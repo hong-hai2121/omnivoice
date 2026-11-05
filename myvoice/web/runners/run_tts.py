@@ -8,6 +8,9 @@ amain_taogiong_gui nên kết quả không lệch với GUI.
     python run_tts.py --tts-json cfg.json [--input in.txt] [--output out.wav]
                       [--from-gemini] [--reuse] [--rebuild ngang|doc|tiktok]
                       [--episode 07]
+
+Mã thoát: 0 = xong · 77 = dừng có chủ ý · 2 = lỗi · 79 = LỖI GPU (hàng đợi tạm dừng) —
+cùng bộ mã với run_episode.py.
 """
 
 from __future__ import annotations
@@ -28,9 +31,28 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
         sys.path.insert(0, _p)
 
 import amain_taogiong_gui as gui                       # noqa: E402
-from run_episode import _Var, HeadlessApp, _setup_logging, STOP   # noqa: E402
+from run_episode import (_Var, HeadlessApp, _setup_logging, STOP,   # noqa: E402
+                         GPU_LOI, gpu_loi_cuoi)
 
 ERROR = 2
+
+
+def _ket_qua(ok, status) -> int:
+    """Mã thoát theo kết quả gui.run_tts (True = xong; False = nó đã ghi “Lỗi: …” rồi dừng).
+
+    Trước 05/11/2026 runner này bỏ qua giá trị trả về nên lượt hỏng vẫn in “✅ Xong.” và
+    thoát mã 0. Lỗi GPU thì trả GPU_LOI để hàng đợi tạm dừng (xem run_episode.py)."""
+    if ok:
+        if status.get():
+            logging.info(status.get())
+        logging.info("✅ Xong.")
+        return 0
+    ly_do = gpu_loi_cuoi()
+    if ly_do:
+        logging.error(f"⛔ LỖI GPU → dừng cả hàng đợi: {ly_do}")
+        return GPU_LOI
+    logging.error("❌ Tạo giọng/video không hoàn tất (xem dòng “Lỗi:” phía trên).")
+    return ERROR
 
 
 def _effect_path(ts: dict):
@@ -103,6 +125,7 @@ def main(argv=None) -> int:
         ngang_nguon_zoom=ts.get("ngang_nguon_zoom", 120),
         ngang_out=out_dir / "YOUTUBE.mp4",
         pitch=ts.get("pitch", 0.0),               # tông giọng (bán cung) áp lên audio gốc
+        chuan_am=ts.get("chuan_am", False),       # 🔉 nén + loudnorm −14 LUFS (mặc định tắt)
         fx=ts.get("fx"),                          # bộ lọc giọng (tiếng vang / thiếu niên)
         doc_speed=ts.get("doc_speed", 1.0), doc_percent=ts.get("doc_percent", 100),
         doc_from_ngang=ts.get("doc_from_ngang", False),
@@ -138,7 +161,7 @@ def main(argv=None) -> int:
                 logging.error(f"❌ Chưa có audio để dựng video: {output}")
                 return ERROR
             logging.info(f"🎬 Dựng lại video {kind} từ {output.name} (không chạy lại TTS).")
-            gui.run_tts(
+            ok = gui.run_tts(
                 "", None, [], str(output), progress, status, stub, stub, stub, pause,
                 video_only=True, reuse=True,
                 make_video=(kind == "ngang"),
@@ -170,7 +193,7 @@ def main(argv=None) -> int:
             except Exception as e:
                 logging.warning(f"⚠️ Không ghi được input_chia_cau.docx: {e}")
             logging.info(f"🎧 Tạo giọng {len(chunks)} đoạn → {output}")
-            gui.run_tts(
+            ok = gui.run_tts(
                 ts.get("mode", "clone"), ts.get("voice_param"), chunks, str(output),
                 progress, status, stub, stub, stub, pause,
                 reuse=args.reuse,
@@ -181,10 +204,7 @@ def main(argv=None) -> int:
                 make_sub=ts.get("make_sub", False),
                 make_sub_doc=ts.get("make_sub_doc", False),
                 **common)
-        if status.get():
-            logging.info(status.get())
-        logging.info("✅ Xong.")
-        return 0
+        return _ket_qua(ok, status)
     except Exception as e:
         logging.error(f"❌ Lỗi: {e}")
         logging.error(traceback.format_exc())

@@ -13,6 +13,18 @@ from unittest.mock import patch
 from myvoice.web import power
 
 
+# CHỐT AN TOÀN (05/11/2026 — user nhắc: thử phần tắt máy phải cẩn thận): tiến trình chạy
+# test KHÔNG BAO GIỜ được tắt máy / cho máy ngủ thật. Các test dưới chỉ gọi _tick() với
+# đồng hồ giả trên watcher không bật luồng canh, nhưng watcher toàn cục của power.py vẫn
+# sống trong tiến trình này — thay hẳn hai hàm phát lệnh bằng hàm ném lỗi, không gỡ.
+def _cam_lenh_that(*_a, **_k):
+    raise AssertionError("test không được phát lệnh tắt máy / cho máy ngủ thật")
+
+
+power.PowerWhenDone._shutdown_now = _cam_lenh_that
+power.PowerWhenDone._sleep_now = _cam_lenh_that
+
+
 def _lam_watcher() -> power.PowerWhenDone:
     # __init__ tự bật luồng nền canh hàng đợi — thử logic thì không cần, chặn lại.
     with patch.object(threading.Thread, "start"):

@@ -116,3 +116,9 @@ mt_cache/
 # Token Playwright Extension + profile Chrome của máy này (myvoice/TRINHDUYET)
 /myvoice/TRINHDUYET/cau_hinh.json
 /myvoice/TRINHDUYET/*.png
+
+# Kho VieNeu-TTS clone về để app Thử giọng dùng (voice/thu_giong.py, tab 🗣️) — là git repo RIÊNG
+# (nested) + .venv vài GB do `uv sync` tạo, KHÔNG đưa vào repo này. Lấy lại:
+#   cd myvoice/voice && git clone https://github.com/pnnbao97/VieNeu-TTS.git
+# rồi bấm ⬇ Cài GPU/CPU trong tab ⚙️ của app (hoặc `uv sync --extra cuda` trong kho).
+/myvoice/voice/VieNeu-TTS/

@@ -14,6 +14,8 @@ Mã thoát: 0 = xong · 77 = dừng có chủ ý (bước chặn, vd dịch chư
 78 = SEO hỏng nhưng không có bước dựng video trong lần gọi này (chuỗi còn bước dựng
 video phía sau thì hàng đợi đi tiếp). SEO hỏng mà lần gọi CÓ dựng video → chạy hết,
 trả 77 để hàng đợi KHÔNG nối việc đăng YouTube / lên lịch Facebook.
+79 = LỖI GPU (GpuLoi: không có CUDA, thiếu VRAM, NVENC chết…) — tập sau cũng sẽ dính
+nên hàng đợi thấy mã này là TẠM DỪNG cả hàng đợi, không chạy tiếp (05/11/2026).
 """
 
 from __future__ import annotations
@@ -41,6 +43,8 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
 
 import amain_taogiong_gui as gui                # noqa: E402
+from gpu_batbuoc import (GpuLoi, MA_THOAT_GPU,  # noqa: E402
+                         loi_cuoi as gpu_loi_cuoi)
 from myvoice.web import core                    # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
@@ -48,6 +52,9 @@ from myvoice.web import core                    # noqa: E402
 # Đổi số này thì đổi cả STOP_CODE trong web/steps.py.
 STOP = 77       # dừng có chủ ý — không phải sự cố
 ERROR = 2
+# LỖI GPU (05/11/2026): tập sau cũng sẽ dính → hàng đợi tạm dừng thay vì chạy tiếp.
+# Một nguồn duy nhất ở scripts/gpu_batbuoc.py (web/steps.py lấy cùng hằng đó).
+GPU_LOI = MA_THOAT_GPU
 # SEO hỏng (03/10/2026): KHÔNG chặn cả tập nữa — mẻ chạy đêm 03/10 mất trọn 4 tập vì
 # Gemini không nhận tin lúc 04:23. Bước SEO/thumbnail trả mã này, main() ghi nhớ rồi
 # đi tiếp; tạo giọng + video ngang vẫn làm, video dọc/TikTok/Short (in tiêu đề SEO)
@@ -432,7 +439,8 @@ def step_tts(app, folder: Path, episode: str, state: dict, source: str = "") -> 
     _close_driver(state)          # nhả RAM Firefox trước khi render video
     if not app._batch_run_tts(folder, ts, episode):
         logging.error("❌ Tạo giọng/video không hoàn tất.")
-        return ERROR
+        # run_tts nuốt lỗi rồi trả False; nó ghi lại nếu lỗi đó là lỗi GPU (gpu_batbuoc).
+        return GPU_LOI if gpu_loi_cuoi() else ERROR
     if not seo_ok:
         if hoan and not core._doc_video_exists(folder):
             try:
@@ -533,6 +541,7 @@ def main(argv=None) -> int:
 
     code = 0
     seo_hong = False
+    ly_do_gpu = ""
     try:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
@@ -562,6 +571,11 @@ def main(argv=None) -> int:
                 seo_hong, code = True, 0
             if code != 0:
                 break
+    except GpuLoi as e:
+        # Bước ném thẳng GpuLoi (nhận diện bằng Whisper thiếu CUDA…): cũng là lỗi mà
+        # tập sau sẽ dính → mã dừng-cả-hàng-đợi, không phải mã lỗi thường.
+        ly_do_gpu = str(e)
+        code = GPU_LOI
     except Exception as e:
         logging.error(f"❌ Lỗi: {e}")
         logging.error(traceback.format_exc())
@@ -569,6 +583,12 @@ def main(argv=None) -> int:
     finally:
         _close_driver(state)
 
+    if code == GPU_LOI:
+        # In SAU CÙNG (sau cả dòng đóng phiên Gemini): hàng đợi lấy dòng ⛔ cuối của bước
+        # làm lý do hiện trên trang web.
+        logging.error(f"⛔ LỖI GPU ở tập {episode} → dừng cả hàng đợi: "
+                      f"{ly_do_gpu or gpu_loi_cuoi() or 'xem dòng “Lỗi:” phía trên'}")
+        return GPU_LOI
     if code == 0 and seo_hong:
         if "tts" in steps:
             # Mã DỪNG để hàng đợi web KHÔNG gọi on_success (nối việc đăng YouTube +

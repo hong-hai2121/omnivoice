@@ -19,7 +19,7 @@ from omnivoice.utils.common import get_best_device
 
 # ── CẤU HÌNH ────────────────────────────────────────────────────────────────
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
-REF_AUDIO  = str(BASE_DIR / "voice" / "ngochuyen.mp3")
+REF_AUDIO  = str(BASE_DIR / "voice" / "giong_mau" / "ngochuyen.mp3")
 TEXT_FILE  = str(BASE_DIR / "kịch_bản" / "input.docx")   # tập cũ còn input.txt vẫn đọc được
 OUTPUT     = str(Path.home() / "Downloads" / "output.wav")
 

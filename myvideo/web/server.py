@@ -62,6 +62,13 @@ import kieusub                       # noqa: E402
 # bảng — dich_gemini (bước ② + SEO) tự đọc từ đó, đổi ở web nào cũng là một.
 import gemini_backend                # noqa: E402
 import hieuung_giong as hu          # noqa: E402  (🔆 sáng giọng: bản nghe thử đã EQ)
+# 04/11/2026: chế độ 🗣 VieNeu ở khối ③ — danh sách 25 giọng dựng sẵn + trạng thái cài đặt
+# lấy từ client của myvoice (không import gói vieneu; worker bật lúc bước ③ chạy).
+_MYVOICE_VOICE = str(REPO_ROOT / "myvoice" / "voice")
+if _MYVOICE_VOICE not in sys.path:
+    sys.path.insert(0, _MYVOICE_VOICE)
+import vieneu_client as vn          # noqa: E402
+VIENEU_NGHE_DIR = REPO_ROOT / "myvoice" / "voice" / "_thu_giong" / "vieneu"   # bản nghe thử app Thử giọng
 OUTPUT_DIR = st.OUTPUT_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
 SETTINGS_FILE = WEB_DIR / "web_settings.json"
@@ -94,6 +101,10 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 maxchars_en="42", ngucanh=True, gopcau=True,
                 batchchars="1200", offline=False,
                 voice="", voice_stars=[], subchars="50",
+                # 04/11/2026: ENGINE bước ③ — "vieneu" (VieNeu-TTS giọng dựng sẵn, mặc định
+                # theo chốt của user; nhanh gấp 5–10 lần clone, 48 kHz) | "omni" (OmniVoice
+                # nhái giọng mẫu `voice`). giong_vieneu = 1 trong vn.GIONG_DUNG_SAN.
+                engine="vieneu", giong_vieneu="Ngọc Huyền",
                 kieusub="hopbo", subfont="",
                 # Đè lên kiểu đã chọn (rỗng = giữ của kiểu): màu chữ · màu viền
                 # · cỡ chữ (% cỡ gốc) · vị trí (% chiều cao từ đáy; rỗng = tự đặt).
@@ -127,9 +138,14 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 #   form chính /luu & /chay — 24/10 dời từ tab 🔊 về đây vì nó là cài
                 #   đặt của bước TẠO GIỌNG): 0–100, trị giọng clone "ồm" — EQ giọng
                 #   mẫu lúc dựng prompt + EQ audio tổng (taogiong_srt.py --sang).
-                #   Mặc định 80 (user chốt sau khi nghe demo); đổi mức là bước ③ đọc
-                #   lại toàn bộ câu. Ô 🔊 Nghe thử khối ③ phát bản mẫu đã EQ theo mức.
-                sanggiong="80",
+                #   Mặc định 0 từ 05/11/2026 (trước 80 — user "tắt hết": engine mặc định
+                #   nay là VieNeu giọng dựng sẵn đã sáng); đổi mức là bước ③ đọc lại toàn
+                #   bộ câu (chỉ clone). Ô 🔊 Nghe thử khối ③ phát bản mẫu đã EQ theo mức.
+                sanggiong="0",
+                # • 🔉 CHUẨN ÂM giọng đọc (05/11/2026, mặc định TẮT theo chốt của user): bật =
+                #   bước ③ nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS, bước ④ loudnorm lại
+                #   giọng (−14, hoặc −23 nếu ttsnorm); tắt = giữ mức gốc của giọng ở cả hai bước.
+                chuanam=False,
                 # • 🎵 TÔNG GIỌNG (bán cung) + 🔔 TIẾNG VANG (trường độ / cường độ) +
                 #   🧒 THIẾU NIÊN — mang từ myvoice sang 24/10/2026, cùng tên khoá bên
                 #   đó, cũng ở khối ③; áp lên audio tổng bước ③ (taogiong_srt.py
@@ -590,6 +606,12 @@ async def index(request: Request):
         "voices": [{"ten": v, "i": tt[v], "sao": v in stars}
                    for v in stars + [v for v in vs if v not in stars]],
         "voice_stars": stars,
+        # 🗣 VieNeu: 25 giọng dựng sẵn; giọng nào đã có bản nghe thử (app Thử giọng
+        # tab 🗣️ lưu ở myvoice/voice/_thu_giong/vieneu/<tên>.wav) thì ô 🔊 phát được.
+        "vieneu_giong": list(vn.GIONG_DUNG_SAN),
+        "vieneu_nghe": sorted(p.stem for p in VIENEU_NGHE_DIR.glob("*.wav")
+                              if p.stem in vn.GIONG_DUNG_SAN) if VIENEU_NGHE_DIR.is_dir() else [],
+        "vieneu_da_cai": vn.trang_thai()["da_cai"],
         "logos": kh.logos(kenh_ht),
         "logo_chon": logo_ht.name if logo_ht else "",
         # 🎵 Kho nhạc nền myvideo/nhac — cho ô chọn ở khối ④.
@@ -908,8 +930,12 @@ def _settings_from_form(form) -> dict:
         gopcau=bool(g("gopcau")),
         offline=bool(g("offline")),
         voice=g("voice") or "",
+        # 🗣/🎙 engine bước ③ + giọng VieNeu (ô vắng ở trang cũ → mặc định vieneu / Ngọc Huyền).
+        engine="omni" if g("engine") == "omni" else "vieneu",
+        giong_vieneu=(g("giong_vieneu") if g("giong_vieneu") in vn.GIONG_DUNG_SAN else "Ngọc Huyền"),
         # 🔆 Sáng giọng (khối ③): 0–100, mặc định 80; ô vắng (trang cũ còn mở) → 80.
-        sanggiong=_clamp(g("sanggiong"), 0, 100, 80),
+        sanggiong=_clamp(g("sanggiong"), 0, 100, 0),
+        chuanam=bool(g("chuanam")),
         # 🎵🔔🧒 (khối ③, như myvoice): tông kẹp ±6 bán cung làm tròn 0,5; bộ lọc 0–100.
         pitch=f"{hu.parse_pitch(g('pitch'), 0.0):.1f}",
         vang_truong_do=_clamp(g("vang_truong_do"), 0, 100, 0),
@@ -1372,14 +1398,27 @@ def _nghe_thu_giong(src: Path, sang) -> Path:
 
 @app.get("/nghe/giong")
 async def nghe_giong(ten: str = "", sang: str = "0"):
-    """Stream file giọng mẫu trong myvideo/voice — tên phải có trong kho.
+    """Stream file giọng mẫu trong kho (myvoice/voice/giong_mau, kho cũ myvideo/voice) — tên phải có trong kho.
     sang > 0: bản đã EQ 🔆 sáng giọng ở mức đó (xem _nghe_thu_giong)."""
     src = st.voice_path(ten)
     if src is None:
-        return JSONResponse({"error": "không có giọng này trong myvoice/voice hay myvideo/voice"},
+        return JSONResponse({"error": "không có giọng này trong myvoice/voice/giong_mau hay myvideo/voice"},
                             status_code=404)
     f = _nghe_thu_giong(src, sang)
     return FileResponse(str(f), media_type="audio/wav" if f.suffix == ".wav" else None)
+
+
+@app.get("/nghe/vieneu")
+async def nghe_vieneu(ten: str = ""):
+    """Bản nghe thử giọng dựng sẵn VieNeu `ten` — file app Thử giọng (tab 🗣️ → 🎧 Tạo & nghe)
+    đã lưu ở myvoice/voice/_thu_giong/vieneu/<tên>.wav. Chưa có → 404 (trang báo cách tạo)."""
+    if ten not in vn.GIONG_DUNG_SAN:
+        return JSONResponse({"error": f"không có giọng VieNeu '{ten}'"}, status_code=404)
+    f = VIENEU_NGHE_DIR / f"{ten}.wav"
+    if not f.is_file():
+        return JSONResponse({"error": "chưa có bản nghe thử — mở app Thử giọng, tab 🗣️, "
+                                      "tab con 🎧, chọn giọng này rồi bấm Tạo & nghe"}, status_code=404)
+    return FileResponse(str(f), media_type="audio/wav")
 
 
 @app.get("/kenh/logo")
@@ -1580,6 +1619,12 @@ def main() -> None:
         print(_bao_doi_cong(uu_tien, port), flush=True)
 
     OUTPUT_DIR.mkdir(exist_ok=True)
+    # Chép nhật ký hàng đợi ra tệp myvideo/web/nhatky/hangdoi_<ngày>.log (05/11/2026, cùng
+    # cơ chế với myvoice — JobRunner dùng chung): server này thường chạy ẩn (pythonw), xong
+    # mẻ còn tự ngủ/tắt máy, nên tệp là chỗ duy nhất đọc lại được vì sao một việc dừng.
+    # Bật ở main() chứ không phải lúc import: test import server thì không sinh tệp.
+    from myvoice.web.jobs import bat_nhat_ky_tep
+    bat_nhat_ky_tep(WEB_DIR / "nhatky")
     # Ảnh xem trước kiểu phụ đề còn thiếu (kiểu mới thêm) → tự vẽ nền sau,
     # không chặn server; vẽ xong tải lại trang là thấy.
     threading.Thread(target=kieusub.taomau_thieu, daemon=True).start()
