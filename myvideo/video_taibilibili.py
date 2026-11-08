@@ -17,6 +17,9 @@ ffmpeg, tự thử lại khi rớt mạng — toàn việc app đã làm tốt, 
   Video không có đúng mức đó thì lấy mức gần nhất KHÔNG VƯỢT yêu cầu (chon_muc).
 - App chưa mở thì tự mở (pythonw trong .venv của app) rồi đợi MCP lên.
 - File --out đã có thì bỏ qua, coi như xong — chạy lại vô hại.
+- Đợt tải xong, hàng đợi myvoice gọi `--dong-app` (08/11/2026, user yêu cầu): đóng app
+  NẾU chính script này đã mở nó (dấu PID ở %TEMP%\\omnivoice_bili23_tu_mo.json); app
+  người dùng mở sẵn từ trước, hay PID đã thành tiến trình khác, thì để nguyên.
 
 Dùng tay:  python myvideo/video_taibilibili.py <link> --out <file.mp4>
            thêm --chat-luong 360P để tải bản nhẹ;
@@ -30,6 +33,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -39,6 +43,12 @@ from pathlib import Path
 # biến môi trường thay vì sửa code.
 BBDOWN_DIR = Path(os.environ.get("OMNI_BBDOWN_DIR", r"D:\Python\BBDown"))
 CFG_PATH = Path(os.environ.get("APPDATA", "")) / "Bili23 Downloader" / "config.json"
+# Dấu "app do script này tự mở" (08/11/2026): mo_app() ghi PID + đường dẫn pythonw của app
+# vào đây; cuối đợt tải, hàng đợi gọi `--dong-app` → chỉ đóng đúng tiến trình đó. Để ở
+# %TEMP% vì myvoice lẫn myvideo cùng dùng một dấu, và khởi động lại máy là dấu cũ vô nghĩa.
+DAU_TU_MO = Path(os.environ.get("OMNI_BILI23_DAU", "")
+                 or Path(tempfile.gettempdir()) / "omnivoice_bili23_tu_mo.json")
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 # Trạng thái task của app (DownloadStatus bên đó, đã hạ chữ) → nhãn tiếng Việt.
 TRANG_THAI = {
@@ -49,6 +59,10 @@ TRANG_THAI = {
     "failed": "TẢI HỎNG", "ffmpeg_failed": "FFMPEG HỎNG",
 }
 HONG = {"failed", "ffmpeg_failed"}
+# Task CÒN VIỆC (đang tải/ghép…) — `--dong-app` thấy còn thì chưa đóng app (task có thể của
+# myvideo hay của người dùng tạo tay). paused/failed/completed không tính.
+DANG_LAM = {"queued", "parsing", "downloading", "ffmpeg_queued", "merging", "converting",
+            "additional_processing"}
 
 # Mức chất lượng video của app (tên trong video_quality_map bên đó → mã qn của
 # Bilibili; mã lớn hơn = nét hơn). Dùng để xếp hạng khi video thiếu mức được xin.
@@ -166,10 +180,106 @@ def mo_app() -> None:
         raise ThatBai(f"Không thấy app Bili23 ở {BBDOWN_DIR} (đặt OMNI_BBDOWN_DIR "
                       "nếu để chỗ khác) — mở app bằng tay rồi chạy lại.")
     print("🚀 App Bili23 chưa mở — đang mở giúp…", flush=True)
-    subprocess.Popen([str(pyw), str(main)], cwd=str(BBDOWN_DIR),
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL,
-                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    proc = subprocess.Popen([str(pyw), str(main)], cwd=str(BBDOWN_DIR),
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    _ghi_dau_tu_mo(proc.pid, pyw)
+
+
+def _ghi_dau_tu_mo(pid: int, exe: Path) -> None:
+    """Ghi dấu "app do mình mở" (PID + exe) cho `--dong-app` đọc lại ở cuối đợt tải.
+    Không ghi được thì chỉ mất tính năng tự đóng — việc tải vẫn chạy."""
+    try:
+        DAU_TU_MO.write_text(json.dumps({"pid": int(pid), "exe": str(exe),
+                                         "luc": time.strftime("%Y-%m-%d %H:%M:%S")}),
+                             encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _xoa_dau_tu_mo() -> None:
+    try:
+        DAU_TU_MO.unlink()
+    except OSError:
+        pass
+
+
+def _duong_dan_exe(pid: int) -> str:
+    """Đường dẫn exe của tiến trình `pid` — "" nếu đã chết hoặc không xem được (Windows API,
+    không cần psutil). Dùng để chắc PID trong dấu VẪN là pythonw của app, chưa bị cấp lại."""
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(0x1000, False, int(pid))        # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        n = wintypes.DWORD(len(buf))
+        if not k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+            return ""
+        return buf.value
+    finally:
+        k32.CloseHandle(h)
+
+
+def _taskkill(pid: int, ep: bool) -> None:
+    """taskkill /T luôn: pythonw của .venv chỉ là bộ phóng, cửa sổ app nằm ở pythonw CON
+    (bản gốc), nên phải đi cả cây. Không /F = gửi WM_CLOSE (app tự lưu rồi thoát);
+    ep=True = thêm /F ép diệt (ffmpeg con nếu còn)."""
+    cmd = ["taskkill", "/PID", str(pid), "/T"] + (["/F"] if ep else [])
+    try:
+        subprocess.run(cmd, capture_output=True, creationflags=CREATE_NO_WINDOW)
+    except Exception:
+        pass
+
+
+def _task_dang_lam():
+    """Số task của app CÒN VIỆC (list_tasks state=downloading, lọc theo DANG_LAM) — None nếu
+    không hỏi được MCP (app treo/tắt MCP: đằng nào cũng là app của mình, cứ đóng)."""
+    try:
+        url, token = doc_cau_hinh()
+        kq = goi_tool(url, token, "list_tasks", {"state": "downloading"}, timeout=20.0)
+        return sum(1 for t in (kq.get("tasks") or [])
+                   if str(t.get("status", "")).lower() in DANG_LAM)
+    except Exception:       # noqa: BLE001
+        return None
+
+
+def dong_app_neu_tu_mo(cho: float = 8.0) -> str:
+    """Đóng app Bili23 NẾU chính script này đã mở nó (có dấu DAU_TU_MO và PID vẫn là pythonw
+    của app) → một dòng kể đã làm gì. App người dùng mở sẵn (không có dấu) hay PID đã thành
+    tiến trình khác thì để nguyên; app còn task đang tải (myvideo / người dùng tạo tay) thì
+    CHƯA đóng, giữ dấu cho lượt sau. Không ném lỗi: dọn dẹp không được làm hỏng hàng đợi."""
+    try:
+        dau = json.loads(DAU_TU_MO.read_text(encoding="utf-8"))
+        pid, exe = int(dau["pid"]), str(dau.get("exe", ""))
+    except (OSError, ValueError, KeyError, TypeError):
+        return "ℹ️ App Bili23 không do hàng đợi tự mở (hoặc đã đóng) → để nguyên."
+    dang_chay = _duong_dan_exe(pid)
+    if not dang_chay:
+        _xoa_dau_tu_mo()
+        return f"ℹ️ App Bili23 (PID {pid}) đã đóng từ trước → không phải làm gì."
+    if os.path.normcase(dang_chay) != os.path.normcase(exe):
+        _xoa_dau_tu_mo()
+        return (f"ℹ️ PID {pid} giờ là tiến trình khác ({Path(dang_chay).name}), không phải "
+                "app Bili23 do hàng đợi mở → để nguyên.")
+    con = _task_dang_lam()
+    if con:
+        return (f"⏳ App Bili23 còn {con} task đang tải (của myvideo hay bạn tạo tay) → chưa "
+                "đóng, lượt tải sau sẽ đóng.")
+    _xoa_dau_tu_mo()
+    _taskkill(pid, ep=False)                 # đóng êm trước
+    moc = time.monotonic() + cho
+    while time.monotonic() < moc and _duong_dan_exe(pid):
+        time.sleep(0.5)
+    if _duong_dan_exe(pid):                  # còn sống (vd thu vào khay) → ép
+        _taskkill(pid, ep=True)
+        return f"🧹 Đã đóng app Bili23 (PID {pid}, phải ép) — app do bộ tải tự mở, tải xong thì dọn."
+    return f"🧹 Đã đóng app Bili23 (PID {pid}) — app do bộ tải tự mở, tải xong thì dọn."
 
 
 def chon_tap(kq: dict) -> tuple[str, str]:
@@ -194,10 +304,13 @@ def chon_tap(kq: dict) -> tuple[str, str]:
                   "Bilibili rồi copy link có ?p=…).")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Tải video Bilibili qua app Bili23 Downloader (MCP).")
-    ap.add_argument("url", help="Link bilibili.com / b23.tv (hoặc mã BV/av trần)")
-    ap.add_argument("--out", required=True, help="File .mp4 đích (đường dẫn đầy đủ)")
+    ap.add_argument("url", nargs="?", help="Link bilibili.com / b23.tv (hoặc mã BV/av trần)")
+    ap.add_argument("--out", help="File .mp4 đích (đường dẫn đầy đủ)")
+    ap.add_argument("--dong-app", action="store_true",
+                    help="Không tải gì: đóng app Bili23 nếu chính script này đã mở nó (cuối "
+                         "đợt tải của hàng đợi), rồi thoát")
     ap.add_argument("--timeout", type=float, default=14400,
                     help="Đợi tải tối đa bấy nhiêu giây (mặc định 14400 = 4 giờ)")
     ap.add_argument("--cho-app", type=float, default=90,
@@ -207,7 +320,12 @@ def main() -> int:
     ap.add_argument("--chat-luong", default="auto",
                     help="Mức video: auto (mặc định = cao nhất tải được), 1080P, 720P, "
                          "480P, 360P… — chỉ cần tiếng thì 360P là đủ")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    if args.dong_app:
+        print(dong_app_neu_tu_mo(), flush=True)
+        return 0
+    if not args.url or not args.out:
+        ap.error("cần <link> và --out <file.mp4> (hoặc chỉ --dong-app)")
     yeu_cau = chuan_chat_luong(args.chat_luong)
 
     out = Path(args.out)

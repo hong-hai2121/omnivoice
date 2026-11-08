@@ -1,26 +1,23 @@
 """
-Dựng video nền theo độ dài audio rồi lồng vào bộ khung trang trí nhiều lớp.
+Dựng video NGANG 1920×1080 theo độ dài audio: ghép clip kho (hoặc video nguồn) phủ KÍN
+màn hình, chỉ dán thêm logo Mimi audio nhỏ ở góc trên phải.
 
 Quy trình:
   - Lấy thời lượng từ file audio (kịch_bản/*.wav) làm thời lượng đích.
   - Ghép RANDOM các video trong videongang/ (lặp lại tới khi đủ thời lượng audio).
-  - Lồng video đã ghép vào khung (cắt bo góc theo khung1).
-  - Mux audio gốc (wav) vào, cắt video đúng bằng độ dài audio (-shortest).
+  - Phóng to ZOOM rồi cắt về 1920×1080 (phần dư cắt ở mép trên/dưới theo CAT_TREN để bỏ
+    phụ đề + watermark cháy sẵn trong clip kho), dán logo, mux audio (-t = độ dài audio).
 
-Thứ tự lớp (từ dưới lên trên):
-  1. Khung0*.png      -> nền dưới cùng; NHIỀU KIỂU (mèo, tông hồng), chọn ngẫu nhiên mỗi lần
-                         dựng — vẽ thêm kiểu bằng scripts/video_khung0_tao.py (cùng bố cục)
-  2. video + hiệu ứng -> hiệu ứng phủ THẲNG vào video ghép, rồi cùng đưa vào
-                         khung1 và cắt bo góc (dư ra ngoài khung1 bị cắt bỏ)
-  3. khung1*.png      -> viền khung video (bo góc); nhiều màu, chọn ngẫu nhiên mỗi lần dựng
-  4. khung2.png       -> lớp trang trí trên cùng (chữ/hoa văn), KHÔNG in sẵn logo;
-                         logo Mimi audio cùng màu viền được dán vào ô K2_LOGO_BOX
+Bố cục "Ngang A" (08/11/2026, user chọn sau khi xem mockup): bỏ hẳn bộ khung cũ (nền
+Khung0 + viền khung1 + lớp trang trí khung2 che mất ~52 % màn hình, video chỉ còn 48 %).
+Các PNG trong Backbround/ vẫn để nguyên nhưng không dùng khi dựng nữa.
 
 MODE:
-  - "fit"  : hiện trọn video (có thể có dải nền trên/dưới) — không mất hình.
-  - "fill" : phóng to + cắt cho video phủ kín vùng trong khung.
+  - "fill" : phóng to + cắt cho video phủ kín màn hình (mặc định).
+  - "fit"  : hiện trọn video, dải đen trên/dưới nếu khác tỉ lệ.
 
-Đầu ra:  kịch_bản/<tên_audio>_videodone.mp4
+Đầu ra:  kịch_bản/<tên_audio>_videodone.mp4 (+ YOUTUBE_goc.mp4 nếu goc_out: cùng hình,
+         CHƯA dán logo — bản dọc dùng lại, xem video_doc_khung.py)
 
 Cách dùng:
     python video_khung.py
@@ -55,26 +52,25 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
-BG_DIR     = BASE_DIR / "Backbround"
-KHUNG0     = BG_DIR / "Khung0.png"     # nền dưới cùng — bản vẽ tay gốc, dự phòng
-# Nền có NHIỀU KIỂU: Khung0.png (gốc) + "Khung0 chấm bi.png", "Khung0 ca rô.png", ... do
-# scripts/video_khung0_tao.py vẽ (08/09/2026). Mỗi lần dựng chọn NGẪU NHIÊN một nền
-# (random_bg); thả thêm file "Khung0 <tên>.png" 1920×1080 CÙNG BỐ CỤC là được chọn theo.
-KHUNG0_PATTERN = "Khung0*.png"
-KHUNG1     = BG_DIR / "khung1.png"     # viền khung video (bo góc) — bản hồng gốc, dự phòng
-# Viền khung có NHIỀU màu: khung1.png (hồng), khung1 xanh.png, khung1 tím.png, khung1 đỏ.png ...
-# Mỗi lần dựng video chọn NGẪU NHIÊN một viền (random_frame); thêm màu chỉ cần thả file
-# "khung1 <màu>.png" CÙNG HÌNH DẠNG (vùng trong dò theo kênh alpha, không theo màu).
-KHUNG1_PATTERN = "khung1*.png"
-KHUNG2     = BG_DIR / "khung2.png"     # trang trí trên cùng (KHÔNG còn in sẵn logo)
-# Logo Mimi audio: dùng chung kho logo của thumbnail (logo.png hồng, logo xanh.png, ...).
-# khung2.png đã bỏ logo in sẵn; mỗi lần dựng, logo CÙNG MÀU viền khung1 (logo_for_frame)
-# được dán vào K2_LOGO_BOX — đúng ô logo từng chiếm trong khung2 cũ (đo bằng cách so
-# khung2 cũ với khung2 đã bỏ logo). Logo nằm DƯỚI khung2 để nút Subscribe đè lên như gốc.
+BG_DIR     = BASE_DIR / "Backbround"   # bộ khung CŨ (Khung0/khung1/khung2) — không dùng khi dựng nữa
+# Logo Mimi audio: dùng chung kho logo của thumbnail (logo.png hồng, logo xanh.png, logo
+# tím.png, logo đỏ.png). Mỗi lần dựng chọn NGẪU NHIÊN một màu (random_logo); tên logo ghi
+# vào YOUTUBE_goc.json để bản dọc dán logo cùng màu.
 LOGO_DIR   = BASE_DIR / "YOUTUBE" / "thumbnail"
-K2_LOGO_BOX = (0, 346, 348, 690)
+LOGO_PATTERN = "logo*.png"
 VIDEO_DIR  = BASE_DIR / "videongang"   # kho video ngang để ghép random
 SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
+
+# Khung hình xuất cố định 1920×1080 (trước lấy theo kích thước PNG khung).
+CANVAS_W, CANVAS_H = 1920, 1080
+# Logo góc trên phải: cao LOGO_CAO px, cách mép trên/phải LOGO_LE px (tính theo 1080p).
+LOGO_CAO = 150
+LOGO_LE  = 36
+
+# Bộ khung cũ — chỉ còn video_khung0_tao.py (vẽ nền Khung0) tham chiếu để ghép ảnh thử.
+KHUNG1 = BG_DIR / "khung1.png"
+KHUNG2 = BG_DIR / "khung2.png"
+K2_LOGO_BOX = (0, 346, 348, 690)
 
 # GPU (NVIDIA NVENC) BẮT BUỘC khi dựng video (27/10/2026): NVENC lỗi hay ffmpeg không
 # có h264_nvenc thì ném GpuLoi — báo lỗi rồi DỪNG, không âm thầm rớt về CPU (libx264)
@@ -83,19 +79,32 @@ SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 # lần mà không ai hay. USE_GPU=False mới là CHỦ Ý dùng CPU (xem nvenc_batbuoc).
 USE_GPU = True
 
-# Chiều cao thấp nhất của video xuất. Nếu bộ khung PNG bị thay bằng bản 720p,
-# video vẫn được render lại tối thiểu 1080p thay vì hạ theo kích thước khung.
-MIN_OUTPUT_HEIGHT = 1080
-# Hạ CQ/CRF để ưu tiên chi tiết sau khi ghép khung. File xuất sẽ lớn hơn và
-# dựng chậm hơn một chút so với cấu hình mặc định trước đây (CQ 19 / CRF 18).
+# Hạ CQ/CRF để ưu tiên chi tiết. File xuất sẽ lớn hơn và dựng chậm hơn một chút so với
+# cấu hình mặc định trước đây (CQ 19 / CRF 18).
 NVENC_CQ = 16
 X264_CRF = 16
 
 MODE  = "fill"      # "fit" hoặc "fill"
-INSET = 6           # thu vào trong vài px để không đè lên viền
-ZOOM  = 1.25        # phóng to NỘI DUNG video bên trong vùng (1.0 = vừa khít, 1.25 = 125%)
-OVERSCAN = 10       # nới VÙNG video ra ngoài N px mỗi cạnh (theo px của khung) để video
-                    # luồn xuống dưới viền khung1 — khử viền đen quanh video
+# Clip kho videongang/ (và video tải xuống của tập) là video Trung Quốc: PHỤ ĐỀ cháy sẵn ở
+# mép dưới (≈ 89–97 % chiều cao) và watermark bilibili góc trên (≈ 1–7 %, trái hoặc phải vì có
+# clip lật gương). Ô ✂ "Che chữ Trung" (che_chu, mặc định TẮT — user chốt 08/11/2026 "không
+# cần che… mặc định không check"): BẬT → CẮT BỎ mép trên CAT_TREN_MIN + mép dưới CAT_DUOI_MIN
+# (tỉ lệ chiều cao clip), phần thiếu lót DẢI ĐEN trên/dưới (letterbox); TẮT → giữ nguyên khung
+# hình gốc. Không phóng to ở cả hai: clip kho vốn là video điện thoại đã nén lại, phóng 1,27–1,3×
+# để phủ kín màn hình là thấy mờ (user chê). Zoom chỉ còn ở ô 🎞 video nguồn (người dùng tự
+# chọn; phóng bằng lanczos + làm nét nhẹ LAM_NET); zoom ≥ ZOOM_MIN ≈ 1,27 thì hết dải đen.
+# Đo 08/11/2026 trên 16 clip mẫu của 3 kho (nauan / vlog / thiennhien); bản khung cũ dùng
+# ZOOM 1.25 cắt giữa, viền chấm khung1 che nốt vệt chữ.
+CAT_TREN_MIN = 0.08
+CAT_DUOI_MIN = 0.13
+ZOOM_MIN = 1.0 / (1.0 - CAT_TREN_MIN - CAT_DUOI_MIN)       # mức phóng đủ che không cần dải đen
+CAT_TREN = CAT_TREN_MIN / (CAT_TREN_MIN + CAT_DUOI_MIN)   # phần dư cắt ở mép trên (≈ 38 %)
+ZOOM  = 1.0            # kho clip: KHÔNG phóng (1:1) → dải đen ≈ 113 px mỗi đầu ở 1080p
+LAM_NET = 0.7          # unsharp luma amount khi có phóng (0 = tắt); 1:1 không làm nét
+# Logo: nằm gọn TRONG dải đen dưới (bên phải) khi dải đủ cao (≥ LOGO_THANH_MIN px) để không
+# che hình; dải thấp hơn (có phóng) thì về góc trên phải như bố cục không dải.
+LOGO_THANH_MIN = 90
+LOGO_THANH_LE = 8      # lề trên/dưới của logo trong dải đen
 # 🎞 Video nguồn (24/10/2026, build_video(source_video=…)): MỘT video — video tải
 # xuống của tập — thay kho clip. Thời lượng được kéo/nén (setpts) cho khớp audio vì
 # lời đọc là bản dịch của chính video đó; kẹp trong [KEO_MIN, KEO_MAX] để hình không
@@ -124,28 +133,6 @@ def _run(cmd, **kw):
     kw.setdefault("encoding", "utf-8")
     kw.setdefault("errors", "replace")
     return subprocess.run(cmd, creationflags=CREATE_NO_WINDOW, **kw)
-
-
-def _even(value: float) -> int:
-    """Kích thước video phải chia hết cho 2 để mã hóa yuv420p."""
-    return max(2, int(round(value / 2.0)) * 2)
-
-
-def output_canvas_size(width: int, height: int) -> tuple[int, int]:
-    """Trả về canvas giữ tỷ lệ, cao ít nhất MIN_OUTPUT_HEIGHT."""
-    scale = max(1.0, MIN_OUTPUT_HEIGHT / height)
-    return _even(width * scale), _even(height * scale)
-
-
-def scale_box(x: int, y: int, w: int, h: int,
-              source_w: int, source_h: int,
-              target_w: int, target_h: int) -> tuple[int, int, int, int]:
-    """Scale tọa độ vùng trong của khung mà không làm lệch mép."""
-    left = round(x * target_w / source_w)
-    top = round(y * target_h / source_h)
-    right = round((x + w) * target_w / source_w)
-    bottom = round((y + h) * target_h / source_h)
-    return left, top, right - left, bottom - top
 
 
 _nvenc_cached: bool | None = None
@@ -445,36 +432,77 @@ def build_playlist(videos, durations, target):
     return seq, total
 
 
-def list_frames() -> list[Path]:
-    """Liệt kê các viền khung video (khung1.png, khung1 xanh.png, ...) theo tên."""
-    return sorted(BG_DIR.glob(KHUNG1_PATTERN), key=lambda p: p.name.casefold())
+def loc_phu_kin(cw: int, ch: int, zoom: float, che: bool = False) -> tuple[str, float, int]:
+    """Chuỗi filter ffmpeg đặt video vào khung cw×ch KHÔNG phóng quá `zoom` (1.0 = giữ 1:1):
+    phóng `zoom` lần (lanczos + làm nét nhẹ nếu > 1) → che=True thì bỏ mép trên CAT_TREN_MIN,
+    mép dưới CAT_DUOI_MIN (watermark + phụ đề cháy sẵn; phần dư khi phóng chia CAT_TREN ở
+    trên), che=False thì không cắt mép (phần dư khi phóng cắt giữa) → ngang cắt giữa cho vừa
+    cw → phần thiếu lót dải đen trên/dưới (pad). Phóng ≥ ZOOM_MIN (che) hay ≥ 1 (không che)
+    thì vừa khít, hết dải đen. Trả về (filter, zoom thực, chiều cao dải đen mỗi đầu ≈ px, 16:9)."""
+    z = max(1.0, float(zoom))
+    zw, zh = round(cw * z), round(ch * z)
+    tren = CAT_TREN_MIN if che else 0.0
+    con = (1.0 - CAT_TREN_MIN - CAT_DUOI_MIN) if che else 1.0
+    chia = CAT_TREN if che else 0.5
+    net = f",unsharp=5:5:{LAM_NET:g}:5:5:0" if (LAM_NET > 0 and z > 1.0) else ""
+    f = (f"scale={zw}:{zh}:force_original_aspect_ratio=increase:flags=lanczos,"
+         f"crop=min(iw\\,{cw}):min(ih*{con:.4f}\\,{ch}):(iw-ow)/2:"
+         f"ih*{tren:g}+(ih*{con:.4f}-oh)*{chia:.4f}{net},"
+         f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:black")
+    thanh = int(max(0.0, (ch - min(ch, zh * con)) / 2))
+    return f, z, thanh
 
 
-def random_frame() -> Path:
-    """Chọn ngẫu nhiên một viền khung; không có file nào thì về khung1.png."""
-    frames = list_frames()
-    return random.choice(frames) if frames else KHUNG1
+def list_logos() -> list[Path]:
+    """Các logo Mimi audio trong kho thumbnail (logo.png, logo xanh.png, logo tím.png, ...)."""
+    return sorted(LOGO_DIR.glob(LOGO_PATTERN), key=lambda p: p.name.casefold())
 
 
-def list_bgs() -> list[Path]:
-    """Liệt kê các nền Khung0 (Khung0.png, Khung0 chấm bi.png, ...) theo tên."""
-    return sorted(BG_DIR.glob(KHUNG0_PATTERN), key=lambda p: p.name.casefold())
+def random_logo() -> Path:
+    """Chọn ngẫu nhiên một màu logo cho tập; kho trống → logo.png."""
+    logos = list_logos()
+    return random.choice(logos) if logos else LOGO_DIR / "logo.png"
 
 
-def random_bg() -> Path:
-    """Chọn ngẫu nhiên một nền Khung0; không có file nào thì về Khung0.png."""
-    bgs = list_bgs()
-    return random.choice(bgs) if bgs else KHUNG0
+def lop_logo(size: tuple[int, int], logo_path: Path | None, out_path: Path,
+             thanh_duoi: int = 0) -> tuple[Path, bool, str]:
+    """Vẽ lớp phủ trong suốt cw×ch chỉ có logo nhỏ → PNG tạm.
+
+    thanh_duoi = chiều cao dải đen dưới (px). Đủ cao (≥ LOGO_THANH_MIN) → logo nằm gọn trong
+    dải, bên phải, cao thanh − 2·LOGO_THANH_LE (không che hình). Không thì logo góc trên phải,
+    cao LOGO_CAO px (theo 1080p), cách mép LOGO_LE px. Logo cắt sát phần có hình. Không có
+    file logo → lớp trong suốt rỗng (dựng không logo) để filter graph của ffmpeg giữ nguyên số
+    input. Trả về (đường dẫn PNG, có_logo, vị trí "dải dưới" | "góc trên phải").
+    """
+    cw, ch = size
+    layer = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    co_logo = bool(logo_path and Path(logo_path).exists())
+    k = ch / 1080
+    trong_thanh = thanh_duoi >= round(LOGO_THANH_MIN * k)
+    vi_tri = "dải dưới" if trong_thanh else "góc trên phải"
+    if co_logo:
+        logo = Image.open(logo_path).convert("RGBA")
+        bbox = logo.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox()
+        if bbox:
+            logo = logo.crop(bbox)
+        le = round(LOGO_LE * k)
+        if trong_thanh:
+            cao = max(2, thanh_duoi - 2 * round(LOGO_THANH_LE * k))
+            logo = ImageOps.contain(logo, (cao * 3, cao), method=Image.Resampling.LANCZOS)
+            y = ch - thanh_duoi + (thanh_duoi - logo.height) // 2
+        else:
+            cao = max(2, round(LOGO_CAO * k))
+            logo = ImageOps.contain(logo, (cao * 3, cao), method=Image.Resampling.LANCZOS)
+            y = le
+        layer.alpha_composite(logo, (cw - le - logo.width, y))
+    out_path = Path(out_path)
+    layer.save(out_path)
+    return out_path, co_logo, vi_tri
 
 
-def logo_for_frame(frame: Path) -> Path:
-    """Logo cùng màu với viền khung1: "khung1 xanh.png" → "logo xanh.png"; thiếu thì logo.png."""
-    stem = frame.stem
-    suffix = stem[len("khung1"):] if stem.casefold().startswith("khung1") else ""
-    candidate = LOGO_DIR / f"logo{suffix}.png"
-    return candidate if candidate.exists() else LOGO_DIR / "logo.png"
-
-
+# ── Bộ khung CŨ (trước 08/11/2026) ─────────────────────────────────────────────
+# Chỉ còn video_khung0_tao.py (vẽ nền Khung0) gọi hai hàm này để ghép ảnh thử; dựng video
+# không dùng nữa.
 def paste_logo(layer: Image.Image, logo_path: Path) -> Image.Image:
     """Dán logo (cắt sát phần có hình) vào K2_LOGO_BOX, tỉ lệ theo kích thước layer."""
     if not logo_path.exists():
@@ -495,94 +523,10 @@ def paste_logo(layer: Image.Image, logo_path: Path) -> Image.Image:
 
 
 def frame_mask(png_path: Path):
-    """Trả về (ảnh RGBA, mảng bool pixel VIỀN = pixel không trong suốt).
-
-    Trước đây dò viền theo MÀU HỒNG nên viền màu khác (xanh/tím/đỏ) không dò được.
-    Với khung1.png gốc, pixel hồng trùng khít pixel đục (đã kiểm), nên dò theo alpha
-    cho kết quả y hệt mà dùng được mọi màu.
-    """
+    """Trả về (ảnh RGBA, mảng bool pixel VIỀN = pixel không trong suốt) của khung1 cũ."""
     im = Image.open(png_path).convert("RGBA")
     a  = np.array(im)
     return im, a[:, :, 3] > 50
-
-
-pink_mask = frame_mask   # tên cũ, giữ cho tương thích
-
-
-def detect_inner_box(im, pink):
-    """Trả về (x, y, w, h) vùng trống bên trong viền khung hồng."""
-    ys, xs = np.where(pink)
-    if len(xs) == 0:
-        raise RuntimeError("Không tìm thấy viền khung trong ảnh PNG.")
-
-    cy, cx = im.height // 2, im.width // 2
-
-    def inner_edges(mask_line):
-        idx = np.where(mask_line)[0]
-        first_end = idx[0]                       # mép trong của viền đặc bên đầu
-        for v in idx[1:]:
-            if v == first_end + 1:
-                first_end = v
-            else:
-                break
-        last_start = idx[-1]                     # mép trong của viền đặc bên cuối
-        for v in idx[-2::-1]:
-            if v == last_start - 1:
-                last_start = v
-            else:
-                break
-        return first_end, last_start
-
-    left_in, right_in = inner_edges(pink[cy, :])
-    top_in, bottom_in = inner_edges(pink[:, cx])
-
-    x = left_in + 1 + INSET
-    y = top_in  + 1 + INSET
-    w = (right_in - left_in - 1) - 2 * INSET
-    h = (bottom_in - top_in - 1) - 2 * INSET
-    return x, y, w, h
-
-
-def prepare_static_layers(pink, target_size: tuple[int, int], frame: Path = KHUNG1,
-                          logo: Path | None = None, bg: Path = KHUNG0):
-    """Pre-scale các lớp khung tĩnh về đúng cw×ch MỘT LẦN bằng PIL.
-
-    Trước đây ffmpeg phải scale (lanczos) khung0/khung1/khung2/mask trên TỪNG frame
-    rồi overlay 3 lần — rất tốn CPU với video dài. Ở đây ta:
-      - resize sẵn 3 ảnh khung + mask đúng kích thước canvas một lần,
-      - gộp khung1+khung2 (đều nằm trên video) thành 1 lớp phủ trên,
-    nên filter graph chỉ còn overlay (không scale mỗi frame) và bớt 1 overlay.
-
-    Mask trắng = vùng bên trong khung (kể cả góc bo tròn) nhờ binary_fill_holes lấp
-    kín phần trong vòng viền. `frame` = file viền khung1 đang dùng (màu ngẫu nhiên),
-    `logo` = logo dán vào ô K2_LOGO_BOX (giữa khung1 và khung2), `bg` = nền Khung0 đang dùng
-    (kiểu ngẫu nhiên). Trả về (bg_path, top_path, mask_path).
-    """
-    cw, ch = target_size
-    resample = Image.Resampling.LANCZOS
-    tmp = Path(tempfile.gettempdir())
-
-    with Image.open(bg) as src:
-        src.convert("RGBA").resize((cw, ch), resample).save(tmp / "khung0_scaled.png")
-    bg_path = tmp / "khung0_scaled.png"
-
-    # khung1 -> logo -> khung2: gộp thành một lớp phủ trên cùng (logo dưới khung2 để nút
-    # Subscribe của khung2 đè lên mép logo như bản khung2 cũ có logo in sẵn).
-    with Image.open(frame) as src1, Image.open(KHUNG2) as src2:
-        top = src1.convert("RGBA").resize((cw, ch), resample)
-        k2 = src2.convert("RGBA").resize((cw, ch), resample)
-    if logo:
-        top = paste_logo(top, logo)
-    top = Image.alpha_composite(top, k2)
-    top_path = tmp / "khung_top.png"
-    top.save(top_path)
-
-    show = ndimage.binary_fill_holes(pink)
-    mask_img = Image.fromarray(np.where(show, 255, 0).astype("uint8"), "L").resize((cw, ch), resample)
-    mask_path = tmp / "khung_mask.png"
-    mask_img.save(mask_path)
-
-    return bg_path, top_path, mask_path
 
 
 def gom_clip_kho(source_dir, log=print) -> tuple[list[Path], str]:
@@ -618,18 +562,21 @@ def gom_clip_kho(source_dir, log=print) -> tuple[list[Path], str]:
 
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 progress=None, skip_existing=False, output: Path | None = None,
-                source_dir=None, frame: Path | None = None,
-                logo: Path | None = None, goc_out: Path | None = None,
-                bg: Path | None = None, source_video: Path | None = None,
-                source_zoom: float = 1.0) -> Path:
+                source_dir=None, logo: Path | None = None, goc_out: Path | None = None,
+                source_video: Path | None = None, source_zoom: float = 1.0,
+                che_chu: bool = False) -> Path:
     """
-    Dựng video nền + khung từ một file audio cụ thể.
+    Dựng video ngang không khung + logo nhỏ từ một file audio cụ thể.
+
+    che_chu: (08/11/2026, ô ✂ "Che chữ Trung cháy sẵn", mặc định TẮT) True → cắt bỏ mép trên
+             CAT_TREN_MIN / dưới CAT_DUOI_MIN của clip rồi lót dải đen mỏng (logo nằm trong
+             dải dưới); False → giữ NGUYÊN khung hình gốc 1:1, không cắt, logo góc trên phải.
 
     goc_out: (08/09/2026) đường dẫn để xuất THÊM "video gốc" — đoạn video đã ghép +
-             hiệu ứng, đã scale/cắt vào vùng trong khung nhưng CHƯA lồng khung — ngay
-             trong cùng lượt ffmpeg (đầu ra thứ hai, không tiếng, nén nhẹ hơn 4 bậc).
-             Bản dọc (video_doc_khung) dùng lại file này thay vì ghép clip dọc. Kèm
-             file .json cùng tên ghi viền khung đã chọn + vùng trong. None = không xuất.
+             hiệu ứng, đã phóng/cắt đúng 1920×1080 nhưng CHƯA dán logo — ngay trong
+             cùng lượt ffmpeg (đầu ra thứ hai, không tiếng, nén nhẹ hơn 4 bậc). Bản dọc
+             (video_doc_khung) dùng lại file này thay vì ghép clip dọc. Kèm file .json
+             cùng tên ghi logo đã chọn + bố cục. None = không xuất.
 
     Trả về đường dẫn video kết quả. Ném RuntimeError nếu thiếu tài nguyên hoặc
     ffmpeg lỗi (để bên gọi — ví dụ GUI — bắt và hiển thị). `log` là hàm nhận
@@ -645,28 +592,22 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             skip_existing khi đó kiểm tra ĐÚNG file này nên vẫn "chỉ dựng phần còn thiếu".
 
     effect: đường dẫn file hiệu ứng (vd .mov có alpha trong scripts/hieuung/).
-            Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC, rồi mới đưa vào
-            khung1 và cắt bo góc (lặp lại nếu ngắn hơn audio). None = không thêm.
+            Nếu có, hiệu ứng được phủ THẲNG vào video ghép TRƯỚC khi phóng/cắt (lặp
+            lại nếu ngắn hơn audio). None = không thêm.
 
     source_dir: thư mục kho clip ngang để ghép random. None (mặc định) → dùng cả
                 videongang/. Truyền 1 thư mục con (vd videongang/thiennhien) để chỉ
                 ghép clip theo chủ đề đó, hoặc LIST thư mục con (01/11/2026) → gộp
                 clip của tất cả rồi xáo chung (xem gom_clip_kho).
 
-    frame: file viền khung (khung1*.png) cụ thể. None (mặc định) → chọn NGẪU NHIÊN
-           một màu trong Backbround/ (xem random_frame).
-
-    logo: file logo dán vào khung2. None (mặc định) → logo CÙNG MÀU với viền đã chọn
-          (xem logo_for_frame), lấy từ kho logo thumbnail.
-
-    bg: file nền Khung0*.png cụ thể. None (mặc định) → chọn NGẪU NHIÊN một kiểu nền
-        trong Backbround/ (xem random_bg; vẽ thêm kiểu bằng video_khung0_tao.py).
+    logo: file logo dán góc trên phải. None (mặc định) → chọn NGẪU NHIÊN một màu trong
+          kho logo thumbnail (xem random_logo). Không có file → dựng không logo.
 
     source_video: (24/10/2026) MỘT video làm nguồn hình thay cho kho clip (video tải
         xuống của tập): tiếng gốc KHÔNG map vào đầu ra (= tắt tiếng), thời lượng kéo/
         nén khớp audio (ti_le_keo), phần thiếu/thừa lặp hoặc cắt. Không đọc được file
         → ghép clip kho như cũ. source_zoom: phóng to nội dung bấy nhiêu lần rồi cắt
-        giữa (1.2 = 120%) — thay cho ZOOM mặc định của kho clip.
+        (1.2 = 120%) — thay cho ZOOM mặc định của kho clip.
     """
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
@@ -675,12 +616,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         log(f"♻ Video ngang đã có → bỏ qua dựng lại: {output.name}")
         return output
 
-    frame = Path(frame) if frame else random_frame()
-    logo = Path(logo) if logo else logo_for_frame(frame)
-    bg = Path(bg) if bg else random_bg()
-    for f in (bg, frame, KHUNG2):
-        if not f.exists():
-            raise RuntimeError(f"Không tìm thấy khung: {f}")
+    logo = Path(logo) if logo else random_logo()
 
     # Chuẩn hóa hiệu ứng: bỏ qua nếu rỗng hoặc file không tồn tại.
     effect = Path(effect) if effect else None
@@ -711,21 +647,24 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         # Kho clip: cả videongang/, 1 thư mục con, hay nhiều thư mục con gộp lại.
         videos, ten_kho = gom_clip_kho(source_dir, log)
 
-    audio_file = Path(audio_file)
     if not audio_file.exists():
         raise RuntimeError(f"Không tìm thấy audio: {audio_file}")
     audio_dur  = get_duration(audio_file)
-    # output đã được xác định ở trên (tôn trọng tham số output tùy chọn).
 
-    # Khung + vùng trong + mặt nạ bo góc (lấy từ viền khung1 đã chọn)
-    im, pink = frame_mask(frame)
-    source_w, source_h = im.size
-    cw, ch = output_canvas_size(source_w, source_h)
-    ix, iy, iw, ih = detect_inner_box(im, pink)
-    ix, iy, iw, ih = scale_box(
-        ix, iy, iw, ih, source_w, source_h, cw, ch
-    )
-    bg_path, top_path, mask_path = prepare_static_layers(pink, (cw, ch), frame, logo, bg)
+    cw, ch = CANVAS_W, CANVAS_H
+    tmp = Path(tempfile.gettempdir())
+    # Phóng: video nguồn theo source_zoom (ô 🎞 bên GUI/web), kho clip theo ZOOM (1:1).
+    try:
+        zoom = max(1.0, min(float(source_zoom or 1.0), 3.0)) if nguon else ZOOM
+    except (TypeError, ValueError):
+        zoom = ZOOM
+    if mode == "fill":
+        loc_dat, zoom, thanh = loc_phu_kin(cw, ch, zoom, bool(che_chu))
+    else:  # fit: thu vừa khít (giữ trọn hình), căn giữa, dải đen phần còn lại
+        loc_dat = (f"scale={cw}:{ch}:force_original_aspect_ratio=decrease,"
+                   f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:black")
+        thanh = 0
+    logo_path, co_logo, logo_vi_tri = lop_logo((cw, ch), logo, tmp / "khung_logo.png", thanh)
 
     concat_list = None
     keo = 1.0
@@ -748,19 +687,13 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             for v in seq:
                 f.write(f"file '{v.as_posix()}'\n")
 
-    log(f"Khung gốc  : {source_w}x{source_h}")
-    log(f"Nền khung  : {bg.name}")
-    log(f"Viền khung : {frame.name}")
-    log(f"Logo       : {logo.name if logo.exists() else '(không thấy) ' + str(logo)}")
-    log(f"Video xuất : {cw}x{ch} (tối thiểu {MIN_OUTPUT_HEIGHT}p)")
-    log(f"Vùng trong : x={ix} y={iy} {iw}x{ih}")
-    # Phóng to nội dung: video nguồn theo source_zoom (ô 🎞 bên GUI/web), kho clip
-    # theo ZOOM cố định như trước.
-    try:
-        zoom = max(1.0, min(float(source_zoom or 1.0), 3.0)) if nguon else ZOOM
-    except (TypeError, ValueError):
-        zoom = ZOOM
-    log(f"Chế độ     : {mode}  (zoom {zoom:g}x, nới {OVERSCAN}px)")
+    log(f"Bố cục     : {cw}x{ch} không khung, "
+        + (f"✂ che chữ Trung: bỏ mép trên {CAT_TREN_MIN:.0%} / dưới {CAT_DUOI_MIN:.0%} của clip"
+           if che_chu else "giữ nguyên khung hình gốc (không cắt mép)")
+        + (f", dải đen trên/dưới ≈ {thanh} px" if thanh else ""))
+    log(f"Logo       : {logo.name if co_logo else '(không thấy) ' + str(logo)} — {logo_vi_tri}")
+    log(f"Chế độ     : {mode}  (" + ("giữ 1:1, không phóng" if zoom <= 1.0 + 1e-6 else
+        f"phóng {zoom:.3g}x lanczos + làm nét nhẹ") + ")")
     log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
     if nguon:
         log(f"Video nguồn: {nguon.name} ({nguon_dur:.2f}s) → kéo x{keo:.3f} = {total:.2f}s, "
@@ -771,10 +704,9 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
     log(f"Đầu ra     : {output}")
 
-    # ── Bước 1: phủ hiệu ứng THẲNG vào video thô (trước khi đưa vào khung) ──────
+    # ── Bước 1: phủ hiệu ứng THẲNG vào video thô (trước khi phóng/cắt) ──────────
     # Hiệu ứng được scale đúng kích thước video ghép rồi overlay lên video, nên
-    # bong bóng "dính" vào nội dung video; khi đưa video vào khung + cắt bo góc thì
-    # hiệu ứng cũng bị cắt theo đúng vùng khung1 (không tràn ra nền/khung).
+    # bong bóng "dính" vào nội dung video và bị phóng/cắt cùng video.
     src_label = "[0:v]"
     pre = ""
     if nguon:
@@ -785,56 +717,26 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     if effect:
         vw, vh = get_resolution(seq[0])   # các clip đã chuẩn hoá cùng độ phân giải
         pre += (
-            f"[5:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
+            f"[3:v]scale={vw}:{vh}:force_original_aspect_ratio=increase,"
             f"crop={vw}:{vh},format=rgba[fx];"
             f"{src_label}[fx]overlay=0:0:shortest=0[srcfx];"
         )
         src_label = "[srcfx]"
 
-    # ── Bước 2: đưa video (đã có hiệu ứng) vào vùng trong của khung ────────────
-    if mode == "fill":
-        # Nới vùng đặt video ra ngoài OVERSCAN px mỗi cạnh (theo px của khung) để
-        # video luồn xuống dưới viền khung1 → khử viền đen. Đây là "phóng to so với
-        # khung", khác hẳn ZOOM (phóng to nội dung video bên trong vùng đó).
-        overscan_x = round(OVERSCAN * cw / source_w)
-        overscan_y = round(OVERSCAN * ch / source_h)
-        bx = max(0, ix - overscan_x)
-        by = max(0, iy - overscan_y)
-        bw = min(iw + 2 * overscan_x, cw - bx)
-        bh = min(ih + 2 * overscan_y, ch - by)
-        # Phủ kín vùng (đã nới); ZOOM>1 thì phóng nội dung rồi cắt giữa về đúng vùng.
-        zw, zh = round(bw * zoom), round(bh * zoom)
-        noi_dung = (f"{src_label}scale={zw}:{zh}:force_original_aspect_ratio=increase,"
-                    f"crop={bw}:{bh}")
-        dat = f"pad={cw}:{ch}:{bx}:{by}:black[vid];"
-        goc_box = (bx, by, bw, bh)
-    else:  # fit
-        # Thu vừa khít (giữ trọn hình), căn giữa trong vùng khung
-        noi_dung = f"{src_label}scale={iw}:{ih}:force_original_aspect_ratio=decrease"
-        dat = f"pad={cw}:{ch}:{ix}+({iw}-iw)/2:{iy}+({ih}-ih)/2:black[vid];"
-        goc_box = (ix, iy, iw, ih)
+    # ── Bước 2: đặt video vào khung cw×ch (loc_dat đã dựng ở trên: cắt mép + dải đen) ──
+    noi_dung = loc_dat + ",setsar=1"
     goc_out = Path(goc_out) if goc_out else None
     if goc_out:
-        # Tách luồng nội dung TRƯỚC khi lồng khung → đầu ra thứ hai (video gốc cho bản
-        # dọc). Kích thước chẵn cho yuv420p.
-        place = (noi_dung + ",split[c1][c2];[c1]" + dat +
-                 "[c2]scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[goc];")
+        # Video gốc cho bản dọc tách ra TRƯỚC khi cắt/đặt: giữ NGUYÊN cỡ clip (chỉ ép chẵn
+        # cho yuv420p) để bản dọc tự cắt đúng vùng cần (1:1, không phóng).
+        place = (f"{src_label}split[c1][c2];[c1]{noi_dung}[vid];"
+                 f"[c2]scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1[goc];")
     else:
-        place = noi_dung + "," + dat
+        place = f"{src_label}{noi_dung}[vid];"
 
-    # ── Bước 3: xếp lớp khung — nền khung0 -> video (cắt bo góc) -> khung1+khung2
-    # Hiệu ứng đã nằm sẵn trong [vid] (cắt bo góc cùng video), nên lớp khung phủ
-    # bình thường lên trên; phần hiệu ứng dư ra ngoài khung1 đã bị mask cắt bỏ.
-    # Các lớp khung tĩnh đã được pre-scale đúng cw×ch (xem prepare_static_layers),
-    # nên KHÔNG scale lại mỗi frame; khung1+khung2 đã gộp sẵn thành 1 lớp phủ trên.
-    # Inputs: 0=video(ghép) 1=khung0 2=khung_top 3=mask 4=audio [5=hiệu ứng]
-    filt = (
-        pre + place +
-        f"[3:v]format=gray[mask];"
-        f"[vid][mask]alphamerge[va];"
-        f"[1:v][va]overlay=0:0[b1];"
-        f"[b1][2:v]overlay=0:0[out]"
-    )
+    # ── Bước 3: dán lớp logo (PNG trong suốt đã vẽ đúng cw×ch, không scale mỗi frame)
+    # Inputs: 0=video(ghép) 1=lớp logo 2=audio [3=hiệu ứng]
+    filt = pre + place + "[vid][1:v]overlay=0:0[out]"
 
     def _codec(gpu, them=0):
         """Tham số mã hoá; `them` = nới chất lượng (CQ/CRF + them) cho đầu ra phụ."""
@@ -861,18 +763,16 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             # 0: video nguồn (một file, 🎞) hoặc danh sách clip ghép
             *(["-i", str(nguon)] if nguon
               else ["-f", "concat", "-safe", "0", "-i", str(concat_list)]),
-            "-loop", "1", "-i", str(bg_path),    # 1: khung0 (nền) đã pre-scale
-            "-loop", "1", "-i", str(top_path),   # 2: khung1+khung2 gộp, đã pre-scale
-            "-loop", "1", "-i", str(mask_path),  # 3: mask bo góc đã pre-scale
-            "-i", str(audio_file),               # 4: audio
+            "-loop", "1", "-i", str(logo_path),  # 1: lớp logo (PNG trong suốt cw×ch)
+            "-i", str(audio_file),               # 2: audio
         ]
         if effect:
             # -stream_loop -1: lặp vô hạn input hiệu ứng (sẽ bị -t cắt đúng độ dài).
-            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 5
+            cmd += ["-stream_loop", "-1", "-i", str(effect)]   # input 3
         cmd += [
             "-filter_complex", filt,
             "-map", "[out]",
-            "-map", "4:a",
+            "-map", "2:a",
             "-t", f"{audio_dur:.6f}",           # cắt video đúng bằng độ dài audio
             *codec,
             "-pix_fmt", "yuv420p",
@@ -880,20 +780,22 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             str(output),
         ]
         if goc_out:
-            # Đầu ra thứ hai: video gốc (không tiếng) cho bản dọc — cùng lượt giải mã.
+            # Đầu ra thứ hai: video gốc (không tiếng, chưa phóng/cắt, chưa logo) cho bản dọc —
+            # cùng lượt giải mã; nén nhẹ hơn main 2 bậc (là nguồn phóng của bản dọc nên không hạ sâu).
             cmd += ["-map", "[goc]", "-an", "-t", f"{audio_dur:.6f}",
-                    *_codec(gpu, 4), "-pix_fmt", "yuv420p", str(goc_out)]
+                    *_codec(gpu, 2), "-pix_fmt", "yuv420p", str(goc_out)]
         return cmd
 
     if goc_out:
-        log(f"Video gốc  : {goc_out.name} (trước khi lồng khung, {goc_box[2]}x{goc_box[3]}) → dùng cho bản dọc")
+        log(f"Video gốc  : {goc_out.name} (video đã ghép nguyên cỡ clip, chưa cắt, chưa logo) "
+            f"→ bản dọc tự cắt vùng giữa 1:1")
     use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
     log("Đang dựng video... (GPU - h264_nvenc)" if use_gpu else "Đang dựng video... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log, progress=progress)
     # NVENC lỗi → GpuLoi (báo lỗi rồi dừng), KHÔNG thử lại bằng CPU — kiểm sau khi dọn
     # file tạm bên dưới (xem dung_neu_nvenc_loi).
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
-    for tmp_path in (concat_list, bg_path, top_path, mask_path):
+    for tmp_path in (concat_list, logo_path):
         if tmp_path is None:          # video nguồn: không có danh sách ghép
             continue
         try:
@@ -905,14 +807,15 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     if goc_out and goc_out.exists():
-        # Ghi kèm viền khung đã chọn + vùng trong: bản dọc lấy màu khung theo đây, và
-        # tập nào mất file gốc thì biết cắt YOUTUBE.mp4 ở đâu.
+        # Ghi kèm bố cục + logo đã chọn: bản dọc dán logo cùng màu, và tập nào mất file gốc
+        # thì biết lấy cả khung hình YOUTUBE.mp4 (layout "toanman" = không có viền khung).
+        # "goc": "raw" = file gốc chưa cắt mép → bản dọc phải tự bỏ CAT_TREN_MIN/CAT_DUOI_MIN.
         try:
-            import json
             goc_out.with_suffix(".json").write_text(json.dumps({
-                "frame": frame.name, "bg": bg.name, "canvas": [cw, ch],
-                "inner": [int(ix), int(iy), int(iw), int(ih)],
-                "box": [int(v) for v in goc_box], "audio": audio_file.name,
+                "layout": "toanman", "goc": "raw", "che": bool(che_chu),
+                "cat": [CAT_TREN_MIN, CAT_DUOI_MIN], "logo": logo.name if co_logo else "",
+                "frame": "", "bg": "", "canvas": [cw, ch],
+                "inner": [0, 0, cw, ch], "box": [0, 0, cw, ch], "audio": audio_file.name,
                 "source_video": nguon.name if nguon else "",
             }, ensure_ascii=False, indent=1), encoding="utf-8")
         except Exception as e:

@@ -70,7 +70,10 @@ WEB_DEFAULTS = dict(mode="vieneu", vieneu_voice="Ngọc Huyền", voice="", inst
                     # Bản video đăng lên Page (15/09/2026): "full" = facebook.mp4
                     # trọn tập (nếp cũ) · "ngan" = tiktok.mp4 cắt ngắn giống TikTok.
                     # Áp cho CẢ tự động lẫn nút 📘 đăng tay — script đọc lúc chạy.
-                    fb_ban="full")
+                    fb_ban="full",
+                    # ⏻/🌙 "xong hết thì tắt máy / cho máy ngủ" của trang web — lựa chọn
+                    # lần trước ("" / "shutdown" / "sleep"), power.py ghi/đọc (08/11/2026).
+                    power_mode="")
 
 # ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
 SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
@@ -1467,6 +1470,9 @@ def tts_settings() -> tuple[dict | None, str]:
         # tiếng gốc lúc dựng, phóng to % rồi cắt giữa; tắt = ghép clip videongang/.
         ngang_tu_nguon=bool(opts.get("ngang_tu_nguon")),
         ngang_nguon_zoom=_i(opts.get("ngang_nguon_zoom"), 120, 100, 200),
+        # ✂ Che chữ Trung cháy sẵn (08/11/2026): bật = cắt mép + dải đen / dải dọc 852;
+        # mặc định TẮT = giữ nguyên khung hình gốc 1:1.
+        che_chu_trung=bool(opts.get("che_chu_trung", False)),
         doc_from_ngang=bool(opts.get("doc_from_ngang")),
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),

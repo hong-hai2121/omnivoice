@@ -28,6 +28,9 @@ RUNNER_TRINHDUYET = core.WEB_DIR / "runners" / "run_dang_trinhduyet.py"
 # Lấp đoạn "(trống)" trong gemini_result.docx — script CLI có sẵn, không đi qua
 # run_episode.py (nó không phải một bước của quy trình, chỉ là việc sửa tay có trợ giúp).
 RETRANS_SCRIPT = core.SCRIPTS_DIR / "dich_lai_trong.py"
+# Script tải Bilibili qua app Bili23 (cùng file runner gọi: run_episode.TAIBILI_SCRIPT) —
+# ở đây chỉ dùng chế độ `--dong-app` cho bước cuối của đợt tải.
+TAIBILI_SCRIPT = core.WEB_DIR.parent.parent / "myvideo" / "video_taibilibili.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
 # Mã "dừng có chủ ý" của runner — phải khớp STOP trong runners/run_episode.py.
@@ -87,6 +90,22 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
     if force:
         argv.append("--force")
     return argv
+
+
+# Tên việc đóng Bili23 trong hàng đợi — server tìm theo tên này để DỜI nó về cuối khi có
+# đợt tải mới xếp thêm (bấm ⏩ lần nữa giữa mẻ), khỏi đóng rồi mở lại.
+DONG_BILI23_TITLE = "⏩ Đóng app Bili23 (nếu bộ tải tự mở)"
+
+
+def dong_bili23_step() -> Step:
+    """Bước CUỐI của đợt tải (08/11/2026, user yêu cầu): đóng app Bili23 nếu chính bộ tải đã
+    tự mở nó — app người dùng mở sẵn từ trước thì để nguyên (script tự kiểm bằng dấu PID,
+    xem video_taibilibili.py). Đặt ở cuối ĐỢT chứ không sau từng tập: tập sau lại cần app,
+    đóng/mở liên tục tốn ~10 s mỗi lần. continue_on_fail: dọn dẹp hỏng không được biến đợt
+    tải thành "lỗi"; không có halt_codes vì bước này không đụng GPU."""
+    argv = [core.python_exe(), "-u", str(TAIBILI_SCRIPT), "--dong-app"]
+    return Step(label="Đóng app Bili23 (nếu bộ tải tự mở)", argv=argv,
+                cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(), continue_on_fail=True)
 
 
 def upload_steps(episode: str) -> list[Step]:

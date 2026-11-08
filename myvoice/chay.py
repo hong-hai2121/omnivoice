@@ -13,10 +13,13 @@ thiếu fastapi/uvicorn/torch.
 
 Cửa sổ nhỏ (mặc định) tự bật server rồi TỰ MỞ trình duyệt ngay khi server sẵn
 sàng — nút 🌐 vẫn còn để mở LẠI. Đóng cửa sổ = tắt server (nếu server do cửa sổ
-này bật). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
+này bật) KÈM CẢ CÂY việc đang chạy — runner giữ OmniVoice / worker VieNeu / Whisper
+trên VRAM, ffmpeg… tắt theo (taskkill /T, xem _tat_cay; user chốt 09/11/2026: tắt app =
+trả VRAM). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
 Thùng rác) · hai ô ⏻ "tắt máy" / 🌙 "cho máy ngủ" khi hàng đợi web chạy xong hết.
-Bộ đếm do SERVER giữ (web/power.py, mặc định TẮT) — ô ở đây là công tắc từ xa, cùng
-trạng thái với ô trên trang web. (🌙 bỏ 26/10/2026, user cho quay lại 31/10/2026.)
+Bộ đếm do SERVER giữ (web/power.py; từ 08/11/2026 nhớ lựa chọn lần trước trong
+web_settings.json, trước đó mặc định TẮT) — ô ở đây là công tắc từ xa, cùng trạng thái
+với ô trên trang web. (🌙 bỏ 26/10/2026, user cho quay lại 31/10/2026.)
 """
 
 from __future__ import annotations
@@ -50,6 +53,34 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[union-attr]
     except Exception:
         pass
+
+
+def _tat_cay(proc: subprocess.Popen | None, cho: float = 8.0) -> None:
+    """Tắt tiến trình server VÀ CẢ CÂY con cháu (runner hàng đợi → run_episode/run_tts giữ
+    OmniVoice, Whisper → worker VieNeu → ffmpeg). proc.terminate() trên Windows chỉ chạm
+    đúng server: việc đang chạy vẫn sống, model vẫn nằm trên VRAM tới khi tắt máy (user chốt
+    09/11/2026: tắt app = trả VRAM). taskkill /T /F quét cả cây — cùng cách web/jobs._terminate
+    dừng một việc; không quét được thì ít nhất kill server. Bản sao y ở myvideo/chay.py."""
+    if proc is None or proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False,
+                           capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=cho)
+        except Exception:
+            pass
+    else:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=cho)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _is_venv_python() -> bool:
@@ -490,16 +521,7 @@ def _run_launcher(port: int) -> int:
         root.after(400, _poll, 0)
 
     def _stop_server() -> None:
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+        _tat_cay(proc)
 
     def _open() -> None:
         url = url_var.get()
@@ -710,7 +732,7 @@ def _run_launcher(port: int) -> int:
                 f"⏻ Server vẫn chạy (tiến trình khác) nên vẫn {nhan} khi xong — "
                 "huỷ: bỏ tick trên trang web.")
         if owner:
-            log("⏹ Đang tắt server…")
+            log("⏹ Đang tắt server + việc đang chạy (trả VRAM)…")
             root.update_idletasks()
             _stop_server()
         root.destroy()

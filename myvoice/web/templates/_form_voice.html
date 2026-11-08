@@ -270,6 +270,11 @@
          dựng video mới tắt tiếng gốc, phóng to N% cắt giữa, kéo thời lượng khớp giọng. #}
       {{ chk('ngang_tu_nguon', '🎞 Lấy video tải xuống làm video nguồn (thay ghép clip)', opts,
              'Chỉ có tác dụng khi tập có video tải về (link Bilibili → Downloads/<mã BV>.mp4, hoặc file video chọn từ máy). Tiếng gốc chỉ tắt lúc dựng video — bước nhận diện và dịch vẫn nghe tiếng gốc trước đó. Hình được kéo/nén cho vừa độ dài giọng đọc (kẹp 0,5–2×; lệch hơn thì lặp/cắt). Không có video → ghép clip theo “Nguồn clip ngang”.') }}
+      {# ✂ Che chữ Trung cháy sẵn (08/11/2026). Mặc định TẮT: giữ nguyên khung hình gốc 1:1,
+         không cắt, không phóng. Bật: cắt 8 % mép trên + 13 % mép dưới (phụ đề + watermark),
+         ngang lót dải đen mỏng (logo nằm trong dải dưới), dọc dải 1080×852 thay vì 1080×1080. #}
+      {{ chk('che_chu_trung', '✂ Che chữ Trung cháy sẵn trong clip', opts,
+             'Clip trong kho (và video tải xuống) thường có phụ đề Trung ở đáy và watermark ở góc trên. TẮT (mặc định): giữ nguyên khung hình gốc, không cắt, không phóng — hình nét nhất, chữ Trung vẫn hiện. BẬT: cắt bỏ 8% mép trên + 13% mép dưới rồi lót dải đen mỏng trên/dưới (kiểu điện ảnh), logo nằm trong dải dưới không che hình; video dọc lấy dải 1080×852 thay vì 1080×1080. Áp cho cả video ngang, dọc, TikTok, Short của tập.') }}
     </div>
     <div class="grid">
       {{ speed('ngang_speed', opts.ngang_speed) }}
@@ -768,7 +773,7 @@
   <details class="panel fold" data-fold="gn-doc" open>
     <summary class="phead"><span class="num">7</span><h2>Video dọc (1080×1920)</h2></summary>
     <div class="foldbody foldsplit">
-      {# Trái: ô chỉnh. Phải: ba khung dọc tạo sẵn (xem trước). #}
+      {# Trái: ô chỉnh. Phải: xem trước bố cục dọc theo 3 màu logo. #}
       <div class="foldmain">
         <div class="chks">
           {{ chk('make_video_doc', 'Dựng video dọc', opts) }}
@@ -780,8 +785,8 @@
         </div>
         <div class="chks">
           <span class="lbl">Nguồn hình:</span>
-          {{ chk('doc_khung', '🖼 Video gốc bản ngang + khung dọc tạo sẵn', opts,
-                 'Nhanh, không ghép clip dọc: bản dọc = video gốc (trước khi lồng khung) đặt vào dải giữa, khung cùng màu viền khung ngang, tiêu đề + số tập + ảnh mèo + nút Đăng ký vẽ sẵn; phụ đề dọc nằm trong dải video. Bộ khung ở Backbround/khungdoc/ — sửa/thay PNG ở đó là lần dựng sau dùng ngay (vẽ lại: python scripts/video_doc_khung.py --tao-khung --force). Tắt 🖼 thì dùng ♻ / 📁.') }}
+          {{ chk('doc_khung', '🖼 Video gốc bản ngang + bố cục dọc thoáng', opts,
+                 'Nhanh, không ghép clip dọc: bản dọc = vùng giữa của video gốc bản ngang đặt NGUYÊN cỡ (1:1, không phóng) vào dải giữa 1080×852, nền là chính video làm mờ, phía trên logo nhỏ + tiêu đề tập chữ trắng, phía dưới dòng "Nghe trọn tập tại kênh Mimi audio" (bố cục 08/11/2026, bỏ khung hoa / thẻ giấy / ảnh mèo). Logo cùng màu logo bản ngang. Phụ đề dọc nằm trong dải video. Tắt 🖼 thì dùng ♻ / 📁.') }}
           {{ chk('doc_from_ngang', '♻ Dùng lại video ngang', opts,
                  'Phóng to video ngang cho khớp chiều cao rồi cắt giữa. Chỉ dùng khi tắt 🖼; bật cả ♻ lẫn 📁 thì 📁 thắng.') }}
           {{ chk('doc_from_subfolder', '📁 Ghép từ thư mục con videodoc', opts,
@@ -789,14 +794,14 @@
         </div>
         <div class="actions"><button name="action" value="doc">▶ Dựng lại video dọc</button></div>
       </div>
-      {# Xem trước khung dọc tạo sẵn (Backbround/khungdoc, 3 màu theo viền khung ngang).
+      {# Xem trước bố cục dọc (3 màu logo, cùng màu logo bản ngang).
          Ảnh do scripts/video_doc_khung.xem_truoc vẽ, cache ở static/khungdoc. #}
       <div class="foldside khungdoc-xt" style="display:flex;flex-wrap:wrap;gap:10px">
         {% for mau in ['tím', 'xanh', 'đỏ'] %}
           <figure style="margin:0;text-align:center">
             <a href="/giongnoi/khungdoc-xemtruoc?mau={{ mau }}&lam_moi=1" target="_blank"
-               title="Khung dọc màu {{ mau }} — bấm mở ảnh to (vẽ lại)">
-              <img src="/giongnoi/khungdoc-xemtruoc?mau={{ mau }}" alt="Khung dọc màu {{ mau }}"
+               title="Bố cục dọc, logo màu {{ mau }} — bấm mở ảnh to (vẽ lại)">
+              <img src="/giongnoi/khungdoc-xemtruoc?mau={{ mau }}" alt="Bố cục dọc, logo màu {{ mau }}"
                    loading="lazy" style="height:210px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.18)"></a>
             <figcaption class="hint" style="margin-top:2px">{{ mau }}</figcaption>
           </figure>

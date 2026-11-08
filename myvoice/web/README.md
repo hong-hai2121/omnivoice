@@ -46,6 +46,16 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 
+**✂ Che chữ Trung cháy sẵn trong clip** (khối ④ Video ngang, 08/11/2026; khoá
+`che_chu_trung` trong `taogiong_options.json`, **mặc định tắt**; GUI Tk chưa có ô → chạy
+như tắt): video ngang/dọc từ 08/11/2026 không còn khung trang trí và **không phóng to**
+(1:1). Tắt = giữ nguyên khung hình gốc, logo nhỏ góc trên phải, bản dọc dải 1080×1080
+giữa màn hình. Bật = cắt 8 % mép trên + 13 % mép dưới (phụ đề Trung + watermark bilibili),
+ngang lót dải đen mỏng trên/dưới với logo nằm trong dải dưới, bản dọc dải 1080×852. Trạng
+thái ghi vào `YOUTUBE_goc.json` (`che`) nên nút "Dựng lại video dọc" theo đúng bản ngang;
+ảnh xem trước khối ⑦ vẽ theo trạng thái đang lưu (cache `static/khungdoc/xt_<màu>[_che].jpg`).
+Xem `scripts/video_khung.py` (`loc_phu_kin`, `lop_logo`) và `scripts/video_doc_khung.py` (`bo_cuc`).
+
 **🎞 Lấy video tải xuống làm video nguồn** (khối ④ Video ngang, 24/10/2026; khoá
 `ngang_tu_nguon` + `ngang_nguon_zoom` trong `taogiong_options.json`, GUI có cùng ô):
 thay vì ghép clip `videongang/`, video ngang lấy hình từ CHÍNH video của tập — link
@@ -68,6 +78,14 @@ tên RIÊNG `Downloads/<mã BV>_<mức>.mp4`; `<mã BV>.mp4` luôn là bản đ�
 🎞 thì vẫn tải bản cao nhất. Video thiếu đúng mức đã chọn → lấy mức gần nhất không vượt
 (`chon_muc` trong `myvideo/video_taibilibili.py`, tham số `--chat-luong`). GUI Tkinter
 không có ô này vì ở đó link tải bằng yt-dlp (chỉ mp3), không qua Bili23.
+
+**Tự đóng app Bili23 sau đợt tải** (08/11/2026): bộ tải tự mở app thì ghi dấu PID
+(`%TEMP%\omnivoice_bili23_tu_mo.json`); "⏩ đợt 1 · tải video/audio" có thêm bước cuối
+*Đóng app Bili23 (nếu bộ tải tự mở)* = `video_taibilibili.py --dong-app`
+(`steps.dong_bili23_step`) — chỉ đóng đúng tiến trình đã tự mở, app người dùng mở sẵn
+hay PID đã cấp lại thì để nguyên; đóng êm (WM_CLOSE) trước, 8 s còn sống mới ép. Đóng sau
+cả đợt chứ không sau từng tập (mở lại mất ~10 s). Chạy lẻ một tập (bước nhận diện tự
+tải) không tự đóng. Test: `myvoice/tests/test_dong_bili23.py`.
 
 **Nguồn clip ngang tick NHIỀU thư mục** (khối ③, 01/11/2026): ô chọn 1 thư mục con
 `videongang/` đổi thành cụm checkbox (GUI: nút thả menu có ô tick, cùng ô). Khoá
@@ -320,10 +338,12 @@ thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiế
 Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
 **⏻ Xong hết thì tắt máy / 🌙 Xong hết thì cho máy ngủ** — hai ô tick ngay đầu khối
-*Hàng đợi*, loại trừ nhau (tick ô này là bỏ ô kia), **mặc định TẮT mỗi lần mở
-server** (tick tay trên web hoặc cửa sổ desktop `chay.py` — ô bên đó là công tắc
-từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm — tick suông
-lúc chưa chạy gì thì không tắt/ngủ). Chạy xong CẢ hàng đợi chính lẫn hàng đợi đăng
+*Hàng đợi*, loại trừ nhau (tick ô này là bỏ ô kia), **nhớ lựa chọn lần trước** (từ
+08/11/2026: tick/bỏ tick là ghi khoá `power_mode` vào `web_settings.json`, mở server
+lại là bật y như cũ — trước đó mặc định TẮT mỗi lần mở; hết giờ tự bỏ tick trong RAM
+nhưng không đổi lựa chọn đã nhớ). Tick trên web hoặc cửa sổ desktop `chay.py` — ô bên
+đó là công tắc từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm —
+tick suông lúc chưa chạy gì thì không tắt/ngủ. Chạy xong CẢ hàng đợi chính lẫn hàng đợi đăng
 YouTube/Facebook, rảnh thêm `SHUTDOWN_DELAY_MIN` / `SLEEP_DELAY_MIN` (đều 1 phút từ
 31/10/2026) thì phát `shutdown /s /f /t 0` hoặc gọi `suspend_computer`
 (SetSuspendState — ngủ: chạm chuột là dậy, server vẫn còn nguyên); có việc mới chen

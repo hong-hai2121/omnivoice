@@ -123,6 +123,7 @@ def main(argv=None) -> int:
         # thư mục output để tìm video của tập.
         ngang_tu_nguon=ts.get("ngang_tu_nguon", False),
         ngang_nguon_zoom=ts.get("ngang_nguon_zoom", 120),
+        che_chu_trung=ts.get("che_chu_trung", False),   # ✂ che chữ Trung cháy sẵn (mặc định tắt)
         ngang_out=out_dir / "YOUTUBE.mp4",
         pitch=ts.get("pitch", 0.0),               # tông giọng (bán cung) áp lên audio gốc
         chuan_am=ts.get("chuan_am", False),       # 🔉 nén + loudnorm −14 LUFS (mặc định tắt)

@@ -8,7 +8,9 @@ xếp lệnh vào hàng đợi, không import logic nặng nào:
                           Firefox dự phòng — gemini_backend dùng chung myvoice);
                           ô 🤖 GPT CLI (gemini_backend = "cli", cùng ô chọn) →
                           --cli: codex exec, tài khoản ChatGPT, không cần trình duyệt
-  ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè
+  ③ taogiong_srt.py       giọng VieNeu (mặc định) / OmniVoice từng câu + xếp timeline chống
+                          đè; cài đặt giọng (🎚 mẫu, tông, vang, thiếu niên, 🔆 sáng, 🔉 chuẩn
+                          âm, 🔊 âm lượng dB) cùng khoá với myvoice, áp cho CẢ HAI engine
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
                           — cả vẽ sub, che mờ lẫn thay tiếng đều bỏ được
 
@@ -388,6 +390,9 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                      "--vang", str(s.get("vang_truong_do") or "0").strip(),
                      str(s.get("vang_cuong_do") or "0").strip(),
                      "--thieunien", str(s.get("thieu_nien") or "0").strip()]
+            # 🔊 Âm lượng cơ bản (dB) — mang từ myvoice sang 09/11/2026 (khoá am_luong_db
+            # cùng tên bên đó); cộng lên audio tổng ở bước cuối, 0 = giữ nguyên.
+            argv += ["--am-luong", str(s.get("am_luong_db") or "0").strip()]
             if s.get("redotts"):
                 argv.append("--redo-tts")
             # 🔉 Chuẩn âm (05/11/2026, khoá chuanam, mặc định tắt) → --chuan-am khi bật.

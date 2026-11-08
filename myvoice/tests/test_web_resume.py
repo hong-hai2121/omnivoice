@@ -150,7 +150,9 @@ class ResumeRouteTests(unittest.TestCase):
                 self.run_resume(selected)
                 self.queue.assert_called_once()
                 title, built = self.queue.call_args.args
-                self.assertIn("126", title)
+                # 17/10/2026: việc xếp theo ĐỢT, số tập nằm ở kwargs episodes.
+                self.assertIn("đợt 4", title)
+                self.assertEqual(self.queue.call_args.kwargs["episodes"], ["126"])
                 argv = built[0].argv
                 self.assertEqual(argv[argv.index("--steps") + 1], "tts")
                 self.assertNotIn("--force", argv)
@@ -230,18 +232,102 @@ class ResumeRouteTests(unittest.TestCase):
         self.queue.assert_not_called()
         self.assertIn("Không tìm thấy", self.logs.call_args.args[0])
 
+    def test_cli_backend_runs_each_episode_to_completion_in_order(self):
+        """08/11/2026: dịch bằng GPT CLI (không cần màn hình) → mỗi tập một việc trọn bước,
+        tập nhỏ trước; link Bilibili thì có bước tải và một việc đóng Bili23 ở cuối."""
+        self.mock(core, "load_pipeline", return_value={"gemini_backend": "cli"})
+        self.rows.return_value = [
+            {**row(127, recognize=False, translate=False, input=False, seo=False,
+                   thumbnail=False, audio=False, video_ngang=False, video_doc=False),
+             "source": "https://www.bilibili.com/video/BV1x"},
+            row(126, seo=False, video_doc=False),
+        ]
+        self.run_resume()
+        jobs = [call for call in self.queue.call_args_list]
+        self.assertEqual(len(jobs), 3)
+        t126, (s126,) = jobs[0].args
+        t127, (s127,) = jobs[1].args
+        self.assertIn("Tập 126", t126)
+        self.assertIn("Tập 127", t127)
+        self.assertEqual(s126.argv[s126.argv.index("--steps") + 1], "seo,tts")
+        self.assertEqual(s127.argv[s127.argv.index("--steps") + 1],
+                         "tai,recognize,translate,input,seo,thumbnail,tts")
+        self.assertNotIn("--require", s127.argv)
+        self.assertIsNotNone(s126.on_success)
+        self.assertEqual(jobs[0].kwargs["episodes"], ["126"])
+        t_dong, (s_dong,) = jobs[2].args
+        self.assertIn("Bili23", t_dong)
+        self.assertEqual(s_dong.argv[-1], "--dong-app")
+        self.assertTrue(jobs[2].kwargs["light"])
+
+    def test_cli_backend_without_links_does_not_close_bili23(self):
+        self.mock(core, "load_pipeline", return_value={"gemini_backend": "firefox"})
+        self.rows.return_value = [row(126, seo=False)]
+        self.run_resume()
+        self.assertEqual(self.queue.call_count, 1)
+        self.assertIn("Tập 126", self.queue.call_args.args[0])
+
+    def test_extension_backend_keeps_four_batches(self):
+        self.mock(core, "load_pipeline", return_value={"gemini_backend": "extension"})
+        self.rows.return_value = [row(ep, seo=False, video_doc=False) for ep in (127, 126)]
+        self.run_resume()
+        titles = [call.args[0] for call in self.queue.call_args_list]
+        self.assertEqual(len(titles), 2)
+        self.assertIn("đợt 3", titles[0])
+        self.assertIn("đợt 4", titles[1])
+        self.assertEqual(self.queue.call_args_list[0].kwargs["episodes"], ["126", "127"])
+
+    def test_extension_backend_closes_bili23_after_batch_2_and_moves_old_close_job(self):
+        """Link Bilibili: việc đóng Bili23 nằm SAU đợt 2 (đợt 2 có thể tải lại link hỏng ở
+        đợt 1); việc đóng cũ còn chờ trong hàng đợi thì bị bỏ để xếp lại ở cuối."""
+        self.mock(core, "load_pipeline", return_value={"gemini_backend": "extension"})
+        remove = self.mock(server.runner, "remove", return_value=True)
+        self.mock(server.runner, "state", return_value={"pending": [
+            {"id": 7, "title": server.steps_mod.DONG_BILI23_TITLE},
+            {"id": 8, "title": "⏩ đợt 3 · dịch → input.docx → SEO — 1 tập"}]})
+        self.rows.return_value = [
+            {**row(127, recognize=False, translate=False, input=False, seo=False,
+                   thumbnail=False, video_doc=False),
+             "source": "https://www.bilibili.com/video/BV1x"},
+            row(126, seo=False, video_doc=False),
+        ]
+        self.run_resume()
+        titles = [call.args[0] for call in self.queue.call_args_list]
+        self.assertEqual([t.split(" — ")[0] for t in titles],
+                         ["⏩ đợt 1 · tải video/audio", "⏩ đợt 2 · nhận diện tiếng Trung",
+                          server.steps_mod.DONG_BILI23_TITLE,
+                          "⏩ đợt 3 · dịch → input.docx → SEO",
+                          "⏩ đợt 4 · thumbnail → giọng + video"])
+        self.assertTrue(self.queue.call_args_list[2].kwargs["light"])
+        remove.assert_called_once_with(7)
+
+    def test_no_close_job_without_links(self):
+        self.mock(core, "load_pipeline", return_value={"gemini_backend": "extension"})
+        self.rows.return_value = [row(126, recognize=False, translate=False, input=False,
+                                      seo=False, thumbnail=False, video_doc=False)]
+        self.run_resume()
+        titles = [call.args[0] for call in self.queue.call_args_list]
+        self.assertNotIn(server.steps_mod.DONG_BILI23_TITLE, titles)
+        self.assertEqual(len(titles), 3)        # đợt 2, 3, 4 (nguồn là file → không tải)
+
     def test_front_steps_for_all_episodes_precede_builds(self):
         self.rows.return_value = [row(ep, seo=False, video_doc=False) for ep in (127, 126)]
         self.run_resume()
-        jobs = [call.args for call in self.queue.call_args_list]
-        self.assertEqual(len(jobs), 4)
-        self.assertIn("126", jobs[0][0])
-        self.assertIn("127", jobs[1][0])
-        for _, built in jobs[:2]:
-            argv = built[0].argv
+        # 17/10/2026: hai ĐỢT (SEO mọi tập → dựng mọi tập), mỗi đợt một việc, mỗi tập một
+        # bước, tập nhỏ trước; bước dựng phải --require bước dịch của đợt trước.
+        jobs = self.queue.call_args_list
+        self.assertEqual(len(jobs), 2)
+        (t_seo, seo_steps), (t_tts, tts_steps) = jobs[0].args, jobs[1].args
+        self.assertIn("đợt 3", t_seo)
+        self.assertIn("đợt 4", t_tts)
+        self.assertEqual(jobs[0].kwargs["episodes"], ["126", "127"])
+        self.assertEqual([len(seo_steps), len(tts_steps)], [2, 2])
+        for built in seo_steps:
+            argv = built.argv
             self.assertEqual(argv[argv.index("--steps") + 1], "seo")
-        for _, built in jobs[2:]:
-            argv = built[0].argv
+            self.assertTrue(built.continue_on_fail)
+        for built in tts_steps:
+            argv = built.argv
             self.assertEqual(argv[argv.index("--steps") + 1], "tts")
             self.assertEqual(argv[argv.index("--require") + 1], "translate,input")
 

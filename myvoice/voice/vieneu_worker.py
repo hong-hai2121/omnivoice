@@ -24,12 +24,18 @@ OmniVoice (tests/test_vieneu_mode.py) mà không cần cài VieNeu.
 dòng "❌ KHÔNG CÓ GPU: …" rồi thoát mã MA_KHONG_GPU, KHÔNG nạp model. SDK để "auto" thì khi
 mất CUDA nó lặng lẽ chạy ONNX/CPU — đêm 05/11/2026 driver NVIDIA treo, 5 tập sinh đủ đoạn
 bằng CPU (39 đoạn/phút thay vì 165) rồi mới dừng ở bước ASR kiểm tra (GPU bắt buộc).
+
+--parent-pid N (09/11/2026, user chốt "tắt app = trả VRAM"): worker canh tiến trình cha N
+(canh_cha); cha tắt — đóng cửa sổ GUI/launcher, taskkill, sập — là worker TỰ THOÁT ngay,
+model ~0,7 GB rời VRAM. Không có cờ này, worker mồ côi cứ nằm giữ VRAM tới khi tắt máy
+(Windows không tự tắt tiến trình con theo cha). vieneu_client.SdkWorker.bat luôn truyền.
 """
 from __future__ import annotations
 
 import argparse
 import base64
 import json
+import os
 import sys
 import threading
 import time
@@ -166,17 +172,97 @@ def make_server(engine, port: int, host: str = "127.0.0.1") -> ThreadingHTTPServ
     return ThreadingHTTPServer((host, port), H)
 
 
-def main() -> int:
+# ── CANH TIẾN TRÌNH CHA ──────────────────────────────────────────────────────────
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_SYNCHRONIZE = 0x00100000
+_STILL_ACTIVE = 259
+_INFINITE = 0xFFFFFFFF
+
+
+def cha_con_song(pid: int) -> bool:
+    """Tiến trình `pid` còn sống? Windows: OpenProcess + GetExitCodeProcess (STILL_ACTIVE);
+    nơi khác: os.kill(pid, 0). Không mở được handle = đã chết (cùng user nên không phải
+    chuyện quyền)."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            ma = ctypes.c_ulong()
+            if not k32.GetExitCodeProcess(h, ctypes.byref(ma)):
+                return False
+            return ma.value == _STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def canh_cha(pid: int, khi_chet, moi: float = 1.0):
+    """Luồng nền theo dõi tiến trình cha `pid`: cha kết thúc → gọi `khi_chet()` (bài thật:
+    thoát ngay để trả VRAM). Windows: mở handle SYNCHRONIZE rồi WaitForSingleObject — về đúng
+    lúc cha tắt, không tốn CPU, không sợ PID bị cấp lại; không mở được handle (cha đã chết
+    trước khi worker kịp canh) → dò bằng cha_con_song mỗi `moi` giây. pid 0 → không canh,
+    trả None. Trả Thread (daemon) để test chờ được."""
+    if not pid or pid <= 0:
+        return None
+
+    def _canh() -> None:
+        if sys.platform == "win32":
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(_SYNCHRONIZE, False, pid)
+            if h:
+                try:
+                    k32.WaitForSingleObject(h, _INFINITE)
+                finally:
+                    k32.CloseHandle(h)
+                khi_chet()
+                return
+        while cha_con_song(pid):
+            time.sleep(moi)
+        khi_chet()
+
+    t = threading.Thread(target=_canh, daemon=True, name="canh-cha")
+    t.start()
+    return t
+
+
+def _thoat_theo_cha() -> None:
+    """Cha tắt → worker tắt ngay (os._exit: không đợi luồng HTTP, model rời VRAM theo tiến trình)."""
+    print("⏹ tiến trình cha đã tắt → worker VieNeu tự tắt, trả VRAM", flush=True)
+    os._exit(0)
+
+
+def doi_so() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="VieNeu SDK worker (HTTP loopback)")
     ap.add_argument("--port", type=int, default=8010)
     ap.add_argument("--device", default="auto",
                     help="auto|cuda|cpu — cuda = ÉP GPU: không có CUDA thì thoát mã "
                          f"{MA_KHONG_GPU}, không lặng lẽ chạy CPU")
-    a = ap.parse_args()
+    ap.add_argument("--parent-pid", type=int, default=0,
+                    help="PID tiến trình cha: cha tắt (đóng app, taskkill, sập) là worker tự thoát "
+                         "ngay để trả VRAM; 0 = không canh")
+    return ap
+
+
+def main() -> int:
+    a = doi_so().parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
         pass
+    # Canh cha TRƯỚC khi nạp model: cha tắt giữa lúc đang nạp cũng thoát luôn.
+    canh_cha(a.parent_pid, _thoat_theo_cha)
     if a.device == "cuda":
         ly_do = kiem_cuda()
         if ly_do:

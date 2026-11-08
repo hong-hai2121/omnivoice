@@ -260,6 +260,10 @@ OPTS_DEFAULTS = dict(
     # gốc lúc dựng, phóng to ngang_nguon_zoom % rồi cắt giữa, kéo thời lượng khớp
     # giọng đọc) thay vì ghép clip videongang/. Mặc định tắt = ghép clip như cũ.
     ngang_tu_nguon=False, ngang_nguon_zoom=120,
+    # 08/11/2026: ✂ che chữ Trung cháy sẵn trong clip — bật: cắt 8 % mép trên + 13 % mép
+    # dưới, lót dải đen mỏng (ngang) / dải dọc 1080×852 (dọc). Mặc định TẮT = giữ nguyên
+    # khung hình gốc 1:1, không cắt, không phóng (user chốt: "để tỷ lệ cũ không phóng to").
+    che_chu_trung=False,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
     doc_from_subfolder=False,
@@ -2611,7 +2615,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None, chuan_am=False, am_luong=0.0):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None, chuan_am=False, am_luong=0.0, che_chu_trung=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -3020,7 +3024,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                                         skip_existing=skip_video, output=ngang_out,
                                         source_dir=ngang_src_dirs, goc_out=goc_out,
                                         source_video=ngang_src_video,
-                                        source_zoom=float(ngang_nguon_zoom or 100) / 100.0)
+                                        source_zoom=float(ngang_nguon_zoom or 100) / 100.0,
+                                        che_chu=bool(che_chu_trung))
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
@@ -3146,6 +3151,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     vdoc_out, doc_sub_trong_hinh = vdk.dung_cho_tap(
                         output_path.parent, audio=doc_audio, output=fb_out,
                         cover_png=cover_doc, caption=tiktok_caption, log=logging.info,
+                        che_chu=bool(che_chu_trung),
                         progress=_video_progress("📱 Dựng video dọc (khung)..."),
                         skip_existing=skip_video)
                 else:
@@ -3349,8 +3355,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 # Khung dọc tạo sẵn: chữ phải nằm TRONG dải video (đáy dải ~y 1333)
                 # → vị trí cố định theo khung, không theo % của khung ngang.
                 if doc_khung:
-                    from video_doc_khung import SUB_VITRI as _vt
-                    doc_vitri = _vt
+                    import video_doc_khung as _vdk
+                    doc_vitri = _vdk.sub_vitri(bool(che_chu_trung))
                 else:
                     doc_vitri = sub_vitri
                 make_youtube_sub(doc_video, inputdocx.input_for(output_path.parent),
@@ -6865,7 +6871,7 @@ class App(tk.Tk):
         # Ba dòng trạng thái này dùng CHUNG biến với tab '🎧 Nhận diện' (②→⑤ ghi vào
         # đây). Label không wraplength thì đòi bề ngang đúng bằng chữ → cột quy trình
         # nở ra theo câu trạng thái, nhìn như giao diện bị nhảy. wraplength đặt lại
-        # theo kiểu dàn trang ở _pipeline_set_layout (dọc hẹp ở Home / ngang rộng ở
+        # theo kiểu dàn trang ở _pipeline_set_layout (dọc hẹp ở Home / ngưang rộng ở
         # tab Tạo kịch bản).
         self._pipe_status_labels = (lb_link, lb_stt, lb_up)
 

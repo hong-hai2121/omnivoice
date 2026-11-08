@@ -752,33 +752,39 @@ def _nen_ngang() -> Path | None:
 
     Thứ tự nguồn:
       1. nen_ngang.png đặt TAY trong static/kieusub (dùng nguyên trạng).
-      2. KHUNG TRANG TRÍ GỐC myvoice/Backbround/khung1.png — sạch, không dính
-         chữ nào; phần trong suốt lót nền phẳng tối cho chữ mẫu nổi rõ.
-         (nen_ngang.jpg là CACHE tự sinh — khung1.png mới hơn thì vẽ lại.)
+      2. Nền phẳng tối + logo nhỏ góc trên phải — bố cục video ngang 1:1 không khung từ
+         08/11/2026 ở trạng thái mặc định (ô ✂ che chữ Trung tắt; trước đó lót khung
+         trang trí khung1.png, nay bỏ khung). (nen_ngang.jpg là CACHE tự sinh — file
+         kieusub.py mới hơn thì vẽ lại.)
       3. Trích từ YOUTUBE.mp4 mới nhất (làm MỜ dải sub cũ — video sub kín
          từ đầu tới cuối) / clip gốc videongang."""
     dest = ANH_DIR / "nen_ngang.jpg"
-    khung = MYVOICE_DIR / "Backbround" / "khung1.png"
+    moc = Path(__file__)
+    logo = MYVOICE_DIR / "YOUTUBE" / "thumbnail" / "logo.png"
     tay = ANH_DIR / "nen_ngang.png"
     if tay.is_file():
         return tay
     if dest.is_file():
         try:
-            if not khung.is_file() or dest.stat().st_mtime >= khung.stat().st_mtime:
+            if dest.stat().st_mtime >= moc.stat().st_mtime:
                 return dest
         except OSError:
             return dest
     ANH_DIR.mkdir(parents=True, exist_ok=True)
-    if khung.is_file():
-        try:
-            from PIL import Image
-            nen = Image.new("RGB", (1920, 1080), (30, 36, 52))
-            lop = Image.open(khung).convert("RGBA")
-            nen.paste(lop, (0, 0), lop)
-            nen.resize((768, 432), Image.LANCZOS).save(dest, quality=90)
-            return dest
-        except Exception:
-            pass
+    try:
+        from PIL import Image, ImageOps
+        nen = Image.new("RGBA", (1920, 1080), (30, 36, 52, 255))
+        if logo.is_file():
+            lg = Image.open(logo).convert("RGBA")
+            bbox = lg.getchannel("A").point(lambda a: 255 if a > 32 else 0).getbbox()
+            if bbox:
+                lg = lg.crop(bbox)
+            lg = ImageOps.contain(lg, (450, 150), method=Image.LANCZOS)   # như video_khung.LOGO_CAO/LOGO_LE
+            nen.alpha_composite(lg, (1920 - 36 - lg.width, 36))
+        nen.convert("RGB").resize((768, 432), Image.LANCZOS).save(dest, quality=90)
+        return dest
+    except Exception:
+        pass
     # Dải MỜ che sub cũ: vùng sub mặc định (MarginV 173, ~2 dòng) trên khung 432.
     che = ("scale=768:432,split[a][b];"
            "[b]crop=768:130:0:275,gblur=sigma=16[c];[a][c]overlay=0:275")

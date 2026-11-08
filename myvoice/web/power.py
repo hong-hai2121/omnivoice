@@ -26,8 +26,13 @@ mẻ qua đêm không ai ngồi máy); 🌙 gọi suspend_computer của GUI (Se
 này chỉ trả về khi máy đã DẬY, server chạy tiếp bình thường. Trước khi đếm còn tập
 dựng xong CHƯA đăng thì ghi cảnh báo vào nhật ký đăng (chỉ báo, không tự đăng).
 
-MẶC ĐỊNH TẮT mỗi lần mở server — muốn chạy qua đêm rồi tắt/ngủ thì tick tay trên
-trang web hoặc cửa sổ desktop (chay.py — công tắc từ xa của hai ô này).
+NHỚ LẦN TRƯỚC (08/11/2026, user yêu cầu — trước đó mặc định TẮT mỗi lần mở server): mỗi lần
+người dùng tick/bỏ tick, lựa chọn ("" / "shutdown" / "sleep") ghi vào web_settings.json khoá
+`power_mode` (file riêng của bản web — KHÔNG đụng khoá "shutdown"/"sleep" của GUI Tkinter
+trong taogiong_pipeline.json); server mở lại thì khoi_phuc() bật y như lần trước. Hết giờ
+tự bỏ tick trong RAM nhưng KHÔNG đổi lựa chọn đã nhớ — mẻ đêm sau vẫn tắt/ngủ như đã
+chọn. Vẫn phải THẤY BẬN rồi mới đếm, nên mở server mà không chạy gì thì không tắt/ngủ.
+Đêm 08/11/2026: mẻ 2 chạy lúc 01:21 quên tick ⏻, card chết lúc 02:17 mà máy nằm cả đêm.
 """
 
 from __future__ import annotations
@@ -51,6 +56,8 @@ CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 MODES = ("shutdown", "sleep")
 ICON = {"shutdown": "⏻", "sleep": "🌙", "": ""}
 LABEL = {"shutdown": "tắt máy", "sleep": "cho máy ngủ", "": ""}
+# Khoá nhớ lựa chọn trong web_settings.json (xem đầu file).
+NHO_KHOA = "power_mode"
 
 
 def delay_min(mode: str) -> int:
@@ -70,7 +77,8 @@ class PowerWhenDone:
     """Trạng thái hai ô tick (một chế độ duy nhất) + luồng nền canh hàng đợi."""
 
     def __init__(self) -> None:
-        # Mặc định TẮT (xem đầu file) — tick tay mới đếm giờ.
+        # Khởi tạo TẮT; server gọi khoi_phuc() lúc mở để lấy lại lựa chọn lần trước (xem đầu
+        # file) — không đọc file ở đây để import module trong test/script lẻ không bật gì.
         self._mode = ""
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
@@ -79,10 +87,14 @@ class PowerWhenDone:
         threading.Thread(target=self._watch, daemon=True).start()
 
     # ── API cho tầng web ────────────────────────────────────────────────────
-    def arm(self, mode) -> None:
+    def arm(self, mode, nho: bool = True) -> None:
         """Đặt chế độ: "" tắt, "shutdown" ⏻, "sleep" 🌙 (True/False kiểu cũ = ⏻/tắt).
-        Đổi ⏻ ↔ 🌙 giữa lúc đang đếm thì đếm lại từ đầu — phải thấy bận đã."""
+        Đổi ⏻ ↔ 🌙 giữa lúc đang đếm thì đếm lại từ đầu — phải thấy bận đã.
+        nho=True (người dùng tick): ghi lựa chọn ra web_settings.json cho lần mở sau;
+        khoi_phuc() gọi với nho=False vì chỉ đọc lại."""
         mode = _norm(mode)
+        if nho:
+            self._nho(mode)
         with self._lock:
             if mode == self._mode:
                 return
@@ -97,6 +109,25 @@ class PowerWhenDone:
             log(f"✖ Đã huỷ đếm ngược {LABEL[prev]}.")
         else:
             log(f"{ICON[prev]} Đã tắt chế độ {LABEL[prev]} khi xong.")
+
+    def _nho(self, mode: str) -> None:
+        """Ghi lựa chọn ra web_settings.json (khoá NHO_KHOA). Hỏng thì chỉ báo — không được
+        làm hỏng việc tick."""
+        try:
+            core.save_web_settings({NHO_KHOA: mode})
+        except Exception as e:          # noqa: BLE001
+            log(f"⚠️ Không ghi nhớ được lựa chọn {ICON[mode] or '⏻/🌙'} cho lần sau: {e}")
+
+    def khoi_phuc(self) -> str:
+        """Lúc mở server: bật lại chế độ đã chọn lần trước → tên chế độ ("" = lần trước để
+        tắt, không bật gì). Chỉ ĐỌC web_settings.json, không ghi lại."""
+        try:
+            mode = _norm(core.load_web_settings().get(NHO_KHOA, ""))
+        except Exception:               # noqa: BLE001 — file hỏng thì coi như tắt
+            mode = ""
+        if mode:
+            self.arm(mode, nho=False)
+        return mode
 
     def state(self) -> dict:
         """Dữ liệu cho khối hàng đợi (_queue.html, làm mới 2 giây/lần) và

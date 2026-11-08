@@ -572,7 +572,11 @@ class SdkWorker(TienTrinh):
         if not WORKER_PY.exists():
             raise RuntimeError(f"thiếu {WORKER_PY.name} cạnh vieneu_client.py")
         cong = cong or chon_cong()
-        self._bat([str(VENV_PY), str(WORKER_PY), "--port", str(cong), "--device", device],
+        # --parent-pid (09/11/2026): tiến trình này (GUI / runner bước / script) tắt vì bất cứ
+        # lý do gì — đóng cửa sổ, taskkill cả cây, sập — thì worker tự thoát, model rời VRAM;
+        # không còn worker mồ côi nằm giữ ~0,7 GB tới khi tắt máy.
+        self._bat([str(VENV_PY), str(WORKER_PY), "--port", str(cong), "--device", device,
+                   "--parent-pid", str(os.getpid())],
                   _env(), cong, on_line)
         h = self.cho_san_sang(timeout)
         if not h:

@@ -63,7 +63,21 @@ def _token() -> str:
 
 TOKEN = _token()
 
-app = FastAPI(title="myvoice — bảng điều khiển")
+async def _tat_viec_khi_server_tat() -> None:
+    """Server tắt êm (Ctrl+C ở chế độ --console, uvicorn shutdown) → dừng cả ba hàng đợi: kill
+    CẢ CÂY việc đang chạy (jobs._terminate taskkill /T) để runner đang giữ OmniVoice / Whisper /
+    worker VieNeu trên VRAM không sống sót sau khi app tắt (user chốt 09/11/2026: tắt app = trả
+    VRAM). Launcher chay.py đóng server bằng TerminateProcess nên hook này KHÔNG chạy ở đó — bên
+    đó tự taskkill /T cả cây (chay._tat_cay); worker VieNeu còn tự canh cha (--parent-pid).
+    Việc dở vẫn được nối lại khi mở web lần sau (cờ pending trong manifest, không phải RAM)."""
+    for r in (runner, upload_runner, fb_runner):
+        try:
+            r.stop_all()
+        except Exception as e:  # noqa: BLE001 — đang tắt, không để một hàng đợi lỗi chặn hàng khác
+            log(f"⚠️ Không dừng được hàng đợi lúc tắt server: {e}")
+
+
+app = FastAPI(title="myvoice — bảng điều khiển", on_shutdown=[_tat_viec_khi_server_tat])
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
@@ -436,9 +450,9 @@ def _save_pipe_from_form(form) -> dict:
     """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
 
     KHÔNG đụng hai khoá "shutdown"/"sleep": đó là ô ⏻/🌙 của GUI Tkinter (ghi ra
-    file), còn ô ⏻/🌙 “xong hết thì tắt máy / cho máy ngủ” của trang web chỉ nhớ
-    trong bộ nhớ server (power.py) chứ không ghi ra file — ghi đè mỗi lần chạy là
-    âm thầm tắt cài đặt ⏻/🌙 của GUI.
+    file này), còn ô ⏻/🌙 “xong hết thì tắt máy / cho máy ngủ” của trang web nhớ
+    riêng ở web_settings.json khoá power_mode (power.py, 08/11/2026) — ghi đè hai
+    khoá kia mỗi lần chạy là âm thầm tắt cài đặt ⏻/🌙 của GUI.
     """
     pipe = core.load_pipeline()
     if form.get("gemini_backend") in ("firefox", "extension", "cli"):
@@ -842,15 +856,17 @@ def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
 
 @app.get("/giongnoi/khungdoc-xemtruoc")
 def khungdoc_xemtruoc(mau: str = "tím", lam_moi: int = 0):
-    """Ảnh xem trước KHUNG DỌC tạo sẵn (scripts/video_doc_khung.py) theo màu: nền hoa +
-    khung màu quanh dải video gốc + tiêu đề/số/ảnh mèo mẫu + một khung hình thật của
-    tập gần nhất. Vẽ một lần rồi cache ở static/khungdoc; lam_moi=1 vẽ lại."""
+    """Ảnh xem trước BỐ CỤC DỌC (scripts/video_doc_khung.py) theo màu logo: nền là khung
+    hình thật của tập gần nhất làm mờ + dải video giữa + logo + tiêu đề mẫu + dòng kêu
+    gọi. Dải video theo ô ✂ che_chu_trung đang lưu (852 che / 1080 không che — file cache
+    riêng). Vẽ một lần rồi cache ở static/khungdoc (vẽ lại khi code bố cục đổi); lam_moi=1 vẽ lại."""
     try:
         import video_doc_khung as vdk
         if mau not in vdk.MAU:
             mau = "tím"
-        p = vdk.xem_truoc(mau, core.WEB_DIR / "static" / "khungdoc" / f"xt_{mau}.jpg",
-                          force=bool(lam_moi), log=log)
+        che = bool(core.load_options().get("che_chu_trung", False))
+        p = vdk.xem_truoc(mau, core.WEB_DIR / "static" / "khungdoc" / f"xt_{mau}{'_che' if che else ''}.jpg",
+                          force=bool(lam_moi), log=log, che=che)
     except Exception as e:
         log(f"⚠️ Không vẽ được xem trước khung dọc: {e}")
         p = None
@@ -1101,6 +1117,10 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     hết rồi mới tới GPU. Trước đây mỗi tập một việc trọn gói: tập đầu dựng video xong
     tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO).
 
+    08/11/2026: cách xếp TUỲ CÁCH DỊCH (ô gemini_backend). "extension" (cần màn hình
+    sáng) → bốn đợt như trên. "cli" (GPT CLI) hay "firefox" → TUẦN TỰ TỪNG TẬP: mỗi tập
+    một việc chạy trọn các bước còn thiếu rồi mới sang tập sau (_xep_tung_tap).
+
     17/10/2026: link/file đang nằm trong ô Nguồn được NẠP trước (core.register_sources
     — ghi manifest với số tập đã cấp, cờ pending) rồi xếp như mọi tập thiếu đủ bước.
     Trước đây ⏩ chỉ dò thư mục tập, vừa dán link mà bấm ⏩ thì báo "không còn bước
@@ -1224,25 +1244,81 @@ def _run_resume(request: Request, form) -> RedirectResponse:
             runner.enqueue(f"⏩ {ten} — {len(buoc)} tập", buoc, episodes=eps)
             queued += 1
 
+    def _xep_dong_bili23() -> None:
+        """Việc nhẹ "Đóng app Bili23 (nếu bộ tải tự mở)" (08/11/2026, user yêu cầu) — luôn
+        nằm SAU việc tải cuối cùng: việc cũ cùng tên còn chờ thì bỏ đi rồi xếp lại ở cuối
+        (bấm ⏩ thêm tập giữa mẻ không làm app đóng rồi phải mở lại). Script tự kiểm: chỉ đóng
+        đúng tiến trình bộ tải đã mở, còn task đang tải (myvideo/tay) thì để lượt sau."""
+        for j in runner.state()["pending"]:
+            if j["title"] == steps_mod.DONG_BILI23_TITLE:
+                runner.remove(j["id"])
+        runner.enqueue(steps_mod.DONG_BILI23_TITLE, [steps_mod.dong_bili23_step()], light=True)
+
     def _la_link(src: str) -> bool:
         return str(src or "").strip().lower().startswith(("http://", "https://"))
 
     def _ten(keys: list[str]) -> str:
         return " → ".join(steps_mod.SINGLE_STEPS.get(k, k) for k in keys)
 
-    _xep_dot("đợt 1 · tải video/audio", [
-        (r, ["tai"], None, "Tải")
-        for r, front, _ in viec if "recognize" in front and _la_link(r["source"])])
-    _xep_dot("đợt 2 · nhận diện tiếng Trung", [
-        (r, ["recognize"], None, "Nhận diện")
-        for r, front, _ in viec if "recognize" in front])
-    _xep_dot("đợt 3 · dịch → input.docx → SEO", [
-        (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
-        for r, front, _ in viec
-        if (rest := [k for k in front if k != "recognize"])])
-    _xep_dot("đợt 4 · thumbnail → giọng + video", [
-        (r, back, ["translate", "input"] if front else None, _ten(back))
-        for r, front, back in viec if back])
+    def _xep_tung_tap() -> None:
+        """TUẦN TỰ TỪNG TẬP (08/11/2026, user yêu cầu): mỗi tập MỘT việc chạy trọn các bước
+        còn thiếu (tải → nhận diện → dịch → input → SEO → thumbnail → giọng + video) rồi mới
+        sang tập sau. Dùng khi dịch bằng GPT CLI (hay Firefox): không cần màn hình sáng nên
+        không có lý do gộp bước dịch của mọi tập lại; chạy trọn tập thì tập nào xong là xong
+        hẳn, máy sập giữa đêm cũng không mất cả mẻ dở dang. Một việc = một lần gọi runner
+        nên bước sau tự thấy kết quả bước trước, không cần --require."""
+        nonlocal queued, blocked
+        co_link = False                 # có tập ĐÃ XẾP mà phải tải link → cần đóng Bili23 ở cuối
+        for r, front, back in viec:
+            keys = list(front) + list(back)
+            tai = "recognize" in front and _la_link(r["source"])
+            if tai:
+                keys.insert(0, "tai")
+            step, err = steps_mod.resume_step(
+                keys, r["source"], r["episode"], upload=upload_on,
+                label=f"Tập {r['episode']} — {_ten(keys)}")
+            if err:
+                log(f"⛔ {err}")
+                blocked += 1
+                continue
+            runner.enqueue(f"⏩ Tập {r['episode']} · {_ten(keys)}", [step],
+                           episodes=[r["episode"]])
+            queued += 1
+            co_link = co_link or tai
+        if co_link:
+            _xep_dong_bili23()      # sau tập CUỐI — giữa các tập còn cần app
+
+    # Cách xếp tuỳ CÁCH DỊCH (08/11/2026): extension Chrome cần màn hình sáng trong lúc
+    # dịch → gom bước dịch của mọi tập vào một đợt (bốn đợt bên dưới) để chỉ phải sáng một
+    # lượt; GPT CLI / Firefox không cần màn hình → chạy tuần tự từng tập.
+    backend = core.load_pipeline().get("gemini_backend") or core.gui.PIPE_DEFAULTS["gemini_backend"]
+    if viec:
+        if backend == "extension":
+            log("🧭 Dịch bằng extension (cần màn hình sáng) → xếp 4 đợt: tải hết → nhận diện hết "
+                "→ dịch + SEO hết → thumbnail + giọng + video.")
+        else:
+            log(f"🧭 Dịch bằng {'GPT CLI' if backend == 'cli' else backend} (không cần màn hình) "
+                "→ chạy TUẦN TỰ từng tập: xong trọn các bước của tập này mới sang tập sau.")
+    if viec and backend != "extension":
+        _xep_tung_tap()
+    else:
+        tai_link = [(r, ["tai"], None, "Tải")
+                    for r, front, _ in viec if "recognize" in front and _la_link(r["source"])]
+        _xep_dot("đợt 1 · tải video/audio", tai_link)
+        _xep_dot("đợt 2 · nhận diện tiếng Trung", [
+            (r, ["recognize"], None, "Nhận diện")
+            for r, front, _ in viec if "recognize" in front])
+        if tai_link:
+            # Đóng Bili23 SAU đợt 2 chứ không phải đợt 1: link tải hỏng ở đợt 1 thì đợt 2
+            # tải lại (mở lại app) — đóng sau đợt 1 là app lại nằm nền tới sáng.
+            _xep_dong_bili23()
+        _xep_dot("đợt 3 · dịch → input.docx → SEO", [
+            (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
+            for r, front, _ in viec
+            if (rest := [k for k in front if k != "recognize"])])
+        _xep_dot("đợt 4 · thumbnail → giọng + video", [
+            (r, back, ["translate", "input"] if front else None, _ten(back))
+            for r, front, back in viec if back])
     if not queued:
         if blocked:
             log("⚠️ Có tập còn thiếu bước nhưng chưa xếp chạy được — xem lý do ở trên.")
@@ -2126,7 +2202,15 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    log("⏻/🌙 “Xong hết thì tắt máy / cho máy ngủ” mặc định TẮT — muốn thì tick trên trang web.")
+    # ⏻/🌙 nhớ lựa chọn lần trước (08/11/2026, user yêu cầu — trước đó mặc định TẮT mỗi lần
+    # mở): bật lại ở đây, sau khi nhật ký tệp đã bật để dòng "Bật … khi xong" cũng vào tệp.
+    nho = power.watcher.khoi_phuc()
+    if nho:
+        log(f"{power.ICON[nho]} Nhớ lần trước: “Xong hết thì {power.LABEL[nho]}” đang BẬT — "
+            "không muốn thì bỏ tick trên trang web (lựa chọn mới cũng được nhớ).")
+    else:
+        log("⏻/🌙 “Xong hết thì tắt máy / cho máy ngủ” đang TẮT (như lần trước) — muốn thì tick "
+            "trên trang web, lần mở sau vẫn nhớ.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
