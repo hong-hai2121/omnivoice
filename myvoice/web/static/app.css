@@ -148,19 +148,80 @@ main {
 /* Home gom mọi chức năng nên cần rộng hơn các trang một cột. */
 body.p-home main { max-width: 1340px; }
 
-/* Chỉ Ở HOME: các khối trong một form tự dàn thành nhiều cột.
-   Dùng CSS columns chứ KHÔNG dùng grid: grid xếp theo hàng nên khối cao thấp
-   lệch nhau là để lại lỗ hổng; columns rót tiếp khối sau vào ngay chỗ trống.
-   Trang riêng vẫn xếp dọc một cột theo thứ tự dùng. */
-body.p-home .form-grid { columns: 340px; column-gap: 12px; }
-body.p-home .form-grid > * {
-  display: block; margin: 0 0 12px; break-inside: avoid; page-break-inside: avoid;
+/* 06/11/2026: Home KHÔNG còn chia 2–3 cột (CSS columns) — từ khối "1 Nhận diện
+   giọng nói" trở xuống, mỗi khối là MỘT HÀNG trọn bề ngang, thu gọn được
+   (details.fold bên dưới). Lớp .form-grid / .span-all còn trên template nhưng
+   không mang luật nào nữa. */
+
+/* ── HÀNG THU GỌN (details.fold) ─────────────────────────────────────────────
+   <details class="panel fold" data-fold="<khoá>" open>
+     <summary class="phead"><span class="num">1</span><h2>Tên</h2><span class="sub">…</span></summary>
+     <div class="foldbody">…</div>
+   </details>
+   Thẻ <details> gốc của trình duyệt: ô nhập trong hàng đang đóng VẪN gửi theo form
+   (chỉ không vẽ), nên tự lưu / nút chạy không đổi gì. Trạng thái mở/đóng từng hàng
+   nhớ ở localStorage theo data-fold (xem cuối app.js) — dùng chung mọi trang. */
+details.fold { padding: 0; }
+details.fold > summary.phead {
+  list-style: none; cursor: pointer; user-select: none;
+  flex-wrap: nowrap; gap: 9px;
+  margin: 0; padding: 9px 14px; border-bottom: 1px solid transparent;
+  border-radius: var(--r);
+  transition: background .12s;
 }
-/* Popup kho kiểu để <script> nằm rời ngay trong form — luật > * ở trên lỡ
-   bật display:block cho nó là cả đoạn JS hiện thành chữ trên trang → giấu lại. */
-body.p-home .form-grid > script { display: none; }
-body.p-home .form-grid > .span-all,
-body.p-home .form-grid > .runbar { column-span: all; }
+details.fold > summary.phead::-webkit-details-marker { display: none; }
+details.fold > summary.phead:hover { background: var(--sunken); }
+details.fold > summary.phead:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+details.fold > summary.phead h2 { flex: none; }
+/* Mũi tên cuối hàng vẽ bằng hai cạnh viền (không lệ thuộc font): › khi đóng, ⌄ khi mở. */
+details.fold > summary.phead::after {
+  content: ""; flex: none; margin: 0 6px 0 auto; width: 8px; height: 8px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: rotate(-45deg); transition: transform .15s;
+}
+details.fold > summary.phead:hover::after { border-color: var(--accent); }
+details.fold[open] > summary.phead {
+  border-bottom-color: var(--line); border-radius: var(--r) var(--r) 0 0;
+}
+details.fold[open] > summary.phead::after { transform: rotate(45deg) translate(-2px, -2px); }
+/* Dòng phụ cạnh tên khối: một dòng, dài quá thì cắt đuôi — KHÔNG xuống dòng, để
+   hàng đóng luôn cao đúng một dòng. */
+.fold .sub {
+  flex: 0 1 auto; min-width: 0; color: var(--muted); font-size: 12.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.foldbody { padding: 12px 16px 14px; }
+.foldbody > :last-child { margin-bottom: 0; }
+.foldbody > :first-child { margin-top: 0; }
+
+/* Trong hàng rộng: ô nhập giữ bề ngang vừa phải (auto-fill, không kéo giãn hết
+   hàng như auto-fit); ô cần dài hơn mang .w2 / .w3. */
+.fold .grid { grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); }
+.fold .grid > .w2 { grid-column: span 2; }
+.fold .grid > .w3 { grid-column: span 3; }
+@media (max-width: 620px) {          /* lưới còn 1–2 cột: ô dài chiếm trọn hàng, khỏi tràn */
+  .fold .grid > .w2, .fold .grid > .w3 { grid-column: 1 / -1; }
+}
+/* Cụm checkbox nằm NGANG, tự xuống dòng (bỏ lề âm của .chk kẻo ô nọ đè ô kia). */
+.fold .chks { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 0 14px; margin-left: -7px; }
+.fold .chks .chk { margin: 0; }
+.fold .chks .lbl { font-size: 13px; padding: 4px 0 4px 7px; color: var(--muted); }
+.fold .field .chks { margin-bottom: 0; }
+/* .hang: một dòng gồm nút + ô tick (+ ghi chú) cạnh nhau. */
+.hang { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-bottom: 8px; }
+.hang > .actions, .hang > .chks, .hang > .hint, .hang > .warn { margin: 0; }
+.hang > .chks { margin-left: -7px; }
+/* 🎧 Nghe thử cài đặt giọng: nút + thanh phát + dòng "Mẫu: tập N · 31 s · …". */
+.nghethu { margin: 10px 0 0; }
+.nghethu audio { height: 32px; width: 300px; }
+.nghethu button:disabled { opacity: .55; cursor: progress; }
+.fold .modes { max-width: 760px; }
+/* Hai nửa cạnh nhau: trái là ô chỉnh, phải là ảnh xem trước (khối Video dọc). */
+.foldsplit { display: flex; flex-wrap: wrap; gap: 6px 28px; align-items: flex-start; }
+.foldsplit > .foldmain { flex: 1 1 420px; min-width: 0; }
+.foldsplit > .foldside { flex: 0 1 auto; }
+/* Thanh "thu gọn hết / mở hết" ngay trên hàng đầu tiên. */
+.foldbar { display: flex; justify-content: flex-end; gap: 4px; margin: 0 0 6px; }
 
 /* Khối chạy hàng loạt: cột hẹp (nhập link · nút chạy) | cột rộng (bảng tập). */
 body.p-home .batch-grid {

@@ -59,6 +59,16 @@ chưa tải…) → ghi cảnh báo rồi ghép clip theo “Nguồn clip ngang�
 đưa thẳng đường dẫn video (`ngang_source_video`), còn nút ▶ Dựng lại / GUI tra
 `batch_manifest.json` theo thư mục tập (`gui.nguon_video_cua_tap`).
 
+**Ô “Tải Bilibili”** (cạnh Model + Tốc độ ở khối Nguồn và trang Nhận diện, 05/11/2026;
+khoá `bili_quality` trong `taogiong_pipeline.json`, mức ở `gui.BILI_QUALITIES`): mức
+video khi tải link Bilibili qua app Bili23 — `Cao nhất` (mặc định, như trước) / 1080P /
+720P / 480P / 360P. Kênh audio chỉ cần tiếng để nhận diện nên 360P là đủ. Bản thấp lưu
+tên RIÊNG `Downloads/<mã BV>_<mức>.mp4`; `<mã BV>.mp4` luôn là bản đầy đủ nên myvideo và
+🎞 không nhặt nhầm bản mờ (đã có bản đầy đủ thì dùng luôn, khỏi tải bản thấp). Đang bật
+🎞 thì vẫn tải bản cao nhất. Video thiếu đúng mức đã chọn → lấy mức gần nhất không vượt
+(`chon_muc` trong `myvideo/video_taibilibili.py`, tham số `--chat-luong`). GUI Tkinter
+không có ô này vì ở đó link tải bằng yt-dlp (chỉ mp3), không qua Bili23.
+
 **Nguồn clip ngang tick NHIỀU thư mục** (khối ③, 01/11/2026): ô chọn 1 thư mục con
 `videongang/` đổi thành cụm checkbox (GUI: nút thả menu có ô tick, cùng ô). Khoá
 `ngang_source` trong `taogiong_options.json` nay là **list tên thư mục con** (chuỗi 1
@@ -83,11 +93,31 @@ trang: hai khối giống nhau từng ký tự). Các nút quay về đúng tran
 `_back()` đọc Referer, còn nút Facebook trả thẳng khối đã vẽ lại nên trang nào
 cũng tự cập nhật tại chỗ.
 
-Ở Home, mỗi khối tự dàn thành nhiều cột bằng **CSS columns** (`body.p-home
-.form-grid`) — grid xếp theo hàng nên khối cao thấp lệch nhau để lại lỗ hổng, còn
-columns thì rót khối sau vào ngay chỗ trống. Riêng khối hàng loạt dùng
-`.batch-grid`: cột hẹp (nhập link · nút chạy) | cột rộng (bảng tập 10 cột).
-Các trang riêng vẫn xếp **dọc một cột theo đúng thứ tự bấm**, căn giữa màn hình.
+**🎧 Nghe thử cài đặt giọng (06/11/2026).** Hàng “3 Cài đặt tạo giọng” có nút 🎧 + thanh
+phát: `app.js` (khối “Nghe thử”) gửi các ô giọng đang hiện tới `POST /giongnoi/nghethu`
+(không ghi cài đặt), server áp lên mẫu ~30 s giọng gốc của tập đầu đợt mới nhất
+(`scripts/taogiong_nghethu.py`, lưu ở `voice/nghe_thu/`) rồi trả đường phát qua
+`/giongnoi/nghe`. Đã bấm 🎧 một lần thì đổi ô giọng nào là tự phát lại bản mới. Chi tiết
+cách chọn tập / lúc thay mẫu: mục 🎧 trong `myvoice/README.md`.
+
+**Hàng thu gọn (06/11/2026).** Từ khối “1 Nhận diện giọng nói” trở xuống (①②③ kịch
+bản · 8 khối giọng nói & video · thumbnail · đăng YouTube · đăng Facebook), mỗi khối
+là **một hàng trọn bề ngang, bấm đầu hàng để thu gọn/mở** — thay cho kiểu Home tự
+chia 2–3 cột bằng CSS columns trước đó. Mỗi hàng là
+`<details class="panel fold" data-fold="<khoá>">` + `<summary class="phead">` +
+`<div class="foldbody">` (luật ở `app.css`, khối “HÀNG THU GỌN”): thẻ `<details>` gốc
+của trình duyệt nên **ô trong hàng đang đóng vẫn gửi theo form** — tự lưu và các nút
+chạy không đổi gì. Trạng thái mở/đóng từng hàng nhớ ở `localStorage` (`mv.fold.v1`,
+khoá = `data-fold`, dùng chung mọi trang) và được áp lại sau mỗi lần htmx vẽ lại khối
+(IIFE cuối `app.js`); chưa bấm hàng nào thì theo thuộc tính `open` của template (mọi
+hàng mở, riêng “6 Kiểu phụ đề vẽ cứng” đóng). Hai nút `data-fold-all` ngay trên hàng
+đầu thu gọn / mở hết. Trong hàng: `.grid` dùng `auto-fill` (ô nhập không giãn hết
+hàng; `.w2`/`.w3` cho ô dài), `.chks` nằm ngang, `.hang` = nút + ô tick trên một dòng,
+`.foldsplit` = ô chỉnh bên trái · ảnh/bảng bên phải. Chữ giải thích dài của các khối
+này chuyển vào `title` (rê chuột vào ô/nút); “Nguồn clip ngang” dời từ khối 3 sang
+khối 4 *Video ngang*. Thêm khối mới thì dùng đúng khuôn trên và đặt `data-fold` riêng.
+Khối hàng loạt phía trên vẫn dùng `.batch-grid`: cột hẹp (nhập link · nút chạy) | cột
+rộng (bảng tập). Các trang riêng xếp dọc một cột, căn giữa màn hình như cũ.
 
 Giao diện: menu trái tím gradient (giữ nguyên mọi trang) + mỗi trang một tông màu
 riêng để nhìn là biết đang ở đâu — Home chàm · kịch bản tím · nhận diện xanh dương · giọng nói

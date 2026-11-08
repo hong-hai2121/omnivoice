@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⬇ Tải video Bilibili CHẤT LƯỢNG CAO NHẤT qua app Bili23 Downloader.
+"""⬇ Tải video Bilibili qua app Bili23 Downloader (mặc định: CHẤT LƯỢNG CAO NHẤT).
 
 Dán link bilibili.com / b23.tv vào ô Nguồn của web myvideo là bước ⬇ này được
 xếp TRƯỚC bước ①: nhờ app Bili23 Downloader (D:\\Python\\BBDown — GUI PySide6,
@@ -10,12 +10,16 @@ Vì sao đi QUA APP thay vì tự gọi API Bilibili: app giữ sẵn đăng nh�
 lượng cao nhất mà tài khoản xem được), tự chọn CDN, tự ghép luồng DASH bằng
 ffmpeg, tự thử lại khi rớt mạng — toàn việc app đã làm tốt, ở đây chỉ ra lệnh.
 
-- Chất lượng: KHÔNG chỉ định gì — app theo danh sách ưu tiên của người dùng
-  (8K → … thấp dần), đúng nghĩa "cao nhất tải được"; chỉ ép container mp4.
+- Chất lượng: mặc định KHÔNG chỉ định gì — app theo danh sách ưu tiên của người
+  dùng (8K → … thấp dần), đúng nghĩa "cao nhất tải được"; chỉ ép container mp4.
+  Thêm --chat-luong 360P / 480P / 720P / 1080P (05/11/2026) khi chỉ cần TIẾNG
+  (kênh audio myvoice: nhận diện xong là hết việc của file) — tải nhanh, nhẹ đĩa.
+  Video không có đúng mức đó thì lấy mức gần nhất KHÔNG VƯỢT yêu cầu (chon_muc).
 - App chưa mở thì tự mở (pythonw trong .venv của app) rồi đợi MCP lên.
 - File --out đã có thì bỏ qua, coi như xong — chạy lại vô hại.
 
 Dùng tay:  python myvideo/video_taibilibili.py <link> --out <file.mp4>
+           thêm --chat-luong 360P để tải bản nhẹ;
            thêm --chi-phan-tich để chỉ xem link ra những tập nào (không tải).
 """
 
@@ -46,9 +50,44 @@ TRANG_THAI = {
 }
 HONG = {"failed", "ffmpeg_failed"}
 
+# Mức chất lượng video của app (tên trong video_quality_map bên đó → mã qn của
+# Bilibili; mã lớn hơn = nét hơn). Dùng để xếp hạng khi video thiếu mức được xin.
+MUC_VIDEO = {"360P": 16, "480P": 32, "720P": 64, "1080P": 80, "AI": 100,
+             "1080P+": 112, "1080P60": 116, "4K": 120, "4K_SDR": 122, "HDR": 125,
+             "DOLBY_VISION": 126, "8K": 127}
+
 
 class ThatBai(Exception):
     """Lỗi có lời giải thích sẵn cho người dùng — in ra rồi exit 1."""
+
+
+def chuan_chat_luong(s) -> str:
+    """Chữ ở --chat-luong → "auto" (cao nhất tải được) hoặc tên mức của app.
+    Nhận cả "360", "360p", "360P"; mức lạ thì báo rõ thay vì âm thầm tải bản khác."""
+    t = str(s or "").strip().upper().replace(" ", "")
+    if t in ("", "AUTO"):
+        return "auto"
+    if t.isdigit():
+        t += "P"
+    if t in MUC_VIDEO:
+        return t
+    raise ThatBai(f"Không hiểu mức chất lượng '{s}' — dùng một trong: auto, "
+                  + ", ".join(sorted(MUC_VIDEO, key=MUC_VIDEO.get)) + ".")
+
+
+def chon_muc(yeu_cau: str, co_san) -> str:
+    """Mức người dùng xin → mức sẽ gửi cho app, theo những mức video này THẬT SỰ có.
+
+    App gặp mức video không có thì âm thầm nhảy về mức đầu danh sách của nó (thường
+    là cao nhất) — xin 360P mà ra 1080P. Nên chọn sẵn ở đây: mức cao nhất KHÔNG
+    VƯỢT yêu cầu; video chỉ có các mức cao hơn thì lấy mức thấp nhất đang có."""
+    if yeu_cau == "auto":
+        return "auto"
+    co = [m for m in (co_san or []) if m in MUC_VIDEO]
+    if not co or yeu_cau in co:
+        return yeu_cau
+    duoi = [m for m in co if MUC_VIDEO[m] <= MUC_VIDEO[yeu_cau]]
+    return max(duoi, key=MUC_VIDEO.get) if duoi else min(co, key=MUC_VIDEO.get)
 
 
 def doc_cau_hinh() -> tuple[str, str]:
@@ -165,7 +204,11 @@ def main() -> int:
                     help="Đợi app mở tối đa bấy nhiêu giây (mặc định 90)")
     ap.add_argument("--chi-phan-tich", action="store_true",
                     help="Chỉ phân tích link xem ra tập nào, KHÔNG tải")
+    ap.add_argument("--chat-luong", default="auto",
+                    help="Mức video: auto (mặc định = cao nhất tải được), 1080P, 720P, "
+                         "480P, 360P… — chỉ cần tiếng thì 360P là đủ")
     args = ap.parse_args()
+    yeu_cau = chuan_chat_luong(args.chat_luong)
 
     out = Path(args.out)
     if out.is_file() and out.stat().st_size > 1_000_000:
@@ -183,7 +226,8 @@ def main() -> int:
                           "mở app Bili23 bằng tay, nhìn xem có báo lỗi gì không.")
 
     dn = goi_tool(url, token, "get_login_status", {})
-    if not dn.get("logged_in") or dn.get("session_expired"):
+    # Chỉ đáng nhắc khi đang xin bản cao nhất: mức thấp (360P…) không cần đăng nhập.
+    if yeu_cau == "auto" and (not dn.get("logged_in") or dn.get("session_expired")):
         print("⚠ Phiên đăng nhập Bilibili trong app đã hết/chưa có — vẫn tải được "
               "nhưng chất lượng có thể bị giới hạn. Mở app đăng nhập lại để có bản "
               "cao nhất.", flush=True)
@@ -199,10 +243,18 @@ def main() -> int:
         return 0
 
     # Không chỉ định chất lượng → app theo danh sách ưu tiên của người dùng
-    # (cao nhất trước). redownload=True: app từng tải video này rồi thì vẫn tải
+    # (cao nhất trước). Có --chat-luong thì xin đúng mức đó (đã dò theo các mức
+    # video này có). redownload=True: app từng tải video này rồi thì vẫn tải
     # lại — vì file đích của mình chưa có (đã có thì thoát từ đầu rồi).
+    tuy_chon = {"container": "mp4"}
+    muc = chon_muc(yeu_cau, chat_luong)
+    if muc != "auto":
+        tuy_chon["video_quality"] = muc
+        print(f"🎚 Tải mức {muc}"
+              + (f" (video không có {yeu_cau} — lấy mức gần nhất)" if muc != yeu_cau else ""),
+              flush=True)
     tao = goi_tool(url, token, "create_download",
-                   {"episode_ids": [ep_id], "options": {"container": "mp4"},
+                   {"episode_ids": [ep_id], "options": tuy_chon,
                     "redownload": True}, timeout=120.0)
     tasks = tao.get("tasks") or []
     if not tasks:

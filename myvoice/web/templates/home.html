@@ -2,9 +2,10 @@
 {% block title %}Home — myvoice{% endblock %}
 
 {# Bản web của view “🏠 Home (đầy đủ)” bên GUI: MỌI nút chức năng nằm ở đây, xếp
-   theo đúng thứ tự làm việc. Mỗi khối tự chia cột (form-grid) nên không cột nào
-   bị hẫng một khoảng trống dài. Các trang riêng bên menu chỉ còn là chỗ xem kỹ
-   từng phần + vài tuỳ chọn ít dùng. #}
+   theo đúng thứ tự làm việc. Từ khối “1 Nhận diện giọng nói” trở xuống, mỗi khối
+   là MỘT HÀNG trọn bề ngang, thu gọn được (06/11/2026 — trước đó chia 2–3 cột bằng
+   CSS columns); xem details.fold trong app.css và cuối app.js. Các trang riêng bên
+   menu dùng chung chính các khối đó + vài tuỳ chọn ít dùng. #}
 {% block content %}
 <div class="pagehead">
   <h1><span class="ico">🏠</span> Home</h1>

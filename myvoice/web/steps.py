@@ -77,7 +77,9 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
     pipe = core.load_pipeline()
     argv = [core.python_exe(), "-u", str(RUNNER), "--steps", step_names,
             "--model", str(pipe.get("model", "medium")),
-            "--speed", str(pipe.get("speed", "0.7"))]
+            "--speed", str(pipe.get("speed", "0.7")),
+            # Mức video khi tải link Bilibili (ô "Tải Bilibili"; "auto" = cao nhất).
+            "--bili-quality", core.gui.chuan_bili_quality(pipe.get("bili_quality"))]
     if source:
         argv += ["--source", source]
     if episode:

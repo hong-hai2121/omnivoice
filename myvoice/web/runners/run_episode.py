@@ -74,8 +74,9 @@ STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
 # / nhích chuột trong lúc gửi–đợi Gemini; tải, nhận diện, tạo giọng, video và đường
 # Firefox/GPT CLI để màn hình tắt theo Windows.
 
-# ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO bản chất lượng cao nhất qua
-# app Bili23 Downloader bằng script cầu nối bên myvideo — mượn NGUYÊN script
+# ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO qua app Bili23 Downloader (mặc
+# định bản cao nhất; ô "Tải Bilibili" 05/11/2026 chọn được mức thấp hơn khi chỉ cần
+# tiếng — xem gui.BILI_QUALITIES) bằng script cầu nối bên myvideo — mượn NGUYÊN script
 # (như gemini_backend dùng chung), không viết bộ tải thứ hai. File về
 # Downloads/<mã BV>.mp4, TRÙNG chỗ với bên myvideo: video nào bên kia tải rồi
 # thì bên này nhặt lại luôn. Link KHÔNG phải bilibili vẫn đi yt-dlp lấy mp3 như cũ.
@@ -109,21 +110,51 @@ def _ten_tai_bilibili(src: str) -> str:
     return gui.ten_tai_bilibili(src)
 
 
-def _tai_video_bilibili(src: str) -> tuple[str, str]:
+def _muc_tai_bilibili(chat_luong: str) -> str:
+    """Mức ở ô "Tải Bilibili" → mức THẬT SỰ tải ("auto" = cao nhất tải được).
+
+    Đang bật 🎞 "Lấy video tải xuống làm video nguồn" thì file tải về còn làm HÌNH cho
+    video ngang → vẫn tải bản cao nhất, bỏ qua mức thấp (mức thấp chỉ hợp khi file
+    chỉ dùng để nghe nhận diện)."""
+    muc = gui.chuan_bili_quality(chat_luong)
+    if muc == "auto":
+        return muc
+    try:
+        opts = core.load_options()
+    except Exception:
+        opts = {}
+    if opts.get("ngang_tu_nguon") and opts.get("make_video"):
+        logging.info(f"🎞 Đang bật “Lấy video tải xuống làm video nguồn” → vẫn tải bản "
+                     f"CAO NHẤT (bỏ qua mức {muc}) để hình video ngang không mờ.")
+        return "auto"
+    return muc
+
+
+def _tai_video_bilibili(src: str, chat_luong: str = "auto") -> tuple[str, str]:
     """Link bilibili → (đường dẫn video đã tải, ""), lỗi thì ("", lý do).
 
     Chạy video_taibilibili.py làm tiến trình con, in của nó đổ thẳng ra stdout
-    cho web thấy tiến độ; dòng ❌ cuối cùng chính là lý do lỗi để note sổ."""
+    cho web thấy tiến độ; dòng ❌ cuối cùng chính là lý do lỗi để note sổ.
+
+    chat_luong ≠ "auto" (ô "Tải Bilibili", 05/11/2026): tải bản nhẹ về file RIÊNG
+    <mã BV>_<mức>.mp4; đã có sẵn bản đầy đủ <mã BV>.mp4 thì dùng luôn, khỏi tải."""
     ten = _ten_tai_bilibili(src)
     if not ten:
         return "", f"không nhận ra mã BV/av trong link: {src}"
     if not TAIBILI_SCRIPT.is_file():
         return "", f"thiếu script {TAIBILI_SCRIPT}"
-    out = Path.home() / "Downloads" / f"{ten}.mp4"
+    muc = gui.chuan_bili_quality(chat_luong)
+    day_du = gui.TAI_VE_DIR / f"{ten}.mp4"
+    out = gui.TAI_VE_DIR / f"{gui.ten_file_bilibili(src, muc)}.mp4"
+    lenh = [sys.executable, "-u", str(TAIBILI_SCRIPT), src, "--out", str(out)]
+    if muc != "auto":
+        if day_du.is_file() and day_du.stat().st_size > 1_000_000:
+            logging.info(f"♻ Đã có bản đầy đủ {day_du.name} — dùng luôn, khỏi tải bản {muc}.")
+            return str(day_du), ""
+        lenh += ["--chat-luong", muc]
     ly_do = ""
     try:
-        p = subprocess.Popen([sys.executable, "-u", str(TAIBILI_SCRIPT), src,
-                              "--out", str(out)],
+        p = subprocess.Popen(lenh,
                              cwd=str(_BASE_DIR.parent),
                              env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -201,13 +232,14 @@ def _resolve_folder(app: HeadlessApp, source: str, episode: str | None):
 
 
 # ── Từng bước ───────────────────────────────────────────────────────────────
-def _fetch_media(source: str, episode: str) -> tuple[str, str]:
+def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple[str, str]:
     """Nguồn → (đường dẫn file media, ""), lỗi → ("", lý do).
 
-    File local dùng thẳng; link thì tải về (Bilibili: NGUYÊN VIDEO bản cao nhất qua
-    app Bili23 — file dùng được cho cả myvideo; link khác: yt-dlp lấy mp3). Đã có
-    file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước "tai" chạy trước, bước
-    "recognize" chạy sau không tải lại. Link tải lỗi được note vào sổ link lỗi."""
+    File local dùng thẳng; link thì tải về (Bilibili: NGUYÊN VIDEO qua app Bili23, mức
+    theo ô "Tải Bilibili" — mặc định bản cao nhất, file dùng được cho cả myvideo; link
+    khác: yt-dlp lấy mp3). Đã có file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước
+    "tai" chạy trước, bước "recognize" chạy sau không tải lại. Link tải lỗi được note
+    vào sổ link lỗi."""
     src = (source or "").strip().strip('"').strip("'")
     if not src:
         return "", "Không có nguồn (link/file) để nhận diện."
@@ -215,8 +247,11 @@ def _fetch_media(source: str, episode: str) -> tuple[str, str]:
         logging.info(f"📁 File local: {src}")
         return src, ""
     if _BILI_LINK_RE.match(src):
-        logging.info(f"⬇ Link Bilibili → tải video bản cao nhất qua app Bili23: {src}")
-        media, ly_do = _tai_video_bilibili(src)
+        muc = _muc_tai_bilibili(bili_quality)
+        logging.info("⬇ Link Bilibili → tải video "
+                     + ("bản cao nhất" if muc == "auto" else f"mức {muc} (chỉ cần tiếng)")
+                     + f" qua app Bili23: {src}")
+        media, ly_do = _tai_video_bilibili(src, muc)
         if not media:
             note_link_loi(src, ly_do, episode)
             return "", f"Không tải được video Bilibili: {ly_do}"
@@ -232,7 +267,8 @@ def _fetch_media(source: str, episode: str) -> tuple[str, str]:
     return "", f"Nguồn không hợp lệ (không phải file cũng không phải link): {src}"
 
 
-def step_tai(folder: Path, episode: str, source: str, force: bool) -> int:
+def step_tai(folder: Path, episode: str, source: str, force: bool,
+             bili_quality: str = "auto") -> int:
     """Bước TẢI (17/10/2026): chỉ đem video/audio của nguồn về máy, KHÔNG nhận diện.
     ⏩ xếp đợt tải cho MỌI tập trước, xong hết mới tới đợt nhận diện. Đã có bản
     nhận diện thì khỏi tải (trừ khi --force)."""
@@ -240,7 +276,7 @@ def step_tai(folder: Path, episode: str, source: str, force: bool) -> int:
     if existing and gui.read_zh_docx_chunks(existing) and not force:
         logging.info(f"♻ Bỏ qua tải (đã có {existing.name}).")
         return 0
-    media, ly_do = _fetch_media(source, episode)
+    media, ly_do = _fetch_media(source, episode, bili_quality)
     if not media:
         logging.error(f"❌ {ly_do}")
         return ERROR
@@ -249,14 +285,15 @@ def step_tai(folder: Path, episode: str, source: str, force: bool) -> int:
 
 
 def step_recognize(app, folder: Path, episode: str, source: str,
-                   model: str, speed: float, force: bool) -> int:
+                   model: str, speed: float, force: bool,
+                   bili_quality: str = "auto") -> int:
     import nhandien_giongnoi as recog
 
     existing = gui.find_zh_docx(folder)
     if existing and gui.read_zh_docx_chunks(existing) and not force:
         logging.info(f"♻ Bỏ qua nhận diện (đã có {existing.name}).")
         return 0
-    media, ly_do = _fetch_media(source, episode)
+    media, ly_do = _fetch_media(source, episode, bili_quality)
     if not media:
         logging.error(f"❌ {ly_do}")
         return ERROR
@@ -481,6 +518,9 @@ def main(argv=None) -> int:
     parser.add_argument("--episode", default="", help="Số tập (bỏ trống = tự cấp).")
     parser.add_argument("--model", default="medium", help="Model Whisper cho bước nhận diện.")
     parser.add_argument("--speed", type=float, default=0.7, help="Tốc độ audio khi nhận diện.")
+    parser.add_argument("--bili-quality", default="auto",
+                        help="Mức video khi tải link Bilibili: auto (cao nhất), 1080P, 720P, "
+                             "480P, 360P — chỉ cần tiếng để nhận diện thì 360P là đủ.")
     parser.add_argument("--tts-json", default="", help="File JSON cài đặt tạo giọng/video.")
     parser.add_argument("--force", action="store_true",
                         help="Làm lại cả khi bước đó đã có kết quả.")
@@ -546,10 +586,12 @@ def main(argv=None) -> int:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
             if name == "tai":
-                code = step_tai(folder, episode, args.source.strip(), args.force)
+                code = step_tai(folder, episode, args.source.strip(), args.force,
+                                args.bili_quality)
             elif name == "recognize":
                 code = step_recognize(app, folder, episode, args.source.strip(),
-                                      args.model, args.speed, args.force)
+                                      args.model, args.speed, args.force,
+                                      args.bili_quality)
             elif name == "translate":
                 code = step_translate(app, folder, episode, state)
             elif name == "input":

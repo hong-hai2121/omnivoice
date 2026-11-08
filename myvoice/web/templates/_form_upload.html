@@ -1,26 +1,34 @@
 {# Khối ĐĂNG YOUTUBE — cài đặt + nút đăng. Dùng chung Home và trang riêng.
-   Cần: up (cài đặt), up_choices, pipe, slots, pending, chan_note. #}
-<form class="panel" method="post" action="/dangyoutube/luu" data-tuluu="/dangyoutube/luu">
-  <div class="phead">
+   Cần: up (cài đặt), up_choices, pipe, slots, pending, chan_note.
+   06/11/2026: khối là MỘT HÀNG thu gọn được (details.fold — app.css, cuối app.js);
+   chữ giải thích dài nằm ở title (rê chuột vào ô/nút). #}
+<form method="post" action="/dangyoutube/luu" data-tuluu="/dangyoutube/luu">
+ <details class="panel fold" data-fold="youtube" open>
+  <summary class="phead">
     <h2>Đăng YouTube</h2>
-    <p class="hint">Video ngang (<code>YOUTUBE.mp4</code>) của từng tập, kèm thumbnail,
-       tiêu đề · mô tả · thẻ tag lấy từ SEO của chính tập đó.</p>
-  </div>
-
+    <span class="sub">YOUTUBE.mp4 + thumbnail · tiêu đề, mô tả, tag lấy từ SEO của tập ·
+      {% if pending %}chờ đăng {{ pending|length }} tập{% else %}không có tập chờ đăng{% endif %}</span>
+  </summary>
+  <div class="foldbody">
   <div class="chks">
     {# Ô này quyết định quy trình ở khối 1 có tự đăng sau khi dựng xong video không.
        Lưu ở taogiong_pipeline.json (khoá "upload") — chung với bản GUI. #}
-    <label class="chk"><input type="checkbox" name="upload" {{ 'checked' if pipe.upload }}>
+    <label class="chk" title="Đăng chạy ở hàng đợi RIÊNG nên tập kế cứ dựng tiếp, không phải đợi tải lên xong. Mỗi tập tự nhận một khung giờ trống ({{ slots }}), mỗi ngày 2 tập.">
+      <input type="checkbox" name="upload" {{ 'checked' if pipe.upload }}>
       ⬆ Tự động đăng sau khi dựng xong video</label>
+    <label class="chk" title="Kênh dùng giọng TTS nên thường để BẬT.">
+      <input type="checkbox" name="contains_ai" {{ 'checked' if up.contains_ai }}>
+      🤖 Khai báo có dùng AI</label>
+    <label class="chk" title="Bật sẽ tắt bình luận và giảm đề xuất — chỉ bật khi video thật sự dành cho trẻ em (dưới 14 tuổi).">
+      <input type="checkbox" name="made_for_kids" {{ 'checked' if up.made_for_kids }}>
+      👶 Nội dung cho trẻ em</label>
   </div>
-  <p class="hint">Đăng chạy ở hàng đợi RIÊNG nên tập kế cứ dựng tiếp, không phải đợi
-     tải lên xong. Mỗi tập tự nhận một khung giờ trống ({{ slots }}), mỗi ngày 2 tập.</p>
 
   <div class="grid">
     {# Cách đăng (30/10/2026): API = Data API (hạn mức ~11 video/ngày); Trình duyệt = Chrome thật qua
        Playwright Extension, đăng cả YouTube Studio lẫn TikTok Studio; profile liên kết ở
        myvoice/TRINHDUYET/cau_hinh.json. Lưu ở taogiong_pipeline.json (khoá upload_backend). #}
-    <label class="field">
+    <label class="field w2">
       <span>Cách đăng</span>
       <select name="upload_backend">
         {% for id, lb in backends.items() %}
@@ -28,7 +36,7 @@
         {% endfor %}
       </select>
     </label>
-    <label class="field">
+    <label class="field w2">
       <span>Danh mục</span>
       <select name="category_id">
         {% for c in up_choices.categories %}
@@ -36,7 +44,7 @@
         {% endfor %}
       </select>
     </label>
-    <label class="field">
+    <label class="field w2">
       <span>Chế độ đăng</span>
       <select name="privacy">
         {% for p in up_choices.privacy %}
@@ -46,46 +54,33 @@
     </label>
   </div>
 
-  <div class="chks">
-    <label class="chk"><input type="checkbox" name="made_for_kids" {{ 'checked' if up.made_for_kids }}>
-      👶 Nội dung làm cho trẻ em (dưới 14 tuổi)</label>
-    <label class="chk"><input type="checkbox" name="contains_ai" {{ 'checked' if up.contains_ai }}>
-      🤖 Khai báo nội dung có dùng AI (giọng đọc tổng hợp)</label>
-  </div>
-  <p class="hint">Kênh dùng giọng TTS nên ô 🤖 thường để BẬT. Bật ô 👶 sẽ tắt bình luận
-     và giảm đề xuất — chỉ bật khi video thật sự dành cho trẻ em.</p>
-
   <div class="actions">
+    {# 💾 đứng ĐẦU như trước: nút submit đầu tiên là nút mặc định của form — đổi chỗ
+       với "Đăng ngay" thì một phím Enter lạc là thành đăng thật. #}
     {# hx-post: lưu tại chỗ, không tải lại trang (formaction là đường lui noscript). #}
     <button class="primary" formaction="/dangyoutube/luu"
             hx-post="/dangyoutube/luu" hx-target="#luunote-dang" hx-swap="innerHTML">💾 Lưu cài đặt</button>
     <span id="luunote-dang" class="luunote"></span>
-    <button formaction="/dangyoutube/chay">⬆ Đăng ngay các tập chưa đăng</button>
+    <button formaction="/dangyoutube/chay"
+            title="Lưu cài đặt rồi xếp lần lượt các tập chưa đăng vào hàng đợi đăng.">⬆ Đăng ngay các tập chưa đăng</button>
     {# Nút này KHÔNG lưu cài đặt (handler bỏ qua form) — nó chỉ mở cửa sổ Google. #}
-    <button formaction="/dangyoutube/dangnhap" formnovalidate>🔑 Đăng nhập YouTube</button>
+    <button formaction="/dangyoutube/dangnhap" formnovalidate
+            title="Gặp lỗi “Chưa đăng nhập YouTube” thì bấm: cửa sổ Google mở ra ngay trên máy này, bấm Cho phép là xong — kết quả hiện ở nhật ký hàng đợi đăng. Token còn dùng được thì nút chỉ đọc lại kênh. Đổi hẳn sang kênh khác vẫn phải dùng nút “🔁 Đổi kênh…” bên app GUI. Nếu cứ vài ngày lại phải bấm một lần: app OAuth đang ở chế độ Testing, Google thu hồi quyền sau 7 ngày — vào Google Cloud Console → OAuth consent screen → Publish app là hết.">🔑 Đăng nhập YouTube</button>
   </div>
-  <p class="hint">Gặp lỗi “Chưa đăng nhập YouTube” thì bấm 🔑: cửa sổ Google mở ra
-     ngay trên máy này, bấm Cho phép là xong — kết quả hiện ở nhật ký hàng đợi đăng
-     bên dưới. Token còn dùng được thì nút chỉ đọc lại kênh, không bắt đăng nhập lại.
-     Đổi hẳn sang kênh khác vẫn phải dùng nút “🔁 Đổi kênh…” bên app GUI.
-     Nếu cứ vài ngày lại phải bấm 🔑 một lần: app OAuth đang ở chế độ <em>Testing</em>,
-     Google thu hồi quyền sau 7 ngày — vào Google Cloud Console → OAuth consent
-     screen → <em>Publish app</em> là hết.</p>
 
   {% if pending %}
-    <p class="hint">Đang chờ đăng ({{ pending|length }} tập): {{ pending|join(', ') }}.
-       Bấm “Đăng ngay” sẽ lưu cài đặt rồi xếp lần lượt vào hàng đợi đăng.</p>
+    <p class="hint">Chờ đăng ({{ pending|length }} tập): {{ pending|join(', ') }}.</p>
   {% else %}
-    <p class="hint">Không có tập nào chờ đăng (thiếu video/SEO, hoặc kênh đã có hết).</p>
+    <p class="hint" title="Thiếu video/SEO, hoặc kênh đã có hết.">Không có tập nào chờ đăng.</p>
   {% endif %}
   {% if chan_note %}<p class="hint">{{ chan_note }}</p>{% endif %}
   {% if td %}
-    <p class="hint">🌐 Đăng qua trình duyệt —
+    <p class="hint" title="Điền myvoice/TRINHDUYET/cau_hinh.json; cách chuẩn bị profile trong TRINHDUYET/README.md.">🌐 Đăng qua trình duyệt —
       {% for name, st in td.items() %}
         {{ 'YouTube' if name == 'youtube' else 'TikTok' }}:
         {% if st.ok %}profile “{{ st.profile }}” ✓{% else %}chưa liên kết profile{% endif %}{{ ' ·' if not loop.last }}
-      {% endfor %}
-      (điền <code>myvoice/TRINHDUYET/cau_hinh.json</code>; cách chuẩn bị profile trong
-      <code>TRINHDUYET/README.md</code>).</p>
+      {% endfor %}</p>
   {% endif %}
+  </div>
+ </details>
 </form>

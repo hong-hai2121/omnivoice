@@ -44,6 +44,9 @@ examples/exp*
 # Toàn bộ thư mục kịch_bản sinh tự động (input.txt, docx dịch/SEO, youtube_seo.txt,
 # audio/video, thumbnail, các thư mục tập 01, 02, 17, 18...) — KHÔNG đưa gì lên git.
 /myvoice/kịch_bản/
+# Mẫu 🎧 nghe thử cài đặt giọng (~30 s giọng gốc của một tập + các bản đã áp cài đặt) —
+# scripts/taogiong_nghethu.py tự lấy lại từ kịch_bản/.
+/myvoice/voice/nghe_thu/
 
 # State/cài đặt GUI ghi nhớ tự động (không cần đưa lên repo)
 /myvoice/voice_favorites.json

@@ -355,6 +355,7 @@ def _voice_ctx() -> dict:
         "sub_fonts": _sub_fonts(),
         "input_txt": core.default_input_path(web.get("input") or ""),
         "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
+        "nghethu": _nghethu_nhan(),       # 🎧 mẫu nghe thử đang lưu (rỗng = chưa có)
         "voice_dir": str(core.VOICE_DIR),
         "tiktok_episode": core.thumbnail_episode() + 1,
     }
@@ -445,6 +446,7 @@ def _save_pipe_from_form(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
+    _nho_bili_quality(pipe, form)
     # KHÔNG đụng khoá "upload": ô tick đó nằm ở khối "Đăng YouTube", không có trên
     # form này. Checkbox vắng mặt bị hiểu là tắt → mỗi lần bấm chạy ở khối 1 sẽ âm
     # thầm tắt chế độ tự đăng.
@@ -463,8 +465,16 @@ def _save_model_speed(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
+    _nho_bili_quality(pipe, form)
     core.save_pipeline(pipe)
     return pipe
+
+
+def _nho_bili_quality(pipe: dict, form) -> None:
+    """Ô "Tải Bilibili" (mức video khi tải link Bilibili qua Bili23). Form không có ô
+    này (bản cũ còn mở, nút gửi thiếu ô) thì GIỮ giá trị đang lưu."""
+    if form.get("bili_quality"):
+        pipe["bili_quality"] = core.gui.chuan_bili_quality(form["bili_quality"])
 
 
 def _upload_ready() -> bool:
@@ -861,6 +871,60 @@ def play_audio(file: str = ""):
     if not path.is_file():
         return JSONResponse({"error": "chưa có file"}, status_code=404)
     return FileResponse(str(path))
+
+
+def _nghethu_nhan() -> str:
+    """Dòng 'Mẫu: tập 164 · 31 s' cạnh nút 🎧 lúc mở trang (chỉ đọc mau_goc.json)."""
+    try:
+        import taogiong_nghethu as nt
+        return nt.nhan_mau(nt.doc_mau())
+    except Exception:
+        return ""
+
+
+@app.post("/giongnoi/nghethu")
+def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
+                  vang_cuong_do: str = Form(""), thieu_nien: str = Form(""),
+                  sang_giong: str = Form(""), am_luong_db: str = Form(""),
+                  chuan_am: str = Form(""), mode: str = Form(""), voice: str = Form(""),
+                  vieneu_voice: str = Form(""), instruct: str = Form("")):
+    """🎧 Nghe thử (06/11/2026): áp tông + bộ lọc + chuẩn âm + âm lượng ĐANG HIỆN trên
+    form (chưa cần lưu, route này không ghi cài đặt) lên mẫu ~30 s giọng gốc của một
+    tập rồi trả đường phát. Mẫu + cách chọn tập: scripts/taogiong_nghethu.py.
+
+    `def` thường (không async) để FastAPI chạy ở luồng phụ — ffmpeg mất 1–3 giây."""
+    import taogiong_nghethu as nt
+    hu = core.gui.hu
+    fx = dict(vang_truong_do=vang_truong_do, vang_cuong_do=vang_cuong_do,
+              thieu_nien=thieu_nien, sang_giong=sang_giong)
+    try:
+        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, chuan_am=bool(chuan_am), log=log)
+    except nt.ChuaCoMau as e:
+        return JSONResponse({"ok": False, "loi": str(e)})
+    except Exception as e:
+        log(f"⚠️ Nghe thử lỗi: {e}")
+        return JSONResponse({"ok": False, "loi": f"Không dựng được bản nghe thử: {e}"},
+                            status_code=500)
+    mau = kq["mau"]
+    ghi_chu = []
+    # Mẫu đọc bằng giọng khác giọng đang chọn trên form (chỉ biết với tập tạo từ 06/11/2026).
+    g = mau.get("giong") or {}
+    dang_chon = {"vieneu": vieneu_voice, "clone": voice, "design": instruct}.get(mode, "")
+    if g.get("che_do") and mode and (g.get("che_do") != mode
+                                     or str(g.get("giong") or "") != str(dang_chon or "")):
+        ghi_chu.append(f"Mẫu đọc bằng giọng “{nt.ten_giong(g) or g.get('che_do')}”, khác giọng "
+                       "đang chọn — tạo giọng tập đầu bằng giọng mới thì mẫu đổi theo.")
+    # Clone: mức Sáng giọng còn EQ giọng mẫu lúc SINH câu — phần đó mẫu giữ ở mức cũ.
+    sang = hu.parse_fx(sang_giong)
+    if g.get("che_do") == "clone" and sang != int(mau.get("sang_goc") or 0):
+        ghi_chu.append(f"Mẫu sinh lúc Sáng giọng {int(mau.get('sang_goc') or 0)}; bài thật ở mức "
+                       f"{sang} còn EQ cả giọng mẫu nên sẽ khác đôi chút.")
+    return JSONResponse({
+        "ok": True,
+        "url": "/giongnoi/nghe?file=" + quote(str(kq["file"])),
+        "mau": nt.nhan_mau(mau), "mo_ta": kq["mo_ta"], "ghi_chu": ghi_chu,
+        "van_ban": mau.get("van_ban", ""),
+    })
 
 
 @app.post("/giongnoi/yeuthich/{kind}")
@@ -1801,6 +1865,7 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
+             "am_luong_db": float,   # 🔊 âm lượng cơ bản (dB), "+3" / "2,5" đều đọc được
              # bộ lọc giọng kiểu CapCut, 0–100 (0 = tắt) — xem scripts/hieuung_giong.py
              "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "sang_giong": int,   # 🔆 sáng giọng (bớt ồm; EQ cả giọng mẫu lúc dựng prompt)
@@ -1827,6 +1892,8 @@ def _save_opts_from_form(form) -> dict:
                 opts[k] = cast(str(form[k]).replace(",", "."))
             except ValueError:
                 pass
+    if form.get("am_luong_db", "") != "":   # kẹp ngay lúc lưu: ô hiện đúng mức sẽ áp
+        opts["am_luong_db"] = core.gui.hu.parse_amluong(opts.get("am_luong_db"))
     for k in _TEXT_KEYS:
         if k in form:
             opts[k] = str(form[k])

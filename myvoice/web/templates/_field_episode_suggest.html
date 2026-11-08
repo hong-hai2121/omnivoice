@@ -10,9 +10,10 @@
      cho những link sau, hết danh sách mới cấp số mới — nhờ vậy thư mục, thumbnail,
      tiêu đề và mô tả của từng tập đều mang đúng số cần bù. #}
   <div class="epsuggest">
+    {# 06/11/2026: rút gọn chữ — phần giải thích nằm ở title của dòng nhãn. #}
     {% if missing.todo %}
-      <p class="hint">Kênh còn thiếu trong dải Số {{ missing.lo }}–{{ missing.hi }}
-         — bấm để làm bù (bắt đầu từ số này, các link sau lấy tiếp):</p>
+      <p class="hint" title="Bấm một số: link đầu mang số đó, các link sau lấy tiếp những số kênh còn thiếu; hết danh sách thì cấp số mới.">Kênh
+         còn thiếu (Số {{ missing.lo }}–{{ missing.hi }}) — bấm để làm bù:</p>
       <div class="chips">
         {% for ep in missing.todo %}
           <button type="button" class="chip" onclick="pickEpisode('{{ ep }}')">{{ ep }}</button>
@@ -20,8 +21,8 @@
       </div>
     {% endif %}
     {% if missing.built %}
-      <p class="hint">Đã dựng xong ở máy, chỉ còn thiếu trên kênh — việc cần làm là
-         <a href="/nhandien">đăng (nút ⑤)</a>, không cấp cho link mới:</p>
+      <p class="hint" title="Đã có thư mục tập ở máy, chỉ còn thiếu trên kênh — không cấp cho link mới.">Đã
+         dựng xong, chỉ cần <a href="/nhandien">đăng (nút ⑤)</a>:</p>
       <div class="chips">
         {% for ep in missing.built %}
           <a class="chip done" href="/nhandien" title="Tập {{ ep }} đã có thư mục — chỉ cần đăng">{{ ep }}</a>
@@ -29,9 +30,8 @@
       </div>
     {% endif %}
     {% if not missing.todo and not missing.built %}
-      <p class="hint">Kênh không thiếu tập nào trong dải Số {{ missing.lo }}–{{ missing.hi }}
-         (theo lần đọc kênh gần nhất). Số nhỏ hơn {{ missing.lo }} nằm ngoài danh sách
-         video đọc được nên không dò — sẽ không bị cấp lại.</p>
+      <p class="hint" title="Theo lần đọc kênh gần nhất. Số nhỏ hơn {{ missing.lo }} nằm ngoài danh sách video đọc được nên không dò — sẽ không bị cấp lại.">Kênh
+         không thiếu tập nào trong dải Số {{ missing.lo }}–{{ missing.hi }}.</p>
     {% endif %}
     <p class="hint" id="epnote"></p>
   </div>

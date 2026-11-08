@@ -1477,6 +1477,8 @@ def tts_settings() -> tuple[dict | None, str]:
         # 1 giờ (xem scripts/video_short.py + YOUTUBE/dang_tap_youtube.upload_short).
         make_short=bool(opts.get("make_short")),
         chuan_am=bool(opts.get("chuan_am", False)),     # 🔉 chuẩn âm — mặc định tắt (05/11/2026)
+        # 🔊 Âm lượng cơ bản (dB) cộng thẳng lên output.wav ở bước cuối — 0 = giữ nguyên (06/11/2026).
+        am_luong=gui.hu.parse_amluong(opts.get("am_luong_db"), gui.OPTS_DEFAULTS["am_luong_db"]),
         tiktok_speed=_f(opts.get("tiktok_speed"), 1.0, 0.5, 2.0),
         tiktok_percent=_i(opts.get("tiktok_percent"), 50, 1, 100),
         tiktok_no_effect=bool(opts.get("tiktok_no_effect")),

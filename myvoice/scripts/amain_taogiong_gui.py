@@ -113,6 +113,12 @@ DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải t�
 TAI_VE_DIR = Path.home() / "Downloads"
 BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
 BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+# 05/11/2026: MỨC CHẤT LƯỢNG khi tải link Bilibili qua app Bili23 (ô "Tải Bilibili" trên
+# web, khoá bili_quality trong taogiong_pipeline.json). "auto" = cao nhất tải được (như
+# trước). Kênh audio chỉ cần TIẾNG để nhận diện nên 360P là đủ, tải nhanh hơn nhiều.
+# Bản thấp lưu tên RIÊNG <mã BV>_<mức>.mp4 — <mã BV>.mp4 luôn là bản đầy đủ, nên myvideo
+# và 🎞 "lấy video tải xuống làm video nguồn" không bao giờ nhặt nhầm bản mờ.
+BILI_QUALITIES = ("auto", "1080P", "720P", "480P", "360P")
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".ts", ".m4v"}
 DRIVE_SCRIPT_FOLDER_ID = "1cDUrHiQmzyIK7a8rqY3pFspHsizaceei"  # thư mục Drive "kịch bản"
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
@@ -123,7 +129,8 @@ OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài
 # upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
 # khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False, sleep=False, upload=False, gemini_backend="extension")
+                     shutdown=False, sleep=False, upload=False, gemini_backend="extension",
+                     bili_quality="auto")
 # Số phút chờ trước khi tắt máy khi bật ô "⏻ Xong thì tắt máy" (huỷ bằng: shutdown /a).
 # NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py đọc lại hằng này).
 # 31/10/2026: user hạ 5 → 1 phút.
@@ -226,6 +233,10 @@ OPTS_DEFAULTS = dict(
     # VieNeu to hơn mẫu thô 6 dB và "ồm". Tắt = giữ mức gốc của giọng, chỉ cân mức TƯƠNG
     # ĐỐI giữa các đoạn (±CHUNK_GAIN_MAX_DB). Bật lại ở ô 🔉 mục Cài đặt (GUI / web).
     chuan_am=False,
+    # 06/11/2026: 🔊 ÂM LƯỢNG CƠ BẢN (dB, + to / − nhỏ, 0 = giữ nguyên) — cộng thẳng một
+    # mức gain lên output.wav ở bước CUỐI (sau tông, bộ lọc và chuẩn âm nếu bật), mức dương
+    # có bộ chặn đỉnh (hu.amluong_chain). Dùng khi tắt chuẩn âm mà giọng gốc nghe nhỏ.
+    am_luong_db=0.0,
     # 20/10/2026: TÔNG GIỌNG (bán cung, + cao / − trầm, 0 = giữ nguyên) áp lên
     # output.wav ngay sau khi ghép (giữ tốc độ) → mọi bản video/cắt/tăng tốc kế
     # thừa. Mặc định +1 (20/10/2026: hạ từ +2 theo chốt của user sau khi so
@@ -479,6 +490,19 @@ def ten_tai_bilibili(src: str) -> str:
     return f"b23_{duoi[:24]}" if duoi else ""
 
 
+def chuan_bili_quality(value) -> str:
+    """Giá trị đã lưu / nhận từ form → một mức trong BILI_QUALITIES (lạ, trống → "auto")."""
+    muc = str(value or "").strip().upper()
+    return muc if muc in BILI_QUALITIES else "auto"
+
+
+def ten_file_bilibili(src: str, chat_luong="auto") -> str:
+    """Tên file (không đuôi) của bản tải ở mức `chat_luong`: bản đầy đủ là <mã BV>,
+    bản thấp là <mã BV>_<mức> (vd BV1CGpc6YEub_360P) — xem ghi chú ở BILI_QUALITIES."""
+    ten, muc = ten_tai_bilibili(src), chuan_bili_quality(chat_luong)
+    return ten if (not ten or muc == "auto") else f"{ten}_{muc}"
+
+
 def nguon_video_path(source: str):
     """Nguồn của tập (link/file) → file VIDEO đã có trên máy, KHÔNG tải mới.
 
@@ -501,6 +525,12 @@ def nguon_video_path(source: str):
             p = TAI_VE_DIR / f"{ten}{ext}"
             if p.is_file():
                 return p, ""
+        # Bản tải mức thấp (ô "Tải Bilibili" = 360P…) chỉ để nghe — không lấy làm hình.
+        thap = next((TAI_VE_DIR / f"{ten}_{m}.mp4" for m in BILI_QUALITIES
+                     if m != "auto" and (TAI_VE_DIR / f"{ten}_{m}.mp4").is_file()), None)
+        if thap:
+            return None, (f"chỉ có bản tải chất lượng thấp {thap.name} (chỉ để nhận diện) — "
+                          f"muốn lấy làm hình thì tải lại bản đầy đủ {ten}.mp4")
         return None, f"chưa thấy {ten}.mp4 trong {TAI_VE_DIR} (chạy bước tải trước)"
     if src.lower().startswith(("http://", "https://")):
         return None, "link không phải Bilibili → chỉ tải được mp3, không có hình"
@@ -2000,6 +2030,81 @@ def _doc_fx_da_ap(tmp_dir) -> dict:
         return hu.fx_from(None)
 
 
+AMLUONG_MARK = "_amluong.txt"            # trong thư mục chunk: số dB đã cộng lên output.wav
+AMLUONG_HUT_DB = 1.0                     # độ to lên hụt ≥ mức này so với số dB cộng → cảnh báo bẹt tiếng
+
+
+def _ghi_amluong_da_ap(tmp_dir, db: float) -> None:
+    """Ghi mức 🔊 âm lượng đã cộng lên output.wav vào thư mục chunk (cho luồng ♻ đọc lại)."""
+    try:
+        (Path(tmp_dir) / AMLUONG_MARK).write_text(f"{db:.1f}", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _doc_amluong_da_ap(tmp_dir) -> float:
+    """Mức 🔊 âm lượng đã cộng lần tạo trước; tập tạo bằng bản cũ chưa có file → 0."""
+    try:
+        return float((Path(tmp_dir) / AMLUONG_MARK).read_text(encoding="utf-8").strip())
+    except Exception:
+        return 0.0
+
+
+def _do_lufs_nhanh(path, ffmpeg: str):
+    """Độ to cả bài (LUFS, float) bằng filter ebur128; None nếu không đo được.
+
+    Chỉ để GHI NHẬT KÝ. Không dùng _measure_loudness ở đây: lượt đo của loudnorm nội
+    suy lên 192 kHz nên chậm gấp ~10 lần (đo E168 dài 33 phút, 06/11/2026: loudnorm
+    35,7 s, ebur128 3,1 s, cùng ra −19,5 LUFS) mà mấy số còn lại nó trả về ở đây không cần."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
+             "-af", "ebur128=framelog=quiet", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+    except OSError:
+        return None
+    m = re.findall(r"\bI:\s+(-?\d+(?:\.\d+)?) LUFS", r.stderr or "")
+    try:
+        v = float(m[-1])
+    except (IndexError, ValueError):
+        return None
+    return v if v > -69.0 else None              # −70 LUFS = bài câm / quá ngắn để đo
+
+
+def _tang_am_luong_file(wav, db: float) -> str:
+    """Cộng `db` dB lên `wav` (ghi đè, xem hu.apply_amluong_file) → câu mô tả cho nhật ký.
+
+    Đo độ to (LUFS) + đỉnh TRƯỚC và độ to SAU để nhật ký nói đúng chuyện đã xảy ra:
+    đỉnh + mức cộng còn dưới trần thì đây là gain thuần; vượt trần thì bộ chặn gọt các
+    đỉnh vượt. Gọt vài đỉnh lẻ thì độ to vẫn lên đủ số dB đã cộng (đo F169/E168 06/11/2026:
+    gốc −19,6 LUFS đỉnh −0,5 dBFS, +6 dB → −13,6 LUFS); độ to lên HỤT từ AMLUONG_HUT_DB
+    trở lên nghĩa là bộ chặn đang đè cả câu chứ không chỉ đỉnh → tiếng bẹt, báo để hạ mức."""
+    import shutil
+    wav = Path(wav)
+    ffmpeg = shutil.which("ffmpeg")
+    truoc = _do_lufs_nhanh(wav, ffmpeg) if ffmpeg else None
+    dinh = _detect_peak_db(wav, ffmpeg, seconds=36000) if ffmpeg else None
+    hu.apply_amluong_file(wav, db)
+    sau = _do_lufs_nhanh(wav, ffmpeg) if truoc is not None else None
+    do_duoc = truoc is not None and sau is not None
+    mo_ta = f"{db:+.1f} dB"
+    if do_duoc:
+        mo_ta += f": {truoc:.1f} → {sau:.1f} LUFS"
+    if dinh is None or db <= 0:
+        return mo_ta
+    tran = 20 * float(np.log10(hu.AMLUONG_LIMIT))
+    if dinh + db <= tran:
+        return f"{mo_ta} (đỉnh {dinh:.1f} → {dinh + db:.1f} dBFS, chưa chạm trần)"
+    mo_ta += f" (đỉnh gốc {dinh:.1f} dBFS → bộ chặn ghìm các đỉnh vượt trần {tran:.1f} dBFS"
+    hut = db - (sau - truoc) if do_duoc else 0.0
+    if hut >= AMLUONG_HUT_DB:
+        mo_ta += (f"; độ to lên hụt {hut:.1f} dB vì bộ chặn phải đè nhiều — tiếng dễ bẹt, "
+                  "nên hạ mức 🔊")
+    return mo_ta + ")"
+
+
 def _ghi_pitch_da_ap(tmp_dir, pitch: float) -> None:
     """Ghi tông đã áp lên output.wav vào thư mục chunk (cho luồng ♻ đọc lại)."""
     try:
@@ -2506,7 +2611,7 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None, chuan_am=False):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None, chuan_am=False, am_luong=0.0):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
@@ -2534,6 +2639,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # (xem _voice_prompt) nên phải vào chữ ký bên dưới (chỉ khi > 0, để chữ ký
         # của các tập đã tạo trước đó không đổi).
         sang_mau = hu.fx_from(fx)["sang_giong"]
+        # 🔊 Âm lượng cơ bản (dB) — hậu kỳ thuần, KHÔNG vào chữ ký (đổi mức không sinh lại đoạn).
+        am_luong = hu.parse_amluong(am_luong)
 
         # video_only: BỎ QUA tạo giọng, chỉ DỰNG VIDEO từ audio có sẵn (nút "Dựng
         # lại" riêng của từng mục). Cần audio đã tồn tại.
@@ -2582,10 +2689,21 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             if not video_only and fx_cu != fx_moi:
                 logging.info(f"🔔 Audio cũ bộ lọc: {hu.fx_describe(**fx_cu)}; đang chọn: "
                              f"{hu.fx_describe(**fx_moi)} → GIỮ bản cũ (bỏ tick ♻ để tạo lại).")
+            # 🔊 Âm lượng cũng chỉ cộng lúc TẠO (cộng chồng lên bản đã qua bộ chặn đỉnh là
+            # gọt đỉnh hai lần; video đã dựng lại lệch mức với audio).
+            am_cu = _doc_amluong_da_ap(tmp_dir)
+            if not video_only and abs(am_cu - am_luong) > 1e-9:
+                logging.info(f"🔊 Audio cũ âm lượng {am_cu:+.1f} dB, mức đang chọn {am_luong:+.1f} dB → "
+                             "GIỮ mức cũ (bỏ tick ♻ để tạo lại giọng ở mức mới).")
             # Audio của các tập dựng bằng bản cũ chưa qua chuẩn hoá → chuẩn nốt,
             # không thì tập cũ dựng lại vẫn to nhỏ thất thường. Chỉ đụng vào file
             # còn LỆCH mức đích: file đã chuẩn rồi mà nén thêm lần nữa là bẹt giọng.
-            if chuan_am and _chuan_am_neu_can(output_path, status_var):
+            # Bản đã cộng 🔊 thì lệch mức đích đúng bằng số dB đã cộng — đo sẽ tưởng
+            # "chưa chuẩn" rồi nén lần hai và xoá luôn mức cộng → không đo, giữ nguyên.
+            if chuan_am and abs(am_cu) > 1e-9:
+                logging.info(f"🔊 Audio cũ đã cộng âm lượng {am_cu:+.1f} dB → không đo/chuẩn âm lại "
+                             "(bỏ tick ♻ để tạo lại nếu muốn chuẩn âm bản này).")
+            elif chuan_am and _chuan_am_neu_can(output_path, status_var):
                 # Audio gốc vừa đổi mức → bản %/tăng tốc/trộn nhạc làm từ bản
                 # CŨ không còn khớp nữa, phải dựng lại từ bản vừa chuẩn.
                 reuse_derived = False
@@ -2608,6 +2726,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         "chunk cũ, tạo lại từ đầu."
                     )
                 sig_file.write_text(sig, encoding="utf-8")
+            # 🎧 Ghi chế độ + tên giọng sinh các câu này (cho mẫu nghe thử biết nó đọc bằng giọng nào).
+            try:
+                import taogiong_nghethu as _nt
+                _nt.ghi_giong(tmp_dir, mode, voice_param)
+            except Exception:
+                pass
 
             logging.info(f"Tổng {total} đoạn — tải model...")
             if sang_mau and mode == "clone":
@@ -2811,6 +2935,30 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             else:
                 logging.info("⏭ Không chuẩn âm (ô 🔉 đang tắt — mặc định từ 05/11/2026): giữ mức gốc "
                              "của giọng, không nén, không loudnorm.")
+
+            # 🔊 ÂM LƯỢNG CƠ BẢN (06/11/2026): cộng thẳng N dB lên cả bài. Đứng CUỐI —
+            # đặt trước loudnorm thì bị nó kéo về −14 LUFS mất, đặt trước bộ nén thì lệch
+            # ngưỡng nén (tính theo mức tuyệt đối). Mọi bản dẫn xuất lấy từ output.wav
+            # nên theo luôn. Ghi mức đã cộng vào _amluong.txt cho luồng ♻.
+            if abs(am_luong) > 1e-9:
+                status_var.set(f"Đang chỉnh âm lượng {am_luong:+.1f} dB...")
+                try:
+                    logging.info(f"🔊 Âm lượng {_tang_am_luong_file(output_path, am_luong)}.")
+                except Exception as e:
+                    am_luong = 0.0
+                    logging.warning(f"⚠️ Không chỉnh được âm lượng ({e}) → giữ mức gốc.")
+            _ghi_amluong_da_ap(tmp_dir, am_luong)
+
+            # 🎧 MẪU NGHE THỬ (06/11/2026): tập ĐẦU của đợt kịch bản mới vừa có giọng thì lấy
+            # ~30 s câu gốc của nó (output_chunks, chưa qua tông/bộ lọc/âm lượng) làm mẫu cho
+            # nút 🎧 Nghe thử, thay mẫu cũ; lưu ở voice/nghe_thu nên xoá tập mẫu vẫn còn.
+            # Chỉ tính thư mục tập trong kịch_bản/ — xem taogiong_nghethu.chon_tap.
+            if output_path.parent.parent == SCRIPT_DIR and episode_of(output_path.parent.name):
+                try:
+                    import taogiong_nghethu as _nt
+                    _nt.cap_nhat(log=logging.info)
+                except Exception as e:
+                    logging.warning(f"⚠️ Không cập nhật được mẫu nghe thử: {e}")
 
             progress_var.set(100)
             status_var.set(f"Xong!  →  {output}")
@@ -3672,7 +3820,17 @@ class App(tk.Tk):
         self.var_chuan_am = tk.BooleanVar(value=bool(self._opt_settings.get("chuan_am", False)))
         ttk.Checkbutton(ca_row, text="🔉  Chuẩn âm giọng: nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS",
                         variable=self.var_chuan_am).pack(side="left")
-        ttk.Label(ca_row, text="(tắt = giữ mức gốc của giọng, chỉ cân mức giữa các đoạn)",
+        # 🔊 Âm lượng cơ bản (06/11/2026): cộng thẳng N dB lên output.wav ở bước cuối
+        # (sau tông, bộ lọc, chuẩn âm). Cùng khoá "am_luong_db" với ô bên web. Nằm CHUNG
+        # hàng với ô 🔉 (cùng là chuyện độ to) chứ không thêm hàng: cột Cài đặt vốn đã
+        # cao hơn cửa sổ mặc định. Ô nhập đứng trước chú thích để cửa sổ hẹp không che mất.
+        ttk.Label(ca_row, text="🔊 Âm lượng:").pack(side="left", padx=(16, 6))
+        self.var_am_luong = tk.StringVar(value=f"{self._am_luong_tu_cai_dat():.1f}")
+        ttk.Spinbox(ca_row, from_=hu.AMLUONG_MIN, to=hu.AMLUONG_MAX, increment=0.5,
+                    format="%.1f", textvariable=self.var_am_luong, width=6).pack(side="left")
+        ttk.Label(ca_row, text="dB").pack(side="left", padx=(4, 0))
+        ttk.Label(ca_row, text="(chuẩn âm tắt = giữ mức gốc, chỉ cân mức giữa các đoạn · âm lượng: "
+                               "+ to / − nhỏ, 0 = giữ nguyên, cộng sau cùng, có chặn đỉnh)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
         chunk_row = ttk.Frame(sec_opt)
@@ -6039,6 +6197,15 @@ class App(tk.Tk):
         giọng) đang chọn trên GUI, đã kẹp 0–100 — cùng dạng dict mà run_tts(fx=) nhận."""
         return {k: hu.parse_fx(v.get(), OPTS_DEFAULTS[k]) for k, v in self.var_fx.items()}
 
+    def _am_luong_tu_cai_dat(self) -> float:
+        """Mức 🔊 âm lượng (dB) đã lưu trong cài đặt, đã kẹp — giá trị mở đầu của ô."""
+        return hu.parse_amluong(self._opt_settings.get("am_luong_db"),
+                                OPTS_DEFAULTS["am_luong_db"])
+
+    def _am_luong_tu_o(self) -> float:
+        """Mức 🔊 âm lượng (dB) đang gõ trên GUI, đã kẹp — cùng dạng run_tts(am_luong=) nhận."""
+        return hu.parse_amluong(self.var_am_luong.get(), OPTS_DEFAULTS["am_luong_db"])
+
     def _ap_mau_giong(self):
         """Chọn mẫu ở ô 🎚 (02/11/2026): điền tông + 4 bộ lọc theo bảng hu.MAU_GIONG;
         "Tuỳ chỉnh" thì giữ nguyên các ô. Lưu cùng mục Cài đặt khi bấm Chạy như mọi ô."""
@@ -6073,6 +6240,7 @@ class App(tk.Tk):
                 mode=self.var_mode.get(),
                 vieneu_voice=self.var_vieneu_voice.get(),
                 chuan_am=self.var_chuan_am.get(),
+                am_luong_db=self._am_luong_tu_o(),
                 chunk=int(self.var_chunk.get()),
                 pitch=parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
                 **self._fx_from_vars(),
@@ -6909,6 +7077,9 @@ class App(tk.Tk):
     def _save_pipe_settings(self):
         """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
         save_pipe_settings(dict(
+            # Ô "Tải Bilibili" chỉ có trên web (GUI tải link bằng yt-dlp, không qua
+            # Bili23) → chép lại giá trị đang lưu, kẻo bấm chạy ở GUI là web mất lựa chọn.
+            bili_quality=chuan_bili_quality(load_pipe_settings().get("bili_quality")),
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
@@ -7225,6 +7396,7 @@ class App(tk.Tk):
             make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
             make_short=self.var_make_short.get(),
             chuan_am=self.var_chuan_am.get(),           # 🔉 chuẩn âm (mặc định tắt 05/11/2026)
+            am_luong=self._am_luong_tu_o(),             # 🔊 âm lượng cơ bản (dB, bước cuối)
             tiktok_percent=self._parse_percent(self.var_tiktok_percent),
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
             tiktok_caption_pos=tiktok_caption_pos,
@@ -7507,6 +7679,7 @@ class App(tk.Tk):
             tiktok_out=folder / "tiktok.mp4",      # video TIKTOK (cắt theo %)
             make_short=ts.get("make_short", False),
             chuan_am=ts.get("chuan_am", False),
+            am_luong=ts.get("am_luong", 0.0),      # 🔊 âm lượng cơ bản (dB) cộng lên audio gốc
             short_out=folder / "short.mp4",        # YOUTUBE SHORT (≤2:50, đăng tự động)
             tiktok_speed=ts.get("tiktok_speed", 1.0),
             tiktok_percent=ts.get("tiktok_percent", 50),
@@ -8725,6 +8898,10 @@ class App(tk.Tk):
         fx = self._fx_from_vars()
         if hu.fx_active(**fx):
             logging.info(f"🔔 Bộ lọc giọng: {hu.fx_describe(**fx)} (áp lên audio gốc).")
+        # 🔊 Âm lượng cơ bản (dB) — cộng lên output.wav ở bước cuối
+        am_luong = self._am_luong_tu_o()
+        if abs(am_luong) > 1e-9:
+            logging.info(f"🔊 Âm lượng {am_luong:+.1f} dB (cộng lên audio gốc, bước cuối).")
 
         # Tốc độ audio cho VIDEO TIKTOK (cắt theo %) — atempo, giữ cao độ
         make_tiktok = self.var_make_tiktok.get()
@@ -8811,6 +8988,7 @@ class App(tk.Tk):
             kwargs={"make_tiktok": make_tiktok,   # video TikTok (cắt theo %)
                     "make_short": self.var_make_short.get(),   # Short ≤2:50 cắt từ TikTok
                     "chuan_am": self.var_chuan_am.get(),
+                    "am_luong": am_luong,                       # 🔊 âm lượng cơ bản (dB)
                     "tiktok_speed": tiktok_speed,
                     "tiktok_percent": tiktok_percent,
                     "tiktok_no_effect": tiktok_no_effect,
