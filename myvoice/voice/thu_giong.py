@@ -19,12 +19,11 @@ lưu riêng _thu_giong/<tên_giọng>_sang<N>.wav — đổi mức thì bấm T�
 chia mỗi đoạn một câu (cỡ "chunk" trong taogiong_options.json) → sinh từng đoạn
 → cân mức to giữa các đoạn → ghép có khoảng nghỉ theo dấu câu → đệm im lặng
 cuối → nén nhẹ + chuẩn độ to. Nghe thử ra sao thì bài thật ra vậy.
-Từ 01/11/2026 các thanh chỉnh ở đây DÙNG CHUNG thông số với bài thật: tốc độ =
-ô "Tăng tốc" video ngang (ngang_speed), tông (pitch) và 4 bộ lọc đọc từ
-taogiong_options.json lúc mở, và khi bật 🔗 Đồng bộ (mặc định bật) thì nhả
-chuột / bấm ± là ghi ngay vào đúng khoá đó — GUI/web mở lại là thấy, khỏi chép
-tay từng số. Tắt 🔗 để thử tự do không đụng bài thật; "↻ Lấy từ bài thật" kéo
-các thanh về mức đang lưu.
+Từ 10/11/2026 (user yêu cầu) các thanh chỉnh ở đây là CỦA RIÊNG app, nhớ trong
+_thu_giong/thu_giong_settings.json — KHÔNG còn liên kết với taogiong_options.json của
+bài thật: chỉnh ở đây không đụng bài thật, GUI/web đổi cũng không kéo theo ở đây (ô 🔗
+Đồng bộ và nút ↻ Lấy từ bài thật của bản 01/11 đã bỏ). Chỉ cỡ "chunk" để chia câu
+vẫn đọc từ taogiong_options.json cho cách chia giống bài thật.
 Từ 02/11/2026 có hàng nút NGHE để đối chiếu clone với người thật: 🎧 GIỌNG MẪU
 phát file gốc trong voice/giong_mau/ NGUYÊN BẢN (không qua thanh chỉnh; mp3/wav lạ được đổi
 sang wav 16-bit tạm ở _thu_giong/_giongmau/ vì winsound chỉ phát wav PCM),
@@ -43,8 +42,7 @@ dùng chung; tên giọng đã lưu trong cài đặt là tên file trần nên 
 Từ 07/11/2026 trang 🎙️ OMNIVOICE làm lại theo đúng khối "3 Cài đặt tạo giọng" của web
 myvoice (chức năng tương ứng): ① Giọng mẫu · ② Văn bản thử · ③ Cài đặt giọng (🎚 mẫu,
 🎵 tông, ⏩ tốc độ, 🔔 vang, 🧒 thiếu niên, 🔆 sáng giọng, 🔊 ÂM LƯỢNG dB —
-ô 🔊 là mới, cùng khoá am_luong_db với GUI/web, 🔗 đồng bộ như các thanh
-khác) rồi hàng NGHE. Chữ giải thích dài dời vào tooltip (rê chuột lên nhãn), mỗi hàng gọn.
+ô 🔊 là mới) rồi hàng NGHE. Chữ giải thích dài dời vào tooltip (rê chuột lên nhãn), mỗi hàng gọn.
 VĂN BẢN THỬ không còn là câu mẫu cố định: mở app là lấy ≈30 GIÂY ĐẦU (ô "≈ giây" đổi được)
 của KỊCH BẢN MỚI NHẤT trong kịch_bản/ (thư mục tập tạo sau cùng có input.docx/txt), dừng ở
 cuối câu — kich_ban_moi_nhat() + van_ban_dau(); ↻ lấy lại, ✎ về câu mẫu cũ, sửa tay vẫn
@@ -124,10 +122,10 @@ NHAN_CLONE = "▶ Đang phát clone"              # chữ mở đầu dòng tr�
 FX_KEYS = tuple(hu.fx_from(None))             # 4 khoá bộ lọc, đúng thứ tự bảng hu.fx_from
 
 # ── NHỚ LỰA CHỌN GIỮA CÁC LẦN CHẠY ──────────────────────────────────────────────
-# File nhỏ riêng trong _thu_giong/ chỉ nhớ những gì CỦA RIÊNG app này (giọng đang
-# chọn, ô 🔗 Đồng bộ). Thông số giọng (tốc độ / tông / bộ lọc) KHÔNG nằm đây: chúng
-# là của bài thật, đọc/ghi thẳng taogiong_options.json (xem bai_that_doc/bai_that_luu;
-# tts.save_opt_settings gộp khoá nên không xoá cài đặt khác của GUI/web).
+# File nhỏ riêng trong _thu_giong/ nhớ mọi thứ CỦA RIÊNG app này: giọng đang chọn, số giây
+# văn bản thử, VÀ các thông số giọng (speed / pitch / fx / am_luong). Từ 10/11/2026 app
+# KHÔNG liên kết với taogiong_options.json của bài thật nữa (user yêu cầu) — xem
+# thong_so_doc / thong_so_luu.
 SETTINGS_FILE = OUT_DIR / "thu_giong_settings.json"
 
 
@@ -193,10 +191,8 @@ DEFAULT_HOI_THOAI = (
 # nội dung theo đúng title= của các ô bên web (_form_voice.html, khối "Cài đặt tạo giọng").
 TIP = dict(
     pitch="+ cao hơn, − trầm hơn, 0 = giữ nguyên (bán cung). Giữ tốc độ, giữ âm sắc người đọc. "
-          "Bài thật áp lên audio gốc ngay sau khi ghép nên video ngang/dọc/TikTok đều theo; "
-          "chỉ áp lúc tạo giọng, ♻ dùng lại audio thì giữ tông cũ.",
-    speed="= ô Tăng tốc video ngang (ngang_speed) của bài thật, 0,5–2,0×: atempo giữ cao độ. "
-          "Chỉ ảnh hưởng bản phát ở đây và video ngang; file clone không đổi.",
+          "Chỉ cho bản nghe thử ở đây (cài đặt riêng của app, không đụng bài thật).",
+    speed="Tốc độ phát 0,5–2,0×: atempo giữ cao độ. Chỉ ảnh hưởng bản phát ở đây; file clone không đổi.",
     vang_truong_do="0–100. Độ dài đuôi vang như CapCut: 0 = phòng nhỏ, 100 = hội trường. "
                    "Chỉ có tác dụng khi cường độ > 0.",
     vang_cuong_do="0–100, 0 = tắt. Mức tiếng vang trộn vào giọng; áp cùng lúc với tông lên audio gốc.",
@@ -209,11 +205,6 @@ TIP = dict(
     am_luong="0 = giữ nguyên. + to hơn, − nhỏ hơn (−10 … +20 dB, bước 0,5; +6 dB ≈ to gấp đôi). "
              "Cộng một mức lên cả bài, không nén; mức dương có bộ chặn đỉnh. Bài thật áp sau cùng "
              "lên audio gốc; ở đây áp lúc phát nên đổi là nghe ngay.",
-    dong_bo="Bật: nhả chuột / bấm ± / tick ô là ghi ngay vào taogiong_options.json — GUI/web mở lại "
-            "là thấy (chỉnh ở đây = chỉnh bài thật). Tắt: thử tự do, không đụng bài thật (mở app "
-            "vẫn lấy mức bài thật).",
-    lay_bai_that="Kéo mọi ô về đúng mức taogiong_options.json đang lưu (GUI/web vừa đổi thì bấm). "
-                 "Không ghi ngược lại.",
     mau_giong="Bấm một mẫu = đặt tông + 4 bộ lọc theo bảng chung với GUI/web rồi PHÁT NGAY bản clone "
               "của giọng đang chọn với bộ số đó "
               "(chưa có bản thì chỉ báo ở Nhật ký). Kéo thanh lệch mẫu → 'Tuỳ chỉnh'.",
@@ -232,7 +223,7 @@ TIP = dict(
              "nghe để học.",
     nghe_clone="Phát bản thử đã tạo của giọng đang chọn, áp đủ các ô ③ (như bài thật sẽ ra).",
     nghe_ab="Phát mẫu gốc xong tự phát tiếp bản clone để đối chiếu.",
-    nghe_bai_that="= nút 🎧 Nghe thử của web: áp bộ số đang chọn (tông, bộ lọc, chuẩn âm, âm lượng, "
+    nghe_bai_that="= nút 🎧 Nghe thử của web: áp bộ số đang chọn (tông, bộ lọc, âm lượng, "
                   "tốc độ) lên ~30 s GIỌNG GỐC của tập đầu đợt kịch bản mới nhất (voice/nghe_thu, "
                   "scripts/taogiong_nghethu.py) rồi phát — nghe đúng giọng bài thật đang dùng mà "
                   "không cần tạo. Kéo thanh lúc đang phát là dựng + phát lại.",
@@ -308,19 +299,17 @@ def fmt_pitch(semitones: float) -> str:
 
 
 def default_pitch() -> float:
-    """Tông mặc định = tuỳ chọn "pitch" của bài thật (taogiong_options.json) —
-    mở app lên là nghe đúng tông mà bài thật sẽ ra; kéo về 0 để nghe giọng gốc."""
+    """Tông đã nhớ của app (thu_giong_settings.json); chưa có → 0."""
     try:
-        return tts.parse_pitch(tts.load_opt_settings().get("pitch"), 0.0)
+        return tts.parse_pitch(load_settings().get("pitch"), 0.0)
     except Exception:
         return 0.0
 
 
 def default_fx() -> dict:
-    """Bộ lọc mặc định = 4 khoá bộ lọc của bài thật (taogiong_options.json) —
-    mở app lên là nghe đúng bộ lọc bài thật sẽ ra; kéo về 0 để tắt."""
+    """4 bộ lọc đã nhớ của app (khoá "fx" trong thu_giong_settings.json); chưa có → 0."""
     try:
-        return hu.fx_from(tts.load_opt_settings())
+        return hu.fx_from(load_settings().get("fx"))
     except Exception:
         return hu.fx_from(None)
 
@@ -337,25 +326,22 @@ def parse_speed(value, default: float = 1.0) -> float:
 
 
 def default_speed() -> float:
-    """Tốc độ mặc định = ô "Tăng tốc" video ngang của bài thật (ngang_speed) — mở app
-    lên là nghe đúng nhịp mà video ngang sẽ ra; kéo về 1.0 để nghe tốc độ gốc."""
+    """Tốc độ phát đã nhớ của app; chưa có → 1.0."""
     try:
-        return parse_speed(tts.load_opt_settings().get("ngang_speed"), 1.0)
+        return parse_speed(load_settings().get("speed"), 1.0)
     except Exception:
         return 1.0
 
 
-# ── DÙNG CHUNG THÔNG SỐ GIỌNG VỚI BÀI THẬT (01/11/2026) ─────────────────────────
-# Các ô ③ ở đây ↔ đúng khoá GUI/web dùng trong taogiong_options.json:
-#   tốc độ nghe  ↔ ngang_speed (ô "Tăng tốc" video ngang, chuỗi "1.2")
-#   tông giọng   ↔ pitch (float bán cung)
-#   4 bộ lọc     ↔ vang_truong_do / vang_cuong_do / thieu_nien / sang_giong (int 0–100)
-#   🔊 âm lượng  ↔ am_luong_db (float dB, bước 0,5)          — thêm 07/11/2026
+# ── THÔNG SỐ GIỌNG RIÊNG CỦA APP (10/11/2026) ──────────────────────────────────
+# Các ô ③ nhớ trong thu_giong_settings.json: speed (float), pitch (float bán cung),
+# fx ({vang_truong_do, vang_cuong_do, thieu_nien, sang_giong} 0–100), am_luong (float dB).
+# Trước 10/11 chúng đọc/ghi thẳng taogiong_options.json của bài thật (🔗 đồng bộ) — user
+# yêu cầu bỏ liên kết: chỉnh ở đây không đụng bài thật và ngược lại.
 def default_am_luong() -> float:
-    """🔊 Âm lượng (dB) = khoá am_luong_db của bài thật; 0 = giữ nguyên."""
+    """🔊 Âm lượng (dB) đã nhớ của app; chưa có → 0 = giữ nguyên."""
     try:
-        return hu.parse_amluong(tts.load_opt_settings().get("am_luong_db"),
-                                tts.OPTS_DEFAULTS.get("am_luong_db", 0.0))
+        return hu.parse_amluong(load_settings().get("am_luong"), 0.0)
     except Exception:
         return 0.0
 
@@ -365,22 +351,20 @@ def fmt_am_luong(db: float) -> str:
     return f"{db:+.1f} dB" if abs(db) > 1e-9 else "0 dB"
 
 
-def bai_that_doc() -> dict:
-    """Thông số giọng bài thật đang lưu → {"speed", "pitch", "fx", "am_luong"} (đã kẹp)."""
+def thong_so_doc() -> dict:
+    """Thông số giọng đã nhớ của app → {"speed", "pitch", "fx", "am_luong"} (đã kẹp)."""
     return dict(speed=default_speed(), pitch=default_pitch(), fx=default_fx(),
                 am_luong=default_am_luong())
 
 
-def bai_that_luu(speed: float, pitch: float, fx: dict | None,
+def thong_so_luu(speed: float, pitch: float, fx: dict | None,
                  am_luong: float | None = None) -> None:
-    """Ghi thông số giọng vào taogiong_options.json đúng khoá GUI/web đọc; các khoá
-    khác giữ nguyên (tts.save_opt_settings gộp dict). am_luong = None →
-    không đụng khoá đó (chỗ gọi cũ 3 tham số vẫn chạy)."""
-    d = dict(ngang_speed=f"{parse_speed(speed):g}", pitch=tts.parse_pitch(pitch, 0.0),
-             **hu.fx_from(fx))
+    """Nhớ thông số giọng vào thu_giong_settings.json (riêng của app; khoá khác giữ nguyên).
+    am_luong = None → không đụng khoá đó. KHÔNG ghi taogiong_options.json của bài thật."""
+    d = dict(speed=parse_speed(speed), pitch=tts.parse_pitch(pitch, 0.0), fx=hu.fx_from(fx))
     if am_luong is not None:
-        d["am_luong_db"] = hu.parse_amluong(am_luong)
-    tts.save_opt_settings(d)
+        d["am_luong"] = hu.parse_amluong(am_luong)
+    save_settings(**d)
 
 
 def mo_ta_thong_so(speed: float, pitch: float, fx: dict | None,
@@ -543,16 +527,14 @@ class App:
         # (trước có hai trang OmniVoice / VieNeu dùng chung; trang VieNeu gỡ 09/11/2026). Nhãn số gom ở
         # _nhan (khoá → [nhãn]) để cập nhật cùng lúc.
         st = load_settings()
-        bt0 = bai_that_doc()
-        self._da_luu = dict(bt0)          # mức vừa đồng bộ — không đổi thì không ghi lại
+        bt0 = thong_so_doc()              # thông số riêng của app (không phải của bài thật)
         self.var_speed = tk.DoubleVar(master=root, value=bt0["speed"])
         self.var_pitch = tk.DoubleVar(master=root, value=bt0["pitch"])
         self.var_fx = {k: tk.DoubleVar(master=root, value=bt0["fx"].get(k, 0)) for k in FX_KEYS}
         self.var_am_luong = tk.DoubleVar(master=root, value=bt0["am_luong"])
-        self.var_sync = tk.BooleanVar(master=root, value=bool(st.get("dong_bo", True)))
         self.var_mau = tk.StringVar(master=root, value=hu.MAU_TUY_CHINH)
         self.var_giay = tk.StringVar(master=root, value=str(self._kep_giay(st.get("van_ban_giay"))))
-        self._nhan: dict[str, list] = {}                      # "speed" / "pitch" / "am_luong" / "fx:<k>" / "sync" / "mau"
+        self._nhan: dict[str, list] = {}                      # "speed" / "pitch" / "am_luong" / "fx:<k>" / "mau"
         self._o_van_ban: list[tuple[tk.Text, ttk.Label]] = []  # (ô chữ, nhãn nguồn) ② ở từng trang
         self._btn_bai_that: list[ttk.Button] = []             # nút 🎧 Bài thật ở từng trang (khoá lúc dựng)
 
@@ -791,33 +773,16 @@ class App:
         return lbl
 
     def _build_khoi_cai_dat(self, parent) -> ttk.LabelFrame:
-        """Khối ③ Cài đặt giọng (= khối "Cài đặt tạo giọng" của web): 🔗 đồng bộ · ↻ lấy từ bài thật ·
-        🎚 mẫu giọng · hai cột thanh (🎵 tông | ⏩ tốc độ · 🔔 vang trường độ | cường độ · 🧒 thiếu niên |
-        🔆 sáng giọng · 🔊 âm lượng | 🔉 chuẩn âm). Gắn biến tk tạo ở __init__; nhãn chữ đăng ký vào
-        self._nhan để _update_* / _cap_nhat_mau / _dat_nhan cập nhật. Trả LabelFrame — trang tự grid/pack."""
-        cd = ttk.LabelFrame(parent, text="  ③ Cài đặt giọng — dùng chung với bài thật (taogiong_options.json)  ",
+        """Khối ③ Cài đặt giọng (cùng các ô với khối "Cài đặt tạo giọng" của web nhưng là cài đặt
+        RIÊNG của app — 10/11/2026 bỏ 🔗 đồng bộ / ↻ lấy từ bài thật): 🎚 mẫu giọng · hai cột thanh
+        (🎵 tông | ⏩ tốc độ · 🔔 vang trường độ | cường độ · 🧒 thiếu niên | 🔆 sáng giọng · 🔊 âm lượng).
+        Gắn biến tk tạo ở __init__; nhãn chữ đăng ký vào self._nhan để _update_* / _cap_nhat_mau /
+        _dat_nhan cập nhật. Trả LabelFrame — trang tự grid/pack."""
+        cd = ttk.LabelFrame(parent, text="  ③ Cài đặt giọng — riêng của app Thử giọng (không đụng bài thật)  ",
                             padding=(10, 6))
         cd.columnconfigure(0, weight=1, uniform="cot")
         cd.columnconfigure(1, weight=1, uniform="cot")
 
-        sync_row = ttk.Frame(cd)
-        sync_row.grid(row=0, column=0, columnspan=2, sticky="ew")
-        cb = ttk.Checkbutton(sync_row, text="🔗 Đồng bộ với bài thật", variable=self.var_sync,
-                             command=self._on_sync_toggle)
-        cb.pack(side="left")
-        Tooltip(cb, TIP["dong_bo"])
-        b = ttk.Button(sync_row, text="↻ Lấy từ bài thật", style="Nho.TButton", command=self._lay_bai_that)
-        b.pack(side="left", padx=(10, 0))
-        Tooltip(b, TIP["lay_bai_that"])
-        if self._nhan.get("sync"):                       # trang thứ hai: chép dòng trạng thái đang có
-            chu = self._nhan["sync"][0].cget("text")
-        elif self.var_sync.get():
-            chu = "🔗 đang ở mức bài thật: " + mo_ta_thong_so(**self._da_luu)
-        else:
-            chu = "tắt đồng bộ: chỉnh ở đây không đụng bài thật"
-        lbl_sync = ttk.Label(sync_row, style="Muted.TLabel", wraplength=560, justify="left", text=chu)
-        lbl_sync.pack(side="left", padx=(12, 0))
-        self._nhan.setdefault("sync", []).append(lbl_sync)
 
         # 🎚 Mẫu giọng (bảng hu.MAU_GIONG chung GUI/web): bấm = đặt 5 ô + phát ngay bản clone.
         mau_row = ttk.Frame(cd)
@@ -895,7 +860,6 @@ class App:
     lbl_pitch = property(lambda self: self._nhan["pitch"][0])
     lbl_speed = property(lambda self: self._nhan["speed"][0])
     lbl_am_luong = property(lambda self: self._nhan["am_luong"][0])
-    lbl_sync = property(lambda self: self._nhan["sync"][0])
     lbl_mau = property(lambda self: self._nhan["mau"][0])
     lbl_fx = property(lambda self: {k: self._nhan["fx:" + k][0] for k in FX_KEYS})
 
@@ -1214,63 +1178,26 @@ class App:
     def _on_speed_release(self, _e=None):
         """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tốc độ mới để so sánh."""
         self._update_speed_label()
-        self._luu_bai_that()
+        self._luu_thong_so()
         self._replay_if_playing()
 
     # ── 🔗 dùng chung thông số với bài thật ──
     def _thong_so(self) -> dict:
-        """Mức đang chọn trên các ô ③ — cùng dạng bai_that_doc() (speed, pitch, fx, am_luong)."""
+        """Mức đang chọn trên các ô ③ — cùng dạng thong_so_doc() (speed, pitch, fx, am_luong)."""
         return dict(speed=self._speed(), pitch=self._pitch(), fx=self._fx(),
                     am_luong=self._am_luong())
 
-    def _luu_bai_that(self):
-        """Bật 🔗 thì ghi mức đang chọn vào taogiong_options.json (đúng khoá GUI/web);
-        chưa đổi so với lần ghi trước thì thôi. Chỉ gọi từ luồng chính (đọc tk.Var)."""
-        if not self.var_sync.get():
-            return
-        ts = self._thong_so()
-        if ts == self._da_luu:
-            return
+    def _luu_thong_so(self):
+        """Nhớ mức đang chọn vào thu_giong_settings.json — riêng của app, KHÔNG đụng
+        taogiong_options.json của bài thật (10/11/2026). Chỉ gọi từ luồng chính (đọc tk.Var)."""
         try:
-            bai_that_luu(**ts)
+            thong_so_luu(**self._thong_so())
         except Exception as e:
-            self._log(f"⚠️ Không lưu được vào taogiong_options.json: {e}", "warn")
-            return
-        self._da_luu = ts
-        self._dat_nhan("sync", "✓ đã lưu vào bài thật: " + mo_ta_thong_so(**ts))
-
-    def _lay_bai_that(self):
-        """↻: kéo mọi ô ③ về đúng mức taogiong_options.json đang lưu (GUI/web vừa đổi thì
-        bấm nút này). Không ghi ngược lại; đang phát thì phát lại cho nghe."""
-        bt = bai_that_doc()
-        self._da_luu = dict(bt)
-        self.var_speed.set(bt["speed"])
-        self.var_pitch.set(bt["pitch"])
-        for k, v in bt["fx"].items():
-            self.var_fx[k].set(v)
-        self.var_am_luong.set(bt["am_luong"])
-        self._update_speed_label()
-        self._update_pitch_label()
-        self._update_fx_labels()
-        self._update_am_luong_label()
-        self._cap_nhat_mau()
-        self._dat_nhan("sync", "↻ đã lấy từ bài thật: " + mo_ta_thong_so(**bt))
-        self._replay_if_playing()
-
-    def _on_sync_toggle(self):
-        """Tick 🔗: đẩy ngay mức đang chọn sang bài thật; bỏ tick: từ giờ chỉnh tự do."""
-        save_settings(dong_bo=bool(self.var_sync.get()))
-        if self.var_sync.get():
-            self._da_luu = None
-            self._luu_bai_that()
-            if self._da_luu is None:      # không có gì để ghi (lỗi) → vẫn báo trạng thái
-                self._dat_nhan("sync", "🔗 đang đồng bộ với bài thật")
-        else:
-            self._dat_nhan("sync", "tắt đồng bộ: chỉnh ở đây không đụng bài thật")
+            self._log(f"⚠️ Không nhớ được cài đặt: {e}", "warn")
 
     # ── 🎚 mẫu giọng cài sẵn (bảng hu.MAU_GIONG, chung với GUI/web) ──
     def _ap_mau(self):
-        """Bấm một mẫu: đặt tông + 4 bộ lọc theo bảng (lưu vào bài thật nếu 🔗) rồi
+        """Bấm một mẫu: đặt tông + 4 bộ lọc theo bảng (nhớ vào cài đặt riêng của app) rồi
         PHÁT NGAY bản clone của giọng đang chọn với bộ số đó — như bấm ▶ Giọng clone
         (04/11/2026: trước chỉ đặt thanh, đang phát dở mới phát lại; bấm mẫu xong
         phải bấm thêm nút nghe mới so được). Không phát được (đang tạo / chưa chọn
@@ -1285,7 +1212,7 @@ class App:
         self._update_pitch_label()
         self._update_fx_labels()
         self._cap_nhat_mau()
-        self._luu_bai_that()
+        self._luu_thong_so()
         if self._nghe_mau_giong():
             return
         if ts["fx"]["sang_giong"] != sang_cu:
@@ -1341,7 +1268,7 @@ class App:
         """Nhả chuột / bấm ±: nếu đang phát dở thì phát lại luôn ở tông mới để so sánh."""
         self._update_pitch_label()
         self._cap_nhat_mau()
-        self._luu_bai_that()
+        self._luu_thong_so()
         self._replay_if_playing()
 
     # ── bộ lọc giọng nghe thử (tiếng vang / thiếu niên) ──
@@ -1359,9 +1286,9 @@ class App:
         self._on_am_luong_release()
 
     def _on_am_luong_release(self, _e=None):
-        """Nhả chuột / bấm ±: lưu (🔗) rồi nếu đang phát thì phát lại ở mức mới."""
+        """Nhả chuột / bấm ±: nhớ cài đặt rồi nếu đang phát thì phát lại ở mức mới."""
         self._update_am_luong_label()
-        self._luu_bai_that()
+        self._luu_thong_so()
         self._replay_if_playing()
 
     def _fx(self) -> dict:
@@ -1381,7 +1308,7 @@ class App:
         """Nhả chuột / bấm ↺: nếu đang phát dở thì phát lại luôn với bộ lọc mới."""
         self._update_fx_labels()
         self._cap_nhat_mau()
-        self._luu_bai_that()
+        self._luu_thong_so()
         self._replay_if_playing()
 
     def _replay_if_playing(self):

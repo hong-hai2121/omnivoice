@@ -110,35 +110,39 @@ def _mo_tk():
 
 class AppThuGiongTests(unittest.TestCase):
     """Hàng radio 🎚 trong voice/thu_giong.py (App thật, ẩn, không nạp model): bấm mẫu
-    đặt 5 số + ghi vào bài thật khi 🔗; kéo thanh lệch mẫu → "Tuỳ chỉnh"."""
+    đặt 5 số + nhớ vào cài đặt RIÊNG của app (không đụng taogiong_options.json — 10/11/2026);
+    kéo thanh lệch mẫu → "Tuỳ chỉnh"."""
 
     def setUp(self):
         self.root = _mo_tk()
         self.addCleanup(self.root.destroy)
-        self.saved: dict = {}            # thay cho taogiong_options.json thật
-        p = patch.object(gui, "save_opt_settings", lambda d: self.saved.update(d))
-        p.start()
-        self.addCleanup(p.stop)
+        self.saved: dict = {}            # thay cho thu_giong_settings.json thật
+        self.goc: dict = {}              # taogiong_options.json của bài thật — phải trống
+        for p in (patch.object(thu_giong, "save_settings", lambda **kv: self.saved.update(kv)),
+                  patch.object(gui, "save_opt_settings", lambda d: self.goc.update(d))):
+            p.start()
+            self.addCleanup(p.stop)
         self.app = thu_giong.App(self.root)
 
-    def test_bam_mau_dat_5_so_va_luu_bai_that(self):
+    def test_bam_mau_dat_5_so_va_nho_rieng(self):
         a = self.app
-        a.var_sync.set(True)
         a.var_mau.set("Sáng rõ")
         a._ap_mau()
         self.assertEqual(a._pitch(), 0.0)
         self.assertEqual(a._fx(), dict(vang_truong_do=0, vang_cuong_do=0, thieu_nien=0, sang_giong=80))
         self.assertEqual(a.var_mau.get(), "Sáng rõ")
-        self.assertEqual(self.saved.get("sang_giong"), 80)     # 🔗 → ghi đúng khoá bài thật
-        self.assertEqual(self.saved.get("pitch"), 0.0)
+        self.assertEqual(self.saved["fx"]["sang_giong"], 80)   # nhớ vào file riêng của app
+        self.assertEqual(self.saved["pitch"], 0.0)
+        self.assertEqual(self.goc, {})                         # bài thật KHÔNG bị ghi
 
-    def test_tat_dong_bo_thi_khong_ghi(self):
+    def test_khong_bao_gio_ghi_vao_bai_that(self):
         a = self.app
-        a.var_sync.set(False)
         a.var_mau.set("Sân khấu")
         a._ap_mau()
+        a._set_pitch(1.0)
+        a._set_am_luong(3.0)
         self.assertEqual(a._fx()["vang_cuong_do"], 25)
-        self.assertEqual(self.saved, {})
+        self.assertEqual(self.goc, {})
 
     def test_keo_thanh_lech_mau_thanh_tuy_chinh(self):
         a = self.app

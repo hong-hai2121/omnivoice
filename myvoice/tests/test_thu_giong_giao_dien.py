@@ -107,41 +107,40 @@ class KichBanMoiNhatTests(unittest.TestCase):
         self.assertIsNone(thu_giong.kich_ban_moi_nhat())
 
 
-class BaiThatAmLuongTests(unittest.TestCase):
-    """bai_that_doc / bai_that_luu thêm 🔊 am_luong_db (cùng khoá GUI/web); 🔉 chuan_am gỡ 10/11/2026."""
+class ThongSoAmLuongTests(unittest.TestCase):
+    """thong_so_doc / thong_so_luu nhớ 🔊 am_luong trong thu_giong_settings.json (riêng của app,
+    10/11/2026 — không còn liên kết taogiong_options.json; 🔉 chuan_am gỡ 10/11/2026)."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.opts = Path(tmp.name) / "taogiong_options.json"
-        self.opts.write_text(json.dumps({
-            "ngang_speed": "1.2", "pitch": 0.0, "sang_giong": 0,
-            "am_luong_db": 5.0, "chunk": 160,
-        }), encoding="utf-8")
-        p = patch.object(gui, "OPTS_FILE", self.opts)
+        self.f = Path(tmp.name) / "thu_giong_settings.json"
+        self.f.write_text(json.dumps({"voice": "a.wav", "speed": 1.2, "pitch": 0.0,
+                                      "fx": {"sang_giong": 0}, "am_luong": 5.0}), encoding="utf-8")
+        p = patch.object(thu_giong, "SETTINGS_FILE", self.f)
         p.start()
         self.addCleanup(p.stop)
 
     def _doc(self):
-        return json.loads(self.opts.read_text(encoding="utf-8"))
+        return json.loads(self.f.read_text(encoding="utf-8"))
 
-    def test_doc_them_hai_khoa(self):
-        bt = thu_giong.bai_that_doc()
+    def test_doc_du_khoa(self):
+        bt = thu_giong.thong_so_doc()
         self.assertEqual(set(bt), {"speed", "pitch", "fx", "am_luong"})
-        self.assertEqual(bt["am_luong"], 5.0)
+        self.assertEqual((bt["speed"], bt["am_luong"]), (1.2, 5.0))
         self.assertNotIn("chuan_am", bt)
 
     def test_luu_du_bo_so(self):
-        thu_giong.bai_that_luu(1.0, 1.0, None, am_luong=6.3)
+        thu_giong.thong_so_luu(1.0, 1.0, None, am_luong=6.3)
         d = self._doc()
-        self.assertEqual(d["am_luong_db"], 6.5)           # làm tròn 0,5 như hu.parse_amluong
+        self.assertEqual(d["am_luong"], 6.5)              # làm tròn 0,5 như hu.parse_amluong
+        self.assertEqual(d["voice"], "a.wav")             # khoá khác giữ nguyên
         self.assertNotIn("chuan_am", d)
-        self.assertEqual(d["chunk"], 160)                 # khoá khác giữ nguyên
 
-    def test_goi_kieu_cu_khong_dung_hai_khoa(self):
-        thu_giong.bai_that_luu(1.0, 2.0, None)
+    def test_goi_kieu_cu_khong_dung_am_luong(self):
+        thu_giong.thong_so_luu(1.0, 2.0, None)
         d = self._doc()
-        self.assertEqual(d["am_luong_db"], 5.0)
+        self.assertEqual(d["am_luong"], 5.0)
         self.assertEqual(d["pitch"], 2.0)
 
     def test_mo_ta_co_am_luong(self):
@@ -249,15 +248,6 @@ class AppGiaoDienTests(unittest.TestCase):
         a._replay_if_playing()
         a._on_nghe_bai_that.assert_called_once()
         a._play_file.assert_not_called()
-
-    def test_lay_tu_bai_that_keo_ca_am_luong(self):
-        a = self.app
-        a._replay_if_playing = MagicMock()
-        bt = dict(speed=1.5, pitch=1.0, fx=hu.fx_from(dict(sang_giong=80)), am_luong=3.0)
-        with patch.object(thu_giong, "bai_that_doc", lambda: bt):
-            a._lay_bai_that()
-        self.assertEqual(a._thong_so(), bt)
-        self.assertEqual(a.var_mau.get(), "Sáng + cao nhẹ")      # tông +1 + sáng 80 = mẫu này
 
     def test_phat_clone_dung_o_luong_nen_roi_phat(self):
         """_play_file: dựng (_render_file) ở luồng nền → về queue → _play_wav với bản dựng."""

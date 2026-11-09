@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""voice/thu_giong.py dùng chung thông số giọng với bài thật (01/11/2026): tốc độ ↔
-ngang_speed, tông ↔ pitch, 4 bộ lọc ↔ FX_KEYS trong taogiong_options.json. Không mở
+"""voice/thu_giong.py: thông số giọng là CỦA RIÊNG app (10/11/2026) — nhớ trong
+thu_giong_settings.json, KHÔNG đọc/ghi taogiong_options.json của bài thật. Không mở
 cửa sổ Tk, không nạp model."""
 import json
 import os
@@ -37,55 +37,48 @@ class ParseSpeedTests(unittest.TestCase):
         self.assertEqual((thu_giong.SPEED_MIN, thu_giong.SPEED_MAX), (0.5, 2.0))
 
 
-class BaiThatTests(unittest.TestCase):
+class ThongSoRiengTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.opts = Path(tmp.name) / "taogiong_options.json"
-        self.opts.write_text(json.dumps({
-            "chunk": 160, "ngang_speed": "1.2", "pitch": 1.0,
-            "vang_truong_do": 0, "vang_cuong_do": 0, "thieu_nien": 0, "sang_giong": 80,
-            "ngang_source": ["nauan"], "make_video": True,
-        }, ensure_ascii=False), encoding="utf-8")
-        p = patch.object(gui, "OPTS_FILE", self.opts)
-        p.start()
-        self.addCleanup(p.stop)
+        self.goc = Path(tmp.name) / "taogiong_options.json"      # bài thật — phải KHÔNG bị đụng/đọc
+        self.goc.write_text(json.dumps({
+            "chunk": 160, "ngang_speed": "1.2", "pitch": 1.0, "sang_giong": 80, "am_luong_db": 5.0,
+        }), encoding="utf-8")
+        self.rieng = Path(tmp.name) / "thu_giong_settings.json"
+        for p in (patch.object(gui, "OPTS_FILE", self.goc), patch.object(thu_giong, "SETTINGS_FILE", self.rieng)):
+            p.start()
+            self.addCleanup(p.stop)
 
-    def _doc(self) -> dict:
-        return json.loads(self.opts.read_text(encoding="utf-8"))
+    def _rieng(self) -> dict:
+        return json.loads(self.rieng.read_text(encoding="utf-8"))
 
-    def test_doc_dung_khoa_bai_that(self):
-        bt = thu_giong.bai_that_doc()
-        self.assertEqual(bt["speed"], 1.2)
-        self.assertEqual(bt["pitch"], 1.0)
-        self.assertEqual(bt["fx"], dict(vang_truong_do=0, vang_cuong_do=0,
-                                        thieu_nien=0, sang_giong=80))
-        self.assertEqual(thu_giong.default_speed(), 1.2)
+    def test_mac_dinh_khong_lay_tu_bai_that(self):
+        bt = thu_giong.thong_so_doc()
+        self.assertEqual(bt, dict(speed=1.0, pitch=0.0, fx=thu_giong.hu.fx_from(None), am_luong=0.0))
+        self.assertEqual(thu_giong.default_speed(), 1.0)
 
-    def test_luu_ghi_dung_khoa_giu_khoa_khac(self):
-        thu_giong.bai_that_luu(1.05, 2.0, dict(vang_truong_do=40, vang_cuong_do=30,
-                                               thieu_nien=0, sang_giong=60))
-        d = self._doc()
-        self.assertEqual(d["ngang_speed"], "1.05")      # chuỗi như GUI/web lưu
-        self.assertEqual(d["pitch"], 2.0)
-        self.assertEqual((d["vang_truong_do"], d["vang_cuong_do"], d["thieu_nien"], d["sang_giong"]),
-                         (40, 30, 0, 60))
-        # khoá không thuộc thông số giọng không bị đụng
-        self.assertEqual(d["ngang_source"], ["nauan"])
-        self.assertEqual(d["chunk"], 160)
-        self.assertTrue(d["make_video"])
+    def test_luu_vao_file_rieng_khong_dung_bai_that(self):
+        goc_truoc = self.goc.read_text(encoding="utf-8")
+        thu_giong.thong_so_luu(1.05, 2.0, dict(vang_truong_do=40, vang_cuong_do=30,
+                                               thieu_nien=0, sang_giong=60), am_luong=3.0)
+        d = self._rieng()
+        self.assertEqual((d["speed"], d["pitch"], d["am_luong"]), (1.05, 2.0, 3.0))
+        self.assertEqual(d["fx"], dict(vang_truong_do=40, vang_cuong_do=30, thieu_nien=0, sang_giong=60))
+        self.assertEqual(self.goc.read_text(encoding="utf-8"), goc_truoc)   # bài thật y nguyên
 
     def test_luu_roi_doc_lai_khop(self):
-        thu_giong.bai_that_luu(1.5, -1.5, dict(sang_giong=100))
-        bt = thu_giong.bai_that_doc()
+        thu_giong.thong_so_luu(1.5, -1.5, dict(sang_giong=100))
+        bt = thu_giong.thong_so_doc()
         self.assertEqual((bt["speed"], bt["pitch"]), (1.5, -1.5))
         self.assertEqual(bt["fx"]["sang_giong"], 100)
         self.assertEqual(bt["fx"]["thieu_nien"], 0)
+        self.assertEqual(bt["am_luong"], 0.0)                 # không truyền → giữ (chưa có) = 0
 
-    def test_luu_kep_theo_gioi_han_gui(self):
-        thu_giong.bai_that_luu(9.0, 99.0, None)
-        d = self._doc()
-        self.assertEqual(d["ngang_speed"], "2")
+    def test_luu_kep_theo_gioi_han(self):
+        thu_giong.thong_so_luu(9.0, 99.0, None)
+        d = self._rieng()
+        self.assertEqual(d["speed"], thu_giong.SPEED_MAX)
         self.assertEqual(d["pitch"], gui.PITCH_MAX)
 
     def test_mo_ta(self):
