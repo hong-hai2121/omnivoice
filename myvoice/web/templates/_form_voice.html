@@ -71,30 +71,20 @@
     <summary class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></summary>
     <div class="foldbody">
     <div class="modes">
-      {# 04/11/2026: 🗣 VieNeu (giọng dựng sẵn, SDK trong .venv riêng — nhanh gấp 5–10 lần
-         clone) đứng đầu và là mặc định; chế độ nhớ trong web_settings.json. #}
-      {% for value, label, desc in [("vieneu", "🗣 VieNeu", "Giọng dựng sẵn · nhanh"),
-                                    ("clone", "🎙 Clone", "OmniVoice nhái giọng mẫu"),
+      {# Chế độ nhớ trong web_settings.json; "vieneu" của bản 04–09/11 đã gỡ → server coi là clone. #}
+      {% for value, label, desc in [("clone", "🎙 Clone", "OmniVoice nhái giọng mẫu"),
                                     ("design", "🎨 Thiết kế", "Mô tả giọng"),
                                     ("default", "🔊 Mặc định", "Model tự chọn")] %}
-        <label class="mode {{ 'on' if web.mode == value }}">
-          <input type="radio" name="mode" value="{{ value }}" {{ 'checked' if web.mode == value }}>
+        {% set mode_on = web.mode if web.mode in ('clone', 'design', 'default') else 'clone' %}
+        <label class="mode {{ 'on' if mode_on == value }}">
+          <input type="radio" name="mode" value="{{ value }}" {{ 'checked' if mode_on == value }}>
           <b>{{ label }}</b><span class="muted">{{ desc }}</span>
         </label>
       {% endfor %}
     </div>
 
-    {# Ba ô ứng với ba chế độ nằm cùng một hàng; nghe thử + ★ ngay dưới ô giọng mẫu. #}
+    {# Hai ô ứng với hai chế độ có tham số nằm cùng một hàng; nghe thử + ★ ngay dưới ô giọng mẫu. #}
     <div class="grid">
-      <label class="field w2">
-        <span>Giọng VieNeu
-          {% if not vieneu_da_cai %}<b class="muted" title="Mở app Thử giọng → tab 🗣️ → ⬇ Cài GPU">⚠ chưa cài</b>{% endif %}</span>
-        <select name="vieneu_voice">
-          {% for v in vieneu_voices %}
-            <option value="{{ v }}" {{ 'selected' if current_vieneu_voice == v }}>{{ v }}</option>
-          {% endfor %}
-        </select>
-      </label>
       <label class="field w2">
         <span>Giọng mẫu (Clone)</span>
         <select name="voice">

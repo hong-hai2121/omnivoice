@@ -13,7 +13,7 @@ thiếu fastapi/uvicorn/torch.
 
 Cửa sổ nhỏ (mặc định) tự bật server rồi TỰ MỞ trình duyệt ngay khi server sẵn
 sàng — nút 🌐 vẫn còn để mở LẠI. Đóng cửa sổ = tắt server (nếu server do cửa sổ
-này bật) KÈM CẢ CÂY việc đang chạy — runner giữ OmniVoice / worker VieNeu / Whisper
+này bật) KÈM CẢ CÂY việc đang chạy — runner giữ OmniVoice / Whisper
 trên VRAM, ffmpeg… tắt theo (taskkill /T, xem _tat_cay; user chốt 09/11/2026: tắt app =
 trả VRAM). Trong cửa sổ có sẵn: 🌐 mở link · 📋 copy link · 🗑 xóa output (vào
 Thùng rác) · hai ô ⏻ "tắt máy" / 🌙 "cho máy ngủ" khi hàng đợi web chạy xong hết.
@@ -57,7 +57,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 def _tat_cay(proc: subprocess.Popen | None, cho: float = 8.0) -> None:
     """Tắt tiến trình server VÀ CẢ CÂY con cháu (runner hàng đợi → run_episode/run_tts giữ
-    OmniVoice, Whisper → worker VieNeu → ffmpeg). proc.terminate() trên Windows chỉ chạm
+    OmniVoice, Whisper → ffmpeg). proc.terminate() trên Windows chỉ chạm
     đúng server: việc đang chạy vẫn sống, model vẫn nằm trên VRAM tới khi tắt máy (user chốt
     09/11/2026: tắt app = trả VRAM). taskkill /T /F quét cả cây — cùng cách web/jobs._terminate
     dừng một việc; không quét được thì ít nhất kill server. Bản sao y ở myvideo/chay.py."""

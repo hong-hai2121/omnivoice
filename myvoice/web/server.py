@@ -65,10 +65,10 @@ TOKEN = _token()
 
 async def _tat_viec_khi_server_tat() -> None:
     """Server tắt êm (Ctrl+C ở chế độ --console, uvicorn shutdown) → dừng cả ba hàng đợi: kill
-    CẢ CÂY việc đang chạy (jobs._terminate taskkill /T) để runner đang giữ OmniVoice / Whisper /
-    worker VieNeu trên VRAM không sống sót sau khi app tắt (user chốt 09/11/2026: tắt app = trả
-    VRAM). Launcher chay.py đóng server bằng TerminateProcess nên hook này KHÔNG chạy ở đó — bên
-    đó tự taskkill /T cả cây (chay._tat_cay); worker VieNeu còn tự canh cha (--parent-pid).
+    CẢ CÂY việc đang chạy (jobs._terminate taskkill /T) để runner đang giữ OmniVoice / Whisper
+    trên VRAM không sống sót sau khi app tắt (user chốt 09/11/2026: tắt app = trả VRAM).
+    Launcher chay.py đóng server bằng TerminateProcess nên hook này KHÔNG chạy ở đó — bên đó
+    tự taskkill /T cả cây (chay._tat_cay).
     Việc dở vẫn được nối lại khi mở web lần sau (cờ pending trong manifest, không phải RAM)."""
     for r in (runner, upload_runner, fb_runner):
         try:
@@ -341,15 +341,10 @@ def _voice_ctx() -> dict:
     starred = next((v["name"] for v in voices if v["fav"]), "")
     opts = core.load_options()
     hu = core.gui.hu
-    vn = core.gui.vn
     return {
         "opts": opts, "web": web, "voices": voices,
         "current_voice": (saved if saved in names
                           else starred or (voices[0]["name"] if voices else "")),
-        # 04/11/2026: chế độ 🗣 VieNeu — 25 giọng dựng sẵn (danh sách tĩnh, worker bật lúc chạy).
-        "vieneu_voices": list(vn.GIONG_DUNG_SAN),
-        "current_vieneu_voice": core.giong_vieneu_hop_le(web.get("vieneu_voice")),
-        "vieneu_da_cai": vn.trang_thai()["da_cai"],
         "effects": core.list_effects(),
         # 🎚 Mẫu giọng cài sẵn (02/11/2026): bảng hu.MAU_GIONG (chung GUI + app Thử giọng)
         # → ô <select> điền tông + 4 bộ lọc; mau_hien_tai = mẫu khớp đúng số đang lưu.
@@ -903,7 +898,7 @@ def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
                   vang_cuong_do: str = Form(""), thieu_nien: str = Form(""),
                   sang_giong: str = Form(""), am_luong_db: str = Form(""),
                   chuan_am: str = Form(""), mode: str = Form(""), voice: str = Form(""),
-                  vieneu_voice: str = Form(""), instruct: str = Form("")):
+                  instruct: str = Form("")):
     """🎧 Nghe thử (06/11/2026): áp tông + bộ lọc + chuẩn âm + âm lượng ĐANG HIỆN trên
     form (chưa cần lưu, route này không ghi cài đặt) lên mẫu ~30 s giọng gốc của một
     tập rồi trả đường phát. Mẫu + cách chọn tập: scripts/taogiong_nghethu.py.
@@ -925,7 +920,7 @@ def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
     ghi_chu = []
     # Mẫu đọc bằng giọng khác giọng đang chọn trên form (chỉ biết với tập tạo từ 06/11/2026).
     g = mau.get("giong") or {}
-    dang_chon = {"vieneu": vieneu_voice, "clone": voice, "design": instruct}.get(mode, "")
+    dang_chon = {"clone": voice, "design": instruct}.get(mode, "")
     if g.get("che_do") and mode and (g.get("che_do") != mode
                                      or str(g.get("giong") or "") != str(dang_chon or "")):
         ghi_chu.append(f"Mẫu đọc bằng giọng “{nt.ten_giong(g) or g.get('che_do')}”, khác giọng "
@@ -1988,7 +1983,6 @@ def _save_voice_from_form(form) -> None:
     core.save_web_settings({
         "mode": str(form.get("mode", core.WEB_DEFAULTS["mode"])),
         "voice": str(form.get("voice", "")),
-        "vieneu_voice": core.giong_vieneu_hop_le(form.get("vieneu_voice")),
         "instruct": str(form.get("instruct", "")),
         "input": str(form.get("input_txt", "")),
         "output": str(form.get("output_wav", "")),

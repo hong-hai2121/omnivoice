@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""myvideo mang trọn bộ cài đặt giọng của myvoice sang (09/11/2026), áp cho cả VieNeu lẫn
-OmniVoice: 🔊 âm lượng dB (khoá am_luong_db → taogiong_srt.py --am-luong, cộng ở bước cuối
+"""myvideo mang trọn bộ cài đặt giọng của myvoice sang (09/11/2026): 🔊 âm lượng dB (khoá am_luong_db → taogiong_srt.py --am-luong, cộng ở bước cuối
 hau_ky_audio), 🎚 mẫu giọng (bảng hu.MAU_GIONG vào trang, không lưu), 🎧 nghe thử cài đặt
 trên ~30 s giọng thật (taogiong_nghethu_srt.py + route /nghethu, /nghe/caidat), và các ô
-tông/vang/thiếu niên đứng ngoài khối giọng mẫu (hiện cả khi chọn VieNeu).
+tông/vang/thiếu niên đứng ngoài khối giọng mẫu.
 
 Không nạp model. output/ và thư mục mẫu đều là thư mục TẠM. ffmpeg thật chỉ ở phần nghe
 thử (tiếng sin giả)."""
@@ -30,7 +29,7 @@ if str(REPO / "myvideo") not in sys.path:
 import taogiong_srt as ts  # noqa: E402  (tự chèn myvoice/scripts, kéo amain_taogiong_gui)
 import taogiong_nghethu_srt as nt  # noqa: E402
 import hieuung_giong as hu  # noqa: E402
-# Import server myvideo mà KHÔNG cho luồng nền khởi động (xem test_myvideo_vieneu.py).
+# Import server myvideo mà KHÔNG cho luồng nền khởi động.
 import gc  # noqa: E402
 import threading  # noqa: E402
 gc.collect()
@@ -108,13 +107,13 @@ class TestSteps(unittest.TestCase):
         self.assertEqual(len(steps), 1)
         return steps[0].argv
 
-    def test_am_luong_truyen_cho_ca_hai_engine(self):
+    def test_am_luong_truyen_cho_buoc_3(self):
         a = self._argv({"am_luong_db": "3"})
         self.assertEqual(a[a.index("--am-luong") + 1], "3")
-        self.assertEqual(a[a.index("--engine") + 1], "vieneu")
-        a = self._argv({"engine": "omni", "voice": "mau.wav", "am_luong_db": "-2.5"})
+        self.assertNotIn("--engine", a)              # engine VieNeu đã gỡ 09/11/2026
+        a = self._argv({"voice": "mau.wav", "am_luong_db": "-2.5"})
         self.assertEqual(a[a.index("--am-luong") + 1], "-2.5")
-        self.assertEqual(a[a.index("--engine") + 1], "omni")
+        self.assertEqual(a[a.index("--voice") + 1], "mau.wav")
 
     def test_thieu_khoa_thi_0(self):
         a = self._argv({})
@@ -159,7 +158,7 @@ class TestServer(unittest.TestCase):
         self.assertIn('id="nghethuAudio"', h)
         self.assertIn('/nghethu', h)
         # Các ô tông/vang/thiếu niên đứng trong khối cài đặt chung, SAU khối giọng mẫu
-        # (khối giọng mẫu bị ẩn khi chọn VieNeu — ô cài đặt không được nằm trong đó).
+        # (ô cài đặt không nằm trong khối giọng mẫu).
         clone = h.index('id="khoiClone"')
         caidat = h.index('id="khoiCaiDat"')
         self.assertLess(clone, caidat)
@@ -195,7 +194,7 @@ class _Nen(unittest.TestCase):
             p.stop()
         shutil.rmtree(self.td, ignore_errors=True)
 
-    def tao_video(self, ten, luc, so_cau=12, giay=3.0, hz=440.0, giong="vieneu|Ngọc Huyền",
+    def tao_video(self, ten, luc, so_cau=12, giay=3.0, hz=440.0, giong="clone|mau.wav",
                   sang=0, cau_rong=()):
         """output/<ten>/<ten>_x0.7_vi_tts/0001.wav… + _vanban.json; trả thư mục _tts."""
         d = self.out / ten / f"{ten}_x0.7_vi_tts"
@@ -250,7 +249,7 @@ class TestTaoMau(_Nen):
         d = self.tao_video("a", 1.0, so_cau=20, giay=3.0)
         meta = nt.tao_mau(d)
         self.assertEqual(meta["video"], "a_x0.7")
-        self.assertEqual(meta["giong"], "vieneu|Ngọc Huyền")
+        self.assertEqual(meta["giong"], "clone|mau.wav")
         self.assertGreaterEqual(meta["giay"], nt.MAU_GIAY)
         self.assertLessEqual(meta["giay"], nt.MAU_GIAY_TOI_DA + 1)
         self.assertFalse(meta["cat_giua_cau"])
@@ -259,7 +258,7 @@ class TestTaoMau(_Nen):
         self.assertTrue((self.mau / nt.MAU_WAV).is_file())
         self.assertEqual(nt.doc_mau()["ma"], meta["ma"])
         self.assertIn("Mẫu: video a_x0.7", nt.nhan_mau(meta))
-        self.assertIn("giọng Ngọc Huyền", nt.nhan_mau(meta))
+        self.assertIn("giọng mau", nt.nhan_mau(meta))
 
     def test_cau_rong_khong_co_wav_thi_nhay_qua(self):
         d = self.tao_video("a", 1.0, so_cau=16, giay=3.0, cau_rong=(1, 2))
@@ -275,7 +274,7 @@ class TestTaoMau(_Nen):
 
     def test_ten_giong_clone(self):
         self.assertEqual(nt.ten_giong("clone|ngọc huyền 01.wav"), "ngọc huyền 01")
-        self.assertEqual(nt.ten_giong("vieneu|Mai Anh"), "Mai Anh")
+        self.assertEqual(nt.ten_giong("vieneu|Mai Anh"), "Mai Anh")   # sổ của bản VieNeu cũ vẫn đọc được
         self.assertEqual(nt.ten_giong(""), "")
         self.assertEqual(nt.che_do_giong("clone|a.wav"), ("clone", "a.wav"))
 
@@ -330,21 +329,20 @@ class TestNgheThu(_Nen):
 
     def test_route_nghethu_tra_url_phat_duoc(self):
         r = sv.nghethu(pitch="0", vang_truong_do="0", vang_cuong_do="0", thieu_nien="0",
-                       sanggiong="0", am_luong_db="3", chuanam="", engine="vieneu",
-                       giong_vieneu="Ngọc Huyền", voice="")
+                       sanggiong="0", am_luong_db="3", chuanam="", voice="mau.wav")
         j = json.loads(r.body)
         self.assertTrue(j["ok"], j)
         self.assertIn("âm lượng +3.0 dB", j["mo_ta"])
         self.assertIn("Mẫu: video a_x0.7", j["mau"])
-        self.assertEqual(j["ghi_chu"], [])                 # cùng engine + giọng với mẫu
+        self.assertEqual(j["ghi_chu"], [])                 # cùng giọng với mẫu
         self.assertTrue(j["url"].startswith("/nghe/caidat?f=xt_"))
         ten = j["url"].split("f=")[1]
         self.assertEqual(asyncio.run(sv.nghe_caidat(f=ten)).status_code, 200)
-        # chọn giọng khác / engine khác → ghi chú
-        r = sv.nghethu(engine="vieneu", giong_vieneu="Mai Anh")
+        # chọn giọng khác → ghi chú; ô giọng trống (tự lấy file đầu) → không ghi chú
+        r = sv.nghethu(voice="khac.wav")
         self.assertEqual(len(json.loads(r.body)["ghi_chu"]), 1)
-        r = sv.nghethu(engine="omni", voice="mau.wav")
-        self.assertEqual(len(json.loads(r.body)["ghi_chu"]), 1)
+        r = sv.nghethu(voice="")
+        self.assertEqual(json.loads(r.body)["ghi_chu"], [])
 
     def test_route_chua_co_mau(self):
         shutil.rmtree(self.out)

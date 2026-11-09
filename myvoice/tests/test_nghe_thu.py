@@ -199,8 +199,8 @@ class MauGocTests(_Nen):
         meta = nt.cap_nhat()
         self.assertEqual(meta["giong"], {"che_do": "clone", "giong": "ngọc huyền 01.mp3"})
         self.assertTrue(nt.nhan_mau(meta).endswith("· giọng ngọc huyền 01"))
-        nt.ghi_giong(d / "output_chunks", "vieneu", "Ngọc Huyền")
-        self.assertEqual(nt.ten_giong(nt._doc_json(d / "output_chunks" / nt.GIONG_MARK)), "Ngọc Huyền")
+        nt.ghi_giong(d / "output_chunks", "design", "female, young adult")
+        self.assertEqual(nt.ten_giong(nt._doc_json(d / "output_chunks" / nt.GIONG_MARK)), "female, young adult")
 
 
 class ApCaiDatTests(_Nen):
@@ -273,8 +273,8 @@ class WebTests(_Nen):
         truoc = (core.load_options(), core.load_web_settings())
         r = self.c.post("/giongnoi/nghethu", data={
             "pitch": "0", "vang_truong_do": "0", "vang_cuong_do": "0", "thieu_nien": "0",
-            "sang_giong": "0", "am_luong_db": "+6", "chuan_am": "", "mode": "vieneu",
-            "vieneu_voice": "Ngọc Huyền"})
+            "sang_giong": "0", "am_luong_db": "+6", "chuan_am": "", "mode": "clone",
+            "voice": "ngọc huyền 01.mp3"})
         j = r.json()
         self.assertTrue(j["ok"], j)
         self.assertEqual(j["mo_ta"], "âm lượng +6.0 dB")
@@ -360,7 +360,7 @@ class RunTtsTests(_Nen):
                                do_engine=MagicMock(return_value=None), _tra_vram=MagicMock(),
                                _play_done_sound=MagicMock()), \
                 patch.object(gui.logging, "info"), patch.object(gui.logging, "warning"):
-            return gui.run_tts("vieneu", "Ngọc Huyền", ["câu một.", "câu hai.", "câu ba."],
+            return gui.run_tts("design", "female, young adult", ["câu một.", "câu hai.", "câu ba."],
                                str(output), _V(0), _V(""), stub, stub, stub, ev)
 
     def test_tao_giong_tap_thi_co_mau_va_ten_giong(self):
@@ -372,7 +372,7 @@ class RunTtsTests(_Nen):
         self.assertIsNotNone(meta)
         self.assertEqual(meta["tap"], "07")
         self.assertEqual(meta["so_cau"], 3)
-        self.assertEqual(meta["giong"], {"che_do": "vieneu", "giong": "Ngọc Huyền"})
+        self.assertEqual(meta["giong"], {"che_do": "design", "giong": "female, young adult"})
 
     def test_file_ngoai_thu_muc_tap_khong_dung_toi_mau(self):
         d = self.kb / "output"                                    # tab Giọng nói: kịch_bản/output

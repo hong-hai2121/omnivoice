@@ -11,7 +11,7 @@ sys.path — trùng tên là import nhầm bản bên kia.
 
 Khác myvoice ở chỗ LẤY MẪU: myvideo không có kịch_bản/<tập>/output_chunks mà là
 output/<tên>/<base>_vi_tts/0001.wav… (taogiong_srt.generate_all), sổ _vanban.json ở đó ghi lời
-từng câu + giọng ("vieneu|Ngọc Huyền" / "clone|<file>") + mức 🔆 đã sinh.
+từng câu + giọng ("clone|<file>"; video của bản 04–09/11 có thể là "vieneu|…") + mức 🔆 đã sinh.
 
 MẪU GỐC lấy ở đâu
     <base>_vi_tts/0001.wav, 0002.wav… là từng câu engine sinh ra, CHƯA qua hậu kỳ
@@ -43,7 +43,7 @@ KHI NÀO THAY MẪU (cap_nhat)
     tông + bộ lọc (một lượt ffmpeg) → [chuẩn âm: nén + loudnorm −14 LUFS] → 🔊 âm lượng.
     Lệch duy nhất: 🔆 Sáng giọng ở engine OmniVoice còn EQ cả GIỌNG MẪU lúc sinh câu, mà câu
     trong mẫu đã sinh ở mức sáng của video đó → nghe thử chỉ thấy phần EQ áp lên audio (web
-    báo khi hai mức lệch nhau). VieNeu không dựng prompt nên không lệch.
+    báo khi hai mức lệch nhau).
 
 Chạy lẻ:
     venv\\Scripts\\python myvideo\\taogiong_nghethu_srt.py                  # xem / lấy mẫu
@@ -265,7 +265,7 @@ def tao_mau(tts_dir) -> dict:
         tao_luc=_tao_luc(d), lay_luc=time.time(),
         so_cau=len(parts), giay=round(len(am) / sr, 2), sr=sr, muc_rms=muc_rms,
         cat_giua_cau=bool(cat), nghi_theo_dau=bool(loi_so),
-        # Mức 🔆 lúc sinh các câu (clone EQ cả giọng mẫu) + giọng đã đọc ("vieneu|…" / "clone|…").
+        # Mức 🔆 lúc sinh các câu (clone EQ cả giọng mẫu) + giọng đã đọc ("clone|…").
         sang_goc=int(so.get("sang") or 0), giong=str(so.get("giong") or ""),
         van_ban=loi[:VAN_BAN_TOI_DA] + ("…" if len(loi) > VAN_BAN_TOI_DA else ""),
     )
@@ -315,8 +315,8 @@ def cap_nhat(log=None):
 
 
 def che_do_giong(giong: str) -> tuple[str, str]:
-    """'vieneu|Ngọc Huyền' → ('vieneu', 'Ngọc Huyền'); 'clone|a.wav' → ('clone', 'a.wav');
-    sổ cũ không ghi → ('', '')."""
+    """'clone|a.wav' → ('clone', 'a.wav'); sổ của bản VieNeu cũ 'vieneu|Ngọc Huyền' →
+    ('vieneu', 'Ngọc Huyền'); sổ cũ không ghi → ('', '')."""
     s = str(giong or "")
     if "|" not in s:
         return ("", "")

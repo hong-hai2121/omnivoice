@@ -66,7 +66,7 @@ class HomeTests(unittest.TestCase):
             "kb-nhandien": ['value="recognize"', 'name="auto2"'],
             "kb-dich": ['value="translate"', 'name="seo"', 'name="auto3"', 'name="gemini_backend"'],
             "kb-input": ['value="input"', 'name="auto_tts"'],
-            "gn-chedo": ['name="mode"', 'name="vieneu_voice"', 'name="voice"', 'name="instruct"'],
+            "gn-chedo": ['name="mode"', 'name="voice"', 'name="instruct"'],
             "gn-tep": ['name="input_txt"', 'name="output_wav"'],
             "gn-caidat": ['name="chunk"', 'name="mau_giong"', 'name="pitch"', 'name="vang_truong_do"',
                           'name="vang_cuong_do"', 'name="thieu_nien"', 'name="sang_giong"',

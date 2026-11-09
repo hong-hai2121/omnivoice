@@ -37,8 +37,7 @@ class TestCanMuc(unittest.TestCase):
     def test_mac_dinh_tat(self):
         self.assertIs(tts.OPTS_DEFAULTS["chuan_am"], False)
         with patch.object(core, "load_options", lambda: dict(tts.OPTS_DEFAULTS)), \
-                patch.object(core, "load_web_settings", lambda: dict(core.WEB_DEFAULTS)), \
-                patch.object(tts.vn, "trang_thai", return_value=dict(da_cai=True)):
+                patch.object(core, "load_web_settings", lambda: dict(core.WEB_DEFAULTS)):
             ts_, loi = core.tts_settings()
         self.assertEqual(loi, "")
         self.assertIs(ts_["chuan_am"], False)

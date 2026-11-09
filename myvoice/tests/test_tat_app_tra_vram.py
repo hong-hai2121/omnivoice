@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Tắt app = trả VRAM (user chốt 09/11/2026). Ba lớp chốt, lớp nào cũng phải đứng riêng được:
-  1. vieneu_worker --parent-pid: worker canh tiến trình cha, cha chết là tự thoát (canh_cha);
-     vieneu_client.SdkWorker.bat luôn truyền cờ này.
-  2. chay.py (myvoice + myvideo) đóng cửa sổ → _tat_cay: taskkill /T cả cây server → runner →
-     script bước → worker, không chỉ terminate() mỗi server.
-  3. Hai server FastAPI có hook shutdown gọi stop_all() mọi hàng đợi (Ctrl+C chế độ console).
+"""Tắt app = trả VRAM (user chốt 09/11/2026). Hai lớp chốt, lớp nào cũng phải đứng riêng được:
+  1. chay.py (myvoice + myvideo) đóng cửa sổ → _tat_cay: taskkill /T cả cây server → runner →
+     script bước, không chỉ terminate() mỗi server.
+  2. Hai server FastAPI có hook shutdown gọi stop_all() mọi hàng đợi (Ctrl+C chế độ console).
 Tiến trình thật chỉ là `python -c sleep` nhỏ; không nạp model, không mở Tk."""
 import asyncio
 import os
@@ -22,8 +20,6 @@ REPO = Path(__file__).resolve().parents[2]
 for _p in (REPO, REPO / "myvoice" / "voice"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-import vieneu_client as vn  # noqa: E402
-import vieneu_worker as vw  # noqa: E402
 import gc  # noqa: E402
 gc.collect()
 with patch.object(threading.Thread, "start", lambda self: None):
@@ -57,66 +53,7 @@ def _doi_chet(pid: int, cho: float = 8.0) -> bool:
     return not psutil.pid_exists(pid)
 
 
-# ── 1. worker canh cha ───────────────────────────────────────────────────────────
-class TestCanhCha(unittest.TestCase):
-    def test_cha_chet_thi_goi(self):
-        cha = _ngu()
-        ev = threading.Event()
-        try:
-            t = vw.canh_cha(cha.pid, ev.set, moi=0.2)
-            self.assertIsNotNone(t)
-            self.assertFalse(ev.wait(1.0), "cha còn sống mà đã báo chết")
-            cha.kill()
-            cha.wait(5)
-            self.assertTrue(ev.wait(5.0), "cha chết 5 s rồi mà worker chưa biết")
-        finally:
-            if cha.poll() is None:
-                cha.kill()
-
-    def test_cha_da_chet_truoc_khi_canh(self):
-        cha = subprocess.Popen([PY, "-c", "pass"], creationflags=CREATE_NO_WINDOW)
-        cha.wait(10)
-        ev = threading.Event()
-        vw.canh_cha(cha.pid, ev.set, moi=0.2)
-        self.assertTrue(ev.wait(5.0))
-
-    def test_pid_0_khong_canh(self):
-        self.assertIsNone(vw.canh_cha(0, lambda: None))
-        self.assertIsNone(vw.canh_cha(-5, lambda: None))
-
-    def test_cha_con_song(self):
-        self.assertTrue(vw.cha_con_song(os.getpid()))
-        cha = subprocess.Popen([PY, "-c", "pass"], creationflags=CREATE_NO_WINDOW)
-        cha.wait(10)
-        self.assertFalse(vw.cha_con_song(cha.pid))
-        self.assertFalse(vw.cha_con_song(0))
-
-    def test_doi_so_co_parent_pid(self):
-        a = vw.doi_so().parse_args(["--port", "8011", "--parent-pid", "123"])
-        self.assertEqual((a.port, a.parent_pid), (8011, 123))
-        self.assertEqual(vw.doi_so().parse_args([]).parent_pid, 0)
-
-    def test_sdkworker_truyen_parent_pid(self):
-        w = vn.SdkWorker()
-        goi = {}
-
-        def bat_gia(cmd, env, cong, on_line):
-            goi["cmd"] = cmd
-            w.proc = MagicMock()
-            w.proc.poll.return_value = None
-            w.cong = cong
-
-        with patch.object(vn.SdkWorker, "_bat", side_effect=bat_gia, autospec=False), \
-                patch.object(vn.SdkWorker, "cho_san_sang", return_value={"sr": 48000, "voices": ["A"], "backend": "gia"}), \
-                patch.object(vn, "chon_cong", return_value=8099):
-            w.bat(device="cuda")
-        cmd = goi["cmd"]
-        self.assertIn("--parent-pid", cmd)
-        self.assertEqual(cmd[cmd.index("--parent-pid") + 1], str(os.getpid()))
-        self.assertEqual(cmd[cmd.index("--device") + 1], "cuda")
-
-
-# ── 2. launcher tắt cả cây ───────────────────────────────────────────────────────
+# ── 1. launcher tắt cả cây ───────────────────────────────────────────────────────
 class TestTatCay(unittest.TestCase):
     def _cay(self) -> tuple[subprocess.Popen, int]:
         """Cha python sinh con python ngủ 60 s, in PID con rồi tự ngủ — y cấu trúc
@@ -159,7 +96,7 @@ class TestTatCay(unittest.TestCase):
         chay_video._tat_cay(p)          # đã chết sẵn → không ném
 
 
-# ── 3. hook shutdown của hai server ──────────────────────────────────────────────
+# ── 2. hook shutdown của hai server ──────────────────────────────────────────────
 class TestHookServer(unittest.TestCase):
     def test_myvideo_dung_ca_ba_hang_doi(self):
         with patch.object(sv_video.q, "stop_all") as a, patch.object(sv_video.q_dang, "stop_all") as b, \

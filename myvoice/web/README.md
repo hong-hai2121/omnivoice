@@ -158,13 +158,11 @@ module thì không sinh tệp. myvideo dùng chung `JobRunner` nên cũng ghi, v
 
 **Lỗi GPU → hàng đợi TẠM DỪNG** (05/11/2026): runner trả mã thoát **79**
 (`gpu_batbuoc.MA_THOAT_GPU`) khi lượt chạy dừng vì `GpuLoi` — không có CUDA, thiếu
-VRAM, NVENC chết, worker VieNeu mất GPU. Các bước dùng GPU khai `Step.halt_codes`, hàng
+VRAM, NVENC chết. Các bước dùng GPU khai `Step.halt_codes`, hàng
 đợi thấy mã này thì đánh dấu việc lỗi rồi **tạm dừng, giữ nguyên việc còn chờ** (kể cả
 bước `continue_on_fail` trong một đợt) thay vì chạy tiếp các tập sau để hỏng y hệt.
 Đầu khối hàng đợi hiện băng đỏ nêu lý do + cách chạy lại; bấm *▶ Tiếp* là chạy tiếp
-việc còn chờ, tập vừa lỗi thì ⏩ Chạy tiếp để làm lại. Chế độ 🗣 VieNeu cũng **ép GPU**:
-worker bật với `--device cuda`, không dùng được CUDA là dừng ngay chứ không lặng lẽ
-chạy ONNX/CPU (chậm ~4 lần rồi vẫn dừng ở bước ASR kiểm tra).
+việc còn chờ, tập vừa lỗi thì ⏩ Chạy tiếp để làm lại.
 
 **Nút 💾 lưu tại chỗ, không tải lại trang** — mọi nút "💾 Lưu…" (và hai form
 Tập bỏ qua / Câu mở đầu) gửi qua htmx: lưu xong hiện mẩu "✓ đã lưu" cạnh nút

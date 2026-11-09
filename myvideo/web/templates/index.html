@@ -45,7 +45,7 @@
   <h1><span class="ico">🎬</span> myvideo — quy trình 4 bước</h1>
   <p class="muted">Video tiếng <b class="l-zh">Trung</b><b class="l-en">Anh</b> →
      <b>①</b> làm chậm + SRT <span class="l-zh">Trung</span><span class="l-en">Anh</span> →
-     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng VieNeu / OmniVoice xếp timeline →
+     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice xếp timeline →
      <b>④</b> video sub cứng + tiếng Việt.</p>
 </div>
 
@@ -269,45 +269,11 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   <div class="panel">
     <div class="phead">
       <span class="num">3</span><h2>Tạo giọng + xếp timeline</h2>
-      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🗣 VieNeu giọng dựng sẵn — mặc
-        định, hoặc 🎙 OmniVoice clone giọng mẫu), xếp chống đè →
+      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🎙 OmniVoice clone giọng mẫu),
+        xếp chống đè →
         <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>; rồi như myvoice:
         cân mức giữa các câu, tông giọng + bộ lọc, nén nhẹ + chuẩn −14 LUFS.
         Chạy lại tự bỏ qua câu đã có audio.</p>
-    </div>
-    {# 04/11/2026: ENGINE bước ③ — 🗣 VieNeu đứng đầu và là mặc định (user chốt); chọn
-       🎙 OmniVoice thì hiện lại ô giọng mẫu + ⭐ + nghe thử như trước. Lưu cùng form
-       chính (khoá engine / giong_vieneu trong web_settings.json); JS cuối trang
-       (veEngine) ẩn/hiện hai khối. taogiong_srt.py nhận --engine / --giong-vieneu. #}
-    <div class="inline" id="engineRow" style="gap:18px; margin-bottom:8px">
-      <label style="display:flex; gap:6px; align-items:center">
-        <input type="radio" name="engine" value="vieneu" {{ 'checked' if settings.engine != 'omni' }}>
-        <b>🗣 VieNeu</b><span class="hint">giọng dựng sẵn · nhanh · 48 kHz</span>
-      </label>
-      <label style="display:flex; gap:6px; align-items:center">
-        <input type="radio" name="engine" value="omni" {{ 'checked' if settings.engine == 'omni' }}>
-        <b>🎙 OmniVoice</b><span class="hint">clone giọng mẫu (chậm hơn 5–10 lần)</span>
-      </label>
-    </div>
-    <div class="grid" id="khoiVieneu">
-      <label class="field">
-        <span>Giọng VieNeu — 25 giọng dựng sẵn v3 Turbo (worker SDK trong
-          <code>myvoice/voice/VieNeu-TTS/.venv</code>; bật lúc chạy bước ③)
-          {% if not vieneu_da_cai %}<b>⚠ chưa cài — app Thử giọng (myvoice/voice/thu_giong.py) → tab 🗣️ → ⬇ Cài GPU</b>{% endif %}</span>
-        <select name="giong_vieneu" id="vieneuSel">
-          {% for v in vieneu_giong %}
-            <option value="{{ v }}" {{ 'selected' if settings.giong_vieneu == v }}
-                    data-nghe="{{ '1' if v in vieneu_nghe }}">{{ v }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <div class="inline">
-        <span class="hint">🔊 Nghe thử giọng VieNeu đang chọn:</span>
-        <audio id="vNghe" controls preload="none"></audio>
-        <span class="hint" id="vNgheTrong" style="display:none">— chưa có bản nghe thử giọng
-          này: mở app Thử giọng → tab 🗣️ → 🎧 chọn giọng, bấm Tạo &amp; nghe (lưu vào
-          <code>_thu_giong/vieneu/</code>), rồi tải lại trang</span>
-      </div>
     </div>
     <div class="grid" id="khoiClone">
       <label class="field">
@@ -342,10 +308,8 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
           trong danh sách để nghe</span>
       </div>
     </div>
-    {# ── CÀI ĐẶT GIỌNG — dùng chung cho CẢ HAI engine (09/11/2026, mang đủ bộ từ khối
-       "3 Cài đặt tạo giọng" bên myvoice sang theo ý user). Trước đây 🎵🔔🧒 nằm trong khối
-       giọng mẫu nên chọn 🗣 VieNeu là bị giấu dù bước ③ vẫn áp lên audio tổng; nay đứng
-       riêng, hiện luôn. Cùng tên khoá với myvoice (pitch / vang_truong_do / vang_cuong_do /
+    {# ── CÀI ĐẶT GIỌNG (09/11/2026, mang đủ bộ từ khối "3 Cài đặt tạo giọng" bên myvoice
+       sang theo ý user), đứng riêng ngoài khối giọng mẫu. Cùng tên khoá với myvoice (pitch / vang_truong_do / vang_cuong_do /
        thieu_nien / am_luong_db; riêng 🔆 là sanggiong và 🔉 là chuanam như cũ), cùng lõi
        hieuung_giong. Thứ tự áp ở bước ③ (taogiong_srt.hau_ky_audio): tông + bộ lọc một
        lượt ffmpeg → [chuẩn âm] → âm lượng, trên audio tổng _vi_audio.wav. #}
@@ -354,9 +318,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
          (chung GUI / web myvoice / app Thử giọng); sửa tay ô nào thì về "Tuỳ chỉnh". Server
          KHÔNG đọc ô này (chỉ lưu 5 ô số). JS ở cuối trang (mauGiong). #}
       <label class="field" id="mauGiongBox" data-mau='{{ mau_giong | tojson }}' style="grid-column: 1 / -1">
-        <span>🎚 Mẫu giọng (điền tông + 4 bộ lọc) — áp cho cả 🗣 VieNeu lẫn 🎙 OmniVoice</span>
+        <span>🎚 Mẫu giọng (điền tông + 4 bộ lọc)</span>
         <select name="mau_giong"
-                title="Mặc định = tắt hết (giọng VieNeu dựng sẵn đã sáng; bản clone thuần nghe ồm). Các mẫu khác trị ồm từ nhẹ tới đậm; chọn xong vẫn sửa tay từng ô được. Với OmniVoice, đổi mức Sáng giọng là bước ③ đọc lại toàn bộ câu. Nghe thử bằng nút 🎧 bên dưới.">
+                title="Mặc định = tắt hết (bản clone thuần nghe ồm). Các mẫu khác trị ồm từ nhẹ tới đậm; chọn xong vẫn sửa tay từng ô được. Đổi mức Sáng giọng là bước ③ đọc lại toàn bộ câu. Nghe thử bằng nút 🎧 bên dưới.">
           {% for ten, mota in mau_giong_mota %}
             <option value="{{ ten }}">{{ ten }} — {{ mota }}</option>
           {% endfor %}
@@ -393,9 +357,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     {# 🔆 SÁNG GIỌNG (23/10/2026; 24/10 dời từ tab 🔊 về đây vì nó là cài đặt của
        BƯỚC ③): trị giọng clone nghe "ồm, không thanh" — EQ bớt 150–500 Hz, nâng
        3 kHz + dải cao (100 = ±6 dB, từ 50 thêm họa âm dải cao). Áp hai chỗ: EQ
-       giọng mẫu trong bộ nhớ lúc dựng prompt (file mẫu không đổi; chỉ OmniVoice) rồi
-       EQ audio tổng _vi_audio.wav (cả hai engine); đổi mức là bước ③ đọc lại toàn bộ
-       câu khi là OmniVoice (sổ _vanban.json nhớ mức). Lưu cùng form chính (/luu, /chay).
+       giọng mẫu trong bộ nhớ lúc dựng prompt (file mẫu không đổi) rồi EQ audio tổng
+       _vi_audio.wav; đổi mức là bước ③ đọc lại toàn bộ câu (sổ _vanban.json nhớ mức).
+       Lưu cùng form chính (/luu, /chay).
        Thanh kéo + ô số + nút ↺ như tab 🔊 (CSS .cc-* ở app.css); JS ở cuối trang (veSang). #}
     <div class="cc-row">
       <span class="cc-ten">🔆 Sáng giọng</span>
@@ -408,7 +372,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     </div>
     <p class="cc-nhan" id="sanggiongNhan"></p>
     {# 🔉 Chuẩn âm (05/11/2026, mặc định TẮT): bật = bước ③ nén nhẹ + loudnorm −14 LUFS + neo
-       −18 dBFS và bước ④ loudnorm lại giọng; tắt = giữ mức gốc của giọng (như mẫu VieNeu). #}
+       −18 dBFS và bước ④ loudnorm lại giọng; tắt = giữ mức gốc của giọng. #}
     <label class="chk" style="margin-top:6px">
       <input type="checkbox" name="chuanam" {{ 'checked' if settings.chuanam }}>
       🔉 Chuẩn âm giọng đọc (nén nhẹ + loudnorm −14 LUFS ở bước ③ và ④; tắt = giữ mức gốc)
@@ -943,7 +907,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const sSo = document.getElementById("sanggiongSo");
   const sNhan = document.getElementById("sanggiongNhan");
   const sangNhan = v => v === 0
-    ? "0 — tắt (mặc định từ 05/11/2026: giọng VieNeu dựng sẵn đã sáng; chỉ clone mẫu tối mới cần bật)"
+    ? "0 — tắt (mặc định từ 05/11/2026; chỉ giọng mẫu tối mới cần bật)"
     : v + "/100 — bớt ồm 150–500 Hz, thêm 3 kHz + dải cao"
       + (v >= 50 ? ", có họa âm dải cao" : "")
       + " · đổi mức là bước ③ đọc lại toàn bộ câu";
@@ -1011,32 +975,6 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       }
     }
   };
-  // ── 🗣/🎙 Engine bước ③: ẩn/hiện khối VieNeu ↔ khối giọng mẫu; ô 🔊 VieNeu trỏ
-  // sang /nghe/vieneu?ten= nếu đã có bản nghe thử (data-nghe), không thì báo cách tạo.
-  const engR = [...document.querySelectorAll("#engineRow input[name=engine]")];
-  const vSel = document.getElementById("vieneuSel");
-  const veEngine = () => {
-    const omni = engR.some(r => r.checked && r.value === "omni");
-    document.getElementById("khoiVieneu").style.display = omni ? "none" : "";
-    document.getElementById("khoiClone").style.display = omni ? "" : "none";
-  };
-  const veVieneu = () => {
-    const nghe = document.getElementById("vNghe");
-    const trong = document.getElementById("vNgheTrong");
-    const o = vSel.options[vSel.selectedIndex];
-    nghe.pause();
-    if (o && o.dataset.nghe === "1") {
-      nghe.src = "/nghe/vieneu?ten=" + encodeURIComponent(vSel.value);
-      nghe.style.display = ""; trong.style.display = "none";
-    } else {
-      nghe.removeAttribute("src");
-      nghe.style.display = "none"; trong.style.display = "";
-    }
-  };
-  engR.forEach(r => r.addEventListener("change", () => { veEngine(); danhDauDoi(true); }));
-  vSel.addEventListener("change", () => { veVieneu(); danhDauDoi(true); });
-  veEngine();
-  veVieneu();
 
   // ── 🎚 Mẫu giọng cài sẵn (09/11/2026, bảng hu.MAU_GIONG chung với myvoice) ──
   // Chọn mẫu → điền tông + 4 bộ lọc (🔆 là thanh kéo sanggiong); sửa tay ô nào → nhãn về
@@ -1080,7 +1018,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const ntAu = document.getElementById("nghethuAudio");
   const ntNote = document.getElementById("nghethuNote");
   const NT_GUI = ["pitch", "vang_truong_do", "vang_cuong_do", "thieu_nien", "sanggiong",
-                  "am_luong_db", "engine", "giong_vieneu", "voice"];
+                  "am_luong_db", "voice"];
   const NT_LAI = new Set([...NT_GUI, "chuanam", "mau_giong"]);
   let ntLuot = 0, ntHen = null, ntDang = false;
   async function ngheThu() {

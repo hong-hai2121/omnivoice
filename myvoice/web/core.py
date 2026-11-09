@@ -53,9 +53,9 @@ PIPE_DEFAULTS = gui.PIPE_DEFAULTS
 # cho gọn. (save_opt_settings của GUI nay GIỮ lại khoá không nêu khi lưu, nên
 # khoá chỉ-web như tiktok_music_loop vẫn nằm chung taogiong_options.json được.)
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
-# 04/11/2026: mode mặc định "vieneu" (giọng dựng sẵn VieNeu-TTS, user chốt) — cùng
-# OPTS_DEFAULTS của GUI; vieneu_voice = 1 trong gui.vn.GIONG_DUNG_SAN.
-WEB_DEFAULTS = dict(mode="vieneu", vieneu_voice="Ngọc Huyền", voice="", instruct="", input="", output="",
+# mode mặc định "clone" (OmniVoice nhái giọng mẫu) — cùng OPTS_DEFAULTS của GUI.
+# (Chế độ "vieneu" gỡ 09/11/2026; web_settings.json cũ ghi "vieneu" → coi như clone.)
+WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
                     # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
                     # ảnh nền mặc định, và có làm thêm bản dọc không.
@@ -451,12 +451,6 @@ def list_voices() -> list[dict]:
 
 def list_voice_names() -> list[str]:
     return [r["name"] for r in list_voices()]
-
-
-def giong_vieneu_hop_le(ten) -> str:
-    """Tên giọng dựng sẵn VieNeu hợp lệ: không có / lạ → mặc định (Ngọc Huyền)."""
-    ten = str(ten or "").strip()
-    return ten if ten in gui.vn.GIONG_DUNG_SAN else WEB_DEFAULTS["vieneu_voice"]
 
 
 def toggle_voice_favorite(name: str) -> bool:
@@ -1425,13 +1419,9 @@ def tts_settings() -> tuple[dict | None, str]:
     web = load_web_settings()
 
     mode = web.get("mode", "clone")
-    if mode == gui.MODE_VIENEU:
-        # 04/11/2026: giọng dựng sẵn VieNeu (worker SDK, xem gui.nap_engine); tên giọng là voice_param.
-        if not gui.vn.trang_thai()["da_cai"]:
-            return None, ("VieNeu-TTS chưa cài (voice/VieNeu-TTS/.venv) — mở app Thử giọng → tab 🗣️ → "
-                          "⬇ Cài GPU, hoặc chọn chế độ 🎙 Clone.")
-        voice_param = giong_vieneu_hop_le(web.get("vieneu_voice"))
-    elif mode == "clone":
+    if mode not in gui.MODES:          # "vieneu" của bản 04–09/11 đã gỡ, hay giá trị lạ → clone
+        mode = "clone"
+    if mode == "clone":
         voice = (web.get("voice") or "").strip()
         available = list_voice_names()
         if voice not in available:

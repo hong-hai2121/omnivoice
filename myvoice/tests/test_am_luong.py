@@ -114,8 +114,7 @@ class MocTests(unittest.TestCase):
 class CaiDatTests(unittest.TestCase):
     def _ts(self, **opts):
         with patch.object(core, "load_options", lambda: dict(gui.OPTS_DEFAULTS, **opts)), \
-                patch.object(core, "load_web_settings", lambda: dict(core.WEB_DEFAULTS)), \
-                patch.object(gui.vn, "trang_thai", return_value=dict(da_cai=True)):
+                patch.object(core, "load_web_settings", lambda: dict(core.WEB_DEFAULTS)):
             ts, loi = core.tts_settings()
         self.assertEqual(loi, "")
         return ts

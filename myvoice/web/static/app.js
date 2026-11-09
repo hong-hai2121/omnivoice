@@ -1354,7 +1354,7 @@ window.xemTruocThumb = function () {
 // nào (kể cả chọn 🎚 mẫu giọng) là dựng + phát lại luôn, khỏi bấm lại.
 (function () {
   const GUI = ['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien', 'sang_giong',
-               'am_luong_db', 'mode', 'voice', 'vieneu_voice', 'instruct'];
+               'am_luong_db', 'mode', 'voice', 'instruct'];
   const NGHE_LAI = new Set(['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien',
                             'sang_giong', 'am_luong_db', 'chuan_am', 'mau_giong']);
   let luot = 0;         // chỉ lượt bấm sau cùng được phát (bấm dồn / đổi ô liên tiếp)
