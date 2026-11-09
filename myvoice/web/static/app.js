@@ -756,7 +756,7 @@ document.addEventListener("change", event => {
 });
 // ── Tab 🧩 Extension: thử kết nối / gửi thử qua Chrome Extension. Lượt thử chạy
 //    trong tiến trình server (web/gemini_test.py); trang hỏi /api/gemini-test mỗi
-//    giây khi đang chạy để in nhật ký và kết quả. (Tab 🤖 GPT CLI có khối riêng dưới.)
+//    giây khi đang chạy để in nhật ký và kết quả.
 (() => {
   const panel = document.getElementById('ext-test');
   if (!panel) return;
@@ -793,134 +793,6 @@ document.addEventListener("change", event => {
   }
   $('ext-check').addEventListener('click', () => start('check'));
   $('ext-send').addEventListener('click', () => start('send'));
-  refresh();
-})();
-
-
-// ── Tab 🤖 GPT CLI (web/gptcli_test.py, 29/10/2026) ──────────────────────────
-//    ① thẻ trạng thái: /api/gptcli-info (tìm codex + đăng nhập + model/mức sẽ dùng +
-//       cách dịch đang chọn, KHÔNG gọi model) — đọc lúc mở trang và sau mỗi lần ô cài
-//       đặt ② tự lưu (sự kiện mv:daluu do khối tự lưu bên dưới phát).
-//    ③ nhắn thử: POST /api/gptcli-test/chay rồi hỏi /api/gptcli-test mỗi giây; tin gửi
-//       và trả lời hiện kiểu hội thoại (bong bóng), nhật ký + đề bài gấp trong <details>.
-(() => {
-  const panel = document.getElementById('cli-test');
-  if (!panel) return;
-  const $ = id => document.getElementById(id);
-  const chat = $('cli-chat'), logBox = $('cli-log'), promptBox = $('cli-prompt');
-  const status = $('cli-status'), elapsed = $('cli-elapsed');
-  const MUC = { low: 'thấp', medium: 'vừa', high: 'cao', xhigh: 'rất cao', max: 'tối đa' };
-  const BACKEND = { cli: '🤖 GPT CLI', firefox: '🦊 Firefox / Selenium', extension: '🧩 Chrome Extension' };
-  let timer = null, cho = null, daThay = 0, moiGui = false;
-
-  function the(id, lop, chinh, phu) {
-    const el = $(id);
-    el.className = 'cli-stat' + (lop ? ' ' + lop : '');
-    el.querySelector('b').textContent = chinh;
-    el.querySelector('i').textContent = phu || '';
-  }
-  const tenMuc = e => e ? (MUC[e] || e) : 'mặc định';
-
-  async function docInfo() {
-    try {
-      const r = await fetch('/api/gptcli-info', { credentials: 'same-origin' });
-      const s = await r.json();
-      if (s.ok) {
-        the('st-codex', 'ok', '✅ codex-cli ' + s.version, s.path);
-        the('st-login', s.logged_in ? 'ok' : 'warn',
-            s.logged_in ? '✅ Đã đăng nhập' : '⚠️ Chưa đăng nhập', s.login);
-      } else {
-        the('st-codex', 'loi', '❌ Không thấy codex', s.error);
-        the('st-login', 'warn', '—', 'cài codex rồi chạy `codex login`');
-      }
-      the('st-model', '', (s.model || 'codex tự chọn') + ' · ' + tenMuc(s.effort),
-          'model: ' + s.model_nguon + ' · mức: ' + s.effort_nguon);
-      the('st-backend', s.backend === 'cli' ? 'ok' : 'warn', BACKEND[s.backend] || s.backend,
-          s.backend === 'cli' ? 'dịch / SEO / SRT xếp mới đi qua codex'
-                              : 'tick ô "Dùng GPT CLI làm cách dịch" ở khối ② để chuyển');
-    } catch (e) {
-      the('st-codex', 'loi', 'Không lấy được trạng thái', String(e));
-    }
-  }
-
-  function bong(lop, text, meta) {
-    const d = document.createElement('div');
-    d.className = 'cli-msg ' + lop;
-    if (meta) { const m = document.createElement('small'); m.textContent = meta; d.appendChild(m); }
-    d.appendChild(document.createTextNode(text));
-    const trong = chat.querySelector('.empty');
-    if (trong) trong.remove();
-    chat.appendChild(d);
-    d.scrollIntoView({ block: 'nearest' });
-    return d;
-  }
-  function metaBan(s) {
-    return 'Bạn' + (s.mode === 'check' ? ' · 🔌 lệnh thử ngắn' : s.full ? ' · như lúc dịch thật' : '');
-  }
-  function metaTraLoi(s) {
-    const i = s.info || {};
-    return 'GPT CLI · ' + (i.model || 'model codex tự chọn') + ' · mức ' + tenMuc(i.effort)
-      + (s.elapsed ? ' · trả lời sau ' + Math.round(s.elapsed) + ' s' : '');
-  }
-  function hienKetQua(s) {
-    if (cho) { cho.remove(); cho = null; }
-    if (s.error) bong('loi', '❌ ' + s.error, 'GPT CLI · lỗi');
-    else if (s.result) bong('ai', s.result, metaTraLoi(s));
-  }
-
-  async function refresh() {
-    clearTimeout(timer);
-    try {
-      const r = await fetch('/api/gptcli-test', { credentials: 'same-origin' });
-      const s = await r.json();
-      logBox.textContent = s.lines.length ? s.lines.join('\n') : 'Chưa chạy.';
-      promptBox.textContent = s.prompt || '';
-      status.textContent = s.running ? '⌛ đang chạy…' : s.error ? '❌ lỗi — xem khối ③'
-        : s.finished ? '✅ xong' : '';
-      elapsed.textContent = (!s.running && s.finished && s.elapsed)
-        ? 'CLI trả lời sau ' + Math.round(s.elapsed) + ' s' : '';
-      $('cli-check').disabled = $('cli-send').disabled = Boolean(s.running);
-      logBox.scrollTop = logBox.scrollHeight;
-      if (moiGui && s.text) {                       // lượt vừa bấm: bong bóng "Bạn" + chờ
-        moiGui = false;
-        bong('me', s.text, metaBan(s));
-        cho = bong('cho', '⌛ GPT CLI đang trả lời…');
-      }
-      if (s.running) { timer = setTimeout(refresh, 1000); return; }
-      if (s.finished && s.finished !== daThay) {    // lượt vừa xong (hoặc lượt cũ khi mới mở trang)
-        daThay = s.finished;
-        if (!chat.querySelector('.cli-msg.me') && s.text) bong('me', s.text, metaBan(s) + ' · lượt trước');
-        hienKetQua(s);
-        docInfo();                                  // 🔌 có thể vừa đổi trạng thái đăng nhập / codex
-      }
-    } catch (e) {
-      status.textContent = 'Không lấy được trạng thái: ' + e;
-    }
-  }
-  async function start(mode) {
-    const fd = new FormData();
-    fd.set('mode', mode);
-    fd.set('text', $('cli-text').value);
-    if ($('cli-full').checked) fd.set('full_prefix', '1');
-    status.textContent = '⌛ đang gửi yêu cầu…';
-    const resp = await fetch('/api/gptcli-test/chay', { method: 'POST', body: fd, credentials: 'same-origin' });
-    const s = await resp.json().catch(() => ({}));
-    if (!resp.ok) { status.textContent = '❌ ' + (s.error || ('HTTP ' + resp.status)); return; }
-    moiGui = true;
-    refresh();
-  }
-
-  // Ô chọn model: "Nhập tay…" mới hiện ô gõ tên.
-  const sel = $('cli-model'), khac = $('cli-model-khac-field');
-  if (sel && khac) sel.addEventListener('change', () => { khac.hidden = sel.value !== '__khac__'; });
-  // Ô ② vừa tự lưu xong → đọc lại thẻ "Model · mức" / "Cách dịch" ở ①.
-  document.addEventListener('mv:daluu', (e) => {
-    const f = e.detail && e.detail.form;
-    if (f && f.closest('#cli-caidat')) docInfo();
-  });
-  $('cli-check').addEventListener('click', () => start('check'));
-  $('cli-send').addEventListener('click', () => start('send'));
-  docInfo();
   refresh();
 })();
 
@@ -1159,8 +1031,6 @@ window.mvNguon = (function () {
   }
 
   function daLuu(el, html) {
-    // Báo cho khối nào cần làm mới sau khi lưu (tab 🤖: thẻ "Model · mức" ở khối ①).
-    document.dispatchEvent(new CustomEvent('mv:daluu', { detail: { form: el.form } }));
     // Mẩu "✓ đã lưu" của server → ô .luunote cùng khối (nếu khối đó có).
     const khoi = el.closest('.panel, .savebar, form');
     const note = khoi && khoi.querySelector('.luunote');

@@ -18,8 +18,6 @@ RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
 RUNNER_UPLOAD = core.WEB_DIR / "runners" / "run_upload.py"
-# Đăng qua Chrome thật (YouTube Studio + TikTok Studio) — chọn ở ô "Cách đăng" của khối Đăng YouTube.
-RUNNER_TRINHDUYET = core.WEB_DIR / "runners" / "run_dang_trinhduyet.py"
 # Lấp đoạn "(trống)" trong gemini_result.docx — script CLI có sẵn, không đi qua
 # run_episode.py (nó không phải một bước của quy trình, chỉ là việc sửa tay có trợ giúp).
 RETRANS_SCRIPT = core.SCRIPTS_DIR / "dich_lai_trong.py"
@@ -83,16 +81,7 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
 
 
 def upload_steps(episode: str) -> list[Step]:
-    """Bước ĐĂNG YouTube cho 1 tập (chạy ở hàng đợi riêng upload_runner).
-
-    Cách đăng "studio" (30/10/2026): runner run_dang_trinhduyet.py đăng YouTube Studio + TikTok
-    Studio qua Chrome thật; biên nhận cùng khuôn youtube_upload.json nên bảng tiến độ không đổi."""
-    if core.upload_backend() == "studio":
-        argv = [core.python_exe(), "-u", str(RUNNER_TRINHDUYET), "--episode", str(episode),
-                "--nen-tang", "youtube", "tiktok"]
-        return [Step(label=f"Đăng YouTube + TikTok (trình duyệt) tập {episode}", argv=argv,
-                     cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
-                     soft_fail_codes=(STOP_CODE,))]
+    """Bước ĐĂNG YouTube cho 1 tập (chạy ở hàng đợi riêng upload_runner)."""
     argv = [core.python_exe(), "-u", str(RUNNER_UPLOAD), "--episode", str(episode)]
     return [Step(label=f"Đăng YouTube tập {episode}", argv=argv,
                  cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),

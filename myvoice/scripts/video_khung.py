@@ -38,11 +38,6 @@ import numpy as np
 from PIL import Image, ImageOps
 from scipy import ndimage
 
-# GPU bắt buộc (27/10/2026): NVENC lỗi/không có → GpuLoi, báo lỗi rồi dừng (không rớt về CPU).
-from gpu_batbuoc import GpuLoi, RamLoi  # noqa: E402
-# Chốt canh RAM (28/10/2026): ffmpeg ngốn RAM quá ngưỡng → giết, thử lại 1 lần, rồi RamLoi.
-import ram_canhgac as ram  # noqa: E402
-
 # Ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt). Dùng reconfigure() để đổi
 # encoding TẠI CHỖ — KHÔNG bọc TextIOWrapper mới. Nếu bọc wrapper mới, khi module
 # khác (video_doc) cũng bọc lần nữa thì wrapper trung gian mất tham chiếu, bị GC và
@@ -76,11 +71,7 @@ K2_LOGO_BOX = (0, 346, 348, 690)
 VIDEO_DIR  = BASE_DIR / "videongang"   # kho video ngang để ghép random
 SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
-# GPU (NVIDIA NVENC) BẮT BUỘC khi dựng video (27/10/2026): NVENC lỗi hay ffmpeg không
-# có h264_nvenc thì ném GpuLoi — báo lỗi rồi DỪNG, không âm thầm rớt về CPU (libx264)
-# như bản cũ. Vì sao: tập 152 ffmpeg NVENC chết vì hết RAM, bản cũ chỉ in "GPU lỗi,
-# chuyển sang CPU" rồi vứt luôn lỗi thật của ffmpeg, dựng tiếp bằng CPU chậm gấp nhiều
-# lần mà không ai hay. USE_GPU=False mới là CHỦ Ý dùng CPU (xem nvenc_batbuoc).
+# Ưu tiên GPU (NVIDIA NVENC) để dựng video; tự fallback về CPU (libx264) nếu GPU lỗi.
 USE_GPU = True
 
 # Chiều cao thấp nhất của video xuất. Nếu bộ khung PNG bị thay bằng bản 720p,
@@ -160,42 +151,6 @@ def has_nvenc() -> bool:
     return _nvenc_cached
 
 
-def nvenc_batbuoc(use_gpu: bool = True) -> bool:
-    """True = dựng bằng NVENC. `use_gpu` bật mà ffmpeg không có h264_nvenc → GpuLoi.
-
-    use_gpu=False (USE_GPU tắt = CHỦ Ý dùng CPU) thì trả False, bên gọi dựng libx264
-    như cũ. Dùng chung cho video_doc / video_doc_khung (mỗi file có USE_GPU riêng).
-    """
-    if not use_gpu:
-        return False
-    if not has_nvenc():
-        raise GpuLoi("ffmpeg không có encoder h264_nvenc (GPU) — DỪNG, không dựng bằng CPU. "
-                     "Kiểm tra ffmpeg/driver NVIDIA: ffmpeg -encoders | findstr nvenc")
-    return True
-
-
-def dung_neu_nvenc_loi(rc: int, err_tail: str, use_gpu: bool) -> None:
-    """ffmpeg NVENC trả mã lỗi → ném GpuLoi kèm đuôi stderr (lỗi THẬT của ffmpeg).
-
-    Bản cũ tới đây in "GPU lỗi, chuyển sang CPU (libx264)" rồi chạy lại bằng CPU:
-    vừa vứt mất thông báo lỗi của ffmpeg (file stderr bị lượt CPU ghi đè), vừa dựng
-    tiếp chậm gấp nhiều lần mà không ai hay (tập 152, 27/10/2026: ffmpeg NVENC chết
-    vì hết bộ nhớ ảo, không phải tại GPU). rc == 0 hay use_gpu=False → không làm gì.
-
-    Riêng err_tail bắt đầu bằng ram_canhgac.TAG ("[RAM]") = ffmpeg bị chốt canh RAM giết
-    cả 2 lần (28/10/2026) → RamLoi (là GpuLoi, dừng cả lượt) KỂ CẢ khi use_gpu=False:
-    ngốn RAM thì CPU hay GPU đều phải dừng, không phải lỗi của bộ mã hoá.
-    """
-    if rc == 0:
-        return
-    if (err_tail or "").lstrip().startswith(ram.TAG):
-        raise RamLoi("ffmpeg bị chốt canh RAM dừng cả 2 lần — DỪNG để máy không treo; dọn "
-                     f"RAM/VRAM (đóng Chrome/CapCut, app chiếm GPU) rồi chạy lại.\n{err_tail.strip()}")
-    if use_gpu:
-        raise GpuLoi(f"ffmpeg NVENC (GPU) lỗi, mã {rc} — DỪNG, không chuyển sang CPU. "
-                     f"Đuôi stderr của ffmpeg:\n{(err_tail or '').strip()}")
-
-
 def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng video",
                         progress=None):
     """Chạy ffmpeg và báo % theo thời lượng đích nhờ -progress.
@@ -209,94 +164,48 @@ def run_ffmpeg_progress(cmd, total_dur: float, log=print, label: str = "Dựng v
               trình hiện bằng thanh chứ không spam nhật ký), và cập nhật dày hơn
               (~0.5s) cho thanh chạy mượt.
 
-    Chốt canh RAM (28/10/2026, ram_canhgac): tập 152 ffmpeg NVENC ngốn 52 GB bộ nhớ ảo làm
-    cả máy ì tới khi khởi động lại; dựng lại ngay sau thì bình thường (~1,9 GB). Nay ffmpeg
-    vượt ram.NGUONG_GB → bị giết, ghi bằng chứng (ai đang ăn RAM/VRAM) vào log + file
-    ffmpeg_ram_loi.txt cạnh video, thử lại 1 lần sau CHO_THU_LAI_S; vẫn vượt → trả
-    (rc≠0, tail bắt đầu bằng ram.TAG) để dung_neu_nvenc_loi ném RamLoi.
-
     Trả về (returncode, stderr_tail).
     """
     # Chèn -progress pipe:1 -nostats ngay sau 'ffmpeg' để nhận tiến trình qua stdout.
     cmd = [cmd[0], "-progress", "pipe:1", "-nostats", *cmd[1:]]
     err_path = Path(tempfile.gettempdir()) / "ffmpeg_progress_err.log"
+    cur, speed, last = 0.0, "?", 0.0
     interval = 0.5 if progress is not None else 2.0   # thanh GUI cập nhật mượt hơn log
-    ram.kiem_truoc(log)      # 1 dòng RAM/VRAM trước khi chạy; RAM trống thấp thì kể tên thủ phạm
-    for lan in (1, 2):
-        cur, speed, last = 0.0, "?", 0.0
-        with open(err_path, "w", encoding="utf-8", errors="replace") as ef:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=ef,
-                text=True, encoding="utf-8", errors="replace", bufsize=1,
-                creationflags=CREATE_NO_WINDOW,
-            )
-            canh = ram.CanhGac(proc.pid, log=log).start()
-            try:
-                for line in proc.stdout:
-                    line = line.strip()
-                    if line.startswith("out_time_us="):
-                        try:
-                            cur = max(0, int(line.split("=", 1)[1])) / 1_000_000
-                        except ValueError:
-                            pass
-                    elif line.startswith("speed="):
-                        speed = line.split("=", 1)[1]
-                    elif line.startswith("progress="):
-                        now = time.monotonic()
-                        done = line.endswith("end")
-                        if done or now - last >= interval:
-                            last = now
-                            pct = min(100.0, cur / total_dur * 100) if total_dur > 0 else 0.0
-                            if progress is not None:
-                                progress(pct, cur, total_dur, speed)   # → thanh tiến trình GUI
-                            else:
-                                log(f"  {label}: {pct:5.1f}%  ({cur:.0f}/{total_dur:.0f}s, tốc độ {speed})")
-                proc.wait()
-            finally:
-                canh.stop()
+    with open(err_path, "w", encoding="utf-8", errors="replace") as ef:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=ef,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith("out_time_us="):
                 try:
-                    proc.stdout.close()      # đóng ống stdout (lặp 2 lần → không để rò)
-                except OSError:
+                    cur = max(0, int(line.split("=", 1)[1])) / 1_000_000
+                except ValueError:
                     pass
-        try:
-            tail = err_path.read_text(encoding="utf-8", errors="replace")[-1000:]
-        except OSError:
-            tail = ""
-        try:
-            err_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        if not canh.vuot:
-            if canh.dinh_gb >= 3.0:      # chưa tới chốt nhưng cao bất thường → để ý
-                log(f"ℹ️ ffmpeg đỉnh {canh.dinh_gb:.1f} GB RAM (bình thường ~2 GB, chốt {canh.nguong_gb:g} GB)")
-            return proc.returncode, tail
-        # Bị chốt canh RAM giết: báo to + ghi bằng chứng; lần 1 thử lại, lần 2 trả lỗi.
-        msg = (f"{ram.TAG} ffmpeg ngốn {canh.dinh_gb:.1f} GB RAM (quá ngưỡng {canh.nguong_gb:g} GB) "
-               f"→ đã dừng để máy không treo (lần {lan}/2).\n{canh.bang_chung}")
-        log("⚠️ " + msg)
-        _ghi_bang_chung_ram(cmd, msg)
-        if lan == 1:
-            log(f"🔁 Thử dựng lại 1 lần sau {CHO_THU_LAI_S:g} s (27/10: chạy lại cùng clip là xong bình thường)...")
-            time.sleep(CHO_THU_LAI_S)
-    return (proc.returncode or -1), msg + "\nĐuôi stderr của ffmpeg:\n" + tail
-
-
-# Chờ trước khi thử lại sau khi ffmpeg bị chốt canh RAM giết (test đặt nhỏ lại).
-CHO_THU_LAI_S = 5.0
-
-
-def _ghi_bang_chung_ram(cmd, msg: str) -> None:
-    """Ghi sự cố RAM vào ffmpeg_ram_loi.txt CẠNH video đầu ra (đối số cuối của lệnh):
-    nhật ký hàng đợi web chỉ nằm trong RAM, tắt server là mất; file này thì còn để tra."""
+            elif line.startswith("speed="):
+                speed = line.split("=", 1)[1]
+            elif line.startswith("progress="):
+                now = time.monotonic()
+                done = line.endswith("end")
+                if done or now - last >= interval:
+                    last = now
+                    pct = min(100.0, cur / total_dur * 100) if total_dur > 0 else 0.0
+                    if progress is not None:
+                        progress(pct, cur, total_dur, speed)   # → thanh tiến trình GUI
+                    else:
+                        log(f"  {label}: {pct:5.1f}%  ({cur:.0f}/{total_dur:.0f}s, tốc độ {speed})")
+        proc.wait()
     try:
-        thu_muc = Path(str(cmd[-1])).parent
-        if not thu_muc.is_dir():
-            return
-        with open(thu_muc / "ffmpeg_ram_loi.txt", "a", encoding="utf-8") as f:
-            f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n{msg}\nLệnh: "
-                    + " ".join(str(c) for c in cmd) + "\n\n")
+        tail = err_path.read_text(encoding="utf-8", errors="replace")[-1000:]
+    except OSError:
+        tail = ""
+    try:
+        err_path.unlink(missing_ok=True)
     except OSError:
         pass
+    return proc.returncode, tail
 
 
 def _ffprobe_json(args, path: Path, tries: int = 3):
@@ -585,40 +494,9 @@ def prepare_static_layers(pink, target_size: tuple[int, int], frame: Path = KHUN
     return bg_path, top_path, mask_path
 
 
-def gom_clip_kho(source_dir, log=print) -> tuple[list[Path], str]:
-    """Gom clip .mp4 để ghép random → (danh sách clip, tên kho để ghi log/lỗi).
-
-    source_dir: None/rỗng → cả videongang/ (kho gốc rỗng vì đã dồn clip vào thư mục
-    con thì gom MỌI thư mục con); 1 đường dẫn → thư mục đó; list/tuple đường dẫn
-    (01/11/2026, ô "Nguồn ngang" tick nhiều) → gộp clip của tất cả rồi build_playlist
-    xáo chung. Không có clip → RuntimeError.
-    """
-    if not source_dir:
-        dirs = []
-    elif isinstance(source_dir, (str, Path)):
-        dirs = [Path(source_dir)]
-    else:
-        dirs = [Path(d) for d in source_dir if d]
-    if not dirs:
-        ten = str(VIDEO_DIR)
-        videos = sorted(VIDEO_DIR.glob("*.mp4"))
-        if not videos:
-            videos = sorted(VIDEO_DIR.rglob("*.mp4"))
-            if videos:
-                log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
-    else:
-        ten = " + ".join(f"{d.name}/" for d in dirs)
-        videos = sorted({v for d in dirs for v in d.glob("*.mp4")})
-        if videos:
-            log(f"📁 Nguồn video ngang: {ten} ({len(videos)} clip)")
-    if not videos:
-        raise RuntimeError(f"Không có file .mp4 nào trong: {ten}")
-    return videos, ten
-
-
 def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
                 progress=None, skip_existing=False, output: Path | None = None,
-                source_dir=None, frame: Path | None = None,
+                source_dir: Path | None = None, frame: Path | None = None,
                 logo: Path | None = None, goc_out: Path | None = None,
                 bg: Path | None = None, source_video: Path | None = None,
                 source_zoom: float = 1.0) -> Path:
@@ -650,8 +528,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
 
     source_dir: thư mục kho clip ngang để ghép random. None (mặc định) → dùng cả
                 videongang/. Truyền 1 thư mục con (vd videongang/thiennhien) để chỉ
-                ghép clip theo chủ đề đó, hoặc LIST thư mục con (01/11/2026) → gộp
-                clip của tất cả rồi xáo chung (xem gom_clip_kho).
+                ghép clip theo chủ đề đó.
 
     frame: file viền khung (khung1*.png) cụ thể. None (mặc định) → chọn NGẪU NHIÊN
            một màu trong Backbround/ (xem random_frame).
@@ -704,12 +581,21 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             if nguon and nguon_dur <= 0.5:
                 log(f"[Cảnh báo] Video nguồn {nguon.name} quá ngắn ({nguon_dur:.2f}s) → ghép clip kho như cũ.")
                 nguon = None
-    ten_kho = ""
+    src_dir = Path(source_dir) if source_dir else VIDEO_DIR
     if nguon:
         videos = [nguon]
     else:
-        # Kho clip: cả videongang/, 1 thư mục con, hay nhiều thư mục con gộp lại.
-        videos, ten_kho = gom_clip_kho(source_dir, log)
+        videos = sorted(src_dir.glob("*.mp4"))
+        if not videos and not source_dir:
+            # Kho gốc videongang/ rỗng (đã dồn clip vào thư mục con theo chủ đề) → khi
+            # chọn "tất cả" thì gom MỌI clip trong các thư mục con thay vì báo lỗi.
+            videos = sorted(src_dir.rglob("*.mp4"))
+            if videos:
+                log(f"📁 Nguồn video ngang: tất cả thư mục con ({len(videos)} clip)")
+        if not videos:
+            raise RuntimeError(f"Không có file .mp4 nào trong: {src_dir}")
+        if source_dir:
+            log(f"📁 Nguồn video ngang: {src_dir.name}/ ({len(videos)} clip)")
 
     audio_file = Path(audio_file)
     if not audio_file.exists():
@@ -739,7 +625,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         durations = probe_durations(videos, log)
         videos = [v for v in videos if v in durations]
         if not videos:
-            raise RuntimeError(f"Không đọc được clip nào trong: {ten_kho}")
+            raise RuntimeError(f"Không đọc được clip nào trong: {src_dir}")
         seq, total = build_playlist(videos, durations, audio_dur)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
@@ -887,11 +773,13 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
 
     if goc_out:
         log(f"Video gốc  : {goc_out.name} (trước khi lồng khung, {goc_box[2]}x{goc_box[3]}) → dùng cho bản dọc")
-    use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
+    use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video... (GPU - h264_nvenc)" if use_gpu else "Đang dựng video... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log, progress=progress)
-    # NVENC lỗi → GpuLoi (báo lỗi rồi dừng), KHÔNG thử lại bằng CPU — kiểm sau khi dọn
-    # file tạm bên dưới (xem dung_neu_nvenc_loi).
+    # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt dựng.
+    if rc != 0 and use_gpu:
+        log("GPU lỗi, chuyển sang CPU (libx264)...")
+        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log, progress=progress)
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
     for tmp_path in (concat_list, bg_path, top_path, mask_path):
         if tmp_path is None:          # video nguồn: không có danh sách ghép
@@ -901,7 +789,6 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         except OSError:
             pass
     if rc != 0:
-        dung_neu_nvenc_loi(rc, err_tail, use_gpu)      # NVENC lỗi → GpuLoi, không thử CPU
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     if goc_out and goc_out.exists():

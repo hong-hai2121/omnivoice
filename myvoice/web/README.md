@@ -58,16 +58,6 @@ chưa tải…) → ghi cảnh báo rồi ghép clip theo “Nguồn clip ngang�
 (`doc_khung`) dựng từ `YOUTUBE_goc.mp4` nên cũng lấy hình này. Runner `run_episode.py`
 đưa thẳng đường dẫn video (`ngang_source_video`), còn nút ▶ Dựng lại / GUI tra
 `batch_manifest.json` theo thư mục tập (`gui.nguon_video_cua_tap`).
-
-**Nguồn clip ngang tick NHIỀU thư mục** (khối ③, 01/11/2026): ô chọn 1 thư mục con
-`videongang/` đổi thành cụm checkbox (GUI: nút thả menu có ô tick, cùng ô). Khoá
-`ngang_source` trong `taogiong_options.json` nay là **list tên thư mục con** (chuỗi 1
-tên cũ vẫn đọc được, `gui.ngang_source_list`); `[]`/không tick = cả kho. Lúc dựng,
-`video_khung.gom_clip_kho` gộp clip của mọi thư mục đã tick rồi xáo chung tới khi đủ
-thời lượng — thư mục nhiều clip xuất hiện nhiều hơn theo tỉ lệ. Thư mục đã tick nhưng
-không còn trên đĩa hiện "(không thấy)" để bỏ tick; lúc dựng bị bỏ qua (ghi log), bỏ hết
-→ dùng cả kho. Form gửi kèm hidden rỗng cùng tên nên server phân biệt được "bỏ tick hết"
-với "trang không có ô này".
 | **📑 Copy SEO** | Copy SEO | Tiêu đề · tiêu đề TikTok · mô tả · thẻ tag, đúng nội dung 3 nút Copy bên GUI |
 | **📤 Đăng bài** (`/dangbai`) | — | Hàng đợi + **đúng hai khối "Đăng YouTube" và "Đăng Facebook" của Home** cho lúc chỉ ngồi canh việc đăng |
 
@@ -181,7 +171,7 @@ câu dính đuôi), nên muốn đổi bộ hashtag thì sửa ở SEO như mọ
 Cả ba nút chạy `myvoice/FACEBOOK/dang_video_facebook.py` trong **hàng đợi đăng**
 nên kế hoạch/tiến trình hiện ở nhật ký hàng đợi đăng, trang không tải lại. Hai
 việc 🔍/🔄 xếp hàng dạng **light** (xem `JobRunner.heavy_busy`) nên KHÔNG kích
-hoạt ô ⏻/🌙 — bấm xem kế hoạch xong máy không tự tắt/ngủ sau 1 phút.
+hoạt ô ⏻ — bấm xem kế hoạch xong máy không tự tắt sau 5 phút.
 
 Trang không gọi Graph API lúc render (chậm theo đường truyền): danh sách tập đã
 có trên Page đọc từ `FACEBOOK/page_cache.json` mà script ghi ra mỗi lần chạy —
@@ -269,27 +259,24 @@ script từ chối đăng đồng thời **không ghi đè** `page_cache.json`. 
 thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiếp là đăng trùng lên
 Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
-**⏻ Xong hết thì tắt máy / 🌙 Xong hết thì cho máy ngủ** — hai ô tick ngay đầu khối
-*Hàng đợi*, loại trừ nhau (tick ô này là bỏ ô kia), **mặc định TẮT mỗi lần mở
-server** (tick tay trên web hoặc cửa sổ desktop `chay.py` — ô bên đó là công tắc
-từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm — tick suông
-lúc chưa chạy gì thì không tắt/ngủ). Chạy xong CẢ hàng đợi chính lẫn hàng đợi đăng
-YouTube/Facebook, rảnh thêm `SHUTDOWN_DELAY_MIN` / `SLEEP_DELAY_MIN` (đều 1 phút từ
-31/10/2026) thì phát `shutdown /s /f /t 0` hoặc gọi `suspend_computer`
-(SetSuspendState — ngủ: chạm chuột là dậy, server vẫn còn nguyên); có việc mới chen
-vào là huỷ đếm; hết giờ tự bỏ tick (một lần duy nhất). Bộ đếm nằm TRONG server nên
-bỏ tick là huỷ, kể cả lúc đang đếm ngược — không cần `shutdown /a`. Trước khi đếm
-còn tập dựng xong CHƯA đăng thì ghi cảnh báo vào nhật ký đăng (chỉ báo, không tự
-đăng). Route `/hangdoi/tatmay`: `on=1` tắt máy, `ngu=1` ngủ, không gì = tắt;
-`/api/trangthai` trả thêm `shutdown_mode` ("" / "shutdown" / "sleep").
+**⏻ Xong hết thì tắt máy** — ô tick ngay đầu khối *Hàng đợi*, **mặc định TẮT
+mỗi lần mở server** (tick tay trên web hoặc cửa sổ desktop `chay.py` — ô bên đó là
+công tắc từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm — tick
+suông lúc chưa chạy gì thì không tắt máy). Chạy xong CẢ hàng đợi chính lẫn hàng đợi
+đăng YouTube/Facebook, rảnh thêm `SHUTDOWN_DELAY_MIN` (5) phút thì phát
+`shutdown /s /f /t 0`; có việc mới chen vào là huỷ đếm; hết giờ tự bỏ tick (một lần
+duy nhất). Bộ đếm nằm TRONG server nên bỏ tick là huỷ, kể cả lúc đang đếm ngược —
+không cần `shutdown /a`. Trước khi đếm còn tập dựng xong CHƯA đăng thì ghi cảnh báo
+vào nhật ký đăng (chỉ báo, không tự đăng).
 
-Code ở `power.py`, nhưng **số phút chờ + lệnh ngủ nằm bên GUI** (`SHUTDOWN_DELAY_MIN`,
-`SLEEP_DELAY_MIN`, `suspend_computer` trong `amain_taogiong_gui.py`) — ô bên GUI và ô
-trên web cùng một con số. (🌙 từng bị bỏ 26/10/2026, user cho quay lại 31/10/2026.)
+Code ở `power.py`, nhưng **số phút chờ nằm bên GUI** (`SHUTDOWN_DELAY_MIN` trong
+`amain_taogiong_gui.py`) — ô ⏻ bên GUI và ô ⏻ trên web cùng một con số. Chế độ 🌙
+“cho máy ngủ” đã bỏ 26/10/2026 ở cả web, `chay.py` lẫn GUI — user chỉ giữ tắt máy,
+đừng thêm lại.
 
-Không port sang web: ô “⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Ô ⏻/🌙
-của GUI ghi ra `taogiong_pipeline.json`, còn ô ⏻/🌙 của web chỉ nhớ trong bộ nhớ
-server — trang web không ghi đè khoá `shutdown`/`sleep` của GUI.
+Không port sang web: ô “⬆️ hiện cửa sổ khi tạo giọng” (web không có cửa sổ). Ô ⏻
+của GUI ghi ra `taogiong_pipeline.json`, còn ô ⏻ của web chỉ nhớ trong bộ nhớ
+server — trang web không ghi đè khoá `shutdown` của GUI.
 
 ## Cấu trúc
 
@@ -298,7 +285,7 @@ web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
   jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
-  power.py       ô “⏻ tắt máy” / “🌙 cho máy ngủ” khi xong hết — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown/ngủ
+  power.py       ô “⏻ xong hết thì tắt máy” — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/
     run_episode.py    chạy các bước của một tập

@@ -38,8 +38,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 # Tái dùng các tiện ích đã có của bản ngang (đọc thời lượng, dò NVENC, ghép playlist, tìm audio).
 from video_khung import (get_duration, has_nvenc, build_playlist, find_audio,
-                         run_ffmpeg_progress, probe_durations,
-                         nvenc_batbuoc, dung_neu_nvenc_loi)
+                         run_ffmpeg_progress, probe_durations)
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VIDEO_DIR  = BASE_DIR / "videodoc"     # kho video DỌC để ghép random
@@ -47,8 +46,7 @@ SCRIPT_DIR = BASE_DIR / "kịch_bản"     # nơi chứa audio + xuất video
 
 OUT_W, OUT_H = 1080, 1920   # khung dọc 9:16
 
-# GPU (NVENC) bắt buộc (27/10/2026): không có h264_nvenc / NVENC lỗi → GpuLoi, báo lỗi
-# rồi dừng, KHÔNG rớt về CPU (libx264) — xem video_khung.nvenc_batbuoc. False = chủ ý CPU.
+# Ưu tiên GPU (NVENC), tự fallback CPU (libx264) nếu GPU lỗi.
 USE_GPU  = True
 NVENC_CQ = 18
 X264_CRF = 18
@@ -258,12 +256,15 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         ]
         return cmd
 
-    use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
+    use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video dọc... (GPU - h264_nvenc)" if use_gpu
         else "Đang dựng video dọc... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log,
                                        label="Dựng video dọc", progress=progress)
-    # NVENC lỗi → GpuLoi (báo lỗi rồi dừng), KHÔNG thử lại bằng CPU — kiểm sau khi dọn.
+    if rc != 0 and use_gpu:
+        log("GPU lỗi, chuyển sang CPU (libx264)...")
+        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
+                                           label="Dựng video dọc", progress=progress)
     # Dọn file tạm — bỏ qua nếu Windows còn khóa (không để rớt cả lượt dựng đã xong).
     if concat_list is not None:
         try:
@@ -271,7 +272,6 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         except OSError:
             pass
     if rc != 0:
-        dung_neu_nvenc_loi(rc, err_tail, use_gpu)      # NVENC lỗi → GpuLoi, không thử CPU
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     final_dur = get_duration(output)

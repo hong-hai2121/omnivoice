@@ -1,23 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 seo_youtube_gemini.py — Lấy ĐOẠN ĐẦU của nội dung đã dịch (gemini_result.docx),
-ghép TRỌN ĐỀ BÀI SEO (SEO_PROMPT) + đoạn trích thành MỘT tin duy nhất, gửi đi (Gemini
-hoặc GPT CLI — theo ô cách dịch gemini_backend dùng chung), rồi lưu seoYoutube.docx.
+CHÈN TRỌN BỘ YÊU CẦU SEO (SEO_PROMPT) lên trước rồi gửi kèm đoạn truyện lên
+Gemini, rồi lưu kết quả ra seoYoutube.docx.
 
 Ý tưởng:
-• Trước đây script dựa vào 1 cuộc trò chuyện Gemini "đã ra đề sẵn" (ra đề một lượt, gửi
-  đoạn một lượt); khi Gemini bỏ id rồi mở CHAT MỚI thì mất ngữ cảnh → SEO lỗi hoặc
-  không gửi được. Nay ĐỀ BÀI TỰ CHỨA: SEO_PROMPT nói rõ đoạn trích nằm ở CUỐI tin sau
-  mốc EXCERPT_MARK và yêu cầu làm trọn 3 bước ngay trong một câu trả lời — gửi vào
-  chat nào (kể cả chat mới trống) hay vào một lệnh `codex exec` không nhớ gì cũng ra
-  đúng định dạng. 01/11/2026: viết lại hẳn thành một câu lệnh, bỏ kiểu "bây giờ tôi sẽ
-  gửi đoạn trích" của thời hai lượt; bước đánh số lại 1–3 (trước là 2–4 vì "bước 1" là
-  lượt gửi đoạn). seo_docx_parser nhận mốc theo TỪ KHOÁ mục (CHỌN TIÊU ĐỀ / THẺ TAG /
-  MÔ TẢ VIDEO / TIÊU ĐỀ TỐT NHẤT…) nên không đụng tới số bước.
-• 🤖 GPT CLI (gemini_backend "cli"): driver là dich_gptcli.GptCliDriver — không có chat,
-  mỗi send() là MỘT lệnh codex exec mang CLI_HEADER + SEO_PROMPT + đoạn trích. _open_chat
-  chỉ gọi driver.get() để xoá câu hướng dẫn dịch còn đọng (driver dùng chung với bước
-  dịch), không chờ giây nào.
+• Trước đây script dựa vào 1 cuộc trò chuyện Gemini "đã ra đề sẵn"; khi Gemini bỏ
+  id rồi mở CHAT MỚI thì mất ngữ cảnh → SEO lỗi hoặc không gửi được. Nay TIN NHẮN
+  TỰ CHỨA đầy đủ yêu cầu (SEO_PROMPT) nên gửi vào chat nào — kể cả chat mới trống —
+  cũng ra đúng định dạng.
 • Vì thế mặc định MỖI TẬP gửi vào một cuộc trò chuyện MỚI (SEO_NEW_CHAT): chat cũ
   chứa sẵn SEO của mọi tập trước, chỉ cần đọc nhầm một lần là cả loạt tập ra chung
   một tiêu đề (đã dính: tập 55–58, 49, 08).
@@ -88,82 +79,52 @@ SEO_NEW_CHAT = os.environ.get("OMNI_SEO_NEW_CHAT", "1").strip().lower() not in (
 SEO_ATTEMPTS = max(1, int(os.environ.get("OMNI_SEO_ATTEMPTS", "2")))
 
 
-# ── Đề bài SEO: MỘT câu lệnh tự chứa, đoạn trích đứng ở CUỐI tin ───────────────
-# 01/11/2026 (theo yêu cầu người dùng): viết lại thành một lệnh duy nhất cho cả Gemini
-# lẫn GPT CLI — đề bài + đoạn trích đi chung một tin, không còn kiểu "ra đề trước, gửi
-# đoạn sau" (câu cuối cũ "Bây giờ, tôi sẽ gửi đoạn trích truyện đầu tiên…" khiến mô hình
-# chạy một lệnh có thể trả lời "Vâng, gửi đi" rồi hết). Đề bài kết bằng mốc EXCERPT_MARK,
-# đoạn trích nối ngay sau (send_to_gemini ghép prefix + "\n\n" + đoạn; GptCliDriver.compose
-# cũng vậy, thêm CLI_HEADER ở đầu).
-#
-# ĐỊNH DẠNG ĐẦU RA phải giữ đúng các mốc mà YOUTUBE/seo_docx_parser.py tìm theo từ khoá:
-# "CHỌN TIÊU ĐỀ", "TIÊU ĐỀ TỐT NHẤT" / "ĐƯỢC CHỌN" (dòng mốc kết bằng ':' rồi tiêu đề
-# nằm riêng dòng kế), "THẺ TAG" (dòng nhiều dấu phẩy nhất trong mục), "MÔ TẢ VIDEO" (từ
-# đó tới hết). Số bước đổi 2–4 → 1–3 không ảnh hưởng (parser khớp "BƯỚC n" bất kỳ).
-# Đặt OMNI_SEO_PROMPT để đổi đề bài mà không sửa code (thiếu mốc thì excerpt_body tự thêm).
-EXCERPT_MARK = "ĐOẠN TRÍCH TRUYỆN:"
+# ── Trọn bộ yêu cầu SEO chèn LÊN TRƯỚC đoạn truyện khi gửi Gemini ──────────────
+# Nhờ tin nhắn tự chứa đủ yêu cầu này, không còn phụ thuộc cuộc trò chuyện "đã ra
+# đề sẵn": gửi vào chat mới trống vẫn ra đúng định dạng. Đặt qua biến môi trường
+# OMNI_SEO_PROMPT nếu muốn đổi mà không sửa code.
 SEO_PROMPT = os.environ.get("OMNI_SEO_PROMPT", "").strip() or """\
-Tôi là kênh "Mimi audio" (truyện audio, truyện full, audio dài kỳ, nội dung kịch tính, nghẹt thở — KHÔNG PHẢI truyện dễ ngủ). Bạn là chuyên gia nội dung và SEO YouTube. ĐOẠN TRÍCH TRUYỆN nằm ở CUỐI tin này, ngay sau dòng "ĐOẠN TRÍCH TRUYỆN:". Hãy đọc đoạn trích rồi làm TRỌN cả 3 bước dưới đây trong MỘT câu trả lời duy nhất: không chào hỏi, không hỏi lại, không chờ tôi gửi thêm gì, không nhắc lại yêu cầu — chỉ in kết quả theo đúng định dạng ở cuối.
+Tôi là kênh "Mimi audio" (chuyên về truyện audio, truyện full, audio dài kỳ, nội dung kịch tính, nghẹt thở, KHÔNG PHẢI truyện dễ ngủ). Hãy đóng vai một chuyên gia nội dung và SEO YouTube để giúp tôi xử lý các đoạn trích từ truyện thành các tài nguyên đăng tải theo đúng quy trình và định dạng bắt buộc sau:
 
 ---
 
-### 🎯 BƯỚC 1: CHỌN TIÊU ĐỀ VIDEO
-Viết 5 tiêu đề hay, mỗi tiêu đề dài 60 – 75 ký tự (tính cả phần "| Mimi audio" ở cuối), rồi chọn ra 1 tiêu đề tốt nhất làm quán quân.
+### 🎯 BƯỚC 2: CHỌN TIÊU ĐỀ VIDEO
+Chọn 5 tiêu đề hay, độ dài từ 60 – 75 ký tự (bao gồm cả phần "| Mimi audio" ở cuối). Sau đó chọn ra 1 tiêu đề tốt nhất làm quán quân.
 *Yêu cầu nghiêm ngặt:*
 - Tiêu đề số 1: Luôn bắt đầu bằng cụm từ "Sự Thật Đằng Sau...".
 - Tiêu đề số 2: Luôn bắt đầu bằng cụm từ "Màn...".
 - Tiêu đề số 3: Luôn viết theo mẫu "Câu Chuyện Đời [Tên Nhân Vật Chính] Và Sự Thật Đau Đớn Sau Nhiều Năm...".
 - Tiêu đề số 4: Luôn bắt đầu bằng cụm từ "Truyện Tâm Lý Xã Hội Về Luật Nhân Quả...".
 - Tiêu đề số 5: Luôn bắt đầu bằng cụm từ "Bí Mật Sau Cuộc Đời...".
-- TUYỆT ĐỐI KHÔNG dùng các từ liên quan đến tiền bạc như: tiền, nghèo, giàu, gia tài, phú hộ, triệu phú, tỷ phú, vàng, bạc... (Cốt truyện có tiền bạc thì dùng từ né tránh như "phú quý", "hào môn", "sự nghiệp".)
+- TUYỆT ĐỐI KHÔNG dùng các từ liên quan đến tiền bạc như: tiền, nghèo, giàu, gia tài, phú hộ, triệu phú, tỷ phú, vàng, bạc... (Nếu cốt truyện có tiền bạc, phải dùng từ thay thế né tránh như "phú quý", "hào môn", "sự nghiệp").
 
 ---
 
-### 🏷️ BƯỚC 2: VIẾT THẺ TAG YOUTUBE
-Viết một đoạn văn bản chứa các thẻ tag cách nhau bằng dấu phẩy, tổng độ dài khoảng 400 ký tự, phân bổ đủ 4 nhóm từ khóa:
-- Nhóm 1 (cố định, chép nguyên): "truyện audio, truyện đêm khuya, truyện tâm lý xã hội, truyện đời sống, truyện Mimi audio, truyện gia đình, truyện cảm động, truyện người vợ, truyện mẹ chồng nàng dâu, truyện nhân quả, Mimi audio, nghe truyện Mimi audio, truyện audio Mimi, kênh Mimi audio, nghe truyện hay, truyện hay mỗi ngày, truyện kể đêm khuya, truyện Việt Nam, audio truyện hay,"
-- Nhóm 2: Từ khóa về thể loại cụ thể của truyện trong đoạn trích (ví dụ: trùng sinh, xuyên không, cổ đại...).
-- Nhóm 3: Tên các nhân vật chính xuất hiện trong đoạn trích.
-- Nhóm 4: Các cụm từ nổi bật, ấn tượng lấy từ cốt truyện.
+### 🏷️ BƯỚC 3: VIẾT THẺ TAG YOUTUBE
+Tạo một đoạn văn bản chứa các thẻ tag cách nhau bằng dấu phẩy, tổng độ dài khoảng 400 ký tự. Phải phân bổ đủ 4 nhóm từ khóa sau:
+- Nhóm 1 (Mặc định cố định): "truyện audio, truyện đêm khuya, truyện tâm lý xã hội, truyện đời sống, truyện Mimi audio, truyện gia đình, truyện cảm động, truyện người vợ, truyện mẹ chồng nàng dâu, truyện nhân quả, Mimi audio, nghe truyện Mimi audio, truyện audio Mimi, kênh Mimi audio, nghe truyện hay, truyện hay mỗi ngày, truyện kể đêm khuya, truyện Việt Nam, audio truyện hay,"
+- Nhóm 2: Từ khóa liên quan đến thể loại cụ thể của truyện vừa đưa (ví dụ: trùng sinh, xuyên không, cổ đại...).
+- Nhóm 3: Tên các nhân vật chính xuất hiện trong đoạn truyện.
+- Nhóm 4: Các cụm từ nổi bật, ấn tượng lấy từ nội dung cốt truyện.
 
 ---
 
-### 📝 BƯỚC 3: VIẾT MÔ TẢ VIDEO CHUẨN SEO
-Viết mô tả siêu rút gọn đúng 5 dòng theo cấu trúc sau (không thêm bớt dòng, không viết tràn lan):
-- Dòng 1 (bộ hashtag cố định): #MimiAudio #TruyenAudio #TruyenTamLyXaHoi #TruyenKichTinh #Audio
-- Dòng 2: [Tiêu đề tốt nhất đã chọn ở Bước 1]
-- Dòng 3 & 4 (tóm tắt nội dung): 2 câu ngắn gọn, súc tích, mô tả tình huống kịch tính, nghẹt thở của truyện (TUYỆT ĐỐI KHÔNG dùng các từ "ngủ ngon", "giấc ngủ", "dễ ngủ").
-- Dòng 5 (kêu gọi hành động cố định): 👉 Đăng ký Mimi audio và bật chuông để nghe truyện mới mỗi ngày.
+### 📝 BƯỚC 4: VIẾT MÔ TẢ VIDEO CHUẨN SEO
+Viết mô tả siêu rút gọn theo đúng cấu trúc 4 phần sau (không thêm bớt dòng, không viết tràn lan):
+- Dòng 1 (Bộ hashtag): #MimiAudio #TruyenAudio #TruyenTamLyXaHoi #TruyenKichTinh #Audio
+- Dòng 2: [Tiêu đề tốt nhất đã chọn ở Bước 2]
+- Dòng 3 & 4 (Tóm tắt nội dung): Viết 2 câu ngắn gọn, súc tích, mô tả tình huống kịch tính, nghẹt thở của truyện (Tuyệt đối KHÔNG nhắc đến các từ "ngủ ngon", "giấc ngủ", "dễ ngủ").
+- Dòng 5 (Kêu gọi hành động cố định): 👉 Đăng ký Mimi audio và bật chuông để nghe truyện mới mỗi ngày.
 
 ---
 
-### ⚠️ ĐỊNH DẠNG ĐẦU RA (bắt buộc)
-- Dùng thanh ngăn cách (---) và tiêu đề lớn Markdown cho từng bước, đúng chữ: "## 🎯 BƯỚC 1: CHỌN TIÊU ĐỀ VIDEO", "## 🏷️ BƯỚC 2: VIẾT THẺ TAG YOUTUBE", "## 📝 BƯỚC 3: VIẾT MÔ TẢ VIDEO CHUẨN SEO".
-- Sau danh sách 5 tiêu đề, ghi dòng "**🏆 Tiêu đề tốt nhất được chọn:**" rồi xuống dòng, tiêu đề quán quân nằm RIÊNG một dòng dạng trích dẫn (>), không kèm ghi chú số ký tự.
-- Thẻ tag ở Bước 2 đặt riêng trong một khối mã (code block) gồm đúng một dòng, để dễ sao chép.
-- Toàn bộ bằng tiếng Việt, giọng sắc sảo; tuân thủ tuyệt đối các quy định trên; không in gì ngoài ba bước này.
+### ⚠️ QUY TẮC ĐỊNH DẠNG ĐẦU RA (OUTPUT):
+- Luôn sử dụng các thanh ngăn cách (---) và tiêu đề lớn bằng định dạng Markdown (## 🎯 BƯỚC 2..., ## 🏷️ BƯỚC 3..., ## 📝 BƯỚC 4...) để tạo cấu trúc rõ ràng, scannable, dễ đọc lướt.
+- Phần Thẻ Tag ở Bước 3 phải được đặt riêng trong một khối mã (code block) để dễ dàng sao chép.
+- Sử dụng trích dẫn (>) để làm nổi bật Tiêu đề được chọn ở Bước 2.
+- Luôn dùng tiếng Việt, giọng điệu adaptive, sắc sảo và tuân thủ tuyệt đối các quy định trên.
 
-""" + EXCERPT_MARK
-
-
-def excerpt_body(text):
-    """Phần gửi SAU đề bài: đoạn trích đứng ngay dưới mốc EXCERPT_MARK. Đề bài mặc định
-    đã kết bằng mốc; đề bài tự đặt (OMNI_SEO_PROMPT) thiếu mốc thì chèn mốc vào đây để
-    câu "đoạn trích nằm ở cuối tin" luôn đúng."""
-    text = (text or "").strip()
-    if SEO_PROMPT.rstrip().endswith(EXCERPT_MARK):
-        return text
-    return f"{EXCERPT_MARK}\n{text}"
-
-
-def strip_outer_fence(ans):
-    """Bỏ rào ``` bọc TOÀN câu trả lời (GPT CLI đôi khi gói cả bài vào một khối Markdown).
-    Rào bên trong (khối thẻ tag) giữ nguyên — parser chọn dòng tag theo số dấu phẩy nên
-    dòng ``` không ảnh hưởng; nhưng rào ngoài ở cuối sẽ lọt vào MÔ TẢ (lấy tới hết file)."""
-    lines = (ans or "").strip().splitlines()
-    if len(lines) >= 2 and lines[0].strip().startswith("```") and lines[-1].strip() == "```":
-        return "\n".join(lines[1:-1]).strip()
-    return (ans or "").strip()
+Bây giờ, tôi sẽ gửi đoạn trích truyện đầu tiên, hãy thực hiện ngay lập tức từ BƯỚC 2 đến BƯỚC 4 cho tôi."""
 
 
 def _seo_conversation_id():
@@ -208,14 +169,7 @@ def _open_new_chat(driver, log, wait=6):
 
 
 def _open_chat(driver, log):
-    """Đưa trình duyệt tới nơi sẽ gửi SEO: chat MỚI (mặc định) hoặc chat SEO cố định.
-    GPT CLI: không có chat nào — get() chỉ xoá câu hướng dẫn dịch + đuôi bản dịch còn
-    đọng (driver dùng chung với bước dịch) để lệnh SEO chỉ mang đề bài SEO; không chờ."""
-    if g._is_cli(driver):
-        driver.get(NEW_CHAT_URL)
-        log("🤖 GPT CLI: đề bài SEO + đoạn trích đi chung MỘT lệnh codex exec (không mở chat, "
-            "không chờ).")
-        return True
+    """Đưa Firefox tới nơi sẽ gửi SEO: chat MỚI (mặc định) hoặc chat SEO cố định."""
     if SEO_NEW_CHAT:
         return _open_new_chat(driver, log)
     if _open_seo_chat(driver, log):
@@ -315,8 +269,7 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
     reset_docx(output_path)
     log("🧹 Đã làm rỗng file kết quả (sẽ ghi nội dung mới sau khi Gemini trả lời).")
 
-    log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) KÈM TRỌN ĐỀ BÀI SEO trong MỘT tin (đề bài "
-        f"trước, đoạn trích sau mốc “{EXCERPT_MARK}”) qua {g.browser_label()}...")
+    log(f"📤 Gửi đoạn đầu ({len(text)} ký tự) — KÈM TRỌN YÊU CẦU SEO — lên Gemini...")
 
     own_driver = driver is None
     fallback = None     # Firefox dự phòng mở GIỮA CHỪNG — của riêng hàm này, luôn đóng
@@ -333,9 +286,8 @@ def run(input_path, output_path, max_chars=0, keep_open=True, log=print, driver=
                 log(f"🔁 Gửi lại SEO lần {lan}/{total} (cuộc trò chuyện khác)...")
             try:
                 _open_chat(driver, log)
-                # MỘT tin: đề bài SEO (SEO_PROMPT, kết bằng mốc) rồi tới đoạn trích.
-                ans = strip_outer_fence(
-                    g.send_to_gemini(driver, excerpt_body(text), prefix=SEO_PROMPT, on_log=log))
+                # Chèn trọn yêu cầu SEO (SEO_PROMPT) lên trước, rồi tới đoạn truyện.
+                ans = (g.send_to_gemini(driver, text, prefix=SEO_PROMPT, on_log=log) or "").strip()
             except Exception as e:
                 # 03/10/2026: extension báo "Gemini chưa xác nhận nhận tin nhắn" lúc 04:23
                 # cho cả 5 tập 119, 125–128 → lỗi ném thẳng ra ngoài, mỗi tập chết sau

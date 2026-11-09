@@ -26,8 +26,6 @@ import shutil
 import subprocess
 import sys
 
-from gpu_batbuoc import GpuLoi   # noqa: E402  GPU bắt buộc (27/10/2026): không CUDA → dừng
-
 # Bảo đảm console Windows in được tiếng Trung/Việt
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -168,8 +166,7 @@ def free_model():
 def get_model(model_name, use_batched=True):
     """Lấy model faster-whisper (có cache). Trả về (model, batched_pipeline|None, device).
 
-    - GPU (CUDA, float16) BẮT BUỘC — không có thì ném GpuLoi, không lùi về CPU int8
-      (27/10/2026: chức năng dùng GPU mà rớt về CPU là báo lỗi rồi dừng).
+    - Tự dùng GPU (CUDA, float16) nếu có, không thì CPU (int8).
     - batched_pipeline: chạy nhiều cửa sổ 30s song song → nhanh hơn 2-4× cho file dài.
     """
     if _CACHE["name"] == model_name and _CACHE["model"] is not None:
@@ -182,15 +179,13 @@ def get_model(model_name, use_batched=True):
         print("❌ Chưa cài faster-whisper. Chạy: pip install faster-whisper")
         sys.exit(1)
 
-    # GPU bắt buộc (27/10/2026): không có CUDA thì ném GpuLoi — báo lỗi rồi dừng,
-    # không âm thầm nhận diện bằng CPU int8 chậm gấp nhiều lần.
+    device, compute_type = "cpu", "int8"
     try:
         import torch
-    except Exception as e:
-        raise GpuLoi(f"không nạp được torch để nhận diện bằng GPU: {e}")
-    if not torch.cuda.is_available():
-        raise GpuLoi("không có GPU CUDA để nhận diện giọng nói — DỪNG, không chạy CPU.")
-    device, compute_type = "cuda", "float16"
+        if torch.cuda.is_available():
+            device, compute_type = "cuda", "float16"
+    except Exception:
+        pass
 
     local_dir = _find_local_model(model_name)
     if local_dir:

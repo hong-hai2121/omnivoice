@@ -51,7 +51,6 @@ from nhandien_giongnoi import (  # noqa: E402
     get_audio_duration,
     get_model,
 )
-from gpu_batbuoc import GpuLoi  # noqa: E402  GPU bắt buộc: NVENC lỗi → dừng, không CPU
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 # Kịch bản dùng chung ở myvoice/kịch_bản/ (input.docx từ 05/09/2026; input.txt cũ vẫn đọc được)
@@ -534,8 +533,7 @@ def burn_subs(video_path: Path, sub_path: Path, out_path: Path, style=BURN_STYLE
     `sub_path` nhận .ass (đã có sẵn kiểu + khung nền bo góc, KHÔNG ép force_style)
     hoặc .srt (không có kiểu riêng → ép bằng force_style, khung nền vuông).
 
-    GPU (h264_nvenc) bắt buộc (27/10/2026): ffmpeg không có NVENC hay NVENC lỗi thì ném
-    GpuLoi — báo lỗi rồi dừng, KHÔNG tự fallback về CPU (libx264) như bản cũ.
+    Ưu tiên GPU (h264_nvenc) cho nhanh; nếu GPU lỗi tự fallback về CPU (libx264).
     Để né rắc rối escape đường dẫn Windows (dấu ':' của ổ đĩa) trong bộ lọc
     subtitles, ta chạy ffmpeg với cwd = thư mục chứa file phụ đề và chỉ truyền TÊN file.
     """
@@ -562,15 +560,14 @@ def burn_subs(video_path: Path, sub_path: Path, out_path: Path, style=BURN_STYLE
         ]
 
     use_gpu = has_nvenc()
-    if not use_gpu:
-        raise GpuLoi("ffmpeg không có encoder h264_nvenc (GPU) — DỪNG, không đốt phụ đề bằng CPU.")
-    print("   Encode: GPU (h264_nvenc)")
+    print("   Encode: GPU (h264_nvenc)" if use_gpu else "   Encode: CPU (libx264)")
     result = subprocess.run(build_cmd(use_gpu), capture_output=True, text=True,
                             encoding="utf-8", errors="replace", cwd=str(sub_path.parent))
-    # NVENC lỗi → GpuLoi kèm stderr: báo lỗi rồi DỪNG, không thử lại bằng CPU (27/10/2026).
-    if result.returncode != 0:
-        raise GpuLoi(f"ffmpeg NVENC (GPU) lỗi khi đốt phụ đề, mã {result.returncode} — DỪNG, "
-                     f"không chuyển sang CPU. Đuôi stderr:\n{result.stderr[-1200:]}")
+    # GPU lỗi (driver/độ phân giải/encoder) → thử lại bằng CPU để không hỏng cả lượt.
+    if result.returncode != 0 and use_gpu:
+        print("   GPU lỗi, chuyển sang CPU (libx264)...")
+        result = subprocess.run(build_cmd(False), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", cwd=str(sub_path.parent))
     if result.returncode != 0:
         print(f"❌ Lỗi ffmpeg khi burn sub:\n{result.stderr[-1200:]}", file=sys.stderr)
         return False
@@ -731,12 +728,7 @@ def main():
                                           srt_path.with_suffix(".ass"), kieu)
         print(f"💾 Đã ghi kiểu phụ đề: {kieu['ten']} ({kieu['id']}) → {ass_path.name}")
         print("🎬 Đang VẼ CỨNG phụ đề vào hình (re-encode, hơi lâu)...")
-        try:
-            ok = burn_subs(video_path, ass_path, out_path)
-        except GpuLoi as e:          # GPU bắt buộc: báo lỗi rồi dừng, không đốt bằng CPU
-            _cleanup_temp()
-            print(f"❌ {e}", file=sys.stderr)
-            sys.exit(1)
+        ok = burn_subs(video_path, ass_path, out_path)
     else:
         print("🎬 Đang nhúng phụ đề (soft sub) vào video...")
         ok = mux_softsub(video_path, srt_path, out_path)

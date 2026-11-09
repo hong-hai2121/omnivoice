@@ -19,6 +19,7 @@ trả 77 để hàng đợi KHÔNG nối việc đăng YouTube / lên lịch Fac
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -41,6 +42,7 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
 
 import amain_taogiong_gui as gui                # noqa: E402
+from giu_man_hinh import CHO_SANG, NHICH_SAU, giu_man_hinh  # noqa: E402
 from myvoice.web import core                    # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
@@ -62,10 +64,9 @@ ALL_STEPS = ["tai", "recognize", "translate", "input", "seo", "thumbnail", "tts"
 # (mở hai lần thì phiên sau vấp profile đang bị khoá).
 STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
                "all": ALL_STEPS}
-# Màn hình (02/11/2026): không bọc bước nào trong giu_man_hinh nữa — Chrome bóp tab Gemini
-# khi màn hình tắt nên CHÍNH ChromeExtensionDriver (scripts/gemini_extension.py) đánh thức
-# / nhích chuột trong lúc gửi–đợi Gemini; tải, nhận diện, tạo giọng, video và đường
-# Firefox/GPT CLI để màn hình tắt theo Windows.
+# Bước chạy trong lúc giữ màn hình sáng (03/10/2026): màn hình tắt thì Chrome bóp tab
+# Gemini → dịch/SEO hỏng (scripts/giu_man_hinh.py). Các bước khác màn hình tắt thoải mái.
+GIU_MAN_HINH = {"recognize", "translate", "seo"}
 
 # ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO bản chất lượng cao nhất qua
 # app Bili23 Downloader bằng script cầu nối bên myvideo — mượn NGUYÊN script
@@ -533,24 +534,33 @@ def main(argv=None) -> int:
 
     code = 0
     seo_hong = False
+    if GIU_MAN_HINH.intersection(steps):
+        logging.info("🖱 Dịch/SEO: nhích chuột đánh thức màn hình trước khi bắt đầu (máy rảnh "
+                     f"lâu thì chờ {CHO_SANG} s cho sáng hẳn). "
+                     f"Nhận diện/dịch/SEO: máy rảnh {NHICH_SAU // 60} phút thì tự nhích "
+                     "chuột 1 px để màn hình không tắt.")
     try:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
-            if name == "tai":
-                code = step_tai(folder, episode, args.source.strip(), args.force)
-            elif name == "recognize":
-                code = step_recognize(app, folder, episode, args.source.strip(),
-                                      args.model, args.speed, args.force)
-            elif name == "translate":
-                code = step_translate(app, folder, episode, state)
-            elif name == "input":
-                code = step_input(app, folder, episode, state)
-            elif name == "seo":
-                code = step_seo(app, folder, episode, state)
-            elif name == "thumbnail":
-                code = step_thumbnail(app, folder, episode, state)
-            elif name == "tts":
-                code = step_tts(app, folder, episode, state, args.source.strip())
+            # Dịch/SEO cần màn hình SÁNG HẲN trước khi gửi Gemini (chờ CHO_SANG giây nếu
+            # máy đã rảnh lâu); nhận diện chỉ cần giữ màn hình, không cần chờ.
+            with (giu_man_hinh(cho_sang=0 if name == "recognize" else CHO_SANG)
+                  if name in GIU_MAN_HINH else contextlib.nullcontext()):
+                if name == "tai":
+                    code = step_tai(folder, episode, args.source.strip(), args.force)
+                elif name == "recognize":
+                    code = step_recognize(app, folder, episode, args.source.strip(),
+                                          args.model, args.speed, args.force)
+                elif name == "translate":
+                    code = step_translate(app, folder, episode, state)
+                elif name == "input":
+                    code = step_input(app, folder, episode, state)
+                elif name == "seo":
+                    code = step_seo(app, folder, episode, state)
+                elif name == "thumbnail":
+                    code = step_thumbnail(app, folder, episode, state)
+                elif name == "tts":
+                    code = step_tts(app, folder, episode, state, args.source.strip())
             # Ghi tiến độ vào manifest sau MỖI bước: web tải lại trang là thấy ngay,
             # và lỡ mất điện giữa chừng vẫn biết tập này đã tới đâu.
             if args.source.strip():

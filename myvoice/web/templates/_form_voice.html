@@ -1,5 +1,5 @@
 {# Khối tạo giọng + video — dùng chung cho trang Giọng nói và trang Home.
-   Cần: opts, web, voices, effects, ngang_sources, ngang_chon, sub_modes, effect_none,
+   Cần: opts, web, voices, effects, ngang_sources, sub_modes, effect_none,
    current_voice, voice_dir, input_txt, output_wav, has_audio, tiktok_episode. #}
 {# Hidden "_bools" khai ô này CÓ trên trang → server chỉ sửa đúng những ô hiển thị
    (checkbox bỏ tick thì trình duyệt không gửi gì — xem chú thích ở server.py). #}
@@ -133,49 +133,6 @@
         <input name="chunk" value="{{ opts.chunk }}" inputmode="numeric"
                title="Mỗi đoạn giọng = 1 câu, nghỉ giữa các câu theo dấu. Câu dài hơn số này cắt thêm ở dấu ; : , gần giữa. Đặt rất lớn (1000) nếu không muốn cắt câu.">
       </label>
-      {# 🎚 Mẫu giọng cài sẵn (02/11/2026): chọn một mẫu là điền tông + 4 ô bộ lọc bên
-         dưới theo bảng hu.MAU_GIONG (chung với GUI và app Thử giọng) rồi app.js tự lưu
-         cả form như gõ tay; sửa tay ô nào thì ô này về "Tuỳ chỉnh". Server KHÔNG đọc ô
-         này (chỉ đọc 5 ô số) nên không có JS vẫn lưu đúng số đang hiện. #}
-      <label class="field" id="mauGiongBox" data-mau='{{ mau_giong | tojson }}'>
-        <span>🎚 Mẫu giọng (điền tông + 4 bộ lọc bên dưới)</span>
-        <select name="mau_giong"
-                title="Mặc định = tắt hết (bản clone thuần, nghe ồm). Các mẫu khác trị ồm từ nhẹ tới đậm; chọn xong vẫn sửa tay từng ô được. Sáng giọng đổi mức là tập mới sinh lại các đoạn (prompt từ giọng mẫu đã EQ). Nghe thử bằng voice/thu_giong.py (cùng bảng mẫu).">
-          {% for ten, mota in mau_giong_mota %}
-            <option value="{{ ten }}" {{ 'selected' if ten == mau_hien_tai }}>{{ ten }} — {{ mota }}</option>
-          {% endfor %}
-          <option value="{{ mau_tuy_chinh }}" {{ 'selected' if mau_hien_tai == mau_tuy_chinh }}>{{ mau_tuy_chinh }} — bộ số riêng của bạn</option>
-        </select>
-      </label>
-      <script>
-        (() => {   // bọc IIFE: form này nhúng ở cả Home lẫn trang Giọng nói
-          const box = document.getElementById("mauGiongBox");
-          if (!box || box.dataset.gan) return;
-          box.dataset.gan = "1";
-          const MAU = JSON.parse(box.dataset.mau);        // {tên mẫu: {pitch, vang_truong_do, …}}
-          const TUY_CHINH = {{ mau_tuy_chinh | tojson }};
-          const sel = box.querySelector("select");
-          const form = box.closest("form");
-          const KHOA = ["pitch", "vang_truong_do", "vang_cuong_do", "thieu_nien", "sang_giong"];
-          const o = k => form.querySelector(`input[name=${k}]`);
-          const so = (k, v) => k === "pitch"
-            ? (Math.round(parseFloat(String(v).replace(",", ".")) * 10) / 10 || 0)
-            : Math.max(0, Math.min(100, parseInt(v, 10) || 0));
-          const khop = () => {       // tên mẫu khớp ĐÚNG 5 ô, không có → "Tuỳ chỉnh"
-            for (const [ten, m] of Object.entries(MAU))
-              if (KHOA.every(k => o(k) && so(k, o(k).value) === so(k, m[k]))) return ten;
-            return TUY_CHINH;
-          };
-          sel.addEventListener("change", () => {
-            const m = MAU[sel.value];
-            if (!m) return;
-            KHOA.forEach(k => { if (o(k)) o(k).value = String(m[k]); });
-            // app.js tự lưu cả form ~150 ms sau (ô này có name) — lúc đó 5 ô đã mang số mới.
-          });
-          KHOA.forEach(k => o(k) && o(k).addEventListener("input", () => { sel.value = khop(); }));
-          sel.value = khop();
-        })();
-      </script>
       <label class="field">
         <span>🎵 Tông giọng (bán cung)</span>
         <input name="pitch" value="{{ opts.pitch }}" list="pitches" inputmode="decimal"
@@ -201,28 +158,14 @@
         <input name="sang_giong" value="{{ opts.sang_giong }}" inputmode="numeric"
                title="Trị giọng clone nghe ồm: EQ bớt 150–500 Hz, nâng 3 kHz + dải cao (100 = ±6 dB, thêm exciter). Áp lên audio gốc VÀ lên giọng mẫu trong bộ nhớ lúc dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn). Nghe thử trước bằng voice/thu_giong.py.">
       </label>
-      {# 🔊 Âm lượng cơ bản (bản 06/11, mang về 09/11/2026): cộng thẳng N dB lên output.wav ở
-         bước cuối (sau tông, bộ lọc, loudnorm). Khoá am_luong_db chung với GUI; 0 = giữ nguyên. #}
       <label class="field">
-        <span>🔊 Âm lượng (dB)</span>
-        <input name="am_luong_db" value="{{ opts.am_luong_db }}" list="amluongs" inputmode="decimal"
-               title="0 = giữ nguyên. + to hơn, − nhỏ hơn (−10 … +20, bước 0,5; +6 dB ≈ to gấp đôi). Cộng thẳng một mức lên cả bài, không nén; mức dương có bộ chặn đỉnh để không vỡ tiếng — nhật ký báo nếu bộ chặn phải ghìm. Áp sau cùng lên audio gốc (output.wav) nên video ngang/dọc/TikTok đều theo. Chỉ áp lúc tạo giọng; ♻ dùng lại audio thì giữ mức cũ.">
-        <datalist id="amluongs">{% for p in ["0","2","3","4","5","6","8","10"] %}<option value="{{ p }}">{% endfor %}</datalist>
-      </label>
-      {# Nguồn clip ngang: tick được NHIỀU thư mục con videongang/ (01/11/2026) — clip
-         gom chung rồi xáo ngẫu nhiên lúc ghép; không tick ô nào = cả kho. Hidden rỗng
-         cùng tên để server biết form CÓ ô này dù bỏ tick hết; thư mục đã lưu nhưng
-         không còn trên đĩa vẫn hiện "(không thấy)" để bỏ tick được. #}
-      <div class="field">
-        <span>Nguồn clip ngang (tick nhiều được; không tick = cả kho)</span>
-        <input type="hidden" name="ngang_source" value="">
-        <div class="chks">
-          {% for s in (ngang_sources + ngang_chon)|unique %}
-            <label class="chk"><input type="checkbox" name="ngang_source" value="{{ s }}"
-                   {{ 'checked' if s in ngang_chon }}> {{ s }}{{ '' if s in ngang_sources else ' (không thấy)' }}</label>
+        <span>Nguồn clip ngang</span>
+        <select name="ngang_source">
+          {% for s in ngang_sources %}
+            <option value="{{ s }}" {{ 'selected' if opts.ngang_source == s }}>{{ s }}</option>
           {% endfor %}
-        </div>
-      </div>
+        </select>
+      </label>
     </div>
     <div class="chks">
       {{ chk('from_gemini', '🌐 Lấy nội dung từ Gemini + kiểm tra trước khi tạo', opts) }}

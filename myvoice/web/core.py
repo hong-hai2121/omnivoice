@@ -25,10 +25,9 @@ BASE_DIR   = WEB_DIR.parent                 # myvoice/
 REPO_ROOT  = BASE_DIR.parent                # gốc repo (chứa package omnivoice + venv)
 SCRIPTS_DIR = BASE_DIR / "scripts"
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"
-TRINHDUYET_DIR = BASE_DIR / "TRINHDUYET"      # đăng qua Chrome thật (YouTube Studio + TikTok Studio)
 VENV_PYTHON = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 
-for _p in (str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), str(TRINHDUYET_DIR)):
+for _p in (str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -524,12 +523,6 @@ def list_photos() -> list[str]:
 
 def list_ngang_sources() -> list[str]:
     return gui.list_ngang_sources()
-
-
-def ngang_source_list(value) -> list[str]:
-    """Ô "Nguồn clip ngang" → list tên thư mục con đã tick ([] = cả kho); nhận cả
-    chuỗi 1 tên cũ lẫn list (xem gui.ngang_source_list)."""
-    return gui.ngang_source_list(value)
 
 
 def list_music() -> list[str]:
@@ -1442,15 +1435,12 @@ def tts_settings() -> tuple[dict | None, str]:
         pitch=_f(opts.get("pitch"), gui.OPTS_DEFAULTS["pitch"], gui.PITCH_MIN, gui.PITCH_MAX),
         # Bộ lọc giọng kiểu CapCut (tiếng vang trường độ / cường độ, thiếu niên), 0–100.
         fx=gui.hu.fx_from(opts),
-        # 🔊 Âm lượng cơ bản (dB) cộng thẳng lên output.wav ở bước cuối — 0 = giữ nguyên.
-        am_luong=gui.hu.parse_amluong(opts.get("am_luong_db"), gui.OPTS_DEFAULTS["am_luong_db"]),
         make_video=bool(opts.get("make_video")), effect=effect_path,
         make_video_doc=bool(opts.get("make_video_doc")),
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),
         doc_percent=_i(opts.get("doc_percent"), 100, 1, 100),
         ngang_speed=_f(opts.get("ngang_speed"), 1.0, 0.5, 2.0),
-        # list tên thư mục con videongang/ đã tick (gộp clip, xáo chung); [] = cả kho
-        ngang_source=gui.ngang_source_list(opts.get("ngang_source")),
+        ngang_source=opts.get("ngang_source") or NGANG_SOURCE_ALL,
         # 🎞 Video ngang lấy VIDEO TẢI XUỐNG của tập làm nguồn hình (24/10/2026): tắt
         # tiếng gốc lúc dựng, phóng to % rồi cắt giữa; tắt = ghép clip videongang/.
         ngang_tu_nguon=bool(opts.get("ngang_tu_nguon")),
@@ -1646,26 +1636,6 @@ def save_upload_settings(data: dict) -> dict:
         return {}
 
 
-# ── Cách đăng: "api" (Data API, hạn mức ~11 video/ngày) | "studio" (Chrome thật qua Playwright
-# Extension: YouTube Studio + TikTok Studio, xem myvoice/TRINHDUYET). Lưu ở taogiong_pipeline.json.
-UPLOAD_BACKENDS = {"api": "API YouTube (Data API)",
-                   "studio": "Trình duyệt Chrome (YouTube Studio + TikTok Studio)"}
-
-
-def upload_backend() -> str:
-    b = str(load_pipeline().get("upload_backend") or "api").strip().lower()
-    return b if b in UPLOAD_BACKENDS else "api"
-
-
-def trinhduyet_status() -> dict:
-    """{nền tảng: {"ok", "ly_do", "profile"}} của cấu hình đăng qua trình duyệt; lỗi nạp → {}."""
-    try:
-        import trinhduyet
-        return trinhduyet.trang_thai()
-    except Exception:
-        return {}
-
-
 def upload_choices() -> dict:
     """Danh sách lựa chọn cho form đăng: danh mục YouTube + các chế độ đăng."""
     try:
@@ -1745,6 +1715,6 @@ def subprocess_env() -> dict:
     from gemini_backend import DEFAULT_BACKEND
     env["OMNI_GEMINI_BACKEND"] = load_pipeline().get("gemini_backend") or DEFAULT_BACKEND
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), str(TRINHDUYET_DIR), env.get("PYTHONPATH", "")]
+        [str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
     return env

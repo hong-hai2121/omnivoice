@@ -17,17 +17,6 @@
      tải lên xong. Mỗi tập tự nhận một khung giờ trống ({{ slots }}), mỗi ngày 2 tập.</p>
 
   <div class="grid">
-    {# Cách đăng (30/10/2026): API = Data API (hạn mức ~11 video/ngày); Trình duyệt = Chrome thật qua
-       Playwright Extension, đăng cả YouTube Studio lẫn TikTok Studio; profile liên kết ở
-       myvoice/TRINHDUYET/cau_hinh.json. Lưu ở taogiong_pipeline.json (khoá upload_backend). #}
-    <label class="field">
-      <span>Cách đăng</span>
-      <select name="upload_backend">
-        {% for id, lb in backends.items() %}
-          <option value="{{ id }}" {{ 'selected' if backend == id }}>{{ lb }}</option>
-        {% endfor %}
-      </select>
-    </label>
     <label class="field">
       <span>Danh mục</span>
       <select name="category_id">
@@ -79,13 +68,4 @@
     <p class="hint">Không có tập nào chờ đăng (thiếu video/SEO, hoặc kênh đã có hết).</p>
   {% endif %}
   {% if chan_note %}<p class="hint">{{ chan_note }}</p>{% endif %}
-  {% if td %}
-    <p class="hint">🌐 Đăng qua trình duyệt —
-      {% for name, st in td.items() %}
-        {{ 'YouTube' if name == 'youtube' else 'TikTok' }}:
-        {% if st.ok %}profile “{{ st.profile }}” ✓{% else %}chưa liên kết profile{% endif %}{{ ' ·' if not loop.last }}
-      {% endfor %}
-      (điền <code>myvoice/TRINHDUYET/cau_hinh.json</code>; cách chuẩn bị profile trong
-      <code>TRINHDUYET/README.md</code>).</p>
-  {% endif %}
 </form>

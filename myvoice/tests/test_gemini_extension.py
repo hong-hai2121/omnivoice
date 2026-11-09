@@ -320,7 +320,7 @@ class BackendSyncAcrossWindowsTests(unittest.TestCase):
         app = self.gui.App.__new__(self.gui.App)
         values = dict(var_auto2=True, var_auto3=True, var_auto_tts=False, var_seo=True,
                       pipe_var_model="medium", pipe_var_speed="0.7",
-                      var_shutdown=False, var_sleep=False, var_upload=False,   # 🌙 var_sleep quay lại 31/10/2026
+                      var_shutdown=False, var_upload=False,
                       var_gemini_backend=backend_in_memory)
         for name, value in values.items():
             holder = {"v": value}
@@ -585,68 +585,6 @@ class ExtensionTestTabTests(unittest.TestCase):
                 self.assertEqual(resp.status_code, 200)
                 self.wait()
             self.assertEqual(client.get("/api/gemini-test").json()["url"], "https://gemini.google.com/app")
-
-
-class ScreenWakeTests(unittest.TestCase):
-    """02/11/2026: màn hình chỉ được đánh thức / giữ sáng TRONG LÚC dùng Chrome Extension
-    (kết nối, gửi, đợi trả lời) — không bọc cả bước, không giữ ở nhận diện/Firefox/CLI."""
-
-    URL = "https://gemini.google.com/app"
-
-    def test_giu_neu_ranh_only_nudges_after_idle_threshold(self):
-        import giu_man_hinh as gm
-        with patch.object(gm.sys, "platform", "win32"), \
-             patch.object(gm, "ranh_giay", return_value=gm.NHICH_SAU - 1), \
-             patch.object(gm, "nhich_chuot") as nudge, patch.object(gm.time, "sleep") as sleep:
-            self.assertFalse(gm.giu_neu_ranh(gm.CHO_SANG))   # đang dùng liên tục: không đụng chuột
-            nudge.assert_not_called()
-            sleep.assert_not_called()
-        with patch.object(gm.sys, "platform", "win32"), \
-             patch.object(gm, "ranh_giay", return_value=gm.NHICH_SAU), \
-             patch.object(gm, "nhich_chuot") as nudge, patch.object(gm.time, "sleep") as sleep:
-            self.assertTrue(gm.giu_neu_ranh())                # đọc trả lời: nhích, KHÔNG chờ
-            nudge.assert_called_once()
-            sleep.assert_not_called()
-            self.assertTrue(gm.giu_neu_ranh(gm.CHO_SANG))     # sắp gửi sau khi rảnh lâu: nhích + chờ sáng
-            sleep.assert_called_once_with(gm.CHO_SANG)
-
-    def test_driver_wakes_on_connect_and_holds_only_while_talking(self):
-        from giu_man_hinh import CHO_SANG
-        bridge = Mock()
-        bridge.wait_for_client.return_value = True
-        bridge.call.return_value = {"texts": ["xong"], "generating": False, "url": self.URL}
-        with patch("gemini_extension.danh_thuc") as wake, patch("gemini_extension.giu_neu_ranh") as hold:
-            driver = ChromeExtensionDriver(self.URL, bridge=bridge, connect_timeout=1)
-            wake.assert_called_once_with(CHO_SANG)            # vừa kết nối: đánh thức màn hình
-            driver.submit("Dịch", ["editor"], ["send"])
-            driver.responses(["answer"])
-            driver.get(self.URL)                              # chat mới
-        self.assertEqual([c.args for c in hold.call_args_list],
-                         [(CHO_SANG,),   # get() trong __init__
-                          (CHO_SANG,),   # submit: rảnh lâu thì đánh thức + chờ sáng
-                          (),            # responses: chỉ nhích, không chờ
-                          (CHO_SANG,)])  # get(): chat mới
-
-    def test_no_wake_when_extension_is_not_connected(self):
-        bridge = Mock(bad_auth=0)
-        bridge.wait_for_client.return_value = False
-        with patch("gemini_extension.danh_thuc") as wake, patch("gemini_extension.giu_neu_ranh") as hold:
-            with self.assertRaises(RuntimeError):
-                ChromeExtensionDriver(self.URL, bridge=bridge, connect_timeout=.1)
-        wake.assert_not_called()
-        hold.assert_not_called()
-
-    def test_pipeline_steps_no_longer_wrap_screen_hold(self):
-        """Khối `with giu_man_hinh()` bọc cả bước đã bỏ: nhận diện, Firefox, GPT CLI,
-        tạo giọng, video để màn hình tắt theo Windows."""
-        root = Path(__file__).resolve().parents[2]
-        for rel in ("myvoice/web/runners/run_episode.py", "myvoice/scripts/dich_lai_trong.py",
-                    "myvideo/dich_srt.py", "myvideo/seo_video.py"):
-            src = (root / rel).read_text(encoding="utf-8")
-            self.assertNotIn("with giu_man_hinh(", src, rel)
-            self.assertNotIn("from giu_man_hinh import", src, rel)
-        import giu_man_hinh as gm
-        self.assertFalse(hasattr(gm, "giu_man_hinh"), "context manager bọc bước đã bỏ")
 
 
 if __name__ == "__main__":

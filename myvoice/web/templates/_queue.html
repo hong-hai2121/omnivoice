@@ -10,30 +10,23 @@
   </div>
 {% endif %}
 
-{# ⏻ Xong hết thì tắt máy / 🌙 Xong hết thì cho máy ngủ — để TRONG khối tự làm mới
-   2 giây/lần, nhờ vậy đếm ngược hiện ngay tại đây. Bộ đếm nằm trong server
-   (web/power.py), lệnh chỉ phát lúc hết giờ → bỏ tick là huỷ, kể cả lúc đang đếm.
-   Hai ô LOẠI TRỪ nhau: tick ô này là JS bỏ tick ô kia, server cũng chỉ giữ một chế
-   độ (shutq.mode = "" / "shutdown" / "sleep"). 🌙 bị bỏ 26/10/2026, user cho quay
-   lại 31/10/2026 — cả hai chờ 1 phút. #}
+{# ⏻ Xong hết thì tắt máy (thay ô 🌙 cho máy ngủ, 26/10/2026) — để TRONG khối tự
+   làm mới 2 giây/lần, nhờ vậy đếm ngược hiện ngay tại đây. Bộ đếm nằm trong server
+   (web/power.py), lệnh shutdown chỉ phát lúc hết giờ → bỏ tick là huỷ, kể cả lúc
+   đang đếm. #}
 <form class="shutrow" method="post" action="/hangdoi/tatmay"
       hx-post="/hangdoi/tatmay" hx-target="#queue" hx-swap="innerHTML">
-  <label class="chk" title="Hết giờ là tắt NGAY (shutdown /s /f /t 0), mọi app bị đóng không hỏi">
-    <input type="checkbox" name="on" value="1" {{ 'checked' if shutq and shutq.mode == 'shutdown' }}
-           onchange="if (this.checked) this.form.elements.ngu.checked = false; this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+  <label class="chk">
+    <input type="checkbox" name="on" value="1" {{ 'checked' if shutq and shutq.armed }}
+           onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
     ⏻ Xong hết thì tắt máy
-  </label>
-  <label class="chk" title="Máy ngủ, chạm chuột là dậy — server, hàng đợi, Chrome còn nguyên">
-    <input type="checkbox" name="ngu" value="1" {{ 'checked' if shutq and shutq.mode == 'sleep' }}
-           onchange="if (this.checked) this.form.elements.on.checked = false; this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
-    🌙 Xong hết thì cho máy ngủ
   </label>
   <span class="spacer"></span>
   <noscript><button class="ghost small">Lưu</button></noscript>
   {% if shutq and shutq.counting %}
-    <span class="badge run">{{ shutq.label }} sau {{ shutq.left }}</span>
+    <span class="badge run">tắt máy sau {{ shutq.left }}</span>
   {% elif shutq and shutq.armed %}
-    <span class="badge">chờ xong hết · rảnh {{ shutq.delay_min }} phút thì {{ shutq.label }}</span>
+    <span class="badge">chờ xong hết · rảnh {{ shutq.delay_min }} phút thì tắt máy</span>
   {% endif %}
 </form>
 

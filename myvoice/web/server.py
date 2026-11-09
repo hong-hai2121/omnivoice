@@ -34,7 +34,7 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
     __package__ = "myvoice.web"
 
-from . import core, gemini_test, gptcli_test, power, steps as steps_mod  # noqa: E402
+from . import core, gemini_test, power, steps as steps_mod  # noqa: E402
 from .jobs import (capture as log_capture, fb_log, fb_runner,  # noqa: E402
                    log, runner, upload_log, upload_runner)
 
@@ -133,8 +133,8 @@ def _page(request: Request, name: str, **ctx) -> HTMLResponse:
     ctx.setdefault("qf", fb_runner.state())
     ctx.setdefault("flog", fb_log.tail(8))
     ctx.setdefault("slots", core.upload_slots_text())
-    # Ô "⏻ Xong hết thì tắt máy" / "🌙 cho máy ngủ" nằm trong khối hàng đợi → trang
-    # nào có khối đó cũng cần trạng thái này.
+    # Ô "⏻ Xong hết thì tắt máy" nằm trong khối hàng đợi → trang nào có khối đó
+    # cũng cần trạng thái này.
     ctx.setdefault("shutq", power.watcher.state())
     # Đồng hồ 📊 VRAM cũng nằm trong khối hàng đợi — đưa vào từ lượt tải đầu,
     # khỏi đợi htmx làm mới 2 giây sau mới hiện (có cache 5s nên không tốn gì).
@@ -186,98 +186,6 @@ async def api_gemini_test_start(request: Request):
     return {"ok": True}
 
 
-@app.get("/gpt-cli", response_class=HTMLResponse)
-def gpt_cli_setup(request: Request):
-    """Tab 🤖 GPT CLI: ① thẻ trạng thái (app.js đổ từ /api/gptcli-info) · ② model + mức cố
-    gắng dùng cho MỌI lệnh dịch (tự lưu → /gpt-cli/luu) · ③ nhắn thử và đợi trả lời (gptcli_test)."""
-    import dich_gptcli as gc
-    import gemini_backend
-    cai_dat = gc.cai_dat()
-    models = gc.danh_sach_model()
-    return _page(request, "gpt_cli.html", active="cli",
-                 sample_text=gptcli_test.SAMPLE_TEXT,
-                 backend_is_cli=(gemini_backend.saved_backend() == "cli"),
-                 cai_dat=cai_dat, models=models, cfg=gc.config_mac_dinh(),
-                 model_khac=bool(cai_dat["model"])
-                 and cai_dat["model"] not in {m["slug"] for m in models},
-                 muc=[(k, *gc.MUC_CO_GANG_NHAN[k]) for k in gc.MUC_CO_GANG],
-                 # Câu hướng dẫn NGẮN viết riêng cho CLI (gửi kèm từng đoạn) — để soi ở ③.
-                 cli_header=gc.CLI_HEADER, cli_huongdan=_cli_huongdan())
-
-
-def _cli_huongdan() -> str:
-    import dich_gemini as g
-    return g.TRANSLATE_PREFIX_CLI.strip()
-
-
-@app.get("/api/gptcli-info")
-def api_gptcli_info():
-    """Thẻ trạng thái đầu tab 🤖: codex · đăng nhập · model/mức sẽ dùng · cách dịch đang chọn.
-    KHÔNG gọi model (chỉ `--version` + `login status`, ~1–2 s) — đọc lúc mở trang và sau
-    mỗi lần ô ② tự lưu."""
-    import dich_gptcli as gc
-    import gemini_backend
-    out = {"ok": True, "backend": gemini_backend.saved_backend(), **gc.hieu_luc()}
-    try:
-        out.update(gc.kiem_tra())
-    except gc.GptCliError as e:
-        out.update(ok=False, error=str(e))
-    return out
-
-
-@app.post("/gpt-cli/luu")
-async def gpt_cli_save(request: Request):
-    """Ô cài đặt khối ② tab 🤖 (tự lưu khi đổi). HAI form cùng gửi về đây:
-    • model / effort → dich_gptcli.luu_cai_dat (khoá gptcli_* trong taogiong_pipeline.json;
-      mọi lệnh codex exec từ giờ dùng: dịch truyện, 🔁, SEO, SRT myvideo);
-    • co_dung_cli (dấu của form ô tick) + dung_cli → gemini_backend: tick = "cli"; bỏ tick khi
-      đang "cli" = về mặc định extension; đang firefox mà không tick thì GIỮ firefox (form này
-      không biết gì về Firefox, đừng âm thầm đổi)."""
-    form = await request.form()
-    import dich_gptcli as gc
-    import gemini_backend
-    notes = []
-    if "effort" in form or "model" in form:
-        model = str(form.get("model") or "").strip()
-        if model == "__khac__":
-            model = str(form.get("model_khac") or "").strip()
-        saved = gc.luu_cai_dat(model=model, effort=str(form.get("effort") or ""))
-        notes.append(f"{saved['model'] or 'model theo config.toml'} · mức "
-                     f"{saved['effort'] or 'mặc định'}")
-    if "co_dung_cli" in form:
-        if "dung_cli" in form:
-            gemini_backend.set_backend("cli")
-            notes.append("cách dịch: GPT CLI")
-        elif gemini_backend.saved_backend() == "cli":
-            gemini_backend.set_backend(gemini_backend.DEFAULT_BACKEND)
-            notes.append("cách dịch: Chrome Extension")
-    tom_tat = " · ".join(notes) if notes else "không có gì đổi"
-    log(f"💾 GPT CLI: {tom_tat}.")
-    return _saved(request, "/gpt-cli", f"✓ Đã lưu — {tom_tat}")
-
-
-@app.get("/api/gptcli-test")
-def api_gptcli_test():
-    """Trạng thái + nhật ký lượt thử GPT CLI (tab 🤖 hỏi mỗi giây khi đang chạy)."""
-    return gptcli_test.tester.state()
-
-
-@app.post("/api/gptcli-test/chay")
-async def api_gptcli_test_start(request: Request):
-    """Bắt đầu một lượt thử: mode=check (tìm codex + đăng nhập + lệnh ngắn) hoặc send (gửi `text`)."""
-    form = await request.form()
-    mode = str(form.get("mode") or "")
-    try:
-        gptcli_test.tester.start(mode, str(form.get("text") or ""),
-                                 full_prefix=bool(form.get("full_prefix")))
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-    except RuntimeError as e:
-        return JSONResponse({"error": str(e)}, status_code=409)
-    log(f"🤖 Thử GPT CLI ({mode}) — xem tab GPT CLI.")
-    return {"ok": True}
-
-
 # Trang Home gom cả bốn khối (giống view "Home (đầy đủ)" bên GUI) nên bốn hàm
 # này là NGUỒN DUY NHẤT: sửa một chỗ, cả Home lẫn trang riêng cùng đổi.
 def _script_ctx() -> dict:
@@ -320,23 +228,12 @@ def _voice_ctx() -> dict:
     names = {v["name"] for v in voices}
     saved = str(web.get("voice", ""))
     starred = next((v["name"] for v in voices if v["fav"]), "")
-    opts = core.load_options()
-    hu = core.gui.hu
     return {
-        "opts": opts, "web": web, "voices": voices,
+        "opts": core.load_options(), "web": web, "voices": voices,
         "current_voice": (saved if saved in names
                           else starred or (voices[0]["name"] if voices else "")),
         "effects": core.list_effects(),
-        # 🎚 Mẫu giọng cài sẵn (02/11/2026): bảng hu.MAU_GIONG (chung GUI + app Thử giọng)
-        # → ô <select> điền tông + 4 bộ lọc; mau_hien_tai = mẫu khớp đúng số đang lưu.
-        "mau_giong": hu.MAU_GIONG,
-        "mau_giong_mota": [(t, hu.MAU_MO_TA.get(t, "")) for t in hu.mau_ten()],
-        "mau_hien_tai": hu.mau_khop(opts.get("pitch"), opts),
-        "mau_tuy_chinh": hu.MAU_TUY_CHINH,
-        # Ô "Nguồn clip ngang" = cụm checkbox tick được nhiều thư mục con (01/11/2026);
-        # ngang_chon = tên đã lưu (thư mục đã xoá vẫn hiện "(không thấy)" để bỏ tick).
-        "ngang_sources": core.list_ngang_sources(),
-        "ngang_chon": core.ngang_source_list(opts.get("ngang_source")),
+        "ngang_sources": [core.NGANG_SOURCE_ALL] + core.list_ngang_sources(),
         "effect_none": core.EFFECT_NONE,
         "sub_modes": [core.SUB_MODE_SRT, core.SUB_MODE_BURN],
         # Kho kiểu phụ đề (scripts/kieusub_mau, dùng chung myvideo) — thẻ ảnh
@@ -373,9 +270,7 @@ def _upload_ctx() -> dict:
     except Exception:
         pass
     return {"up": core.upload_settings(), "up_choices": core.upload_choices(),
-            "pending": core.episodes_pending_upload(), "chan_note": chan_note,
-            "backend": core.upload_backend(), "backends": core.UPLOAD_BACKENDS,
-            "td": core.trinhduyet_status()}
+            "pending": core.episodes_pending_upload(), "chan_note": chan_note}
 
 
 def _thumb_ctx(tap: str = "") -> dict:
@@ -424,13 +319,12 @@ def page_script(request: Request):
 def _save_pipe_from_form(form) -> dict:
     """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
 
-    KHÔNG đụng hai khoá "shutdown"/"sleep": đó là ô ⏻/🌙 của GUI Tkinter (ghi ra
-    file), còn ô ⏻/🌙 “xong hết thì tắt máy / cho máy ngủ” của trang web chỉ nhớ
-    trong bộ nhớ server (power.py) chứ không ghi ra file — ghi đè mỗi lần chạy là
-    âm thầm tắt cài đặt ⏻/🌙 của GUI.
+    KHÔNG đụng khoá "shutdown": đó là ô ⏻ của GUI Tkinter (ghi ra file), còn ô ⏻
+    “xong hết thì tắt máy” của trang web chỉ nhớ trong bộ nhớ server (power.py) chứ
+    không ghi ra file — ghi đè mỗi lần chạy là âm thầm tắt cài đặt ⏻ của GUI.
     """
     pipe = core.load_pipeline()
-    if form.get("gemini_backend") in ("firefox", "extension", "cli"):
+    if form.get("gemini_backend") in ("firefox", "extension"):
         pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
@@ -448,7 +342,7 @@ def _save_model_speed(form) -> dict:
     """Chỉ model + tốc độ. Dùng cho form hàng loạt — form đó KHÔNG có các ô ⛓,
     gọi _save_pipe_from_form sẽ tắt sạch chúng."""
     pipe = core.load_pipeline()
-    if form.get("gemini_backend") in ("firefox", "extension", "cli"):
+    if form.get("gemini_backend") in ("firefox", "extension"):
         pipe["gemini_backend"] = form["gemini_backend"]
     for k in ("model", "speed"):
         if form.get(k):
@@ -467,20 +361,6 @@ def _upload_ready() -> bool:
 
     KHÔNG dùng làm chốt cho chuỗi tự động — xem _auto_upload_wanted.
     """
-    if core.upload_backend() == "studio":
-        # Đăng qua Chrome thật: không cần token API, chỉ cần profile YouTube đã liên kết
-        # (TikTok thiếu thì runner tự bỏ qua phần TikTok, báo rõ trong nhật ký).
-        td = core.trinhduyet_status()
-        yt = td.get("youtube") or {}
-        if not yt.get("ok"):
-            upload_runner.note("⛔ Chưa đăng qua trình duyệt được: "
-                               f"{yt.get('ly_do') or 'chưa đọc được cấu hình TRINHDUYET'}")
-            return False
-        tt = td.get("tiktok") or {}
-        upload_runner.note(f"🌐 Đăng qua Chrome thật — YouTube: profile '{yt.get('profile')}'"
-                           + (f" · TikTok: profile '{tt.get('profile')}'" if tt.get("ok")
-                              else " · TikTok: chưa liên kết (bỏ qua)"))
-        return True
     chan, err = core.refresh_channel()
     if err:
         upload_runner.note(f"⛔ Chưa đăng YouTube được: {err}")
@@ -507,13 +387,6 @@ def _auto_upload_wanted(chain: list[str]) -> bool:
     """
     if not (bool(core.load_pipeline().get("upload")) and "tts" in chain):
         return False
-    if core.upload_backend() == "studio":
-        yt = core.trinhduyet_status().get("youtube") or {}
-        if not yt.get("ok"):
-            upload_runner.note("⚠️ Tự động đăng đang BẬT (qua trình duyệt) nhưng "
-                               f"{yt.get('ly_do') or 'chưa cấu hình'} → vẫn xếp việc đăng; "
-                               "tới lúc đó còn thiếu thì việc đăng báo ở đây.")
-        return True
     ok, err = core.upload_check()
     if not ok:
         upload_runner.note(
@@ -1327,9 +1200,6 @@ def _save_upload_from_form(form) -> dict:
     })
     pipe = core.load_pipeline()
     pipe["upload"] = "upload" in form
-    backend = str(form.get("upload_backend", "") or "").strip().lower()
-    if backend in core.UPLOAD_BACKENDS:
-        pipe["upload_backend"] = backend
     core.save_pipeline(pipe)
     return cfg
 
@@ -1609,9 +1479,9 @@ def api_state():
     trình khác biết còn việc đang chạy không. Chỉ coi là RẢNH khi CẢ hàng đợi chính
     lẫn hàng đợi đăng YouTube/Facebook đều hết việc.
 
-    Kèm luôn trạng thái ô ⏻ “xong hết thì tắt máy” / 🌙 “cho máy ngủ”: hai ô bên cửa
-    sổ chay.py chỉ là công tắc từ xa của hai ô trên trang web (bộ đếm nằm ở power.py),
-    nên nó cần soi lại chỗ này để vẽ đúng tick + đếm ngược."""
+    Kèm luôn trạng thái ô ⏻ “xong hết thì tắt máy”: ô ⏻ bên cửa sổ chay.py chỉ là
+    công tắc từ xa của ô ⏻ trên trang web (bộ đếm nằm ở power.py), nên nó cần soi
+    lại chỗ này để vẽ đúng tick + đếm ngược."""
     q = runner.state()
     shut = power.watcher.state()
     return {
@@ -1623,11 +1493,9 @@ def api_state():
         "upload_busy": upload_runner.heavy_busy() or fb_runner.heavy_busy(),
         "current": (q.get("current") or {}).get("title", ""),
         "pending": len(q.get("pending") or []),
-        "shutdown_armed": shut["armed"],          # bật ⏻ HOẶC 🌙
-        "shutdown_mode": shut["mode"],            # "" / "shutdown" / "sleep" (31/10/2026)
+        "shutdown_armed": shut["armed"],
         "shutdown_left": shut["left"],
-        "shutdown_delay_min": shut["delay_min"],  # số phút của chế độ đang bật
-        "sleep_delay_min": shut["sleep_delay_min"],
+        "shutdown_delay_min": shut["delay_min"],
     }
 
 
@@ -1685,21 +1553,17 @@ def api_upload_log(since: int = -1):
 
 @app.post("/hangdoi/tatmay", response_class=HTMLResponse)
 async def queue_shutdown(request: Request):
-    """Hai ô "⏻ Xong hết thì tắt máy" (on=1) / "🌙 Xong hết thì cho máy ngủ" (ngu=1).
-    (🌙 bỏ 26/10/2026, user cho quay lại 31/10/2026 — cùng một bộ đếm, một chế độ.)
+    """Ô "⏻ Xong hết thì tắt máy" (thay ô 🌙 cho máy ngủ từ 26/10/2026).
 
-    Form này CHỈ có hai ô đó, nên ở đây suy được "vắng mặt = bỏ tick" — điều
-    không làm được ở các form nhiều ô khác trong file này. Hai ô loại trừ nhau
-    (JS trên trang bỏ tick ô kia); không JS mà gửi cả hai thì lấy 🌙 — nhẹ tay hơn,
-    lỡ sai thì chạm chuột là dậy.
+    Form này CHỈ có mỗi ô đó, nên ở đây suy được "vắng mặt = bỏ tick" — điều
+    không làm được ở các form nhiều ô khác trong file này.
 
     Trả thẳng khối hàng đợi (htmx thay tại chỗ) để tick xong thấy đếm ngược ngay,
     không nhảy trang; trình duyệt tắt JS thì rơi về kiểu chuyển hướng như các nút
     hàng đợi khác.
     """
     form = await request.form()
-    mode = "sleep" if form.get("ngu") else ("shutdown" if form.get("on") else "")
-    power.watcher.arm(mode)
+    power.watcher.arm(bool(form.get("on")))
     if request.headers.get("HX-Request"):
         return partial_queue(request)
     return _back(request)
@@ -1767,14 +1631,13 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
-             "am_luong_db": float,   # 🔊 âm lượng cơ bản (dB), "+3" / "2,5" đều đọc được
              # bộ lọc giọng kiểu CapCut, 0–100 (0 = tắt) — xem scripts/hieuung_giong.py
              "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "sang_giong": int,   # 🔆 sáng giọng (bớt ồm; EQ cả giọng mẫu lúc dựng prompt)
              "doc_percent": int, "tiktok_percent": int, "tiktok_caption_pos": int,
              "ngang_nguon_zoom": int,   # 🎞 % phóng to video nguồn (video tải xuống)
              "tiktok_music_db": int, "sub_max_chars": int, "sub_dong": int}
-_TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "effect",
+_TEXT_KEYS = ["ngang_speed", "doc_speed", "tiktok_speed", "ngang_source", "effect",
               "sub_mode", "sub_model", "sub_kieu", "sub_font", "sub_mau",
               "sub_vitri", "sub_cochu", "sub_bengang", "sub_mau_vien"]
 
@@ -1794,15 +1657,9 @@ def _save_opts_from_form(form) -> dict:
                 opts[k] = cast(str(form[k]).replace(",", "."))
             except ValueError:
                 pass
-    if form.get("am_luong_db", "") != "":   # kẹp ngay lúc lưu: ô hiện đúng mức sẽ áp
-        opts["am_luong_db"] = core.gui.hu.parse_amluong(opts.get("am_luong_db"))
     for k in _TEXT_KEYS:
         if k in form:
             opts[k] = str(form[k])
-    # Ô "Nguồn clip ngang" là cụm checkbox tick nhiều (01/11/2026): hidden rỗng cùng
-    # tên luôn được gửi → biết form CÓ ô này; không tick ô nào = [] = cả kho.
-    if "ngang_source" in form:
-        opts["ngang_source"] = core.ngang_source_list(form.getlist("ngang_source"))
     core.save_options(opts)
     return opts
 
@@ -2021,7 +1878,7 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    log("⏻/🌙 “Xong hết thì tắt máy / cho máy ngủ” mặc định TẮT — muốn thì tick trên trang web.")
+    log("⏻ “Xong hết thì tắt máy” mặc định TẮT — muốn thì tick trên trang web.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
