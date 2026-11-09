@@ -2414,6 +2414,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 status_var.set("🎬 Chưa có audio — hãy tạo giọng trước.")
                 return
             sig = old_sig = None
+            khop_sig = True
             reuse_audio = True
         else:
             # Chữ ký cấu hình (giọng/chế độ/văn bản) — quyết định có thể DÙNG LẠI
@@ -2421,16 +2422,28 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # NUM_STEP nằm trong chữ ký: đổi số bước là đổi chất lượng giọng, mà
             # ghép đoạn 32 bước với đoạn 16 bước trong cùng một bài thì nghe cứ
             # lệch lệch mà chẳng biết tại đâu. Cho vào đây là đổi số → sinh lại hết.
-            sig = hashlib.sha1("|".join([mode, str(voice_param), f"step{NUM_STEP}",
-                                         f"fade{FADE_OUT_SEC}",
-                                         *([f"sang{sang_mau}"] if sang_mau else []),
-                                         *chunks])
-                               .encode("utf-8")).hexdigest()
+            def _chu_ky(vp) -> str:
+                return hashlib.sha1("|".join([mode, str(vp), f"step{NUM_STEP}",
+                                              f"fade{FADE_OUT_SEC}",
+                                              *([f"sang{sang_mau}"] if sang_mau else []),
+                                              *chunks])
+                                    .encode("utf-8")).hexdigest()
+            # 10/11/2026: giọng mẫu vào chữ ký bằng TÊN FILE, không phải đường dẫn — dời kho
+            # giọng (voice/ → voice/giong_mau, 04/11 và 09/11) từng làm tập 170 có sẵn
+            # output.wav mà ⏩ vẫn xoá 600 đoạn sinh lại. Chữ ký kiểu cũ (đường dẫn đầy đủ ở
+            # kho hiện tại hay kho cũ voice/ gốc) vẫn được NHẬN để tập đã tạo không phải làm lại.
+            ten_giong = Path(str(voice_param)).name if mode == "clone" else str(voice_param)
+            sig = _chu_ky(ten_giong)
+            sig_cu = ({_chu_ky(voice_param), _chu_ky(BASE_DIR / "voice" / ten_giong),
+                       _chu_ky(VOICE_DIR / ten_giong)} if mode == "clone" else set())
             sig_file = tmp_dir / "_signature.txt"
             old_sig = sig_file.read_text(encoding="utf-8").strip() if sig_file.exists() else None
+            khop_sig = old_sig is not None and (old_sig == sig or old_sig in sig_cu)
             # ♻ Dùng lại: chỉ tái dùng khi audio đã có VÀ chữ ký khớp (cùng văn bản/giọng).
             # Nếu văn bản/giọng đã đổi thì vẫn tạo lại để không ghép nhầm bản cũ.
-            reuse_audio = reuse and audio_ready and old_sig == sig
+            reuse_audio = reuse and audio_ready and khop_sig
+            if khop_sig and old_sig != sig:
+                sig_file.write_text(sig, encoding="utf-8")     # nâng chữ ký cũ sang kiểu tên file
 
         # Dựng video: chế độ dùng-lại BỎ QUA video đã có (chỉ dựng phần thiếu). Nhưng
         # nút "Dựng lại" (video_only) thì LUÔN dựng lại video dù đã tồn tại.
@@ -2464,11 +2477,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         else:
             if reuse and not audio_ready:
                 logging.info("♻ Chưa có audio để dùng lại → tạo giọng từ đầu.")
-            elif reuse and old_sig != sig:
+            elif reuse and not khop_sig:
                 logging.info("♻ Văn bản/giọng đã đổi → tạo lại giọng (không dùng bản cũ).")
 
             # Chữ ký khác lần trước → xóa chunk cũ để tạo lại, tránh ghép nhầm.
-            if old_sig != sig:
+            if not khop_sig:
                 stale = list(tmp_dir.glob("*.wav"))
                 for w in stale:
                     w.unlink()
