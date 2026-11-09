@@ -5,9 +5,8 @@
    kéo kiểu CapCut (±20 dB, vạch 0 ở GIỮA — trái giảm, phải tăng) + một nút
    chuẩn hoá riêng:
      🎬 TIẾNG GỐC của video  — tắt / giữ nhỏ dưới giọng đọc + chuẩn hoá -23 LUFS
-     🗣 GIỌNG ĐỌC code tạo   — chỉnh dB sau chuẩn hoá + đổi mức chuẩn hoá
-                               sang -23 LUFS (EBU R128) thay vì -14 (YouTube)
-   Lưu qua /amthanh/luu (CHỈ 4 khoá này) — form chính /luu không đụng tới,
+     🗣 GIỌNG ĐỌC code tạo   — chỉnh thêm dB (KHÔNG chuẩn hoá độ to — gỡ 10/11/2026)
+   Lưu qua /amthanh/luu (CHỈ 3 khoá này) — form chính /luu không đụng tới,
    nên lưu bên nào cũng không ghi đè bên kia. Cài đặt ăn vào LƯỢT DỰNG ④ KẾ
    TIẾP; video đã dựng rồi không tự đổi. #}
 {% block content %}
@@ -61,9 +60,9 @@
   <div class="panel">
     <div class="phead">
       <span class="num">🗣</span><h2>Giọng đọc (audio code tạo ở bước ③)</h2>
-      <p class="hint">File <code>_vi_audio.wav</code> do bước ③ sinh ra, xưa
-        nay luôn được chuẩn hoá về −14 LUFS (mức YouTube) khi vào video.
-        Hai ô dưới chỉnh ĐỘC LẬP với kênh tiếng gốc ở trên. (Độ sáng giọng 🔆
+      <p class="hint">File <code>_vi_audio.wav</code> do bước ③ sinh ra, vào video
+        giữ nguyên mức (không chuẩn hoá −14 LUFS nữa, từ 10/11/2026).
+        Ô dưới chỉnh ĐỘC LẬP với kênh tiếng gốc ở trên. (Độ sáng giọng 🔆
         chỉnh ở khối ③ tab Quy trình — nó thuộc bước tạo giọng, không phải ④.)</p>
     </div>
     <div class="cc-row">
@@ -77,11 +76,6 @@
               title="Về mặc định (0 dB — như cũ)">↺</button>
     </div>
     <p class="cc-nhan" id="ttsdbNhan"></p>
-    <label class="chk"><input type="checkbox" name="ttsnorm"
-        {{ 'checked' if settings.ttsnorm }}>
-      Chuẩn hoá âm lượng (như ô Loudness normalization của CapCut) — đưa giọng
-      đọc về −23 LUFS thay vì −14 LUFS (mức YouTube, mặc định từ trước tới
-      giờ)</label>
   </div>
 
   <div class="savebar">

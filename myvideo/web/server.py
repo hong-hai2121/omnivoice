@@ -120,11 +120,10 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 # • TIẾNG GỐC video: gocdb = mức dB ("" = như cũ — thay tiếng
                 #   thì TẮT hẳn, giữ tiếng gốc thì nguyên mức; thanh kéo kiểu
                 #   CapCut), gocnorm = chuẩn hoá về -23 LUFS trước khi áp dB.
-                # • GIỌNG ĐỌC (audio bước ③ tạo): ttsdb = chỉnh dB SAU chuẩn
-                #   hoá ("0" = như cũ), ttsnorm = chuẩn hoá về -23 LUFS (EBU
-                #   R128) thay vì -14 (YouTube) như từ trước tới giờ.
+                # • GIỌNG ĐỌC (audio bước ③ tạo): ttsdb = chỉnh thêm dB ("0" = như cũ).
+                #   (ttsnorm / chuẩn hoá −14 LUFS giọng đọc gỡ hẳn 10/11/2026.)
                 # Tất cả mặc định tắt — hành vi y như trước.
-                gocdb="", gocnorm=False, ttsdb="0", ttsnorm=False,
+                gocdb="", gocnorm=False, ttsdb="0",
                 # • 🔆 SÁNG GIỌNG (23/10/2026; ô nằm ở KHỐI ③ trang chính, lưu cùng
                 #   form chính /luu & /chay — 24/10 dời từ tab 🔊 về đây vì nó là cài
                 #   đặt của bước TẠO GIỌNG): 0–100, trị giọng clone "ồm" — EQ giọng
@@ -132,10 +131,6 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 #   Mặc định 0 từ 05/11/2026 (trước 80 — user "tắt hết"); đổi mức là bước ③
                 #   đọc lại toàn bộ câu. Ô 🔊 Nghe thử khối ③ phát bản mẫu đã EQ theo mức.
                 sanggiong="0",
-                # • 🔉 CHUẨN ÂM giọng đọc (05/11/2026, mặc định TẮT theo chốt của user): bật =
-                #   bước ③ nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS, bước ④ loudnorm lại
-                #   giọng (−14, hoặc −23 nếu ttsnorm); tắt = giữ mức gốc của giọng ở cả hai bước.
-                chuanam=False,
                 # • 🎵 TÔNG GIỌNG (bán cung) + 🔔 TIẾNG VANG (trường độ / cường độ) +
                 #   🧒 THIẾU NIÊN — mang từ myvoice sang 24/10/2026, cùng tên khoá bên
                 #   đó, cũng ở khối ③; áp lên audio tổng bước ③ (taogiong_srt.py
@@ -671,7 +666,6 @@ async def amthanh_luu(request: Request):
         "gocnorm": bool(g("gocnorm")),
         # Giọng đọc: 0 = như cũ; kẹp -20…+20 dB (tăng có chặn đỉnh bên ④).
         "ttsdb": _clamp(g("ttsdb"), -20, 20, 0),
-        "ttsnorm": bool(g("ttsnorm")),
     })
     return _tra(request, ok="Đã lưu cài đặt âm thanh — ăn vào lượt dựng ④ kế tiếp",
                 luu=True)
@@ -942,7 +936,6 @@ def _settings_from_form(form) -> dict:
         voice=g("voice") or "",
         # 🔆 Sáng giọng (khối ③): 0–100, mặc định 80; ô vắng (trang cũ còn mở) → 80.
         sanggiong=_clamp(g("sanggiong"), 0, 100, 0),
-        chuanam=bool(g("chuanam")),
         # 🎵🔔🧒 (khối ③, như myvoice): tông kẹp ±6 bán cung làm tròn 0,5; bộ lọc 0–100.
         pitch=f"{hu.parse_pitch(g('pitch'), 0.0):.1f}",
         vang_truong_do=_clamp(g("vang_truong_do"), 0, 100, 0),
@@ -1441,7 +1434,7 @@ def _nghethu_nhan() -> str:
 @app.post("/nghethu")
 def nghethu(pitch: str = Form(""), vang_truong_do: str = Form(""), vang_cuong_do: str = Form(""),
             thieu_nien: str = Form(""), sanggiong: str = Form(""), am_luong_db: str = Form(""),
-            chuanam: str = Form(""), voice: str = Form("")):
+            voice: str = Form("")):
     """Áp cài đặt đang hiện lên mẫu rồi trả đường phát (route này KHÔNG ghi web_settings.json).
     `def` thường (không async) để FastAPI chạy ở luồng phụ — ffmpeg mất 1–3 giây."""
     try:
@@ -1451,7 +1444,7 @@ def nghethu(pitch: str = Form(""), vang_truong_do: str = Form(""), vang_cuong_do
     fx = dict(vang_truong_do=vang_truong_do, vang_cuong_do=vang_cuong_do,
               thieu_nien=thieu_nien, sang_giong=sanggiong)
     try:
-        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, chuan_am=bool(chuanam), log=print)
+        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, log=print)
     except nt.ChuaCoMau as e:
         return JSONResponse({"ok": False, "loi": str(e)})
     except Exception as e:

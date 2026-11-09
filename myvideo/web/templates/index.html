@@ -272,7 +272,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🎙 OmniVoice clone giọng mẫu),
         xếp chống đè →
         <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>; rồi như myvoice:
-        cân mức giữa các câu, tông giọng + bộ lọc, nén nhẹ + chuẩn −14 LUFS.
+        cân mức giữa các câu, tông giọng + bộ lọc (không chuẩn hoá độ to).
         Chạy lại tự bỏ qua câu đã có audio.</p>
     </div>
     <div class="grid" id="khoiClone">
@@ -310,9 +310,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     </div>
     {# ── CÀI ĐẶT GIỌNG (09/11/2026, mang đủ bộ từ khối "3 Cài đặt tạo giọng" bên myvoice
        sang theo ý user), đứng riêng ngoài khối giọng mẫu. Cùng tên khoá với myvoice (pitch / vang_truong_do / vang_cuong_do /
-       thieu_nien / am_luong_db; riêng 🔆 là sanggiong và 🔉 là chuanam như cũ), cùng lõi
+       thieu_nien / am_luong_db; riêng 🔆 là sanggiong), cùng lõi
        hieuung_giong. Thứ tự áp ở bước ③ (taogiong_srt.hau_ky_audio): tông + bộ lọc một
-       lượt ffmpeg → [chuẩn âm] → âm lượng, trên audio tổng _vi_audio.wav. #}
+       lượt ffmpeg → âm lượng, trên audio tổng _vi_audio.wav. #}
     <div class="grid" id="khoiCaiDat">
       {# 🎚 Mẫu giọng cài sẵn: chọn một mẫu là điền tông + 4 ô bộ lọc theo bảng hu.MAU_GIONG
          (chung GUI / web myvoice / app Thử giọng); sửa tay ô nào thì về "Tuỳ chỉnh". Server
@@ -371,12 +371,6 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
               title="Về mặc định (0 — tắt)">↺</button>
     </div>
     <p class="cc-nhan" id="sanggiongNhan"></p>
-    {# 🔉 Chuẩn âm (05/11/2026, mặc định TẮT): bật = bước ③ nén nhẹ + loudnorm −14 LUFS + neo
-       −18 dBFS và bước ④ loudnorm lại giọng; tắt = giữ mức gốc của giọng. #}
-    <label class="chk" style="margin-top:6px">
-      <input type="checkbox" name="chuanam" {{ 'checked' if settings.chuanam }}>
-      🔉 Chuẩn âm giọng đọc (nén nhẹ + loudnorm −14 LUFS ở bước ③ và ④; tắt = giữ mức gốc)
-    </label>
     {# 🎧 Nghe thử CÀI ĐẶT (09/11/2026, như hàng "Cài đặt tạo giọng" bên myvoice): áp các ô
        giọng ĐANG HIỆN (chưa cần lưu) lên ~30 s giọng thật của video đầu đợt mới nhất đã tạo
        giọng rồi phát ngay. Mẫu lưu riêng ở voice/_nghe_thu/caidat (xoá video vẫn nghe được);
@@ -384,7 +378,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
        /nghethu; đã bấm 🎧 một lần thì đổi ô giọng nào là dựng + phát lại luôn. #}
     <div class="inline" id="nghethuBox">
       <button type="button" class="small" id="nghethuNut"
-              title="Áp tông + bộ lọc + sáng giọng + chuẩn âm + âm lượng đang hiện (chưa cần lưu) lên ~30 giây giọng thật của video đầu tiên trong đợt mới nhất đã chạy bước ③ rồi phát. Bấm một lần rồi thì đổi ô giọng nào là tự phát lại bản mới. Mẫu lưu riêng ở voice/_nghe_thu/caidat nên xoá video vẫn nghe được; đợt video mới có giọng thì tự thay bằng video đầu của đợt đó.">🎧 Nghe thử cài đặt</button>
+              title="Áp tông + bộ lọc + sáng giọng + âm lượng đang hiện (chưa cần lưu) lên ~30 giây giọng thật của video đầu tiên trong đợt mới nhất đã chạy bước ③ rồi phát. Bấm một lần rồi thì đổi ô giọng nào là tự phát lại bản mới. Mẫu lưu riêng ở voice/_nghe_thu/caidat nên xoá video vẫn nghe được; đợt video mới có giọng thì tự thay bằng video đầu của đợt đó.">🎧 Nghe thử cài đặt</button>
       <audio id="nghethuAudio" controls preload="none" style="display:none"></audio>
       <span class="hint" id="nghethuNote">{{ nghethu }}</span>
     </div>
@@ -1019,7 +1013,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const ntNote = document.getElementById("nghethuNote");
   const NT_GUI = ["pitch", "vang_truong_do", "vang_cuong_do", "thieu_nien", "sanggiong",
                   "am_luong_db", "voice"];
-  const NT_LAI = new Set([...NT_GUI, "chuanam", "mau_giong"]);
+  const NT_LAI = new Set([...NT_GUI, "mau_giong"]);
   let ntLuot = 0, ntHen = null, ntDang = false;
   async function ngheThu() {
     const fd = new FormData();
@@ -1027,8 +1021,6 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       const el = mainForm.elements[k];     // radio cùng tên → RadioNodeList, .value = ô đang chọn
       if (el && el.value != null) fd.append(k, el.value);
     });
-    const ca = mainForm.elements["chuanam"];
-    if (ca && ca.checked) fd.append("chuanam", "1");
     const toi = ++ntLuot;               // chỉ lượt sau cùng được phát (bấm dồn / đổi ô liên tiếp)
     ntNut.disabled = true;
     ntNote.textContent = "đang dựng…";

@@ -124,7 +124,7 @@ def chia_cue(start, end, text, max_chars=MAX_LINE_CHARS, dong=2):
 
 def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
          zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None, khung_vien=None,
-         goc_db=None, goc_norm=False, tts_db=0.0, tts_lufs=-14.0, che_khoang=None):
+         goc_db=None, goc_norm=False, tts_db=0.0, che_khoang=None):
     """Dựng video kết quả. Các phần đều tuỳ chọn, bỏ hết cũng chạy:
 
     `ass_path` → vẽ cứng phụ đề (None = không vẽ chữ nào).
@@ -147,10 +147,9 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     ra một mức đều. Có `audio`: goc_db=None giữ nếp cũ (tiếng gốc TẮT hẳn),
     có số thì TRỘN tiếng gốc dưới giọng đọc ở mức đó (kiểu thuyết minh).
     Không `audio`: chỉnh thẳng tiếng gốc (None + không norm = copy như cũ).
-    `tts_db`/`tts_lufs` → GIỌNG ĐỌC (file `audio`) — kênh chỉnh ĐỘC LẬP với
-    tiếng gốc: tts_lufs là mức chuẩn hoá (mặc định -14 LUFS chuẩn YouTube như
-    xưa nay; -23 = EBU R128), tts_db chỉnh THÊM sau chuẩn hoá (0 = như cũ;
-    tăng (+) thì tự chặn đỉnh -1.5 dB kẻo vỡ tiếng).
+    `tts_db` → GIỌNG ĐỌC (file `audio`) — kênh chỉnh ĐỘC LẬP với tiếng gốc: chỉnh
+    thêm bấy nhiêu dB (0 = như cũ; tăng (+) thì tự chặn đỉnh kẻo vỡ tiếng). KHÔNG
+    chuẩn hoá độ to giọng đọc (loudnorm −14 LUFS gỡ hẳn 10/11/2026 — giữ mức bước ③).
     `logo` → đóng ảnh PNG này (logo kênh) ở góc phải trên suốt video, rộng
     ~12%% khung; nền trong suốt của PNG giữ nguyên.
     `khung_vien` → đè ảnh PNG KHUNG VIỀN này (lòng trong suốt, vẽ bằng
@@ -231,12 +230,10 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             # Có khung viền: logo lùi vào trong (~4,5% cạnh ngắn) khỏi đè dải viền.
             pad = max(pad, round(min(cw, ch) * 0.045))
 
-    # Chuỗi filter GIỌNG ĐỌC: chuẩn hoá về tts_lufs (mặc định -14 — chuẩn
-    # YouTube, đúng hành vi xưa nay) rồi chỉnh thêm tts_db. Tăng (+dB) thì
-    # chặn đỉnh -1.5 dBFS — limiter chỉ cắn khi chạm trần, giảm thì vô hại.
-    # tts_lufs = 0 (05/11/2026, ô 🔉 Chuẩn âm tắt): KHÔNG loudnorm giọng đọc — giữ nguyên
-    # mức của audio bước ③; anull để chuỗi filter phía sau vẫn hợp lệ.
-    LOUD = f"loudnorm=I={float(tts_lufs):g}:TP=-1.5:LRA=11" if tts_lufs else "anull"
+    # Chuỗi filter GIỌNG ĐỌC: KHÔNG chuẩn hoá (loudnorm −14 LUFS gỡ hẳn 10/11/2026 — giữ
+    # nguyên mức audio bước ③; anull để chuỗi filter phía sau vẫn hợp lệ), chỉ chỉnh thêm
+    # tts_db. Tăng (+dB) thì chặn đỉnh — limiter chỉ cắn khi chạm trần, giảm thì vô hại.
+    LOUD = "anull"
     if tts_db:
         LOUD += f",volume={float(tts_db):g}dB"
         if float(tts_db) > 0:
@@ -277,7 +274,7 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             vi_khung, n = n, n + 1
 
         fc, maps, out_a, out_v = [], [], [], []
-        # ── Tiếng: TTS (loudnorm -14 LUFS chuẩn YouTube) ± tiếng gốc ± nhạc ──
+        # ── Tiếng: TTS (giữ mức bước ③, không loudnorm) ± tiếng gốc ± nhạc ──
         # Chuỗi filter TIẾNG GỐC: chuẩn hoá -23 LUFS (EBU R128) trước — nguồn
         # to nhỏ thất thường vẫn ra một mức — rồi mới áp goc_db dB (kéo kiểu
         # CapCut); tăng (+dB) thì chặn đỉnh -1.5 dBFS như kênh giọng đọc kẻo
@@ -540,13 +537,9 @@ def main():
                              "một mức đều.")
     parser.add_argument("--tts-db", type=float, default=0.0,
                         help="Chỉnh GIỌNG ĐỌC (file --audio) thêm bấy nhiêu dB "
-                             "SAU khi chuẩn hoá (0 = như cũ; âm = nhỏ đi, dương "
+                             "(0 = như cũ; âm = nhỏ đi, dương "
                              "= to lên — tăng thì tự chặn đỉnh -1.5 dB). Kênh "
                              "chỉnh ĐỘC LẬP với --goc-db của tiếng gốc.")
-    parser.add_argument("--tts-lufs", type=float, default=-14.0,
-                        help="Mức chuẩn hoá giọng đọc, LUFS (mặc định -14 — "
-                             "chuẩn YouTube như xưa nay; -23 = EBU R128; 0 = KHÔNG chuẩn hoá, "
-                             "giữ nguyên mức audio bước ③ — ô 🔉 Chuẩn âm tắt).")
     parser.add_argument("--logo", default="",
                         help="Đóng ảnh PNG này (logo kênh) góc phải trên suốt "
                              "video, rộng ~12%% khung. Bỏ trống = không logo.")
@@ -732,11 +725,9 @@ def main():
     # 🔉 Tiếng gốc: trộn dưới giọng đọc (có --audio) hoặc chỉnh thẳng (không).
     goc_db, goc_norm = args.goc_db, bool(args.goc_norm)
     # 🗣 Giọng đọc: kênh chỉnh riêng, chỉ có nghĩa khi --audio.
-    tts_db, tts_lufs = args.tts_db, args.tts_lufs
-    if audio and (tts_db or tts_lufs != -14.0):
-        print((f"🗣 Giọng đọc: chuẩn hoá {tts_lufs:g} LUFS" if tts_lufs
-               else "🗣 Giọng đọc: KHÔNG chuẩn hoá (giữ mức gốc)")
-              + (f", chỉnh thêm {tts_db:+g}dB" if tts_db else ""))
+    tts_db = args.tts_db
+    if audio and tts_db:
+        print(f"🗣 Giọng đọc: giữ mức gốc (không chuẩn hoá), chỉnh thêm {tts_db:+g}dB")
     if audio and goc_db is not None:
         print(f"🔉 Giữ tiếng gốc dưới giọng đọc: {goc_db:g}dB"
               + (" (chuẩn hoá -23 LUFS trước)" if goc_norm else ""))
@@ -758,7 +749,7 @@ def main():
                 force_cpu=args.cpu, vung=vung, zoom=zoom, doc=doc,
                 nhac=nhac, nhac_db=args.nhac_db, logo=logo, khung_vien=khung_vien,
                 goc_db=goc_db, goc_norm=goc_norm,
-                tts_db=tts_db, tts_lufs=tts_lufs, che_khoang=che_khoang):
+                tts_db=tts_db, che_khoang=che_khoang):
         print("❌ ffmpeg lỗi khi vẽ phụ đề.")
         sys.exit(1)
     if outro:

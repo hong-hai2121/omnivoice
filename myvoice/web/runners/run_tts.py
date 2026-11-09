@@ -121,7 +121,6 @@ def main(argv=None) -> int:
         che_chu_trung=ts.get("che_chu_trung", False),   # ✂ che chữ Trung cháy sẵn (mặc định tắt)
         ngang_out=out_dir / "YOUTUBE.mp4",
         pitch=ts.get("pitch", 0.0),               # tông giọng (bán cung) áp lên audio gốc
-        chuan_am=ts.get("chuan_am", False),       # 🔉 nén + loudnorm −14 LUFS (mặc định tắt)
         am_luong=ts.get("am_luong", 0.0),         # 🔊 âm lượng cơ bản (dB) cộng lên audio gốc
         fx=ts.get("fx"),                          # bộ lọc giọng (tiếng vang / thiếu niên)
         doc_speed=ts.get("doc_speed", 1.0), doc_percent=ts.get("doc_percent", 100),

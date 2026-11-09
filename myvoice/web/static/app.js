@@ -1356,7 +1356,7 @@ window.xemTruocThumb = function () {
   const GUI = ['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien', 'sang_giong',
                'am_luong_db', 'mode', 'voice', 'instruct'];
   const NGHE_LAI = new Set(['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien',
-                            'sang_giong', 'am_luong_db', 'chuan_am', 'mau_giong']);
+                            'sang_giong', 'am_luong_db', 'mau_giong']);
   let luot = 0;         // chỉ lượt bấm sau cùng được phát (bấm dồn / đổi ô liên tiếp)
   let hen = null;
 
@@ -1371,8 +1371,6 @@ window.xemTruocThumb = function () {
       const el = form.elements[k];           // radio cùng tên → RadioNodeList, .value = ô đang chọn
       if (el && el.value != null) fd.append(k, el.value);
     });
-    const ca = form.elements['chuan_am'];
-    if (ca && ca.checked) fd.append('chuan_am', '1');
     const toi = ++luot;
     nut.disabled = true;
     if (note) note.textContent = 'đang dựng…';

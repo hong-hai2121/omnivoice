@@ -107,8 +107,8 @@ class KichBanMoiNhatTests(unittest.TestCase):
         self.assertIsNone(thu_giong.kich_ban_moi_nhat())
 
 
-class BaiThatAmLuongChuanAmTests(unittest.TestCase):
-    """bai_that_doc / bai_that_luu thêm 🔊 am_luong_db + 🔉 chuan_am (cùng khoá GUI/web)."""
+class BaiThatAmLuongTests(unittest.TestCase):
+    """bai_that_doc / bai_that_luu thêm 🔊 am_luong_db (cùng khoá GUI/web); 🔉 chuan_am gỡ 10/11/2026."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -116,7 +116,7 @@ class BaiThatAmLuongChuanAmTests(unittest.TestCase):
         self.opts = Path(tmp.name) / "taogiong_options.json"
         self.opts.write_text(json.dumps({
             "ngang_speed": "1.2", "pitch": 0.0, "sang_giong": 0,
-            "am_luong_db": 5.0, "chuan_am": False, "chunk": 160,
+            "am_luong_db": 5.0, "chunk": 160,
         }), encoding="utf-8")
         p = patch.object(gui, "OPTS_FILE", self.opts)
         p.start()
@@ -127,28 +127,26 @@ class BaiThatAmLuongChuanAmTests(unittest.TestCase):
 
     def test_doc_them_hai_khoa(self):
         bt = thu_giong.bai_that_doc()
-        self.assertEqual(set(bt), {"speed", "pitch", "fx", "am_luong", "chuan_am"})
+        self.assertEqual(set(bt), {"speed", "pitch", "fx", "am_luong"})
         self.assertEqual(bt["am_luong"], 5.0)
-        self.assertFalse(bt["chuan_am"])
+        self.assertNotIn("chuan_am", bt)
 
     def test_luu_du_bo_so(self):
-        thu_giong.bai_that_luu(1.0, 1.0, None, am_luong=6.3, chuan_am=True)
+        thu_giong.bai_that_luu(1.0, 1.0, None, am_luong=6.3)
         d = self._doc()
         self.assertEqual(d["am_luong_db"], 6.5)           # làm tròn 0,5 như hu.parse_amluong
-        self.assertTrue(d["chuan_am"])
+        self.assertNotIn("chuan_am", d)
         self.assertEqual(d["chunk"], 160)                 # khoá khác giữ nguyên
 
     def test_goi_kieu_cu_khong_dung_hai_khoa(self):
         thu_giong.bai_that_luu(1.0, 2.0, None)
         d = self._doc()
         self.assertEqual(d["am_luong_db"], 5.0)
-        self.assertFalse(d["chuan_am"])
         self.assertEqual(d["pitch"], 2.0)
 
-    def test_mo_ta_co_am_luong_va_chuan_am(self):
-        s = thu_giong.mo_ta_thong_so(1.2, 0.0, None, am_luong=5.0, chuan_am=True)
+    def test_mo_ta_co_am_luong(self):
+        s = thu_giong.mo_ta_thong_so(1.2, 0.0, None, am_luong=5.0)
         self.assertIn("âm lượng +5.0 dB", s)
-        self.assertIn("chuẩn âm", s)
         s0 = thu_giong.mo_ta_thong_so(1.2, 0.0, None)
         self.assertNotIn("âm lượng", s0)
         self.assertNotIn("chuẩn âm", s0)
@@ -184,9 +182,8 @@ class AppGiaoDienTests(unittest.TestCase):
             self.assertTrue(w.winfo_exists())
         self.assertIn("Bài thật", a.btn_bai_that.cget("text"))
         ts = a._thong_so()
-        self.assertEqual(set(ts), {"speed", "pitch", "fx", "am_luong", "chuan_am"})
+        self.assertEqual(set(ts), {"speed", "pitch", "fx", "am_luong"})
         self.assertEqual(ts["am_luong"], thu_giong.default_am_luong())
-        self.assertEqual(ts["chuan_am"], thu_giong.default_chuan_am())
         self.assertEqual(set(a.var_fx), {"vang_truong_do", "vang_cuong_do", "thieu_nien", "sang_giong"})
 
     def test_trang_vua_cua_so_mac_dinh(self):
@@ -253,10 +250,10 @@ class AppGiaoDienTests(unittest.TestCase):
         a._on_nghe_bai_that.assert_called_once()
         a._play_file.assert_not_called()
 
-    def test_lay_tu_bai_that_keo_ca_am_luong_chuan_am(self):
+    def test_lay_tu_bai_that_keo_ca_am_luong(self):
         a = self.app
         a._replay_if_playing = MagicMock()
-        bt = dict(speed=1.5, pitch=1.0, fx=hu.fx_from(dict(sang_giong=80)), am_luong=3.0, chuan_am=True)
+        bt = dict(speed=1.5, pitch=1.0, fx=hu.fx_from(dict(sang_giong=80)), am_luong=3.0)
         with patch.object(thu_giong, "bai_that_doc", lambda: bt):
             a._lay_bai_that()
         self.assertEqual(a._thong_so(), bt)
@@ -281,7 +278,7 @@ class AppGiaoDienTests(unittest.TestCase):
         a._play_wav.assert_called_once()
         self.assertEqual(a._play_wav.call_args.args[0], ra)
         self.assertEqual(a._render_file.call_args.args[0], Path("clone.wav"))
-        self.assertEqual(set(a._render_file.call_args.kwargs), {"speed", "pitch", "fx", "am_luong", "chuan_am"})
+        self.assertEqual(set(a._render_file.call_args.kwargs), {"speed", "pitch", "fx", "am_luong"})
 
     def test_dung_bo_ket_qua_luot_dung_cu(self):
         a = self.app
@@ -323,7 +320,7 @@ class RenderFileTests(unittest.TestCase):
         return float(np.sqrt(np.mean(x.astype("float64") ** 2)))
 
     def test_khong_ap_gi_tra_chinh_file(self):
-        self.assertEqual(self.app._render_file(self.src, 1.0, 0.0, None, am_luong=0.0, chuan_am=False),
+        self.assertEqual(self.app._render_file(self.src, 1.0, 0.0, None, am_luong=0.0),
                          self.src)
 
     def test_am_luong_cong_6db(self):
@@ -336,15 +333,6 @@ class RenderFileTests(unittest.TestCase):
         with patch.object(thu_giong.subprocess, "run") as run:
             self.assertEqual(self.app._render_file(self.src, 1.0, 0.0, None, am_luong=6.0), out)
         run.assert_not_called()
-
-    def test_chuan_am_ra_file_16bit_muc_chuan(self):
-        out = self.app._render_file(self.src, 1.0, 0.0, None, chuan_am=True)
-        self.assertIn("_chuanam", out.name)
-        self.assertEqual(sf.info(str(out)).subtype, "PCM_16")
-        # neo −18 dBFS + loudnorm −14 LUFS: tiếng sin 0,1 (−20 dBFS) phải to lên rõ
-        self.assertGreater(self._rms(out), self._rms(self.src) * 1.3)
-        self.assertFalse(list((self.tmp / "_tocdo").glob("*.tmp.wav")))   # file tạm đã dọn
-
 
 if __name__ == "__main__":
     unittest.main()

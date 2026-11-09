@@ -9,7 +9,7 @@ xếp lệnh vào hàng đợi, không import logic nặng nào:
                           ô 🤖 GPT CLI (gemini_backend = "cli", cùng ô chọn) →
                           --cli: codex exec, tài khoản ChatGPT, không cần trình duyệt
   ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè; cài đặt giọng
-                          (🎚 mẫu, tông, vang, thiếu niên, 🔆 sáng, 🔉 chuẩn âm, 🔊 âm lượng dB)
+                          (🎚 mẫu, tông, vang, thiếu niên, 🔆 sáng, 🔊 âm lượng dB)
                           cùng khoá với myvoice
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
                           — cả vẽ sub, che mờ lẫn thay tiếng đều bỏ được
@@ -392,9 +392,6 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             argv += ["--am-luong", str(s.get("am_luong_db") or "0").strip()]
             if s.get("redotts"):
                 argv.append("--redo-tts")
-            # 🔉 Chuẩn âm (05/11/2026, khoá chuanam, mặc định tắt) → --chuan-am khi bật.
-            if s.get("chuanam"):
-                argv.append("--chuan-am")
         elif k == "seo":
             # Trong chuỗi ⏩: SEO đứng ngay sau dịch (cùng cần Gemini/màn hình
             # sáng), script tự bỏ qua video đã có SEO nên chạy lại vô hại.
@@ -437,18 +434,11 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                 argv += ["--goc-db", str(s["gocdb"]).strip()]
             if s.get("gocnorm"):
                 argv.append("--goc-norm")
-            # 🗣 Giọng đọc (kênh thứ hai của tab 🔊, độc lập với tiếng gốc):
-            # ttsdb = chỉnh dB sau chuẩn hoá ("0" = như cũ), ttsnorm = chuẩn
-            # hoá -23 LUFS (EBU) thay vì -14 (YouTube). Chỉ có nghĩa khi thay
-            # tiếng — không có --audio thì script tự bỏ qua.
+            # 🗣 Giọng đọc (kênh thứ hai của tab 🔊, độc lập với tiếng gốc): ttsdb = chỉnh
+            # thêm dB ("0" = như cũ). Chỉ có nghĩa khi thay tiếng — không có --audio thì
+            # script tự bỏ qua. (Chuẩn hoá −14 LUFS giọng đọc gỡ hẳn 10/11/2026.)
             if str(s.get("ttsdb") or "").strip() not in ("", "0"):
                 argv += ["--tts-db", str(s["ttsdb"]).strip()]
-            if not s.get("chuanam"):
-                # 🔉 ô Chuẩn âm (khối ③) TẮT → bước ④ cũng không loudnorm lại giọng đọc
-                # (0 = giữ nguyên mức audio bước ③ đã giữ gốc); ttsdb vẫn áp nếu có.
-                argv += ["--tts-lufs", "0"]
-            elif s.get("ttsnorm"):
-                argv += ["--tts-lufs", "-23"]
             # 🏷 Logo / khung viền / outro theo HỒ SƠ KÊNH đang chọn — chỉ gửi
             # khi ô bật VÀ file có thật trong myvideo/kenh/<tên>/ (thiếu file thì
             # thôi, không làm hỏng lượt dựng; script cũng tự bỏ qua nếu file biến

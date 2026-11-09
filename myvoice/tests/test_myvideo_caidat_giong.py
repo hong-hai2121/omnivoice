@@ -58,18 +58,18 @@ class TestHauKyAudio(unittest.TestCase):
     def _goi(self, **kw):
         goi = []
         with patch.object(ts.hu, "apply_fx_file", lambda f, **k: goi.append(("fx", k))), \
-                patch.object(ts, "_loudnorm_file", lambda f, *a, **k: goi.append(("loudnorm",))), \
                 patch.object(ts.hu, "apply_amluong_file", lambda f, db: goi.append(("amluong", db))):
             kq = ts.hau_ky_audio(Path("x.wav"), log=lambda s: None, **kw)
         return goi, kq
 
-    def test_thu_tu_tong_chuan_am_am_luong(self):
-        goi, kq = self._goi(pitch=1, fx=dict(sang_giong=80), chuan_am=True, am_luong="+3")
-        self.assertEqual([g[0] for g in goi], ["fx", "loudnorm", "amluong"])
+    def test_thu_tu_tong_am_luong(self):
+        goi, kq = self._goi(pitch=1, fx=dict(sang_giong=80), am_luong="+3")
+        self.assertEqual([g[0] for g in goi], ["fx", "amluong"])     # không còn bước loudnorm
         self.assertEqual(goi[0][1]["pitch"], 1.0)
         self.assertEqual(goi[0][1]["sang_giong"], 80)
-        self.assertEqual(goi[2][1], 3.0)
-        self.assertEqual((kq["pitch"], kq["am_luong"], kq["chuan_am"]), (1.0, 3.0, True))
+        self.assertEqual(goi[1][1], 3.0)
+        self.assertEqual((kq["pitch"], kq["am_luong"]), (1.0, 3.0))
+        self.assertNotIn("chuan_am", kq)
 
     def test_mac_dinh_khong_dung_gi(self):
         goi, kq = self._goi()
@@ -329,7 +329,7 @@ class TestNgheThu(_Nen):
 
     def test_route_nghethu_tra_url_phat_duoc(self):
         r = sv.nghethu(pitch="0", vang_truong_do="0", vang_cuong_do="0", thieu_nien="0",
-                       sanggiong="0", am_luong_db="3", chuanam="", voice="mau.wav")
+                       sanggiong="0", am_luong_db="3", voice="mau.wav")
         j = json.loads(r.body)
         self.assertTrue(j["ok"], j)
         self.assertIn("âm lượng +3.0 dB", j["mo_ta"])

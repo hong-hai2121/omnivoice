@@ -70,7 +70,7 @@ class HomeTests(unittest.TestCase):
             "gn-tep": ['name="input_txt"', 'name="output_wav"'],
             "gn-caidat": ['name="chunk"', 'name="mau_giong"', 'name="pitch"', 'name="vang_truong_do"',
                           'name="vang_cuong_do"', 'name="thieu_nien"', 'name="sang_giong"',
-                          'name="am_luong_db"', 'name="chuan_am"', 'name="from_gemini"', 'name="reuse"'],
+                          'name="am_luong_db"', 'name="from_gemini"', 'name="reuse"'],
             # "Nguồn clip ngang" dời từ khối 3 sang khối 4 — phải còn cả hidden rỗng cùng tên.
             "gn-ngang": ['name="make_video"', 'name="ngang_speed"', 'name="effect"', 'name="ngang_tu_nguon"',
                          'name="ngang_nguon_zoom"', 'type="hidden" name="ngang_source" value=""',

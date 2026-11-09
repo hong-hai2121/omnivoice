@@ -42,14 +42,14 @@ web (core.VOICE_DIR) và myvideo (VOICE_DIRS[0]) cùng trỏ voice/giong_mau/ n�
 dùng chung; tên giọng đã lưu trong cài đặt là tên file trần nên không phải đổi gì.
 Từ 07/11/2026 trang 🎙️ OMNIVOICE làm lại theo đúng khối "3 Cài đặt tạo giọng" của web
 myvoice (chức năng tương ứng): ① Giọng mẫu · ② Văn bản thử · ③ Cài đặt giọng (🎚 mẫu,
-🎵 tông, ⏩ tốc độ, 🔔 vang, 🧒 thiếu niên, 🔆 sáng giọng, 🔊 ÂM LƯỢNG dB, 🔉 CHUẨN ÂM —
-hai ô 🔊/🔉 là mới, cùng khoá am_luong_db / chuan_am với GUI/web, 🔗 đồng bộ như các thanh
+🎵 tông, ⏩ tốc độ, 🔔 vang, 🧒 thiếu niên, 🔆 sáng giọng, 🔊 ÂM LƯỢNG dB —
+ô 🔊 là mới, cùng khoá am_luong_db với GUI/web, 🔗 đồng bộ như các thanh
 khác) rồi hàng NGHE. Chữ giải thích dài dời vào tooltip (rê chuột lên nhãn), mỗi hàng gọn.
 VĂN BẢN THỬ không còn là câu mẫu cố định: mở app là lấy ≈30 GIÂY ĐẦU (ô "≈ giây" đổi được)
 của KỊCH BẢN MỚI NHẤT trong kịch_bản/ (thư mục tập tạo sau cùng có input.docx/txt), dừng ở
 cuối câu — kich_ban_moi_nhat() + van_ban_dau(); ↻ lấy lại, ✎ về câu mẫu cũ, sửa tay vẫn
-được. Bản clone lưu THÔ (không chuẩn âm; cân mức tương đối giữa câu như bài thật tắt 🔉);
-🔉 chuẩn âm (neo −18 dBFS → nén + loudnorm −14 LUFS) và 🔊 âm lượng áp lúc PHÁT cùng tông /
+được. Bản clone lưu THÔ (cân mức tương đối giữa câu như bài thật; chuẩn âm −14 LUFS gỡ hẳn
+10/11/2026); 🔊 âm lượng áp lúc PHÁT cùng tông /
 bộ lọc / tốc độ (_render_file, cache theo cả bộ số, dựng ở luồng nền) — bật/tắt là nghe
 ngay, không dựng lại. Nút 🎧 BÀI THẬT (30 s) = đúng nút 🎧 Nghe thử của web: áp bộ số đang
 chọn lên mẫu ~30 s giọng gốc của tập đầu đợt kịch bản mới nhất (scripts/taogiong_nghethu.py,
@@ -209,9 +209,6 @@ TIP = dict(
     am_luong="0 = giữ nguyên. + to hơn, − nhỏ hơn (−10 … +20 dB, bước 0,5; +6 dB ≈ to gấp đôi). "
              "Cộng một mức lên cả bài, không nén; mức dương có bộ chặn đỉnh. Bài thật áp sau cùng "
              "lên audio gốc; ở đây áp lúc phát nên đổi là nghe ngay.",
-    chuan_am="Nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS như bài thật. Tắt = giữ mức gốc của giọng, "
-             "chỉ cân mức giữa các câu (mặc định tắt từ 05/11/2026). Ở đây áp lúc phát nên "
-             "bật/tắt là nghe ngay.",
     dong_bo="Bật: nhả chuột / bấm ± / tick ô là ghi ngay vào taogiong_options.json — GUI/web mở lại "
             "là thấy (chỉnh ở đây = chỉnh bài thật). Tắt: thử tự do, không đụng bài thật (mở app "
             "vẫn lấy mức bài thật).",
@@ -354,7 +351,6 @@ def default_speed() -> float:
 #   tông giọng   ↔ pitch (float bán cung)
 #   4 bộ lọc     ↔ vang_truong_do / vang_cuong_do / thieu_nien / sang_giong (int 0–100)
 #   🔊 âm lượng  ↔ am_luong_db (float dB, bước 0,5)          — thêm 07/11/2026
-#   🔉 chuẩn âm  ↔ chuan_am (bool)                            — thêm 07/11/2026
 def default_am_luong() -> float:
     """🔊 Âm lượng (dB) = khoá am_luong_db của bài thật; 0 = giữ nguyên."""
     try:
@@ -364,66 +360,36 @@ def default_am_luong() -> float:
         return 0.0
 
 
-def default_chuan_am() -> bool:
-    """🔉 Chuẩn âm = khoá chuan_am của bài thật (mặc định TẮT từ 05/11/2026)."""
-    try:
-        return bool(tts.load_opt_settings().get("chuan_am", False))
-    except Exception:
-        return False
-
-
 def fmt_am_luong(db: float) -> str:
     """'+5.0 dB', '-2.5 dB', còn 0 thì '0 dB'."""
     return f"{db:+.1f} dB" if abs(db) > 1e-9 else "0 dB"
 
 
 def bai_that_doc() -> dict:
-    """Thông số giọng bài thật đang lưu → {"speed", "pitch", "fx", "am_luong", "chuan_am"} (đã kẹp)."""
+    """Thông số giọng bài thật đang lưu → {"speed", "pitch", "fx", "am_luong"} (đã kẹp)."""
     return dict(speed=default_speed(), pitch=default_pitch(), fx=default_fx(),
-                am_luong=default_am_luong(), chuan_am=default_chuan_am())
+                am_luong=default_am_luong())
 
 
 def bai_that_luu(speed: float, pitch: float, fx: dict | None,
-                 am_luong: float | None = None, chuan_am: bool | None = None) -> None:
+                 am_luong: float | None = None) -> None:
     """Ghi thông số giọng vào taogiong_options.json đúng khoá GUI/web đọc; các khoá
-    khác giữ nguyên (tts.save_opt_settings gộp dict). am_luong / chuan_am = None →
-    không đụng hai khoá đó (chỗ gọi cũ 3 tham số vẫn chạy)."""
+    khác giữ nguyên (tts.save_opt_settings gộp dict). am_luong = None →
+    không đụng khoá đó (chỗ gọi cũ 3 tham số vẫn chạy)."""
     d = dict(ngang_speed=f"{parse_speed(speed):g}", pitch=tts.parse_pitch(pitch, 0.0),
              **hu.fx_from(fx))
     if am_luong is not None:
         d["am_luong_db"] = hu.parse_amluong(am_luong)
-    if chuan_am is not None:
-        d["chuan_am"] = bool(chuan_am)
     tts.save_opt_settings(d)
 
 
 def mo_ta_thong_so(speed: float, pitch: float, fx: dict | None,
-                   am_luong: float = 0.0, chuan_am: bool = False) -> str:
-    """'1.20×, tông +1.0, bộ lọc sáng giọng 80, âm lượng +5.0 dB, chuẩn âm' — dòng trạng thái."""
+                   am_luong: float = 0.0) -> str:
+    """'1.20×, tông +1.0, bộ lọc sáng giọng 80, âm lượng +5.0 dB' — dòng trạng thái."""
     s = f"{speed:.2f}×, tông {fmt_pitch(pitch)}, bộ lọc {hu.fx_describe(**hu.fx_from(fx))}"
     if abs(hu.parse_amluong(am_luong)) > 1e-9:
         s += f", âm lượng {fmt_am_luong(hu.parse_amluong(am_luong))}"
-    if chuan_am:
-        s += ", chuẩn âm"
     return s
-
-
-def _neo_moc(src: Path, out: Path) -> Path:
-    """Bước đầu của 🔉 chuẩn âm bài thật (_balance_chunk_levels(moc=True)): đưa mức tiếng
-    nói (RMS phần có tiếng) về SPEECH_RMS_DBFS bằng MỘT mức gain, ghìm đỉnh 0,97 → ghi
-    `out` 16-bit. File câm → chép nguyên mức."""
-    x, sr = sf.read(str(src), dtype="float32", always_2d=False)
-    if x.ndim > 1:
-        x = x.mean(axis=1)
-    muc = tts._speech_rms(x, sr)
-    g = 1.0
-    if muc > 1e-6:
-        g = 10 ** (tts.SPEECH_RMS_DBFS / 20) / muc
-        dinh = float(np.max(np.abs(x))) if x.size else 0.0
-        if dinh * g > 0.97:
-            g = 0.97 / dinh
-    sf.write(str(out), (x * g).astype("float32"), int(sr), subtype="PCM_16")
-    return out
 
 
 # ── VĂN BẢN THỬ = ≈30 GIÂY ĐẦU KỊCH BẢN MỚI NHẤT (07/11/2026) ──────────────────
@@ -583,7 +549,6 @@ class App:
         self.var_pitch = tk.DoubleVar(master=root, value=bt0["pitch"])
         self.var_fx = {k: tk.DoubleVar(master=root, value=bt0["fx"].get(k, 0)) for k in FX_KEYS}
         self.var_am_luong = tk.DoubleVar(master=root, value=bt0["am_luong"])
-        self.var_chuan_am = tk.BooleanVar(master=root, value=bt0["chuan_am"])
         self.var_sync = tk.BooleanVar(master=root, value=bool(st.get("dong_bo", True)))
         self.var_mau = tk.StringVar(master=root, value=hu.MAU_TUY_CHINH)
         self.var_giay = tk.StringVar(master=root, value=str(self._kep_giay(st.get("van_ban_giay"))))
@@ -886,10 +851,6 @@ class App:
         self._thanh(cd, 6, 0, "🔊 Âm lượng:", self.var_am_luong, hu.AMLUONG_MIN, hu.AMLUONG_MAX,
                     AMLUONG_STEP, self._am_luong, self._set_am_luong, fmt_am_luong,
                     self._on_am_luong_release, TIP["am_luong"], reset=0.0, key="am_luong")
-        ca = ttk.Checkbutton(cd, text="🔉 Chuẩn âm giọng (nén + loudnorm −14 LUFS)",
-                             variable=self.var_chuan_am, command=self._on_chuan_am_toggle)
-        ca.grid(row=6, column=1, sticky="w", pady=(4, 0))
-        Tooltip(ca, TIP["chuan_am"])
         self._cap_nhat_mau()          # radio 🎚 sáng đúng mẫu đang lưu (hoặc không cái nào)
         return cd
 
@@ -1133,16 +1094,13 @@ class App:
         # văn 0,60 s, ; : 0,30 s, phẩy 0,25 s — PAUSE_* bên tts) → đệm im lặng
         # cuối. Trước đây ghép thẳng nên chỗ nghỉ giữa câu khác hẳn bài thật.
         self._set_status("Đang ghép các đoạn...")
-        # moc=False: bước neo −18 dBFS của 🔉 chuẩn âm làm lúc PHÁT (_render_file → _neo_moc),
-        # để tick/bỏ tick 🔉 nghe ngay mà không dựng lại; bản lưu là audio gốc chưa hậu kỳ.
-        parts = tts._balance_chunk_levels(parts, self._sr, moc=False)
+        parts = tts._balance_chunk_levels(parts, self._sr)   # cân tương đối, giữ mức gốc
         merged = tts._join_with_pauses(parts, chunks, self._sr)
         tail = np.zeros(int(tts.TAIL_SILENCE_SEC * self._sr), dtype="float32")
         return np.concatenate([merged, tail])
 
     def _save(self, out: Path, audio) -> None:
-        """Ghi wav THÔ (07/11/2026): không chuẩn âm ở đây nữa — 🔉 chuẩn âm (neo mốc → nén +
-        loudnorm) và 🔊 âm lượng áp lúc PHÁT trong _render_file, cùng chỗ với tông / bộ lọc /
+        """Ghi wav THÔ (07/11/2026): 🔊 âm lượng áp lúc PHÁT trong _render_file, cùng chỗ với tông / bộ lọc /
         tốc độ, để bật/tắt là nghe ngay như nút 🎧 bên web. File này tương ứng "audio gốc
         chưa hậu kỳ" (output_chunks ghép lại) của bài thật."""
         sf.write(str(out), audio, self._sr)
@@ -1261,9 +1219,9 @@ class App:
 
     # ── 🔗 dùng chung thông số với bài thật ──
     def _thong_so(self) -> dict:
-        """Mức đang chọn trên các ô ③ — cùng dạng bai_that_doc() (speed, pitch, fx, am_luong, chuan_am)."""
+        """Mức đang chọn trên các ô ③ — cùng dạng bai_that_doc() (speed, pitch, fx, am_luong)."""
         return dict(speed=self._speed(), pitch=self._pitch(), fx=self._fx(),
-                    am_luong=self._am_luong(), chuan_am=bool(self.var_chuan_am.get()))
+                    am_luong=self._am_luong())
 
     def _luu_bai_that(self):
         """Bật 🔗 thì ghi mức đang chọn vào taogiong_options.json (đúng khoá GUI/web);
@@ -1291,7 +1249,6 @@ class App:
         for k, v in bt["fx"].items():
             self.var_fx[k].set(v)
         self.var_am_luong.set(bt["am_luong"])
-        self.var_chuan_am.set(bt["chuan_am"])
         self._update_speed_label()
         self._update_pitch_label()
         self._update_fx_labels()
@@ -1388,7 +1345,7 @@ class App:
         self._replay_if_playing()
 
     # ── bộ lọc giọng nghe thử (tiếng vang / thiếu niên) ──
-    # ── 🔊 âm lượng + 🔉 chuẩn âm (07/11/2026, cùng khoá am_luong_db / chuan_am với GUI/web) ──
+    # ── 🔊 âm lượng (07/11/2026, cùng khoá am_luong_db với GUI/web) ──
     def _am_luong(self) -> float:
         """Mức 🔊 đang chọn (dB), làm tròn 0,5 và kẹp như hu.parse_amluong."""
         return hu.parse_amluong(self.var_am_luong.get())
@@ -1404,11 +1361,6 @@ class App:
     def _on_am_luong_release(self, _e=None):
         """Nhả chuột / bấm ±: lưu (🔗) rồi nếu đang phát thì phát lại ở mức mới."""
         self._update_am_luong_label()
-        self._luu_bai_that()
-        self._replay_if_playing()
-
-    def _on_chuan_am_toggle(self):
-        """Tick 🔉: lưu (🔗) rồi nếu đang phát thì dựng lại có/không chuẩn âm."""
         self._luu_bai_that()
         self._replay_if_playing()
 
@@ -1453,47 +1405,41 @@ class App:
         return self._playing and time.monotonic() < self._play_until
 
     def _render_file(self, src: Path, speed: float, pitch: float, fx: dict | None = None,
-                     am_luong: float = 0.0, chuan_am: bool = False) -> Path:
-        """Bản phát của `src` theo đúng thứ tự bài thật: [🔉 neo −18 dBFS] → tốc độ (giữ cao
-        độ) + tông (giữ tốc độ) + bộ lọc (một lượt ffmpeg) → [🔉 nén + loudnorm −14 LUFS] →
-        🔊 âm lượng. Cache ở SPEED_DIR theo cả bộ số, dùng lại nếu còn mới hơn `src`; tông 0,
-        không bộ lọc / âm lượng / chuẩn âm thì tên y như trước (`...@1.05x.wav`) nên cache
+                     am_luong: float = 0.0) -> Path:
+        """Bản phát của `src` theo đúng thứ tự bài thật: tốc độ (giữ cao độ) + tông (giữ tốc
+        độ) + bộ lọc (một lượt ffmpeg) → 🔊 âm lượng (chuẩn âm −14 LUFS gỡ hẳn 10/11/2026).
+        Cache ở SPEED_DIR theo cả bộ số, dùng lại nếu còn mới hơn `src`; tông 0,
+        không bộ lọc / âm lượng thì tên y như trước (`...@1.05x.wav`) nên cache
         tốc độ cũ vẫn dùng được. Không có gì để áp → trả chính `src`. Gọi được từ luồng nền
         (tên file tạm riêng theo tiến trình + luồng)."""
         src = Path(src)
         fx = hu.fx_from(fx)
         am_luong = hu.parse_amluong(am_luong)
-        chuan_am = bool(chuan_am)
         if (abs(speed - 1.0) <= 1e-6 and abs(pitch) <= 1e-9 and not hu.fx_active(**fx)
-                and abs(am_luong) <= 1e-9 and not chuan_am):
+                and abs(am_luong) <= 1e-9):
             return src
         cache = SPEED_DIR
         cache.mkdir(parents=True, exist_ok=True)
         tag = (f"@{speed:.2f}x" + (f"{pitch:+.1f}st" if abs(pitch) > 1e-9 else "")
-               + hu.fx_tag(**fx) + ("_chuanam" if chuan_am else "")
+               + hu.fx_tag(**fx)
                + (f"_am{am_luong:+.1f}" if abs(am_luong) > 1e-9 else ""))
         dst = cache / f"{src.stem}{tag}.wav"
         if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
             return dst
         rieng = f".{os.getpid()}_{threading.get_ident()}"
-        neo = cache / f"{dst.stem}{rieng}.neo.tmp.wav"
         tam = cache / f"{dst.stem}{rieng}.tmp.wav"
         try:
-            vao = _neo_moc(src, neo) if chuan_am else src
-            args, sr, _ = hu.build_ffmpeg_args(vao, speed, pitch, None, **fx)
+            args, sr, _ = hu.build_ffmpeg_args(src, speed, pitch, None, **fx)
             proc = subprocess.run(
                 [FFMPEG, "-y", "-loglevel", "error", *args, "-ar", str(sr), "-c:a", "pcm_s16le", str(tam)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 creationflags=CREATE_NO_WINDOW)
             if proc.returncode != 0 or not tam.exists():
                 raise RuntimeError((proc.stderr or "ffmpeg lỗi không rõ").strip()[-300:])
-            if chuan_am:
-                tts._loudnorm_file(tam, tts.VOICE_LUFS, pre_filter=tts.SPEECH_COMPRESSOR)
             hu.apply_amluong_file(tam, am_luong)
             os.replace(tam, dst)
         finally:
-            for f in (neo, tam):
-                f.unlink(missing_ok=True)
+            tam.unlink(missing_ok=True)
         return dst
 
     # ── phát lại bản CLONE ──
@@ -1587,8 +1533,7 @@ class App:
         def work():
             kq, out, err = None, None, None
             try:
-                kq = nt.nghe_thu(pitch=ts["pitch"], fx=ts["fx"], am_luong=ts["am_luong"],
-                                 chuan_am=ts["chuan_am"], log=log)
+                kq = nt.nghe_thu(pitch=ts["pitch"], fx=ts["fx"], am_luong=ts["am_luong"], log=log)
                 out = Path(kq["file"])
                 if abs(ts["speed"] - 1.0) > 1e-6:
                     out = self._render_file(out, ts["speed"], 0.0, None)

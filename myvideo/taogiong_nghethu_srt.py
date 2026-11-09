@@ -39,8 +39,7 @@ KHI NÀO THAY MẪU (cap_nhat)
     (route POST /nghethu của web myvideo).
 
 ÁP CÀI ĐẶT (nghe_thu) — đúng thứ tự bài thật (taogiong_srt.hau_ky_audio):
-    [chuẩn âm: neo mốc −18 dBFS như _balance_chunk_levels(moc=True) trong mix_audio] →
-    tông + bộ lọc (một lượt ffmpeg) → [chuẩn âm: nén + loudnorm −14 LUFS] → 🔊 âm lượng.
+    tông + bộ lọc (một lượt ffmpeg) → 🔊 âm lượng (chuẩn âm −14 LUFS gỡ hẳn 10/11/2026).
     Lệch duy nhất: 🔆 Sáng giọng ở engine OmniVoice còn EQ cả GIỌNG MẪU lúc sinh câu, mà câu
     trong mẫu đã sinh ở mức sáng của video đó → nghe thử chỉ thấy phần EQ áp lên audio (web
     báo khi hai mức lệch nhau).
@@ -241,10 +240,10 @@ def tao_mau(tts_dir) -> dict:
     if not parts or tong < MAU_GIAY_IT_NHAT:
         raise ChuaCoMau(f"{ten_video(d)}: chưa đủ giọng gốc trong {d.name} để lấy mẫu")
 
-    # Mốc mức tiếng nói (trung vị) TRƯỚC khi cân — bước neo −18 dBFS của chuẩn âm cần nó.
+    # Mốc mức tiếng nói (trung vị) TRƯỚC khi cân — chỉ ghi vào meta để tham khảo.
     muc = [m for m in (gui._speech_rms(p, sr) for p in parts) if m > 1e-4]
     muc_rms = float(np.median(muc)) if muc else 0.0
-    parts = gui._balance_chunk_levels(parts, sr, moc=False)
+    parts = gui._balance_chunk_levels(parts, sr)
     am = gui._join_with_pauses(parts, cau, sr)
     cat = len(am) / sr > MAU_GIAY_TOI_DA
     if cat:                                             # câu cuối dài quá → cắt, vát cho khỏi cụt
@@ -340,30 +339,15 @@ def nhan_mau(meta: dict | None) -> str:
 
 
 # ── ÁP CÀI ĐẶT ──────────────────────────────────────────────────────────────────
-def mo_ta(pitch: float, fx: dict, am_luong: float, chuan_am: bool) -> str:
+def mo_ta(pitch: float, fx: dict, am_luong: float) -> str:
     p = []
     if abs(pitch) > 1e-9:
         p.append(f"tông {pitch:+.1f}")
     if hu.fx_active(**fx):
         p.append(hu.fx_describe(**fx))
-    if chuan_am:
-        p.append("chuẩn âm")
     if abs(am_luong) > 1e-9:
         p.append(f"âm lượng {am_luong:+.1f} dB")
     return ", ".join(p) or "giọng gốc, chưa chỉnh gì"
-
-
-def _neo_moc(wav: Path, muc_rms: float, gui) -> None:
-    """Bước 'đặt cả bài về mốc SPEECH_RMS_DBFS' của _balance_chunk_levels(moc=True) — bài
-    thật làm trong mix_audio khi bật chuẩn âm; ở đây làm trên mẫu đã ghép (một mức gain)."""
-    if muc_rms <= 1e-6:
-        return
-    x, sr = sf.read(str(wav), dtype="float32", always_2d=False)
-    g = 10 ** (gui.SPEECH_RMS_DBFS / 20) / muc_rms
-    dinh = float(np.max(np.abs(x))) if x.size else 0.0
-    if dinh * g > 0.97:
-        g = 0.97 / dinh
-    sf.write(str(wav), (x * g).astype("float32"), sr, subtype="PCM_16")
 
 
 def la_ban_nghe(ten: str) -> bool:
@@ -394,7 +378,7 @@ def _xoa_ban_nghe(giu: Path | None = None, so_giu: int = 0) -> None:
             pass
 
 
-def nghe_thu(pitch=0.0, fx=None, am_luong=0.0, chuan_am=False, log=None) -> dict:
+def nghe_thu(pitch=0.0, fx=None, am_luong=0.0, log=None) -> dict:
     """Áp bộ cài đặt lên mẫu gốc → file wav để phát.
     Trả {"file": Path, "mau": thông tin mẫu, "mo_ta": str, "moi": vừa dựng hay lấy bản đã có}.
     Chưa có mẫu và chưa video nào có giọng → ChuaCoMau."""
@@ -406,8 +390,7 @@ def nghe_thu(pitch=0.0, fx=None, am_luong=0.0, chuan_am=False, log=None) -> dict
     pitch = hu.parse_pitch(pitch, 0.0)
     fx = hu.fx_from(fx)
     am_luong = hu.parse_amluong(am_luong)
-    chuan_am = bool(chuan_am)
-    khoa = hashlib.sha1(json.dumps([meta.get("ma"), pitch, fx, am_luong, chuan_am],
+    khoa = hashlib.sha1(json.dumps([meta.get("ma"), pitch, fx, am_luong],
                                    sort_keys=True).encode("utf-8")).hexdigest()[:12]
     out = MAU_DIR / f"xt_{khoa}.wav"
     moi = not (out.exists() and out.stat().st_size > 4096)
@@ -415,11 +398,8 @@ def nghe_thu(pitch=0.0, fx=None, am_luong=0.0, chuan_am=False, log=None) -> dict
         tam = MAU_DIR / f"xt_{khoa}.{os.getpid()}_{threading.get_ident()}.tmp.wav"
         try:
             shutil.copyfile(MAU_DIR / MAU_WAV, tam)
-            if chuan_am:
-                _neo_moc(tam, float(meta.get("muc_rms") or 0.0), gui)
-            # Đúng hàm bài thật dùng cuối bước ③: tông + bộ lọc → [chuẩn âm] → âm lượng.
-            _ts().hau_ky_audio(tam, pitch=pitch, fx=fx, chuan_am=chuan_am, am_luong=am_luong,
-                               log=lambda s: None)
+            # Đúng hàm bài thật dùng cuối bước ③: tông + bộ lọc → âm lượng.
+            _ts().hau_ky_audio(tam, pitch=pitch, fx=fx, am_luong=am_luong, log=lambda s: None)
             os.replace(tam, out)
         finally:
             tam.unlink(missing_ok=True)
@@ -429,7 +409,7 @@ def nghe_thu(pitch=0.0, fx=None, am_luong=0.0, chuan_am=False, log=None) -> dict
         except OSError:
             pass
     _xoa_ban_nghe(giu=out, so_giu=XT_GIU)
-    return dict(file=out, mau=meta, mo_ta=mo_ta(pitch, fx, am_luong, chuan_am), moi=moi)
+    return dict(file=out, mau=meta, mo_ta=mo_ta(pitch, fx, am_luong), moi=moi)
 
 
 # ── CHẠY LẺ ─────────────────────────────────────────────────────────────────────
@@ -441,10 +421,9 @@ def _cli(argv=None):
     ap.add_argument("--thieunien", type=int, default=0)
     ap.add_argument("--sang", type=int, default=0)
     ap.add_argument("--amluong", type=float, default=0.0, help="âm lượng cơ bản (dB)")
-    ap.add_argument("--chuanam", action="store_true", help="áp cả bước chuẩn âm")
     a = ap.parse_args(argv)
     try:
-        kq = nghe_thu(pitch=a.pitch, am_luong=a.amluong, chuan_am=a.chuanam,
+        kq = nghe_thu(pitch=a.pitch, am_luong=a.amluong,
                       fx=dict(vang_truong_do=a.vang[0], vang_cuong_do=a.vang[1],
                               thieu_nien=a.thieunien, sang_giong=a.sang), log=print)
     except ChuaCoMau as e:

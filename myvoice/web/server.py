@@ -897,9 +897,9 @@ def _nghethu_nhan() -> str:
 def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
                   vang_cuong_do: str = Form(""), thieu_nien: str = Form(""),
                   sang_giong: str = Form(""), am_luong_db: str = Form(""),
-                  chuan_am: str = Form(""), mode: str = Form(""), voice: str = Form(""),
+                  mode: str = Form(""), voice: str = Form(""),
                   instruct: str = Form("")):
-    """🎧 Nghe thử (06/11/2026): áp tông + bộ lọc + chuẩn âm + âm lượng ĐANG HIỆN trên
+    """🎧 Nghe thử (06/11/2026): áp tông + bộ lọc + âm lượng ĐANG HIỆN trên
     form (chưa cần lưu, route này không ghi cài đặt) lên mẫu ~30 s giọng gốc của một
     tập rồi trả đường phát. Mẫu + cách chọn tập: scripts/taogiong_nghethu.py.
 
@@ -909,7 +909,7 @@ def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
     fx = dict(vang_truong_do=vang_truong_do, vang_cuong_do=vang_cuong_do,
               thieu_nien=thieu_nien, sang_giong=sang_giong)
     try:
-        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, chuan_am=bool(chuan_am), log=log)
+        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, log=log)
     except nt.ChuaCoMau as e:
         return JSONResponse({"ok": False, "loi": str(e)})
     except Exception as e:

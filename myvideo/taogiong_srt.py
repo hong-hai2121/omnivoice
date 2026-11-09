@@ -172,9 +172,9 @@ from amain_taogiong_gui import (  # noqa: E402
     # 04/11/2026 — nap_engine / do_engine (cùng run_tts bên myvoice) thay cho load_omnivoice /
     # _do_omnivoice ở mọi chỗ nạp / dỡ model. (Engine VieNeu gỡ 09/11/2026 — chỉ còn OmniVoice.)
     nap_engine, do_engine,
-    # Mang từ myvoice sang (trước đây myvideo chưa có): cân mức giữa các câu, nén
-    # nhẹ + chuẩn độ to -14 LUFS, tông giọng + bộ lọc giọng (mix_audio / main).
-    _balance_chunk_levels, _loudnorm_file, SPEECH_COMPRESSOR, VOICE_LUFS, parse_pitch)
+    # Mang từ myvoice sang (trước đây myvideo chưa có): cân mức giữa các câu, tông
+    # giọng + bộ lọc giọng (mix_audio / main). (Chuẩn âm −14 LUFS gỡ hẳn 10/11/2026.)
+    _balance_chunk_levels, parse_pitch)
 # 🔆 SÁNG GIỌNG (23/10/2026) — bộ lọc trị giọng clone "ồm" (giọng mẫu dồn năng
 # lượng vào 150–600 Hz, model chép y nguyên). Dùng chung LÕI với myvoice
 # (scripts/hieuung_giong.py: chuỗi EQ ffmpeg + eq_giong_mau_tam), còn MỨC là cài
@@ -683,7 +683,7 @@ def get_timeline_end(segments, video_path):
     return max_end
 
 
-def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
+def mix_audio(segments, out_wav, timeline_end):
     """Đặt từng wav vào đúng mốc ĐÃ XẾP trên một nền im lặng dài timeline_end."""
     import numpy as np
     import soundfile as sf
@@ -697,8 +697,7 @@ def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
         return None
     # Mang từ myvoice sang (24/10/2026): CÂN MỨC GIỮA CÁC CÂU trước khi đặt lên
     # timeline — mỗi câu sinh riêng một lượt nên to nhỏ lệch nhau (bên myvoice đo
-    # chênh tới 11 dB); kéo về cùng mức rồi đặt cả bài vào mốc SPEECH_RMS_DBFS để
-    # bộ nén SPEECH_COMPRESSOR ở _loudnorm_file (main) ăn đúng ngưỡng như bài thật.
+    # chênh tới 11 dB); kéo về cùng mức tương đối, giữ mức gốc của giọng.
     co_wav = [s for s in segments if s.get("wav")]
     parts = []
     for s in co_wav:
@@ -706,7 +705,7 @@ def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
         if data.ndim > 1:
             data = data.mean(axis=1)
         parts.append(np.ascontiguousarray(data, dtype="float32"))
-    parts = _balance_chunk_levels(parts, sr, moc=chuan_am)   # tắt = không neo −18 dBFS
+    parts = _balance_chunk_levels(parts, sr)
     canvas = np.zeros(int(timeline_end / US * sr) + sr, dtype="float32")
     for s, data in zip(co_wav, parts):
         o = int(s["target_timerange"]["start"] / US * sr)
@@ -745,11 +744,6 @@ def main():
                         help="🔔 Tiếng vang: trường độ 0–100, cường độ 0–100 (0 = tắt).")
     parser.add_argument("--thieunien", type=int, default=0,
                         help="🧒 Giọng thiếu niên: cường độ 0–100 (0 = tắt).")
-    # 05/11/2026: chuẩn âm (nén nhẹ + −14 LUFS + neo −18 dBFS) thành tuỳ chọn, mặc định TẮT
-    # theo chốt của user ("bỏ chuẩn âm đi luôn") — audio tổng giữ mức gốc của giọng.
-    parser.add_argument("--chuan-am", action="store_true",
-                        help="🔉 Chuẩn âm audio tổng: nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS "
-                             "(mặc định KHÔNG — giữ mức gốc của giọng, chỉ cân mức giữa các câu).")
     parser.add_argument("--sang", type=int, default=SANG_MAC_DINH,
                         help="🔆 Sáng giọng 0–100 (0 = tắt): EQ giọng mẫu lúc dựng prompt "
                              f"+ EQ audio tổng — trị giọng clone ồm. Mặc định {SANG_MAC_DINH}.")
@@ -864,27 +858,25 @@ def main():
     print(f"💾 SRT đã xếp     : {out_srt.name}")
 
     out_wav = Path(str(stem) + "_audio.wav")
-    if mix_audio(segments, out_wav, timeline_end, chuan_am=args.chuan_am):
+    if mix_audio(segments, out_wav, timeline_end):
         fx = hu.fx_from(dict(vang_truong_do=args.vang[0], vang_cuong_do=args.vang[1],
                              thieu_nien=args.thieunien, sang_giong=sang))
-        hau_ky_audio(out_wav, pitch=args.pitch, fx=fx, chuan_am=args.chuan_am,
-                     am_luong=args.am_luong)
+        hau_ky_audio(out_wav, pitch=args.pitch, fx=fx, am_luong=args.am_luong)
         print(f"💾 Audio tổng     : {out_wav.name}")
 
     print("\n✅ Xong. Audio CHƯA gắn vào video — bước gắn làm riêng sau khi nghe thử.")
 
 
-def hau_ky_audio(out_wav, pitch=0.0, fx=None, chuan_am=False, am_luong=0.0, log=print) -> dict:
+def hau_ky_audio(out_wav, pitch=0.0, fx=None, am_luong=0.0, log=print) -> dict:
     """Hậu kỳ audio TỔNG sau khi trộn — y thứ tự bài thật bên myvoice (run_tts) và của
     bản 🎧 nghe thử (taogiong_nghethu.nghe_thu, cùng hàm) nên nghe thử sao, bài ra vậy:
       1. TÔNG GIỌNG + BỘ LỌC (tiếng vang / thiếu niên / sáng giọng) trong MỘT lần ffmpeg
          — không đổi thời lượng (rubberband giữ tốc độ, alimiter bù trễ; chỉ tiếng vang
          nối thêm đuôi RT60 ở cuối) nên timeline/SRT đã xếp vẫn khớp.
-      2. 🔉 CHUẨN ÂM (khi bật): nén nhẹ giữa các câu + loudnorm −14 LUFS (SPEECH_COMPRESSOR
-         + loudnorm 2 lượt). Tắt = giữ mức gốc của giọng; bước ④ cũng không chuẩn lại.
-      3. 🔊 ÂM LƯỢNG cơ bản (dB) cộng thẳng lên cả bài ở bước cuối (09/11/2026).
+      2. 🔊 ÂM LƯỢNG cơ bản (dB) cộng thẳng lên cả bài ở bước cuối (09/11/2026).
+    (Chuẩn âm −14 LUFS gỡ hẳn 10/11/2026: giữ mức gốc của giọng; bước ④ cũng không chuẩn lại.)
     Từng bước lỗi thì báo rồi giữ bản trước đó (không bao giờ mất audio). Trả về dict
-    {"pitch", "fx", "chuan_am", "am_luong"} là mức đã áp thật (đã kẹp)."""
+    {"pitch", "fx", "am_luong"} là mức đã áp thật (đã kẹp)."""
     out_wav = Path(out_wav)
     fx = hu.fx_from(fx)
     pitch = parse_pitch(pitch, 0.0)
@@ -896,14 +888,6 @@ def hau_ky_audio(out_wav, pitch=0.0, fx=None, chuan_am=False, am_luong=0.0, log=
                 f"bộ lọc: {hu.fx_describe(**fx)} (giữ tốc độ).")
         except Exception as e:
             log(f"⚠️ Không đổi được giọng ({e}) → giữ audio gốc.")
-    if chuan_am:
-        try:
-            _loudnorm_file(out_wav, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
-        except Exception as e:
-            log(f"⚠️ Không chuẩn được độ to ({e}) → giữ bản chưa chuẩn.")
-    else:
-        log("⏭ Không chuẩn âm (mặc định từ 05/11/2026) — giữ mức gốc của giọng; "
-            "bước ④ cũng không chuẩn lại giọng đọc khi ô 🔉 tắt.")
     if abs(am_luong) > 1e-9:
         try:
             hu.apply_amluong_file(out_wav, am_luong)
@@ -911,7 +895,7 @@ def hau_ky_audio(out_wav, pitch=0.0, fx=None, chuan_am=False, am_luong=0.0, log=
                 + (" (có bộ chặn đỉnh)." if am_luong > 0 else "."))
         except Exception as e:
             log(f"⚠️ Không đổi được âm lượng ({e}) → giữ mức trước đó.")
-    return dict(pitch=pitch, fx=fx, chuan_am=bool(chuan_am), am_luong=am_luong)
+    return dict(pitch=pitch, fx=fx, am_luong=am_luong)
 
 
 if __name__ == "__main__":

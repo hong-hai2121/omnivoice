@@ -230,12 +230,6 @@ class ApCaiDatTests(_Nen):
         self.assertGreater(_tan_so(kq["file"]), 320)           # 300 Hz đã lên tông
         self.assertNotEqual(kq["file"].read_bytes(), (self.mau / nt.MAU_WAV).read_bytes())
 
-    def test_chuan_am_dua_ve_muc_phat_hanh(self):
-        kq = nt.nghe_thu(chuan_am=True)
-        self.assertEqual(kq["mo_ta"], "chuẩn âm")
-        lufs = gui._do_lufs_nhanh(kq["file"], shutil.which("ffmpeg"))
-        self.assertAlmostEqual(lufs, gui.VOICE_LUFS, delta=1.5)
-
     def test_cung_bo_so_thi_dung_lai_ban_da_dung(self):
         a = nt.nghe_thu(pitch=1, am_luong=3)
         b = nt.nghe_thu(pitch="1,0", am_luong="3.0")
@@ -273,7 +267,7 @@ class WebTests(_Nen):
         truoc = (core.load_options(), core.load_web_settings())
         r = self.c.post("/giongnoi/nghethu", data={
             "pitch": "0", "vang_truong_do": "0", "vang_cuong_do": "0", "thieu_nien": "0",
-            "sang_giong": "0", "am_luong_db": "+6", "chuan_am": "", "mode": "clone",
+            "sang_giong": "0", "am_luong_db": "+6", "mode": "clone",
             "voice": "ngọc huyền 01.mp3"})
         j = r.json()
         self.assertTrue(j["ok"], j)
@@ -327,7 +321,7 @@ class WebTests(_Nen):
         js = (Path(server.__file__).resolve().parent / "static" / "app.js").read_text(encoding="utf-8")
         self.assertIn("fetch('/giongnoi/nghethu'", js)
         for o in ("pitch", "vang_truong_do", "vang_cuong_do", "thieu_nien", "sang_giong",
-                  "am_luong_db", "chuan_am", "mau_giong"):
+                  "am_luong_db", "mau_giong"):
             self.assertIn(f"'{o}'", js[js.index("Nghe thử cài đặt giọng"):], o)
 
 

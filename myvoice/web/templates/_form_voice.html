@@ -230,10 +230,6 @@
       </script>
     </div>
     <div class="chks">
-      {# 🔉 Chuẩn âm (05/11/2026, mặc định TẮT): nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS
-         trên output.wav. Tắt = giữ mức gốc của giọng (chỉ cân mức giữa các đoạn). #}
-      {{ chk('chuan_am', '🔉 Chuẩn âm giọng', opts,
-             'Nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS trên output.wav. Tắt = giữ mức gốc của giọng, chỉ cân mức giữa các đoạn.') }}
       {{ chk('from_gemini', '🌐 Lấy nội dung từ Gemini + kiểm tra trước khi tạo', opts) }}
       <label class="chk"><input type="checkbox" name="reuse"> ♻ Dùng lại audio/video đã có</label>
     </div>
@@ -243,7 +239,7 @@
        đã bấm 🎧 một lần thì đổi ô giọng nào là dựng + phát lại luôn. #}
     <div class="hang nghethu" data-nghethu-box>
       <button type="button" data-nghethu
-              title="Áp tông + bộ lọc + chuẩn âm + âm lượng đang hiện (chưa cần lưu) lên ~30 giây giọng gốc của tập đầu tiên trong đợt kịch bản mới nhất rồi phát. Bấm một lần rồi thì đổi ô giọng nào là tự phát lại bản mới. Mẫu lưu riêng ở voice/nghe_thu nên xoá kịch bản vẫn nghe được; đợt kịch bản mới có giọng thì tự thay bằng tập đầu của đợt đó.">🎧 Nghe thử</button>
+              title="Áp tông + bộ lọc + âm lượng đang hiện (chưa cần lưu) lên ~30 giây giọng gốc của tập đầu tiên trong đợt kịch bản mới nhất rồi phát. Bấm một lần rồi thì đổi ô giọng nào là tự phát lại bản mới. Mẫu lưu riêng ở voice/nghe_thu nên xoá kịch bản vẫn nghe được; đợt kịch bản mới có giọng thì tự thay bằng tập đầu của đợt đó.">🎧 Nghe thử</button>
       <audio controls preload="none" hidden></audio>
       <span class="hint" data-nghethu-note>{{ nghethu }}</span>
     </div>
