@@ -22,7 +22,7 @@
     </div>
     <label class="field">
       <span>Link hoặc đường dẫn file — mỗi dòng một nguồn. Link <b>Bilibili</b>
-        tự tải VIDEO qua app Bili23 theo mức ở ô <b>Tải Bilibili</b> bên dưới (về
+        tự tải VIDEO bản chất lượng cao nhất qua app Bili23 (về
         Downloads\&lt;mã BV&gt;.mp4); link tải lỗi được note vào
         <code>kịch_bản/link_tai_loi.txt</code>.</span>
       {# Ô Nguồn DÙNG CHUNG với trang Nhận diện (và mọi tab): nội dung lưu ở server
@@ -68,7 +68,6 @@
           {% endfor %}
         </select>
       </label>
-      {% include "_bili_quality.html" %}
     </div>
     <label class="field">
       <span>Số tập bắt đầu (làm bù)</span>
@@ -99,80 +98,69 @@
     {% endwith %}
   {% endif %}
 
-  {# 06/11/2026: từ đây xuống (và các khối Giọng nói · Thumbnail · Đăng bài) mỗi khối
-     là MỘT HÀNG trọn bề ngang, thu gọn được — <details class="panel fold"> (app.css),
-     trạng thái mở/đóng nhớ theo data-fold (cuối app.js). Ô trong hàng đang đóng vẫn
-     gửi theo form như thường. Chữ giải thích dài chuyển vào title (rê chuột). #}
-  <div class="foldbar">
-    <button type="button" class="ghost" data-fold-all="dong"
-            title="Thu gọn mọi hàng trên trang (trình duyệt nhớ lại)">▸ Thu gọn hết</button>
-    <button type="button" class="ghost" data-fold-all="mo"
-            title="Mở mọi hàng trên trang">▾ Mở hết</button>
+  <div class="panel">
+    <div class="phead">
+      <span class="num">1</span><h2>Nhận diện giọng nói</h2>
+      <p class="hint">Video/audio → <code>tiengTrung.docx</code>.</p>
+    </div>
+    <div class="actions">
+      <button class="primary" name="start" value="recognize">🎙 Nhận diện → tiếng Trung</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="auto2" {{ 'checked' if pipe.auto2 }}>
+        ⛓ Tự động chạy bước 2 sau khi xong</label>
+    </div>
   </div>
 
-  <details class="panel fold" data-fold="kb-nhandien" open>
-    <summary class="phead">
-      <span class="num">1</span><h2>Nhận diện giọng nói</h2>
-      <span class="sub">Video/audio → tiengTrung.docx</span>
-    </summary>
-    <div class="foldbody">
-      <div class="hang">
-        <button class="primary" name="start" value="recognize">🎙 Nhận diện → tiếng Trung</button>
-        <div class="chks">
-          <label class="chk"><input type="checkbox" name="auto2" {{ 'checked' if pipe.auto2 }}>
-            ⛓ Xong thì tự chạy bước 2</label>
-        </div>
-      </div>
-    </div>
-  </details>
-
-  <details class="panel fold" data-fold="kb-dich" open>
-    <summary class="phead">
+  <div class="panel">
+    <div class="phead">
       <span class="num">2</span><h2>Dịch qua Gemini</h2>
-      <span class="sub">tiengTrung.docx → gemini_result.docx</span>
-    </summary>
-    <div class="foldbody">
-      <div class="hang">
-        <button class="primary" name="start" value="translate">🌐 Gửi Gemini</button>
-        <div class="chks">
-          <label class="chk"><input type="checkbox" name="seo" {{ 'checked' if pipe.seo }}>
-            🔎 Xong thì tạo SEO YouTube + thumbnail</label>
-          <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if pipe.auto3 }}>
-            ⛓ Xong thì tự chạy bước 3</label>
-        </div>
-      </div>
-      {% include "_gemini_backend.html" %}
+      <p class="hint"><code>tiengTrung.docx</code> → <code>gemini_result.docx</code>.</p>
     </div>
-  </details>
+    <div class="actions">
+      <button class="primary" name="start" value="translate">🌐 Gửi Gemini</button>
+    </div>
+    {% include "_gemini_backend.html" %}
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="seo" {{ 'checked' if pipe.seo }}>
+        🔎 Tạo SEO YouTube + thumbnail sau khi xong</label>
+      <label class="chk"><input type="checkbox" name="auto3" {{ 'checked' if pipe.auto3 }}>
+        ⛓ Tự động chạy bước 3 sau khi xong</label>
+    </div>
+  </div>
 
-  <details class="panel fold" data-fold="kb-input" open>
-    <summary class="phead">
+  <div class="panel">
+    <div class="phead">
       <span class="num">3</span><h2>Chuẩn bị input.docx</h2>
-      <span class="sub">gemini_result.docx → input.docx</span>
-    </summary>
-    <div class="foldbody">
-      <div class="hang">
-        <button class="primary" name="start" value="input"
-                title="Kiểm tra bản dịch rồi tạo input.docx; đoạn dịch nhờ câu nhắc được tô đỏ.">📝 Tạo input.docx</button>
-        <div class="chks">
-          <label class="chk"><input type="checkbox" name="auto_tts" {{ 'checked' if pipe.auto_tts }}>
-            ⛓ Xong thì chạy tiếp tạo giọng</label>
-        </div>
-      </div>
-      {% if tts_error %}
-        <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
-           — sửa ở <a href="/giongnoi">Giọng nói</a>.</p>
-      {% endif %}
+      <p class="hint">Kiểm tra bản dịch + <code>gemini_result.docx</code> → <code>input.docx</code> (đoạn dịch nhờ câu nhắc được tô đỏ).</p>
     </div>
-  </details>
+    <div class="actions">
+      <button class="primary" name="start" value="input">📝 Tạo input.docx</button>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" name="auto_tts" {{ 'checked' if pipe.auto_tts }}>
+        ⛓ Chạy tiếp tạo giọng (OmniVoice) sau khi xong</label>
+    </div>
+    {% if pipe.upload %}
+      <p class="hint">⬆ Dựng xong video sẽ TỰ ĐĂNG YouTube — bật/tắt và chỉnh cài đặt
+         ở khối “Đăng YouTube”.</p>
+    {% endif %}
+    {% if tts_error %}
+      <p class="warn">⚠️ Bước tạo giọng chưa chạy được: {{ tts_error }}
+         — sửa ở <a href="/giongnoi">Giọng nói</a>.</p>
+    {% endif %}
+    <p class="hint">Bước 2 và SEO dùng cách dịch đã chọn ở trên.</p>
+  </div>
 
   <div class="savebar span-all">
     {# hx-post: lưu tại chỗ, không tải lại trang — server trả mẩu "✓ đã lưu" vào
        ô .luunote bên cạnh. formaction giữ làm đường lui khi không có JS. #}
     <button formaction="/kichban/luu"
-            hx-post="/kichban/luu" hx-target="#luunote-kichban" hx-swap="innerHTML"
-            title="Nhớ model · tốc độ · các ô ⛓. Đổi ô nào cũng tự lưu; bấm nút chạy cũng lưu trước khi chạy.">💾 Lưu cài đặt</button>
+            hx-post="/kichban/luu" hx-target="#luunote-kichban" hx-swap="innerHTML">💾 Lưu cài đặt</button>
     <span id="luunote-kichban" class="luunote"></span>
+    <span class="hint">Nhớ model · tốc độ · các ô ⛓. Bấm nút chạy ở trên cũng tự lưu trước khi
+      chạy{% if on_home %} — trên Home, mọi nút chạy của khối nào cũng lưu luôn
+      cài đặt của TẤT CẢ các khối trên trang{% endif %}.</span>
   </div>
   {# Nút submit ẨN cho ⏩ ở đầu khối Nguồn (#srcRun, app.js gọi requestSubmit):
      đặt CUỐI form để không thành nút mặc định khi bấm Enter. #}

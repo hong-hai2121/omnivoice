@@ -29,16 +29,9 @@ Cách dùng:
     python taogiong_srt.py "output/…_x0.7_vi.srt"
     python taogiong_srt.py "….srt" --voice "hachi.mp3" --limit 10   (thử 10 câu)
     python taogiong_srt.py "….srt" --only-arrange     (đã có wav, chỉ xếp lại)
-    python taogiong_srt.py "….srt" --sang 80          (bật 🔆 sáng giọng cho clone mẫu ồm; mặc định 0 từ 05/11/2026)
-    python taogiong_srt.py "….srt" --engine vieneu --giong-vieneu "Ngọc Huyền"
-        (04/11/2026: MẶC ĐỊNH là VieNeu-TTS giọng dựng sẵn — worker SDK trong
-         myvoice/voice/VieNeu-TTS/.venv, 48 kHz, nhanh gấp 5–10 lần clone;
-         --engine omni --voice <file> = OmniVoice nhái giọng mẫu như trước)
+    python taogiong_srt.py "….srt" --sang 0           (tắt 🔆 sáng giọng; mặc định 80)
     python taogiong_srt.py "….srt" --pitch 1 --vang 80 76 --thieunien 30
                                    (tông giọng + bộ lọc như myvoice; mặc định 0 = tắt)
-    python taogiong_srt.py "….srt" --am-luong 3   (🔊 cộng 3 dB lên audio tổng ở bước cuối,
-                                   sau tông / bộ lọc / chuẩn âm — như ô Âm lượng bên myvoice;
-                                   09/11/2026, mặc định 0 = giữ nguyên)
 
 Kết quả (cạnh file SRT):
     <tên>_tts/0001.wav…      — audio từng câu (chạy lại tự bỏ qua câu đã có)
@@ -72,12 +65,11 @@ except Exception:
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-# Kho giọng: từ 24/10/2026 DÙNG CHUNG DANH SÁCH với myvoice (user soạn danh sách giọng
-# mới ở đó; .prompt.pt / .sang<N>.prompt.pt bên đó dùng lại được vì cùng cách lưu); từ
-# 04/11/2026 kho đó là myvoice/voice/giong_mau (giọng mẫu gom riêng, voice/ chỉ còn code).
-# Kho cũ myvideo/voice vẫn đọc thêm để giọng đã chọn không mất; trùng tên thì myvoice
-# thắng. Cài đặt vẫn riêng (web_settings).
-VOICE_DIRS = (REPO_ROOT / "myvoice" / "voice" / "giong_mau", SCRIPT_DIR / "voice")
+# Kho giọng: từ 24/10/2026 DÙNG CHUNG DANH SÁCH với myvoice (myvoice/voice — user
+# soạn danh sách giọng mới ở đó; .prompt.pt / .sang<N>.prompt.pt bên đó dùng lại
+# được vì cùng cách lưu). Kho cũ myvideo/voice vẫn đọc thêm để giọng đã chọn
+# không mất; trùng tên thì myvoice/voice thắng. Cài đặt vẫn riêng (web_settings).
+VOICE_DIRS = (REPO_ROOT / "myvoice" / "voice", SCRIPT_DIR / "voice")
 VOICE_DIR = VOICE_DIRS[0]      # tên cũ — kho tìm ĐẦU TIÊN
 
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -116,7 +108,7 @@ def _fmt_srt_time(t_us):
 # ════════════════════════════════════════════════════════════════════════════
 def resolve_voice(name):
     """Tìm file giọng mẫu: đường dẫn đầy đủ → tên file trong các kho VOICE_DIRS
-    (myvoice/voice/giong_mau trước, rồi myvideo/voice) → file audio đầu tiên tìm thấy."""
+    (myvoice/voice trước, rồi myvideo/voice) → file audio đầu tiên tìm thấy."""
     if name:
         p = Path(name)
         if p.is_file():
@@ -173,10 +165,6 @@ from amain_taogiong_gui import (  # noqa: E402
     # bản của myvoice — sửa một nơi là hai bảng cùng theo. Tên cũ giữ qua alias.
     load_omnivoice as _load_omnivoice, _tra_vram, _do_omnivoice, _voice_prompt,
     _generate_chunk,
-    # 04/11/2026 — ENGINE theo chế độ (cùng run_tts bên myvoice): "vieneu" = worker SDK
-    # VieNeu-TTS (giọng dựng sẵn, mặc định), "clone" = OmniVoice nhái giọng mẫu. nap_engine
-    # / do_engine thay cho load_omnivoice / _do_omnivoice ở mọi chỗ nạp / dỡ model.
-    nap_engine, do_engine, MODE_VIENEU, vn,
     # Mang từ myvoice sang (trước đây myvideo chưa có): cân mức giữa các câu, nén
     # nhẹ + chuẩn độ to -14 LUFS, tông giọng + bộ lọc giọng (mix_audio / main).
     _balance_chunk_levels, _loudnorm_file, SPEECH_COMPRESSOR, VOICE_LUFS, parse_pitch)
@@ -189,73 +177,23 @@ from amain_taogiong_gui import (  # noqa: E402
 # trộn (main) — từng câu không EQ riêng để khỏi gọi ffmpeg cả nghìn lần.
 import hieuung_giong as hu  # noqa: E402
 
-SANG_MAC_DINH = 0      # 05/11/2026: về 0 (trước 80) — engine mặc định VieNeu giọng dựng sẵn đã sáng
-
-
-class Giong:
-    """Giọng đã chọn cho cả lượt: mode "vieneu" (voice_param = tên giọng dựng sẵn) hay
-    "clone" (voice_param = đường dẫn file mẫu). `id` ghi vào sổ _vanban.json — đổi engine
-    hay đổi giọng là đọc lại toàn bộ câu (nửa bài giọng này nửa bài giọng kia thì hỏng)."""
-
-    def __init__(self, mode: str, voice_param: str, ten: str):
-        self.mode, self.voice_param, self.ten = mode, voice_param, ten
-
-    @property
-    def id(self) -> str:
-        return f"{self.mode}|{self.ten}"
-
-    @property
-    def clone(self) -> bool:
-        return self.mode == "clone"
-
-    def mo_ta(self) -> str:
-        return (f"VieNeu giọng dựng sẵn '{self.ten}'" if self.mode == MODE_VIENEU
-                else f"giọng mẫu {self.ten}")
-
-    def prompt(self, model, sang) -> None:
-        """Clone: dựng/nạp prompt giọng mẫu 1 lần (xả Whisper ngay). VieNeu: không có gì."""
-        if self.clone:
-            _voice_prompt(model, self.voice_param, sang)
-
-    def doc(self, model, text, sang, dur_scale=1.0):
-        """Audio float32 của 1 câu — _generate_chunk của myvoice (cùng FADE_OUT 10 ms)."""
-        return _generate_chunk(model, self.mode, self.voice_param, text,
-                               dur_scale=dur_scale, sang_giong=sang)[0]
-
-
-def giong_vieneu(ten: str) -> Giong:
-    """Giọng dựng sẵn VieNeu theo tên; tên lạ → mặc định (báo)."""
-    ten = (ten or "").strip()
-    if ten not in vn.GIONG_DUNG_SAN:
-        if ten:
-            print(f"⚠️ Không có giọng VieNeu '{ten}' — dùng {vn.GIONG_MAC_DINH}.")
-        ten = vn.GIONG_MAC_DINH
-    return Giong(MODE_VIENEU, ten, ten)
-
-
-def giong_clone(voice_path: Path) -> Giong:
-    return Giong("clone", str(voice_path), Path(voice_path).name)
+SANG_MAC_DINH = 80
 
 # Các hàm dùng chung với myvoice ghi nhật ký qua logging (bài thật có cửa sổ log
 # riêng); đây là script dòng lệnh nên đẩy thẳng ra stdout để trang web myvideo
 # thấy đủ (nạp prompt, cân mức, chuẩn độ to…).
 import logging  # noqa: E402
-if __name__ == "__main__":
-    # Chỉ khi chạy lệnh: web myvideo import module này (🎧 nghe thử dùng hau_ky_audio) thì
-    # không được giành lại cấu hình log của tiến trình server.
-    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout, force=True)
+logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout, force=True)
 
 
-def generate_all(cues, giong, tts_dir, redo=False, sang=0):
+def generate_all(cues, voice_path, tts_dir, redo=False, sang=0):
     """Sinh wav cho từng câu (bỏ qua câu đã có — chạy lại là tiếp tục).
 
     Trả về (files, model, sr): files là list đường dẫn wav song song với cues
     (None nếu câu rỗng/lỗi); model/sr để bên gọi tự dỡ khỏi VRAM
     (model = None khi mọi câu đã có sẵn, chưa phải nạp).
-    giong: Giong (engine + giọng) — đổi engine/giọng so với sổ là đọc lại toàn bộ.
-    sang: mức 🔆 Sáng giọng 0–100 — EQ giọng mẫu lúc dựng prompt (CHỈ clone; VieNeu
-    không có prompt nên ghi sổ mức 0); mức khác lần chạy trước (ghi trong
-    _vanban.json) thì đọc lại toàn bộ câu.
+    sang: mức 🔆 Sáng giọng 0–100 — EQ giọng mẫu lúc dựng prompt; mức khác lần
+    chạy trước (ghi trong _vanban.json) thì đọc lại toàn bộ câu.
     """
     import soundfile as sf
 
@@ -270,14 +208,11 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
     # (sổ cũ là list thuần = mức 0). Mức khác lần trước → prompt giọng mẫu khác →
     # giọng khác → phải đọc lại TOÀN BỘ, không thì nửa bài giọng cũ nửa bài mới.
     sang = hu.parse_fx(sang)
-    sang_so = sang if giong.clone else 0        # mức ghi sổ: VieNeu không EQ prompt
     sang_cu = 0
-    giong_cu = None
     try:
         cu = json.loads(so_van_ban.read_text(encoding="utf-8"))
         if isinstance(cu, dict):
-            sang_cu, giong_cu, cu = (hu.parse_fx(cu.get("sang"), 0), cu.get("giong"),
-                                     list(cu.get("cau") or []))
+            sang_cu, cu = hu.parse_fx(cu.get("sang"), 0), list(cu.get("cau") or [])
     except Exception:
         # Thư mục của bản cũ (chưa có sổ): tin đám wav đang có nếu SỐ LƯỢNG khớp
         # số câu; lệch số là chắc chắn cắt câu đã khác → đọc lại từ đầu.
@@ -286,21 +221,11 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
         if len(co) != len(cues):
             print(f"⚠️ Thư mục có {len(co)} wav cũ mà bản dịch nay {len(cues)} câu "
                   "— cắt câu đã khác, đọc lại từ đầu cho khỏi lắp nhầm giọng.")
-    # Sổ của bản cũ (trước 04/11/2026) không ghi giọng: toàn bộ là OmniVoice clone →
-    # coi như cùng giọng nếu nay vẫn clone; nay là VieNeu thì chắc chắn khác → đọc lại.
-    if giong_cu is None:
-        giong_cu = giong.id if giong.clone else ""
-    doi_giong = bool(cu) and giong_cu != giong.id
-    doi_sang = bool(cu) and not doi_giong and sang_cu != sang_so
-    if doi_giong and not redo:
-        print(f"🔁 Engine/giọng đổi ({giong_cu or 'OmniVoice cũ'} → {giong.id}) → đọc lại "
-              f"toàn bộ {len(cues)} câu.")
-        redo = True
+    doi_sang = bool(cu) and sang_cu != sang
     if doi_sang and not redo:
-        print(f"🔆 Mức sáng giọng đổi {sang_cu} → {sang_so} (EQ giọng mẫu lúc dựng prompt) "
+        print(f"🔆 Mức sáng giọng đổi {sang_cu} → {sang} (EQ giọng mẫu lúc dựng prompt) "
               f"→ đọc lại toàn bộ {len(cues)} câu.")
         redo = True
-    doi_sang = doi_sang or doi_giong
     todo = []
     for i, text in enumerate(moi):
         f = tts_dir / f"{i + 1:04d}.wav"
@@ -321,8 +246,8 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
         print(f"🧺 {len(thua)} wav thừa của lần cắt câu trước còn nằm trong "
               f"{tts_dir.name}/ (không dùng nữa — xoá tay nếu muốn lấy lại chỗ).")
     def _ghi_so(cau):
-        so_van_ban.write_text(json.dumps({"sang": sang_so, "giong": giong.id, "cau": cau},
-                                         ensure_ascii=False), encoding="utf-8")
+        so_van_ban.write_text(json.dumps({"sang": sang, "cau": cau}, ensure_ascii=False),
+                              encoding="utf-8")
     # Đổi mức sáng giọng thì ghi sổ TRỐNG trước — lỡ đứt giữa chừng, lần sau không
     # tin nhầm đám wav giọng cũ; đọc xong hết mới ghi đủ (cuối hàm).
     _ghi_so([] if doi_sang else moi)
@@ -332,10 +257,10 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
         print("♻ Toàn bộ câu đã có audio — bỏ qua bước tạo giọng.")
         return files, None, 0
 
-    print(f"🔊 Giọng: {giong.mo_ta()}"
-          + (f"  ·  🔆 sáng giọng {sang} (EQ mẫu lúc dựng prompt)" if sang and giong.clone else ""))
-    model, sr = nap_engine(giong.mode)
-    giong.prompt(model, sang)   # clone: dựng/nạp prompt 1 lần, xả Whisper ngay
+    print(f"🔊 Giọng mẫu: {voice_path.name}"
+          + (f"  ·  🔆 sáng giọng {sang} (EQ mẫu lúc dựng prompt)" if sang else ""))
+    model, sr = _load_omnivoice()
+    _voice_prompt(model, str(voice_path), sang)   # dựng/nạp prompt 1 lần, xả Whisper ngay
 
     done_before = len(cues) - len(todo)
     if done_before:
@@ -346,7 +271,8 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
             continue
         print(f"  [{n}/{len(todo)}] câu {i + 1}: {text[:50]!r}")
         try:
-            sf.write(str(f), giong.doc(model, text, sang), sr)
+            sf.write(str(f), _generate_chunk(model, "clone", str(voice_path), text,
+                                             sang_giong=sang)[0], sr)
         except Exception as e:
             print(f"  ⚠️ Câu {i + 1} lỗi TTS: {e} — bỏ qua.")
             files[i] = None
@@ -362,7 +288,7 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
 
 
 # ── Kiểm SPIKE ngay sau khi sinh (tái dùng detect_spike của myvoice) ─────────
-def kiemtra_spike(cues, files, model, sr, giong, sang=0):
+def kiemtra_spike(cues, files, model, sr, voice_path, sang=0):
     """Lớp kiểm THÔ, y nếp run_tts bên myvoice: quét spike (tiếng lạ TO bất
     thường gấp 5 lần nền / file gần như câm) toàn bộ câu NGAY khi OmniVoice còn
     trên VRAM — câu dính thì re-roll luôn, không tốn lượt nạp lại model. Lớp ASR
@@ -394,12 +320,13 @@ def kiemtra_spike(cues, files, model, sr, giong, sang=0):
     print(f"🔊 {len(bad)} câu có spike → đọc lại ngay "
           f"(câu {', '.join(str(i + 1) for i, _s in bad)})...")
     if model is None:
-        model, sr = nap_engine(giong.mode)
-    giong.prompt(model, sang)
+        model, sr = _load_omnivoice()
+    _voice_prompt(model, str(voice_path), sang)
     for i, spikes in bad:
         print(f"  câu {i + 1}: spike tại {spikes[:3]}s → đọc lại")
         try:
-            sf.write(str(files[i]), giong.doc(model, texts[i], sang), sr)
+            sf.write(str(files[i]), _generate_chunk(model, "clone", str(voice_path), texts[i],
+                                                    sang_giong=sang)[0], sr)
         except Exception as e:
             print(f"  ⚠️ Câu {i + 1} lỗi khi đọc lại: {e}")
     # Không quét lại vòng nữa — như myvoice: bản re-roll hiếm khi dính tiếp,
@@ -408,7 +335,7 @@ def kiemtra_spike(cues, files, model, sr, giong, sang=0):
 
 
 # ── Kiểm MẤT CHỮ + TIẾNG LẠ, đọc lại câu hỏng (tái dùng taogiong_kiemtra_matchu)
-def kiemtra_va_docla(cues, files, tts_dir, giong, sang=0):
+def kiemtra_va_docla(cues, files, tts_dir, voice_path, sang=0):
     """ASR đối chiếu TỪNG câu với văn bản (large-v3-turbo, xem
     taogiong_kiemtra_matchu — bộ kiểm còn soi cả TIẾNG LẠ rè/rít không phải
     giọng đọc). Câu dính cờ được đọc lại ngay: lượt 1 re-roll, lượt 2 nới
@@ -455,12 +382,14 @@ def kiemtra_va_docla(cues, files, tts_dir, giong, sang=0):
             # Trả VRAM của ASR RỒI mới nạp OmniVoice — hai model không cùng lúc
             # nằm trên card 8GB được.
             ktm.giai_phong()
-            _tra_vram("trả VRAM của ASR để nạp lại engine")
-            model, sr = nap_engine(giong.mode)
-            giong.prompt(model, sang)
+            _tra_vram("trả VRAM của ASR để nạp lại OmniVoice")
+            model, sr = _load_omnivoice()
+            _voice_prompt(model, str(voice_path), sang)
             for i in sorted(bad):
                 try:
-                    sf.write(str(files[i]), giong.doc(model, texts[i], sang, dur_scale=scale), sr)
+                    sf.write(str(files[i]),
+                             _generate_chunk(model, "clone", str(voice_path), texts[i],
+                                             dur_scale=scale, sang_giong=sang)[0], sr)
                     # Như myvoice: bản đọc lại dính spike thì chỉ CẢNH BÁO để
                     # nghe tay — lượt quét ASR kế tiếp vẫn soi lại câu này.
                     spikes = detect_spike(Path(files[i]), sr_spike or sr)
@@ -469,7 +398,7 @@ def kiemtra_va_docla(cues, files, tts_dir, giong, sang=0):
                               f"{spikes[:3]}s — nghe kiểm tay.")
                 except Exception as e:
                     print(f"  ⚠️ Câu {i + 1} lỗi khi đọc lại: {e}")
-            model = do_engine(model, "quét lại lượt sau")
+            model = _do_omnivoice(model, "quét lại lượt sau")
             _tra_vram()
             _sync(sorted(bad))
             bad = ktm.quet_va_xac_minh(texts, shim, on_log=print,
@@ -700,7 +629,7 @@ def get_timeline_end(segments, video_path):
     return max_end
 
 
-def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
+def mix_audio(segments, out_wav, timeline_end):
     """Đặt từng wav vào đúng mốc ĐÃ XẾP trên một nền im lặng dài timeline_end."""
     import numpy as np
     import soundfile as sf
@@ -723,7 +652,7 @@ def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
         if data.ndim > 1:
             data = data.mean(axis=1)
         parts.append(np.ascontiguousarray(data, dtype="float32"))
-    parts = _balance_chunk_levels(parts, sr, moc=chuan_am)   # tắt = không neo −18 dBFS
+    parts = _balance_chunk_levels(parts, sr)
     canvas = np.zeros(int(timeline_end / US * sr) + sr, dtype="float32")
     for s, data in zip(co_wav, parts):
         o = int(s["target_timerange"]["start"] / US * sr)
@@ -736,17 +665,10 @@ def mix_audio(segments, out_wav, timeline_end, chuan_am=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TTS (VieNeu giọng dựng sẵn / OmniVoice clone) theo SRT tiếng Việt + sắp xếp audio chống đè.")
+        description="TTS OmniVoice theo SRT tiếng Việt + sắp xếp audio chống đè.")
     parser.add_argument("srt", help="File .srt tiếng Việt (…_vi.srt).")
-    # 04/11/2026: engine — mặc định VieNeu (user chốt), omni = OmniVoice clone như trước.
-    parser.add_argument("--engine", choices=("vieneu", "omni"), default="vieneu",
-                        help="vieneu = VieNeu-TTS giọng dựng sẵn (--giong-vieneu; mặc định) · "
-                             "omni = OmniVoice nhái giọng mẫu (--voice).")
-    parser.add_argument("--giong-vieneu", default=vn.GIONG_MAC_DINH,
-                        help=f"Tên giọng dựng sẵn VieNeu (1 trong {len(vn.GIONG_DUNG_SAN)} giọng; "
-                             f"mặc định {vn.GIONG_MAC_DINH}).")
     parser.add_argument("--voice", default="",
-                        help="Giọng mẫu: tên file trong myvoice/voice/giong_mau (hoặc kho cũ "
+                        help="Giọng mẫu: tên file trong myvoice/voice (hoặc kho cũ "
                              "myvideo/voice) hoặc đường dẫn (mặc định: file audio đầu "
                              "tiên tìm thấy).")
     parser.add_argument("--video", default="",
@@ -769,20 +691,9 @@ def main():
                         help="🔔 Tiếng vang: trường độ 0–100, cường độ 0–100 (0 = tắt).")
     parser.add_argument("--thieunien", type=int, default=0,
                         help="🧒 Giọng thiếu niên: cường độ 0–100 (0 = tắt).")
-    # 05/11/2026: chuẩn âm (nén nhẹ + −14 LUFS + neo −18 dBFS) thành tuỳ chọn, mặc định TẮT
-    # theo chốt của user ("bỏ chuẩn âm đi luôn") — audio tổng giữ mức gốc của giọng.
-    parser.add_argument("--chuan-am", action="store_true",
-                        help="🔉 Chuẩn âm audio tổng: nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS "
-                             "(mặc định KHÔNG — giữ mức gốc của giọng, chỉ cân mức giữa các câu).")
     parser.add_argument("--sang", type=int, default=SANG_MAC_DINH,
                         help="🔆 Sáng giọng 0–100 (0 = tắt): EQ giọng mẫu lúc dựng prompt "
                              f"+ EQ audio tổng — trị giọng clone ồm. Mặc định {SANG_MAC_DINH}.")
-    # 09/11/2026: 🔊 âm lượng cơ bản (dB) — mang từ myvoice sang (khoá am_luong_db bên web
-    # myvideo); cộng thẳng lên audio tổng Ở BƯỚC CUỐI (sau tông / bộ lọc / chuẩn âm), mức
-    # dương có bộ chặn đỉnh. Áp cho cả VieNeu lẫn clone. 0 = giữ nguyên.
-    parser.add_argument("--am-luong", type=float, default=0.0,
-                        help=f"🔊 Âm lượng cơ bản (dB, {hu.AMLUONG_MIN:+.0f}…{hu.AMLUONG_MAX:+.0f}, "
-                             "bước 0,5; + to hơn, − nhỏ hơn, 0 = giữ nguyên) cộng lên audio tổng sau cùng.")
     args = parser.parse_args()
     sang = hu.parse_fx(args.sang)
 
@@ -808,27 +719,23 @@ def main():
         files = [f if f.exists() else None for f in files]
         print(f"♻ --only-arrange: dùng {sum(1 for f in files if f)} wav có sẵn trong {tts_dir.name}/")
     else:
-        if args.engine == "vieneu":
-            giong = giong_vieneu(args.giong_vieneu)
-        else:
-            voice = resolve_voice(args.voice)
-            if voice is None:
-                print("❌ Không tìm thấy giọng mẫu nào trong "
-                      + " / ".join(str(d) for d in VOICE_DIRS))
-                sys.exit(1)
-            giong = giong_clone(voice)
-        files, model, _sr = generate_all(cues, giong, tts_dir, redo=args.redo_tts, sang=sang)
+        voice = resolve_voice(args.voice)
+        if voice is None:
+            print("❌ Không tìm thấy giọng mẫu nào trong "
+                  + " / ".join(str(d) for d in VOICE_DIRS))
+            sys.exit(1)
+        files, model, _sr = generate_all(cues, voice, tts_dir, redo=args.redo_tts, sang=sang)
         # 1a. Kiểm SPIKE ngay khi model còn trên VRAM (lớp thô, re-roll tại chỗ).
         if not args.no_kiemtra:
-            model = kiemtra_spike(cues, files, model, _sr, giong, sang)
-        # Dỡ engine NGAY: bước kiểm chữ cần cả card cho ASR, còn phần xếp
+            model = kiemtra_spike(cues, files, model, _sr, voice, sang)
+        # Dỡ OmniVoice NGAY: bước kiểm chữ cần cả card cho ASR, còn phần xếp
         # timeline + ghép wav bên dưới chạy CPU nên giữ model lại chỉ tổ chiếm chỗ.
-        model = do_engine(model, "TTS xong")
+        model = _do_omnivoice(model, "TTS xong")
         _tra_vram()
         # 1b. Kiểm mất chữ + đọc lại câu hỏng NGAY (trước khi xếp timeline —
         # câu đọc lại có thể đổi thời lượng nên phải xong xuôi rồi mới xếp).
         if not args.no_kiemtra:
-            kiemtra_va_docla(cues, files, tts_dir, giong, sang)
+            kiemtra_va_docla(cues, files, tts_dir, voice, sang)
 
     # ── 2. Dựng segment (μs) và sắp xếp ─────────────────────────────────────
     import soundfile as sf
@@ -891,54 +798,30 @@ def main():
     print(f"💾 SRT đã xếp     : {out_srt.name}")
 
     out_wav = Path(str(stem) + "_audio.wav")
-    if mix_audio(segments, out_wav, timeline_end, chuan_am=args.chuan_am):
+    if mix_audio(segments, out_wav, timeline_end):
+        # Y như bài thật bên myvoice (run_tts), trên audio TỔNG: TÔNG GIỌNG + BỘ LỌC
+        # (tiếng vang / thiếu niên / sáng giọng) trong MỘT lần ffmpeg trước, rồi nén
+        # nhẹ giữa các câu + chuẩn độ to -14 LUFS (SPEECH_COMPRESSOR + loudnorm 2
+        # lượt). Không đổi thời lượng (rubberband giữ tốc độ, alimiter bù trễ; chỉ
+        # tiếng vang nối thêm đuôi RT60 ở cuối) nên timeline/SRT đã xếp vẫn khớp.
+        # Bước ④ vẫn loudnorm lại theo ô tab 🔊 (ttsdb/ttsnorm) như trước.
         fx = hu.fx_from(dict(vang_truong_do=args.vang[0], vang_cuong_do=args.vang[1],
                              thieu_nien=args.thieunien, sang_giong=sang))
-        hau_ky_audio(out_wav, pitch=args.pitch, fx=fx, chuan_am=args.chuan_am,
-                     am_luong=args.am_luong)
-        print(f"💾 Audio tổng     : {out_wav.name}")
-
-    print("\n✅ Xong. Audio CHƯA gắn vào video — bước gắn làm riêng sau khi nghe thử.")
-
-
-def hau_ky_audio(out_wav, pitch=0.0, fx=None, chuan_am=False, am_luong=0.0, log=print) -> dict:
-    """Hậu kỳ audio TỔNG sau khi trộn — y thứ tự bài thật bên myvoice (run_tts) và của
-    bản 🎧 nghe thử (taogiong_nghethu.nghe_thu, cùng hàm) nên nghe thử sao, bài ra vậy:
-      1. TÔNG GIỌNG + BỘ LỌC (tiếng vang / thiếu niên / sáng giọng) trong MỘT lần ffmpeg
-         — không đổi thời lượng (rubberband giữ tốc độ, alimiter bù trễ; chỉ tiếng vang
-         nối thêm đuôi RT60 ở cuối) nên timeline/SRT đã xếp vẫn khớp.
-      2. 🔉 CHUẨN ÂM (khi bật): nén nhẹ giữa các câu + loudnorm −14 LUFS (SPEECH_COMPRESSOR
-         + loudnorm 2 lượt). Tắt = giữ mức gốc của giọng; bước ④ cũng không chuẩn lại.
-      3. 🔊 ÂM LƯỢNG cơ bản (dB) cộng thẳng lên cả bài ở bước cuối (09/11/2026).
-    Từng bước lỗi thì báo rồi giữ bản trước đó (không bao giờ mất audio). Trả về dict
-    {"pitch", "fx", "chuan_am", "am_luong"} là mức đã áp thật (đã kẹp)."""
-    out_wav = Path(out_wav)
-    fx = hu.fx_from(fx)
-    pitch = parse_pitch(pitch, 0.0)
-    am_luong = hu.parse_amluong(am_luong, 0.0)
-    if abs(pitch) > 1e-9 or hu.fx_active(**fx):
-        try:
-            hu.apply_fx_file(out_wav, pitch=pitch, **fx)
-            log(f"🎵 Đã đổi giọng audio tổng: tông {pitch:+.1f} bán cung, "
-                f"bộ lọc: {hu.fx_describe(**fx)} (giữ tốc độ).")
-        except Exception as e:
-            log(f"⚠️ Không đổi được giọng ({e}) → giữ audio gốc.")
-    if chuan_am:
+        pitch = parse_pitch(args.pitch, 0.0)
+        if abs(pitch) > 1e-9 or hu.fx_active(**fx):
+            try:
+                hu.apply_fx_file(out_wav, pitch=pitch, **fx)
+                print(f"🎵 Đã đổi giọng audio tổng: tông {pitch:+.1f} bán cung, "
+                      f"bộ lọc: {hu.fx_describe(**fx)} (giữ tốc độ).")
+            except Exception as e:
+                print(f"⚠️ Không đổi được giọng ({e}) → giữ audio gốc.")
         try:
             _loudnorm_file(out_wav, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
         except Exception as e:
-            log(f"⚠️ Không chuẩn được độ to ({e}) → giữ bản chưa chuẩn.")
-    else:
-        log("⏭ Không chuẩn âm (mặc định từ 05/11/2026) — giữ mức gốc của giọng; "
-            "bước ④ cũng không chuẩn lại giọng đọc khi ô 🔉 tắt.")
-    if abs(am_luong) > 1e-9:
-        try:
-            hu.apply_amluong_file(out_wav, am_luong)
-            log(f"🔊 Đã cộng {am_luong:+.1f} dB lên audio tổng"
-                + (" (có bộ chặn đỉnh)." if am_luong > 0 else "."))
-        except Exception as e:
-            log(f"⚠️ Không đổi được âm lượng ({e}) → giữ mức trước đó.")
-    return dict(pitch=pitch, fx=fx, chuan_am=bool(chuan_am), am_luong=am_luong)
+            print(f"⚠️ Không chuẩn được độ to ({e}) → giữ bản chưa chuẩn.")
+        print(f"💾 Audio tổng     : {out_wav.name}")
+
+    print("\n✅ Xong. Audio CHƯA gắn vào video — bước gắn làm riêng sau khi nghe thử.")
 
 
 if __name__ == "__main__":

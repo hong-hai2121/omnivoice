@@ -14,8 +14,6 @@ Mã thoát: 0 = xong · 77 = dừng có chủ ý (bước chặn, vd dịch chư
 78 = SEO hỏng nhưng không có bước dựng video trong lần gọi này (chuỗi còn bước dựng
 video phía sau thì hàng đợi đi tiếp). SEO hỏng mà lần gọi CÓ dựng video → chạy hết,
 trả 77 để hàng đợi KHÔNG nối việc đăng YouTube / lên lịch Facebook.
-79 = LỖI GPU (GpuLoi: không có CUDA, thiếu VRAM, NVENC chết…) — tập sau cũng sẽ dính
-nên hàng đợi thấy mã này là TẠM DỪNG cả hàng đợi, không chạy tiếp (05/11/2026).
 """
 
 from __future__ import annotations
@@ -43,8 +41,6 @@ for _p in (str(_BASE_DIR.parent), str(_BASE_DIR / "scripts"), str(_BASE_DIR / "Y
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "garbage_collection_threshold:0.8")
 
 import amain_taogiong_gui as gui                # noqa: E402
-from gpu_batbuoc import (GpuLoi, MA_THOAT_GPU,  # noqa: E402
-                         loi_cuoi as gpu_loi_cuoi)
 from myvoice.web import core                    # noqa: E402
 
 # KHÔNG dùng 1 cho "dừng có chủ ý": Python thoát mã 1 khi crash trước khi vào
@@ -52,9 +48,6 @@ from myvoice.web import core                    # noqa: E402
 # Đổi số này thì đổi cả STOP_CODE trong web/steps.py.
 STOP = 77       # dừng có chủ ý — không phải sự cố
 ERROR = 2
-# LỖI GPU (05/11/2026): tập sau cũng sẽ dính → hàng đợi tạm dừng thay vì chạy tiếp.
-# Một nguồn duy nhất ở scripts/gpu_batbuoc.py (web/steps.py lấy cùng hằng đó).
-GPU_LOI = MA_THOAT_GPU
 # SEO hỏng (03/10/2026): KHÔNG chặn cả tập nữa — mẻ chạy đêm 03/10 mất trọn 4 tập vì
 # Gemini không nhận tin lúc 04:23. Bước SEO/thumbnail trả mã này, main() ghi nhớ rồi
 # đi tiếp; tạo giọng + video ngang vẫn làm, video dọc/TikTok/Short (in tiêu đề SEO)
@@ -74,9 +67,8 @@ STEP_GROUPS = {"script": ["translate", "input", "seo", "thumbnail"],
 # / nhích chuột trong lúc gửi–đợi Gemini; tải, nhận diện, tạo giọng, video và đường
 # Firefox/GPT CLI để màn hình tắt theo Windows.
 
-# ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO qua app Bili23 Downloader (mặc
-# định bản cao nhất; ô "Tải Bilibili" 05/11/2026 chọn được mức thấp hơn khi chỉ cần
-# tiếng — xem gui.BILI_QUALITIES) bằng script cầu nối bên myvideo — mượn NGUYÊN script
+# ⬇ LINK BILIBILI ở ô Nguồn (17/10/2026): tải VIDEO bản chất lượng cao nhất qua
+# app Bili23 Downloader bằng script cầu nối bên myvideo — mượn NGUYÊN script
 # (như gemini_backend dùng chung), không viết bộ tải thứ hai. File về
 # Downloads/<mã BV>.mp4, TRÙNG chỗ với bên myvideo: video nào bên kia tải rồi
 # thì bên này nhặt lại luôn. Link KHÔNG phải bilibili vẫn đi yt-dlp lấy mp3 như cũ.
@@ -110,51 +102,21 @@ def _ten_tai_bilibili(src: str) -> str:
     return gui.ten_tai_bilibili(src)
 
 
-def _muc_tai_bilibili(chat_luong: str) -> str:
-    """Mức ở ô "Tải Bilibili" → mức THẬT SỰ tải ("auto" = cao nhất tải được).
-
-    Đang bật 🎞 "Lấy video tải xuống làm video nguồn" thì file tải về còn làm HÌNH cho
-    video ngang → vẫn tải bản cao nhất, bỏ qua mức thấp (mức thấp chỉ hợp khi file
-    chỉ dùng để nghe nhận diện)."""
-    muc = gui.chuan_bili_quality(chat_luong)
-    if muc == "auto":
-        return muc
-    try:
-        opts = core.load_options()
-    except Exception:
-        opts = {}
-    if opts.get("ngang_tu_nguon") and opts.get("make_video"):
-        logging.info(f"🎞 Đang bật “Lấy video tải xuống làm video nguồn” → vẫn tải bản "
-                     f"CAO NHẤT (bỏ qua mức {muc}) để hình video ngang không mờ.")
-        return "auto"
-    return muc
-
-
-def _tai_video_bilibili(src: str, chat_luong: str = "auto") -> tuple[str, str]:
+def _tai_video_bilibili(src: str) -> tuple[str, str]:
     """Link bilibili → (đường dẫn video đã tải, ""), lỗi thì ("", lý do).
 
     Chạy video_taibilibili.py làm tiến trình con, in của nó đổ thẳng ra stdout
-    cho web thấy tiến độ; dòng ❌ cuối cùng chính là lý do lỗi để note sổ.
-
-    chat_luong ≠ "auto" (ô "Tải Bilibili", 05/11/2026): tải bản nhẹ về file RIÊNG
-    <mã BV>_<mức>.mp4; đã có sẵn bản đầy đủ <mã BV>.mp4 thì dùng luôn, khỏi tải."""
+    cho web thấy tiến độ; dòng ❌ cuối cùng chính là lý do lỗi để note sổ."""
     ten = _ten_tai_bilibili(src)
     if not ten:
         return "", f"không nhận ra mã BV/av trong link: {src}"
     if not TAIBILI_SCRIPT.is_file():
         return "", f"thiếu script {TAIBILI_SCRIPT}"
-    muc = gui.chuan_bili_quality(chat_luong)
-    day_du = gui.TAI_VE_DIR / f"{ten}.mp4"
-    out = gui.TAI_VE_DIR / f"{gui.ten_file_bilibili(src, muc)}.mp4"
-    lenh = [sys.executable, "-u", str(TAIBILI_SCRIPT), src, "--out", str(out)]
-    if muc != "auto":
-        if day_du.is_file() and day_du.stat().st_size > 1_000_000:
-            logging.info(f"♻ Đã có bản đầy đủ {day_du.name} — dùng luôn, khỏi tải bản {muc}.")
-            return str(day_du), ""
-        lenh += ["--chat-luong", muc]
+    out = Path.home() / "Downloads" / f"{ten}.mp4"
     ly_do = ""
     try:
-        p = subprocess.Popen(lenh,
+        p = subprocess.Popen([sys.executable, "-u", str(TAIBILI_SCRIPT), src,
+                              "--out", str(out)],
                              cwd=str(_BASE_DIR.parent),
                              env={**os.environ, "PYTHONIOENCODING": "utf-8"},
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -232,14 +194,13 @@ def _resolve_folder(app: HeadlessApp, source: str, episode: str | None):
 
 
 # ── Từng bước ───────────────────────────────────────────────────────────────
-def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple[str, str]:
+def _fetch_media(source: str, episode: str) -> tuple[str, str]:
     """Nguồn → (đường dẫn file media, ""), lỗi → ("", lý do).
 
-    File local dùng thẳng; link thì tải về (Bilibili: NGUYÊN VIDEO qua app Bili23, mức
-    theo ô "Tải Bilibili" — mặc định bản cao nhất, file dùng được cho cả myvideo; link
-    khác: yt-dlp lấy mp3). Đã có file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước
-    "tai" chạy trước, bước "recognize" chạy sau không tải lại. Link tải lỗi được note
-    vào sổ link lỗi."""
+    File local dùng thẳng; link thì tải về (Bilibili: NGUYÊN VIDEO bản cao nhất qua
+    app Bili23 — file dùng được cho cả myvideo; link khác: yt-dlp lấy mp3). Đã có
+    file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước "tai" chạy trước, bước
+    "recognize" chạy sau không tải lại. Link tải lỗi được note vào sổ link lỗi."""
     src = (source or "").strip().strip('"').strip("'")
     if not src:
         return "", "Không có nguồn (link/file) để nhận diện."
@@ -247,11 +208,8 @@ def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple
         logging.info(f"📁 File local: {src}")
         return src, ""
     if _BILI_LINK_RE.match(src):
-        muc = _muc_tai_bilibili(bili_quality)
-        logging.info("⬇ Link Bilibili → tải video "
-                     + ("bản cao nhất" if muc == "auto" else f"mức {muc} (chỉ cần tiếng)")
-                     + f" qua app Bili23: {src}")
-        media, ly_do = _tai_video_bilibili(src, muc)
+        logging.info(f"⬇ Link Bilibili → tải video bản cao nhất qua app Bili23: {src}")
+        media, ly_do = _tai_video_bilibili(src)
         if not media:
             note_link_loi(src, ly_do, episode)
             return "", f"Không tải được video Bilibili: {ly_do}"
@@ -267,8 +225,7 @@ def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple
     return "", f"Nguồn không hợp lệ (không phải file cũng không phải link): {src}"
 
 
-def step_tai(folder: Path, episode: str, source: str, force: bool,
-             bili_quality: str = "auto") -> int:
+def step_tai(folder: Path, episode: str, source: str, force: bool) -> int:
     """Bước TẢI (17/10/2026): chỉ đem video/audio của nguồn về máy, KHÔNG nhận diện.
     ⏩ xếp đợt tải cho MỌI tập trước, xong hết mới tới đợt nhận diện. Đã có bản
     nhận diện thì khỏi tải (trừ khi --force)."""
@@ -276,7 +233,7 @@ def step_tai(folder: Path, episode: str, source: str, force: bool,
     if existing and gui.read_zh_docx_chunks(existing) and not force:
         logging.info(f"♻ Bỏ qua tải (đã có {existing.name}).")
         return 0
-    media, ly_do = _fetch_media(source, episode, bili_quality)
+    media, ly_do = _fetch_media(source, episode)
     if not media:
         logging.error(f"❌ {ly_do}")
         return ERROR
@@ -285,15 +242,14 @@ def step_tai(folder: Path, episode: str, source: str, force: bool,
 
 
 def step_recognize(app, folder: Path, episode: str, source: str,
-                   model: str, speed: float, force: bool,
-                   bili_quality: str = "auto") -> int:
+                   model: str, speed: float, force: bool) -> int:
     import nhandien_giongnoi as recog
 
     existing = gui.find_zh_docx(folder)
     if existing and gui.read_zh_docx_chunks(existing) and not force:
         logging.info(f"♻ Bỏ qua nhận diện (đã có {existing.name}).")
         return 0
-    media, ly_do = _fetch_media(source, episode, bili_quality)
+    media, ly_do = _fetch_media(source, episode)
     if not media:
         logging.error(f"❌ {ly_do}")
         return ERROR
@@ -476,8 +432,7 @@ def step_tts(app, folder: Path, episode: str, state: dict, source: str = "") -> 
     _close_driver(state)          # nhả RAM Firefox trước khi render video
     if not app._batch_run_tts(folder, ts, episode):
         logging.error("❌ Tạo giọng/video không hoàn tất.")
-        # run_tts nuốt lỗi rồi trả False; nó ghi lại nếu lỗi đó là lỗi GPU (gpu_batbuoc).
-        return GPU_LOI if gpu_loi_cuoi() else ERROR
+        return ERROR
     if not seo_ok:
         if hoan and not core._doc_video_exists(folder):
             try:
@@ -518,9 +473,6 @@ def main(argv=None) -> int:
     parser.add_argument("--episode", default="", help="Số tập (bỏ trống = tự cấp).")
     parser.add_argument("--model", default="medium", help="Model Whisper cho bước nhận diện.")
     parser.add_argument("--speed", type=float, default=0.7, help="Tốc độ audio khi nhận diện.")
-    parser.add_argument("--bili-quality", default="auto",
-                        help="Mức video khi tải link Bilibili: auto (cao nhất), 1080P, 720P, "
-                             "480P, 360P — chỉ cần tiếng để nhận diện thì 360P là đủ.")
     parser.add_argument("--tts-json", default="", help="File JSON cài đặt tạo giọng/video.")
     parser.add_argument("--force", action="store_true",
                         help="Làm lại cả khi bước đó đã có kết quả.")
@@ -581,17 +533,14 @@ def main(argv=None) -> int:
 
     code = 0
     seo_hong = False
-    ly_do_gpu = ""
     try:
         for name in steps:
             logging.info(f"▶ Bước: {name}")
             if name == "tai":
-                code = step_tai(folder, episode, args.source.strip(), args.force,
-                                args.bili_quality)
+                code = step_tai(folder, episode, args.source.strip(), args.force)
             elif name == "recognize":
                 code = step_recognize(app, folder, episode, args.source.strip(),
-                                      args.model, args.speed, args.force,
-                                      args.bili_quality)
+                                      args.model, args.speed, args.force)
             elif name == "translate":
                 code = step_translate(app, folder, episode, state)
             elif name == "input":
@@ -613,11 +562,6 @@ def main(argv=None) -> int:
                 seo_hong, code = True, 0
             if code != 0:
                 break
-    except GpuLoi as e:
-        # Bước ném thẳng GpuLoi (nhận diện bằng Whisper thiếu CUDA…): cũng là lỗi mà
-        # tập sau sẽ dính → mã dừng-cả-hàng-đợi, không phải mã lỗi thường.
-        ly_do_gpu = str(e)
-        code = GPU_LOI
     except Exception as e:
         logging.error(f"❌ Lỗi: {e}")
         logging.error(traceback.format_exc())
@@ -625,12 +569,6 @@ def main(argv=None) -> int:
     finally:
         _close_driver(state)
 
-    if code == GPU_LOI:
-        # In SAU CÙNG (sau cả dòng đóng phiên Gemini): hàng đợi lấy dòng ⛔ cuối của bước
-        # làm lý do hiện trên trang web.
-        logging.error(f"⛔ LỖI GPU ở tập {episode} → dừng cả hàng đợi: "
-                      f"{ly_do_gpu or gpu_loi_cuoi() or 'xem dòng “Lỗi:” phía trên'}")
-        return GPU_LOI
     if code == 0 and seo_hong:
         if "tts" in steps:
             # Mã DỪNG để hàng đợi web KHÔNG gọi on_success (nối việc đăng YouTube +

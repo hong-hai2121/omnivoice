@@ -1,17 +1,10 @@
 {# Form tạo thumbnail — dùng chung cho trang Thumbnail và trang Home.
-   Cần: rows, chosen, suggested, photos.
-   06/11/2026: khối là MỘT HÀNG thu gọn được (details.fold — app.css, cuối app.js);
-   chữ giải thích dài nằm ở title. #}
-<form method="post" action="/thumbnail" data-tuluu="/thumbnail/luu">
- <details class="panel fold" data-fold="thumb" open>
-  <summary class="phead">
-    <span class="num">1</span><h2>Tạo ảnh</h2>
-    <span class="sub">thumbnail&lt;tập&gt;.png (+ bản dọc) trong thư mục của tập</span>
-  </summary>
-  <div class="foldbody">
+   Cần: rows, chosen, suggested, photos. #}
+<form class="panel" method="post" action="/thumbnail" data-tuluu="/thumbnail/luu">
+  <div class="phead"><span class="num">1</span><h2>Tạo ảnh</h2></div>
   <div class="grid">
-    <label class="field w3">
-      <span>Tập{% if on_home %} (lấy sẵn tiêu đề SEO){% endif %}</span>
+    <label class="field">
+      <span>Tập {% if on_home %}(lấy sẵn tiêu đề SEO){% endif %}</span>
       {# Đổi tập: app.js (chonTapThumb) điền tiêu đề SEO + đổi ảnh xem trước tại chỗ. #}
       <select name="episode" data-khongluu onchange="chonTapThumb(this)">
         <option value="">— không gắn tập —</option>
@@ -22,7 +15,7 @@
         {% endfor %}
       </select>
     </label>
-    <label class="field w2">
+    <label class="field">
       <span>Ảnh nền (myvoice/Anh)</span>
       <select name="photo">
         <option value="">— ngẫu nhiên —</option>
@@ -47,38 +40,36 @@
        Radio nằm trong form thumbnail nên form đó gửi kèm sẵn; khối 1 là form khác
        nên giá trị được JS chép sang input ẩn #epmode bên đó. #}
     <div class="chks">
-      <span class="lbl">Số tập khi chạy quy trình:</span>
-      <label class="chk" title="Link 1 lấy số bé nhất kênh còn thiếu, các link sau tăng dần; hết thì nối sau tập mới nhất kênh đã có.">
-        <input type="radio" name="epsrc" value="auto"
+      <span class="field"><span>Số tập khi chạy quy trình</span></span>
+      <label class="chk"><input type="radio" name="epsrc" value="auto"
              {{ 'checked' if epsrc == 'auto' }}
-             onchange="onEpModeChange()"> Tự lấy tập kênh còn thiếu</label>
-      <label class="chk" title="Theo số ở ô “Số tập” / ô “Tập” ở trên.">
-        <input type="radio" name="epsrc" value="manual"
+             onchange="onEpModeChange()"> Tự lấy tập kênh còn thiếu — link 1 lấy số
+        bé nhất, các link sau tăng dần; hết thì nối sau tập mới nhất kênh đã có</label>
+      <label class="chk"><input type="radio" name="epsrc" value="manual"
              {{ 'checked' if epsrc != 'auto' }}
-             onchange="onEpModeChange()"> Theo số tự nhập</label>
-      <span class="hint" id="thumbepnote" style="margin:0"></span>
+             onchange="onEpModeChange()"> Theo số tự nhập ở ô “Số tập” / ô “Tập” ở trên</label>
     </div>
     <input type="hidden" name="episode_manual" id="epmanual" value="{{ '%02d' % tiktok_episode }}">
+    <p class="hint" id="thumbepnote"></p>
   {% endif %}
 
   <label class="field">
     <span>Tiêu đề</span>
-    <textarea name="title" rows="2" data-khongluu>{{ suggested }}</textarea>
+    <textarea name="title" rows="3" data-khongluu>{{ suggested }}</textarea>
   </label>
 
-  <div class="hang">
-    <button class="primary"
-            title="Ảnh lưu vào thư mục của tập: thumbnail&lt;tập&gt;.png và thumbnail&lt;tập&gt;_dọc.png. Tự lưu tuỳ chọn trước khi chạy.">🖼 Tạo thumbnail</button>
-    <div class="chks">
-      <label class="chk"><input type="checkbox" name="doc" value="1" {{ 'checked' if thumb_doc }}>
-        Làm thêm bản dọc 1080×1920 (Shorts)</label>
-    </div>
+  <div class="chks">
+    <label class="chk"><input type="checkbox" name="doc" value="1" {{ 'checked' if thumb_doc }}>
+      Làm thêm bản dọc 1080×1920 (YouTube Shorts)</label>
+  </div>
+  <div class="actions">
+    <button class="primary">🖼 Tạo thumbnail</button>
     {# hx-post: lưu tại chỗ, không tải lại trang (formaction là đường lui noscript). #}
     <button formaction="/thumbnail/luu"
-            hx-post="/thumbnail/luu" hx-target="#luunote-thumbnail" hx-swap="innerHTML"
-            title="Nhớ chế độ đánh số · ảnh nền · ô bản dọc.">💾 Lưu tuỳ chọn</button>
+            hx-post="/thumbnail/luu" hx-target="#luunote-thumbnail" hx-swap="innerHTML">💾 Lưu tuỳ chọn</button>
     <span id="luunote-thumbnail" class="luunote"></span>
   </div>
-  </div>
- </details>
+  <p class="hint">Ảnh lưu vào thư mục của tập: <code>thumbnail&lt;tập&gt;.png</code>
+     và <code>thumbnail&lt;tập&gt;_dọc.png</code>. Nút 💾 nhớ chế độ đánh số · ảnh nền ·
+     ô bản dọc; bấm “Tạo thumbnail” cũng tự lưu trước khi chạy.</p>
 </form>

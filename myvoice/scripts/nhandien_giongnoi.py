@@ -313,7 +313,7 @@ def _repair_looped_segments(model, audio_path, records, suspects):
     return n_fixed
 
 
-def transcribe_chinese(media_path, model_name="medium", batch_size=4,
+def transcribe_chinese(media_path, model_name="medium", batch_size=8,
                        use_batched=True, on_segment=None, on_progress=None,
                        partial_path=None, speed=0.7):
     """Nhận diện 1 file audio/video thành văn bản tiếng Trung.
@@ -550,11 +550,8 @@ def main():
         help="Xuất kèm phiên âm pinyin (cần cài pypinyin).",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=4,
-        help="Số cửa sổ 30s chạy song song (lớn hơn = nhanh hơn nhưng tốn VRAM hơn). "
-             "Hạ 8 → 4 ngày 08/11/2026: card RTX 4060 8 GB dùng chung màn hình bị TDR "
-             "(driver treo, python sập 0xC0000409) khi chạy batch 8; kết quả nhận diện "
-             "không đổi, chỉ chậm hơn một ít.",
+        "--batch-size", type=int, default=8,
+        help="Số cửa sổ 30s chạy song song (lớn hơn = nhanh hơn nhưng tốn VRAM hơn).",
     )
     parser.add_argument(
         "--speed", type=float, default=0.7,

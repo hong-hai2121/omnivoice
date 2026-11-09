@@ -17,25 +17,15 @@
    hx-get nên vòng làm mới tự tắt. #}
 <div id="fbblock"{% if fb.busy %} hx-get="/partials/facebook" hx-trigger="every 6s" hx-swap="outerHTML"{% endif %}>
 
-{# 06/11/2026: cả khối là MỘT HÀNG thu gọn được (details.fold — app.css; cuối app.js
-   áp lại trạng thái mở/đóng sau mỗi lần khối này tự vẽ lại). Ba form nhỏ nằm trong
-   cùng một hàng; chữ giải thích dài chuyển vào title (rê chuột vào ô/nút). #}
-<details class="panel fold" data-fold="facebook" open>
-  <summary class="phead">
-    <h2>📘 Đăng Facebook — Page MimiAudio</h2>
-    <span class="sub">{{ 'bản cắt ngắn (tiktok.mp4)' if fb.ban == 'ngan' else 'bản full (facebook.mp4)' }} ·
-      khung 09:00 / 19:00 còn trống ·
-      {% if fb.rows %}{{ fb.rows|length }} tập chưa đăng{% else %}không có tập chờ đăng{% endif %}</span>
-  </summary>
-  <div class="foldbody">
+<div class="panel">
+  <div class="phead"><h2>📘 Đăng Facebook — Page MimiAudio</h2></div>
 
-  <div class="hang">
   {# Ô tự động: form RIÊNG chỉ chứa mỗi ô này, nên server suy được "vắng mặt = bỏ
      tick" (giống ô ⏻ của hàng đợi). #}
   <form method="post" action="/dangfacebook/tudong"
         hx-post="/dangfacebook/tudong" hx-target="#luunote-fbauto" hx-swap="innerHTML">
     <div class="chks">
-      <label class="chk" title="Chạy song song với đăng YouTube và không giữ hàng đợi chính: dựng xong tập nào là xếp lịch Page tập đó rồi làm tiếp tập sau ngay. Bật/tắt lúc nào cũng được, kể cả giữa mẻ đang chạy — tập kế tiếp theo ngay.">
+      <label class="chk">
         <input type="checkbox" name="on" value="1" {{ 'checked' if fb.auto }}
                onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
         📘 Dựng xong video thì TỰ lên lịch đăng Page
@@ -50,49 +40,72 @@
   <form method="post" action="/dangfacebook/ban"
         hx-post="/dangfacebook/ban" hx-target="#fbblock" hx-swap="outerHTML">
     <div class="chks">
-        <span class="lbl">🎞 Bản đăng:</span>
-        <label class="chk" title="Video dọc trọn tập (facebook.mp4, audio đầy đủ).">
+      <div class="row">
+        <span class="lbl">🎞 Bản đăng lên Page:</span>
+        <label class="chk">
           <input type="radio" name="ban" value="full" {{ 'checked' if fb.ban != 'ngan' }}
                  onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
-          Bản full
+          Bản full (trọn tập — <code>facebook.mp4</code>)
         </label>
-        <label class="chk" title="Chính video TikTok của tập (tiktok.mp4 — cắt theo % ở khối Video TikTok, có nhạc nền), tiêu đề bài mở đầu “Full ở …” như TikTok để trỏ về bản đầy đủ trên YouTube. Tập chưa dựng TikTok thì bị bỏ qua có báo — không lặng lẽ đăng bản full thay.">
+        <label class="chk">
           <input type="radio" name="ban" value="ngan" {{ 'checked' if fb.ban == 'ngan' }}
                  onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
-          Bản cắt ngắn giống TikTok
+          Bản cắt ngắn giống TikTok (<code>tiktok.mp4</code>)
         </label>
         <span id="luunote-fbban" class="luunote">
           {%- if fb.note and fb.note_top %}<span class="savenote">{{ fb.note }}</span>{% endif -%}
         </span>
+      </div>
     </div>
     <noscript><button class="ghost small">Lưu</button></noscript>
   </form>
-  </div>
 
-<form method="post" action="/dangfacebook/chay">
+  <p class="hint">Chạy <b>song song</b> với đăng YouTube và không giữ hàng đợi
+     chính: dựng xong tập nào là xếp lịch Page tập đó rồi làm tiếp tập sau ngay,
+     y như đăng YouTube. Bật/tắt lúc nào cũng được, kể cả giữa mẻ đang chạy —
+     tập kế tiếp theo ngay.
+     {% if fb.ban == 'ngan' -%}
+     <b>Bản cắt ngắn</b> là chính video TikTok của tập (cắt theo % ở khối Video
+     TikTok, có nhạc nền), tiêu đề bài mở đầu “Full ở …” như TikTok để trỏ về bản
+     đầy đủ trên YouTube. Tập <b>chưa dựng TikTok</b> thì bị bỏ qua có báo — không
+     lặng lẽ đăng bản full thay.
+     {%- else -%}
+     <b>Bản full</b> là video dọc trọn tập (audio đầy đủ). Chọn <b>bản cắt ngắn</b>
+     nếu muốn Page chỉ đăng bài mồi như TikTok rồi dẫn về YouTube.
+     {%- endif %}</p>
+</div>
+
+<form class="panel" method="post" action="/dangfacebook/chay">
+  <p class="hint">Xếp vào các khung <b>09:00 / 19:00 hằng ngày còn TRỐNG</b>, tính
+     từ bây giờ. Ngày nào trên Page đã có bài chờ thì bỏ qua ngày đó, ngày nào
+     trống thì lấp vào — xoá bớt bài đã lên lịch là lần xếp sau lấp lại đúng chỗ
+     ấy. Video lấy trong thư mục mỗi tập
+     ({% if fb.ban == 'ngan' %}<b>bản cắt ngắn</b> — <code>tiktok.mp4</code>, hoặc tên
+     tiêu đề TikTok sau khi đã đăng YouTube{% else %}<b>bản full</b> —
+     <code>facebook….mp4</code>{% endif %}), tiêu đề + mô tả lấy từ SEO của tập.</p>
+
   {% if fb.cooldown %}
-    <p class="warn" title="Lượt chạy trước đã dùng tới 75% hạn mức Graph API nên script tự nghỉ cho khỏi bị Meta chặn. Bấm nút lúc này chỉ nhận lại đúng dòng báo này.">⏸
-       Đang tạm ngưng gọi Facebook tới <b>{{ fb.cooldown }}</b> (gần hết hạn mức Graph API).</p>
+    <p class="warn">⏸ Đang tạm ngưng gọi Facebook tới <b>{{ fb.cooldown }}</b> —
+       lượt chạy trước đã dùng tới 75% hạn mức Graph API nên script tự nghỉ cho
+       khỏi bị Meta chặn. Bấm nút lúc này chỉ nhận lại đúng dòng báo trên.</p>
   {% endif %}
 
   {% if not fb.scanned %}
     <p class="warn">Sổ đã đăng đang trống — bấm <b>🔄 Cập nhật lịch Page</b> một
        lần để ghi nhận các tập đã lên Page từ trước.</p>
-  {% endif %}
-  {% if not fb.slots_at %}
-    <p class="warn" title="Bài đã bị xoá trên Facebook vẫn bị tính cho tới khi đọc lại lịch.">Chưa
-       đọc lịch Page lần nào — giờ dự kiến chỉ <b>nối sau bài xa nhất đã biết</b>.
-       Bấm <b>🔄 Cập nhật lịch Page</b> để lấp vào các khung còn trống.</p>
+  {% else %}
+    <p class="hint">Sổ local ghi <b>{{ fb.on_page }}</b> tập đã đăng{% if fb.fetched %} ·
+       đối chiếu Page lần cuối {{ fb.fetched[11:16] }} ngày
+       {{ fb.fetched[8:10] }}/{{ fb.fetched[5:7] }}{% endif %}.</p>
   {% endif %}
 
-  {# Trái: lịch ĐANG CHỜ trên Page, đọc ở lần bấm 🔄 (hoặc lần đăng) gần nhất — chính
-     là bảng quyết định khung nào còn trống. Phải: các tập chưa đăng + giờ dự kiến. #}
-  <div class="foldsplit">
+  {# Lịch ĐANG CHỜ trên Page, đọc ở lần bấm 🔄 (hoặc lần đăng) gần nhất — chính là
+     bảng quyết định khung nào còn trống cho các tập bên dưới. #}
   {% if fb.slots_at %}
-    <div class="foldside">
-    <p class="hint" title="Bấm 🔄 để đọc lại — Facebook có gì thì bảng này có nấy: bài bị xoá biến mất, bài dời giờ nhảy sang giờ mới.">📅
-       <b>Lịch đang chờ trên Page</b> · đọc lúc
-       {{ fb.slots_at[11:16] }} ngày {{ fb.slots_at[8:10] }}/{{ fb.slots_at[5:7] }}</p>
+    <p class="hint">📅 <b>Lịch đang chờ trên Page</b> — đọc lúc
+       {{ fb.slots_at[11:16] }} ngày {{ fb.slots_at[8:10] }}/{{ fb.slots_at[5:7] }}.
+       Bấm 🔄 để đọc lại (Facebook có gì thì bảng này có nấy: bài bị xoá biến mất,
+       bài dời giờ nhảy sang giờ mới).</p>
     <div class="tablewrap">
       <table class="grid">
         <thead><tr><th>Giờ đã có bài</th><th>Tập</th></tr></thead>
@@ -101,20 +114,19 @@
             <tr><td><b>{{ s.when }}</b></td>
                 <td class="epcell">{{ s.ep or '—' }}</td></tr>
           {% else %}
-            <tr><td colspan="2">Mọi khung đều trống.</td></tr>
+            <tr><td colspan="2">Không còn bài nào chờ đăng — mọi khung đều trống.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-    </div>
+  {% else %}
+    <p class="warn">Chưa đọc lịch Page lần nào nên giờ dự kiến bên dưới chỉ
+       <b>nối tiếp sau bài xa nhất đã biết</b> — bài đã bị xoá trên Facebook vẫn
+       bị tính. Bấm <b>🔄 Cập nhật lịch Page</b> để lấy lịch thật rồi lấp vào các
+       khung còn trống.</p>
   {% endif %}
 
-  <div class="foldmain">
   {% if fb.rows %}
-    <p class="hint" title="Ngày dự kiến tính bằng đúng phép tính lúc chạy thật — {% if fb.filled %}lấp vào các khung 9h/19h còn trống theo bảng lịch{% else %}nối sau bài xa nhất đã biết (chưa đọc được lịch Page){% endif %}; lúc bấm chạy script đọc lại lịch Page một lần rồi chốt (tick bớt tập thì các tập sau dồn lên khung trống). Tiêu đề hiện đúng như bài sẽ đăng — tiêu đề YouTube kèm hashtag của mô tả trên cùng một dòng. Video lấy trong thư mục mỗi tập, tiêu đề + mô tả lấy từ SEO của tập.">📋
-       <b>{{ fb.rows|length }} tập chưa đăng</b> · không tick ô nào = làm tất cả{% if fb.scanned %} ·
-       sổ ghi {{ fb.on_page }} tập đã đăng{% if fb.fetched %}, đối chiếu Page
-       {{ fb.fetched[11:16] }} ngày {{ fb.fetched[8:10] }}/{{ fb.fetched[5:7] }}{% endif %}{% endif %}</p>
     <div class="tablewrap">
       <table class="grid">
         <thead><tr><th></th><th>Tập</th><th>Ngày dự kiến đăng</th><th>Tiêu đề bài đăng</th>
@@ -134,19 +146,25 @@
         </tbody>
       </table>
     </div>
+    <p class="hint">{{ fb.rows|length }} tập chưa đăng. Không tick ô nào = làm tất cả.
+       Ngày dự kiến tính bằng đúng phép tính lúc chạy thật —
+       {% if fb.filled %}lấp vào các khung 9h/19h còn trống theo bảng lịch trên{%
+       else %}nối sau bài xa nhất đã biết (chưa đọc được lịch Page){% endif %};
+       lúc bấm chạy script đọc lại lịch Page một lần rồi chốt (tick bớt tập thì
+       các tập sau dồn lên khung trống).
+       Tiêu đề hiện đúng như bài sẽ đăng — tiêu đề YouTube kèm hashtag của mô tả
+       trên cùng một dòng.</p>
   {% else %}
     <p class="hint">Không có tập nào chờ đăng Page (đã lên hết, hoặc chưa dựng
-       {% if fb.ban == 'ngan' %}video TikTok{% else %}video dọc{% endif %}){% if fb.scanned %} ·
-       sổ ghi {{ fb.on_page }} tập đã đăng{% endif %}.</p>
+       {% if fb.ban == 'ngan' %}video TikTok{% else %}video dọc{% endif %}).</p>
   {% endif %}
 
   {% if fb.missing %}
-    <p class="hint">{% if fb.ban == 'ngan' %}Chưa có bản TikTok nên bỏ qua:
-       {{ fb.missing|join(', ') }} — bật “Tạo video TikTok” rồi dựng lại, hoặc chọn bản
-       full.{% else %}Chưa có video dọc nên bỏ qua: {{ fb.missing|join(', ') }}.{% endif %}</p>
+    <p class="hint">{% if fb.ban == 'ngan' %}Chưa có bản TikTok (<code>tiktok.mp4</code>)
+       nên bỏ qua: {{ fb.missing|join(', ') }} — bật “Tạo video TikTok” rồi dựng lại,
+       hoặc chọn bản full ở trên.{% else %}Chưa có video dọc nên bỏ qua:
+       {{ fb.missing|join(', ') }}.{% endif %}</p>
   {% endif %}
-  </div>
-  </div>
 
   {# hx-post: xếp việc tại chỗ, KHÔNG tải lại trang — server trả về CHÍNH khối này
      đã vẽ lại (kèm mẩu trả lời cạnh nút), nên vòng tự làm mới 6s cũng khởi động
@@ -154,21 +172,25 @@
      formaction là đường lui khi trình duyệt tắt JS. #}
   <div class="actions">
     <button class="primary" formaction="/dangfacebook/chay"
-            hx-post="/dangfacebook/chay" hx-target="#fbblock" hx-swap="outerHTML"
-            title="Xếp vào các khung 09:00 / 19:00 hằng ngày còn TRỐNG, tính từ bây giờ: ngày nào trên Page đã có bài chờ thì bỏ qua, ngày trống thì lấp vào. Facebook chỉ nhận lịch trong ~75 ngày tới — tập vượt hạn tự để lại lần sau.">📘 Đăng các tập chưa đăng</button>
+            hx-post="/dangfacebook/chay" hx-target="#fbblock" hx-swap="outerHTML">📘 Đăng các tập chưa đăng</button>
     <button formaction="/dangfacebook/xemtruoc"
-            hx-post="/dangfacebook/xemtruoc" hx-target="#fbblock" hx-swap="outerHTML"
-            title="Soát kế hoạch ở khối Hàng đợi trước khi đăng — không đăng gì.">🔍 Xem kế hoạch (không đăng)</button>
+            hx-post="/dangfacebook/xemtruoc" hx-target="#fbblock" hx-swap="outerHTML">🔍 Xem kế hoạch (không đăng)</button>
     <button formaction="/dangfacebook/quet" formnovalidate
-            hx-post="/dangfacebook/quet" hx-target="#fbblock" hx-swap="outerHTML"
-            title="Hỏi lại Facebook: bài nào đã đăng, bài nào đang chờ lịch, từng bài script đã xếp còn sống không. Bài đã bị xoá trên Facebook được gạch khỏi sổ (tập đó quay lại danh sách chờ, khung giờ ấy thành trống), bài bị dời giờ thì sổ theo giờ mới. Bấm sau khi tự tay xoá/đổi lịch bài trên Page, hoặc khi có bài đăng tay ngoài script. “Đã đăng hay chưa” ghi ở sổ local (FACEBOOK/da_dang.json + facebook_upload.json trong thư mục tập) nên mở trang không tốn lượt gọi API nào.">🔄 Cập nhật lịch Page</button>
+            hx-post="/dangfacebook/quet" hx-target="#fbblock" hx-swap="outerHTML">🔄 Cập nhật lịch Page</button>
     <span id="luunote-facebook" class="luunote">
       {%- if fb.note and not fb.note_top %}<span class="savenote">{{ fb.note }}</span>{% endif -%}
     </span>
   </div>
+  <p class="hint"><b>🔄 Cập nhật lịch Page</b> hỏi lại Facebook ba việc: bài nào
+     đã đăng, bài nào đang chờ lịch, và từng bài script đã xếp còn sống không.
+     Bài đã bị xoá trên Facebook được gạch khỏi sổ (tập đó quay lại danh sách chờ
+     và khung giờ ấy thành trống), bài bị dời giờ thì sổ theo giờ mới. Bấm nút này
+     sau khi tự tay xoá/đổi lịch bài trên Page, hoặc khi có bài đăng tay ngoài script.
+     Nên bấm 🔍 trước khi đăng để soát kế hoạch ở khối Hàng đợi.
+     “Đã đăng hay chưa” ghi ở <b>sổ local</b> (<code>FACEBOOK/da_dang.json</code> +
+     dấu <code>facebook_upload.json</code> trong thư mục tập) nên mở trang không
+     tốn lượt gọi API nào.
+     Facebook chỉ nhận lịch trong ~75 ngày tới — tập vượt hạn tự để lại lần sau.</p>
 </form>
-
-  </div>
-</details>
 
 </div>

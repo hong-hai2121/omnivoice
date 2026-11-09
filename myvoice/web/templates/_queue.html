@@ -37,19 +37,7 @@
   {% endif %}
 </form>
 
-{# ⛔ DỪNG VÌ LỖI GPU (05/11/2026): một bước báo lỗi GPU thì cả hàng đợi tạm dừng thay vì
-   chạy tiếp các tập sau (chúng cũng hỏng y hệt). Phải nêu RÕ lý do + cách chạy lại ngay
-   tại đây, tô nổi — không thì chỉ thấy "tạm dừng" mà không biết vì sao. #}
-{% if q.halt %}
-  <div class="warn halt">
-    <b>⛔ Hàng đợi DỪNG VÌ LỖI GPU</b> lúc {{ q.halt.at }} — ở “{{ q.halt.title }}”, bước “{{ q.halt.step }}”.
-    <div class="haltwhy">{{ q.halt.reason }}</div>
-    <div>Cách chạy lại: khởi động lại máy nếu driver card màn hình vừa treo (hoặc đóng app
-      đang chiếm VRAM) → bấm “▶ Tiếp”{% if q.pending %} để chạy {{ q.pending|length }} việc còn chờ{% endif %}
-      → tập vừa lỗi thì bấm ⏩ Chạy tiếp để làm lại (đoạn giọng đã sinh được dùng lại).
-      Toàn bộ diễn biến: <a href="/nhatky">📜 Nhật ký</a>.</div>
-  </div>
-{% elif q.paused %}<p class="warn">⏸ Hàng đợi đang tạm dừng — bấm “▶ Tiếp” để chạy tiếp.</p>{% endif %}
+{% if q.paused %}<p class="warn">⏸ Hàng đợi đang tạm dừng — bấm “▶ Tiếp” để chạy tiếp.</p>{% endif %}
 
 {% if q.current %}
   <div class="job">

@@ -21,8 +21,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 from typing import Callable
 
 CREATE_NO_WINDOW = 0x08000000
@@ -38,115 +37,6 @@ try:        # console Windows thường là cp1252 → emoji/tiếng Việt sẽ
 except Exception:
     pass
 
-# ── Nhật ký RA TỆP (05/11/2026) ─────────────────────────────────────────────
-# Console chỉ nằm trong RAM: đêm 05/11/2026 mẻ 6 tập hỏng vì driver card màn hình treo,
-# ô ⏻ tắt máy, sáng ra không còn dòng nào để biết lý do. Từ đó mọi dòng log() còn được
-# chép ra <thư mục>/hangdoi_YYYY-MM-DD.log (mỗi ngày một tệp, mỗi dòng kèm giờ), xả ra
-# đĩa theo TỪNG DÒNG để `shutdown /s /f` không nuốt mất phần cuối — phần cần đọc nhất.
-#
-# MẶC ĐỊNH TẮT: chỉ server THẬT bật (main() của web/server.py gọi bat_nhat_ky_tep) —
-# import module này trong test hay script lẻ thì không sinh tệp nào. myvideo dùng chung
-# JobRunner nên server của nó bật riêng với thư mục của nó, hai app không ghi lẫn nhau.
-NHATKY_GIU_NGAY = 14            # tệp cũ hơn ngần này ngày thì xoá lúc mở tệp của ngày mới
-_TEP_NHATKY = re.compile(r"hangdoi_(\d{4}-\d{2}-\d{2})\.log")
-_tep: dict = {"dir": None, "ngay": "", "f": None, "nghi_toi": 0.0}
-# Đầu dòng của các MỐC CHÍNH (việc bắt đầu/xong/lỗi, bước, tắt máy…) — trang 📜 Nhật ký
-# mặc định chỉ hiện các dòng này; hàng nghìn dòng "[12/703] 'câu…'" thì ẩn.
-_MOC_NHATKY = ("▶", "➕", "✅", "❌", "⛔", "⚠", "⏹", "⏭", "⏸", "⏻", "🌙", "☀", "✖", "🌐",
-               "──", "📂", "🎧", "📢", "Lỗi")
-
-
-def bat_nhat_ky_tep(thu_muc) -> None:
-    """Bật chép nhật ký ra tệp trong `thu_muc` (None = tắt). Gọi lúc server khởi động."""
-    with _print_lock:
-        _dong_tep()
-        _tep.update(dir=Path(thu_muc) if thu_muc else None, nghi_toi=0.0)
-
-
-def thu_muc_nhat_ky() -> Path | None:
-    """Thư mục đang chép nhật ký ra (None = chưa bật)."""
-    return _tep["dir"]
-
-
-def _dong_tep() -> None:
-    f = _tep["f"]
-    _tep.update(f=None, ngay="")
-    if f is not None:
-        try:
-            f.close()
-        except Exception:
-            pass
-
-
-def _don_tep_cu(thu_muc: Path, hom_nay: datetime) -> None:
-    """Xoá tệp nhật ký cũ hơn NHATKY_GIU_NGAY ngày (tính theo ngày trong TÊN tệp)."""
-    moc = (hom_nay - timedelta(days=NHATKY_GIU_NGAY)).strftime("%Y-%m-%d")
-    for p in thu_muc.glob("hangdoi_*.log"):
-        m = _TEP_NHATKY.fullmatch(p.name)
-        if m and m.group(1) < moc:
-            try:
-                p.unlink()
-            except OSError:
-                pass
-
-
-def _ghi_tep(line: str) -> None:
-    """Chép một dòng vào tệp của hôm nay — gọi TRONG _print_lock.
-
-    Hỏng (đĩa đầy, thư mục bị khoá…) thì bỏ qua: nhật ký không được làm hỏng việc đang
-    chạy. Nghỉ 60 giây rồi mới thử mở lại, khỏi vấp cùng một lỗi ở từng dòng."""
-    thu_muc = _tep["dir"]
-    if thu_muc is None:
-        return
-    now = datetime.now()
-    ngay = now.strftime("%Y-%m-%d")
-    try:
-        if _tep["f"] is None or _tep["ngay"] != ngay:
-            if time.monotonic() < _tep["nghi_toi"]:
-                return
-            _dong_tep()
-            thu_muc.mkdir(parents=True, exist_ok=True)
-            # buffering=1 = xả theo dòng: tắt máy đột ngột vẫn còn tới dòng cuối cùng.
-            _tep["f"] = open(thu_muc / f"hangdoi_{ngay}.log", "a", encoding="utf-8",
-                             buffering=1)
-            _tep["ngay"] = ngay
-            _don_tep_cu(thu_muc, now)
-        _tep["f"].write(f"{now:%H:%M:%S}  {line}\n")
-    except Exception:
-        _dong_tep()
-        _tep["nghi_toi"] = time.monotonic() + 60
-
-
-def cac_ngay_nhat_ky() -> list[str]:
-    """Các ngày đang có tệp nhật ký (YYYY-MM-DD), mới nhất trước."""
-    thu_muc = _tep["dir"]
-    if thu_muc is None or not thu_muc.is_dir():
-        return []
-    ngay = [m.group(1) for p in thu_muc.glob("hangdoi_*.log")
-            if (m := _TEP_NHATKY.fullmatch(p.name))]
-    return sorted(ngay, reverse=True)
-
-
-def doc_nhat_ky(ngay: str = "", chi_moc: bool = False,
-                toi_da: int = 3000) -> tuple[str, list[str], int]:
-    """Đọc tệp nhật ký của `ngay` (rỗng/không có = ngày mới nhất).
-
-    chi_moc=True: chỉ các MỐC CHÍNH (_MOC_NHATKY). Trả (ngày đã đọc, tối đa `toi_da`
-    dòng CUỐI, tổng số dòng khớp) — ("", [], 0) nếu chưa có tệp nào."""
-    cac_ngay = cac_ngay_nhat_ky()
-    if not cac_ngay:
-        return "", [], 0
-    if ngay not in cac_ngay:
-        ngay = cac_ngay[0]
-    try:
-        lines = (_tep["dir"] / f"hangdoi_{ngay}.log").read_text(
-            encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return ngay, [], 0
-    if chi_moc:      # mỗi dòng: "HH:MM:SS  nội dung" → nội dung bắt đầu ở cột 10
-        lines = [ln for ln in lines if ln[10:].lstrip().startswith(_MOC_NHATKY)]
-    return ngay, lines[-toi_da:], len(lines)
-
 
 # Lượt bấm AJAX (03/10/2026): middleware của server đặt một list vào đây trong lúc xử
 # lý request; mọi dòng log() của CHÍNH request đó được chép thêm vào list để trả về
@@ -161,14 +51,11 @@ def log(text: str) -> None:
     if got is not None:
         got.extend(line for line in str(text).splitlines() if line.strip())
     with _print_lock:                       # nhiều luồng cùng in → khỏi lẫn dòng
-        co_console = True
         for line in str(text).splitlines() or [""]:
-            _ghi_tep(line)                  # ra tệp TRƯỚC: không có console vẫn phải ghi
-            if co_console:
-                try:
-                    print(line, flush=True)
-                except Exception:           # không có console (pythonw) → thôi in
-                    co_console = False
+            try:
+                print(line, flush=True)
+            except Exception:               # không có console (pythonw) → bỏ qua
+                return
 
 
 class LogTail:
@@ -256,11 +143,6 @@ class Step:
     # (17/10/2026: một việc ⏩ = một ĐỢT gồm nhiều tập, mỗi tập một bước — tập hỏng
     # không được kéo cả đợt dừng theo). Không gọi on_success cho bước hỏng.
     continue_on_fail: bool = False
-    # Mã thoát nghĩa là "lỗi mà việc SAU cũng sẽ dính" (05/11/2026: lỗi GPU — runner trả
-    # gpu_batbuoc.MA_THOAT_GPU). Việc này hỏng VÀ cả hàng đợi TẠM DỪNG, kể cả khi bước
-    # mang continue_on_fail: đêm 05/11/2026 driver card treo, đợt 6 tập cứ chạy tiếp và
-    # hỏng y hệt 5 lần. Xem JobRunner._dung_vi_loi.
-    halt_codes: tuple[int, ...] = ()
     # Gọi sau khi bước này CHẠY XONG KHÔNG LỖI. Dùng để nối việc sang hàng đợi khác
     # (dựng video xong → xếp việc đăng YouTube vào upload_runner) mà không bắt hàng
     # đợi chính đứng chờ. Lỗi trong callback không được làm hỏng công việc.
@@ -311,11 +193,6 @@ class JobRunner:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._paused = False
-        # Dừng VÌ LỖI (05/11/2026): một bước trả mã trong Step.halt_codes → _paused bật
-        # kèm lý do ở đây ({at, title, step, reason}); None = không dừng vì lỗi.
-        # "▶ Tiếp" và "⏹ Dừng hết" xoá.
-        self._halt: dict | None = None
-        self._step_tail: deque[str] = deque(maxlen=20)   # vài dòng cuối của bước đang chạy
         self._skip_current = False
         self._ids = itertools.count(1)
         # Vòng đệm nhật ký RIÊNG của hàng đợi này (có thể không có). Mọi dòng của
@@ -359,14 +236,8 @@ class JobRunner:
 
     def resume(self) -> None:
         self._paused = False
-        self._halt = None           # người dùng đã xem lý do và cho chạy tiếp
         self.note("▶ Chạy tiếp hàng đợi.")
         self._wake.set()
-
-    def halted(self) -> dict | None:
-        """Lý do hàng đợi đang DỪNG VÌ LỖI ({at, title, step, reason}); None = không."""
-        with self._lock:
-            return dict(self._halt) if self._halt else None
 
     def skip_current(self) -> None:
         """Bỏ việc đang chạy (kill tiến trình con), hàng đợi vẫn chạy tiếp."""
@@ -388,7 +259,6 @@ class JobRunner:
                 self._history.appendleft(job)
             self._pending.clear()
             proc, cur = self._proc, self._current
-            self._halt = None
         self._paused = False
         if cur is not None:
             self._skip_current = True
@@ -410,8 +280,6 @@ class JobRunner:
         with self._lock:
             return {
                 "paused": self._paused,
-                # Dừng VÌ LỖI: {at, title, step, reason} để trang web nêu rõ lý do; None = không.
-                "halt": dict(self._halt) if self._halt else None,
                 "current": self._current.as_dict() if self._current else None,
                 "pending": [j.as_dict() for j in self._pending],
                 "history": [j.as_dict() for j in list(self._history)[:12]],
@@ -424,17 +292,10 @@ class JobRunner:
 
     def heavy_busy(self) -> bool:
         """busy() nhưng BỎ QUA các việc `light` — nguồn sự thật cho ô ⏻
-        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt tắt máy.
-
-        Hàng đợi đang DỪNG VÌ LỖI (halted) thì việc còn CHỜ cũng không tính: chúng không
-        tự chạy được nữa cho tới khi có người bấm “▶ Tiếp”. Nhờ vậy ô ⏻/🌙 vẫn tắt/ngủ
-        đúng như đã tick thay vì để máy thức cả đêm với card đã hỏng (lý do dừng nằm
-        trong tệp nhật ký — xem bat_nhat_ky_tep)."""
+        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt tắt máy."""
         with self._lock:
             if self._current is not None and not self._current.light:
                 return True
-            if self._halt:
-                return False
             return any(not j.light for j in self._pending)
 
     # ── Worker ──────────────────────────────────────────────────────────────
@@ -482,13 +343,6 @@ class JobRunner:
                 job.status = "stopped"
                 job.message = f"Đã dừng ở bước “{step.label}”."
                 return
-            if code in step.halt_codes:
-                # Xét TRƯỚC continue_on_fail: lỗi kiểu này thì tập sau trong đợt cũng dính.
-                job.status = "failed"
-                job.message = (f"Bước “{step.label}” lỗi (mã {code}) — việc sau cũng sẽ dính "
-                               "nên hàng đợi TẠM DỪNG; lý do nêu ở đầu khối hàng đợi.")
-                self._dung_vi_loi(job, step, code)
-                return
             if code in step.continue_codes:
                 self.note(f"⚠️ {job.title}: “{step.label}” chưa xong (mã {code}) — "
                           "vẫn chạy tiếp bước sau.")
@@ -528,28 +382,7 @@ class JobRunner:
             job.message = "Hoàn tất."
             self.note(f"✅ {job.title} — xong.")
 
-    def _dung_vi_loi(self, job: Job, step: Step, code: int) -> None:
-        """Một bước trả mã trong halt_codes → tạm dừng cả hàng đợi, GIỮ NGUYÊN việc còn chờ.
-
-        Lý do = dòng ⛔/❌ cuối cùng bước đó in ra (runner in “⛔ LỖI GPU … → dừng cả hàng
-        đợi: …” ngay trước khi thoát). Nó hiện ở đầu khối hàng đợi trên trang web
-        (state()["halt"]) tới khi người dùng bấm “▶ Tiếp” (sửa xong, chạy tiếp việc còn
-        chờ) hoặc “⏹ Dừng hết”."""
-        ly_do = next((ln.strip() for ln in reversed(self._step_tail)
-                      if ln.strip().startswith(("⛔", "❌"))), "")
-        with self._lock:
-            cho = len(self._pending)
-            self._paused = True
-            self._halt = {"at": datetime.now().strftime("%H:%M:%S"), "title": job.title,
-                          "step": step.label,
-                          "reason": ly_do or f"mã thoát {code} — xem nhật ký"}
-        self.note(f"⛔ {job.title}: “{step.label}” lỗi (mã {code}) mà việc sau cũng sẽ dính → "
-                  f"TẠM DỪNG hàng đợi, giữ nguyên {cho} việc còn chờ. Sửa xong (lỗi GPU: "
-                  "khởi động lại máy nếu driver card treo, hoặc đóng app đang chiếm VRAM) "
-                  "rồi bấm “▶ Tiếp”.")
-
     def _run_step(self, step: Step) -> int:
-        self._step_tail.clear()
         try:
             proc = subprocess.Popen(
                 step.argv, cwd=step.cwd, env=step.env,
@@ -568,7 +401,6 @@ class JobRunner:
             for line in proc.stdout:                     # type: ignore[union-attr]
                 line = line.rstrip("\r\n")
                 if line.strip():
-                    self._step_tail.append(line)
                     self.note(line)
             return proc.wait()
         finally:

@@ -53,9 +53,7 @@ PIPE_DEFAULTS = gui.PIPE_DEFAULTS
 # cho gọn. (save_opt_settings của GUI nay GIỮ lại khoá không nêu khi lưu, nên
 # khoá chỉ-web như tiktok_music_loop vẫn nằm chung taogiong_options.json được.)
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
-# 04/11/2026: mode mặc định "vieneu" (giọng dựng sẵn VieNeu-TTS, user chốt) — cùng
-# OPTS_DEFAULTS của GUI; vieneu_voice = 1 trong gui.vn.GIONG_DUNG_SAN.
-WEB_DEFAULTS = dict(mode="vieneu", vieneu_voice="Ngọc Huyền", voice="", instruct="", input="", output="",
+WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
                     # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
                     # ảnh nền mặc định, và có làm thêm bản dọc không.
@@ -70,10 +68,7 @@ WEB_DEFAULTS = dict(mode="vieneu", vieneu_voice="Ngọc Huyền", voice="", inst
                     # Bản video đăng lên Page (15/09/2026): "full" = facebook.mp4
                     # trọn tập (nếp cũ) · "ngan" = tiktok.mp4 cắt ngắn giống TikTok.
                     # Áp cho CẢ tự động lẫn nút 📘 đăng tay — script đọc lúc chạy.
-                    fb_ban="full",
-                    # ⏻/🌙 "xong hết thì tắt máy / cho máy ngủ" của trang web — lựa chọn
-                    # lần trước ("" / "shutdown" / "sleep"), power.py ghi/đọc (08/11/2026).
-                    power_mode="")
+                    fb_ban="full")
 
 # ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
 SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
@@ -451,12 +446,6 @@ def list_voices() -> list[dict]:
 
 def list_voice_names() -> list[str]:
     return [r["name"] for r in list_voices()]
-
-
-def giong_vieneu_hop_le(ten) -> str:
-    """Tên giọng dựng sẵn VieNeu hợp lệ: không có / lạ → mặc định (Ngọc Huyền)."""
-    ten = str(ten or "").strip()
-    return ten if ten in gui.vn.GIONG_DUNG_SAN else WEB_DEFAULTS["vieneu_voice"]
 
 
 def toggle_voice_favorite(name: str) -> bool:
@@ -1425,13 +1414,7 @@ def tts_settings() -> tuple[dict | None, str]:
     web = load_web_settings()
 
     mode = web.get("mode", "clone")
-    if mode == gui.MODE_VIENEU:
-        # 04/11/2026: giọng dựng sẵn VieNeu (worker SDK, xem gui.nap_engine); tên giọng là voice_param.
-        if not gui.vn.trang_thai()["da_cai"]:
-            return None, ("VieNeu-TTS chưa cài (voice/VieNeu-TTS/.venv) — mở app Thử giọng → tab 🗣️ → "
-                          "⬇ Cài GPU, hoặc chọn chế độ 🎙 Clone.")
-        voice_param = giong_vieneu_hop_le(web.get("vieneu_voice"))
-    elif mode == "clone":
+    if mode == "clone":
         voice = (web.get("voice") or "").strip()
         available = list_voice_names()
         if voice not in available:
@@ -1470,9 +1453,6 @@ def tts_settings() -> tuple[dict | None, str]:
         # tiếng gốc lúc dựng, phóng to % rồi cắt giữa; tắt = ghép clip videongang/.
         ngang_tu_nguon=bool(opts.get("ngang_tu_nguon")),
         ngang_nguon_zoom=_i(opts.get("ngang_nguon_zoom"), 120, 100, 200),
-        # ✂ Che chữ Trung cháy sẵn (08/11/2026): bật = cắt mép + dải đen / dải dọc 852;
-        # mặc định TẮT = giữ nguyên khung hình gốc 1:1.
-        che_chu_trung=bool(opts.get("che_chu_trung", False)),
         doc_from_ngang=bool(opts.get("doc_from_ngang")),
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),
@@ -1482,9 +1462,6 @@ def tts_settings() -> tuple[dict | None, str]:
         # YouTube Short ≤2:50 cắt từ chính video TikTok, đăng tự động sau bản chính
         # 1 giờ (xem scripts/video_short.py + YOUTUBE/dang_tap_youtube.upload_short).
         make_short=bool(opts.get("make_short")),
-        chuan_am=bool(opts.get("chuan_am", False)),     # 🔉 chuẩn âm — mặc định tắt (05/11/2026)
-        # 🔊 Âm lượng cơ bản (dB) cộng thẳng lên output.wav ở bước cuối — 0 = giữ nguyên (06/11/2026).
-        am_luong=gui.hu.parse_amluong(opts.get("am_luong_db"), gui.OPTS_DEFAULTS["am_luong_db"]),
         tiktok_speed=_f(opts.get("tiktok_speed"), 1.0, 0.5, 2.0),
         tiktok_percent=_i(opts.get("tiktok_percent"), 50, 1, 100),
         tiktok_no_effect=bool(opts.get("tiktok_no_effect")),

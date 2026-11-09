@@ -10,10 +10,6 @@ trên 127.0.0.1 — không có chế độ mở ra mạng LAN. Vẫn giữ một
 Nhật ký chạy in thẳng ra cửa sổ console của server. Riêng hàng đợi ĐĂNG có thêm
 vài dòng cuối ngay trong khối hàng đợi trên trang, và /api/nhatky-dang để GUI
 (tiến trình khác) chiếu sang ô Nhật ký của nó.
-
-Từ 05/11/2026 mọi dòng nhật ký còn được chép ra tệp web/nhatky/hangdoi_<ngày>.log
-(jobs.bat_nhat_ky_tep, bật trong main()) — console chỉ nằm trong RAM, mẻ chạy đêm xong
-ô ⏻ tắt máy là mất hết. Xem lại ở trang /nhatky (nút 📜 Nhật ký trên khối hàng đợi).
 """
 
 from __future__ import annotations
@@ -39,9 +35,8 @@ if __package__ in (None, ""):        # chạy thẳng file: python web/server.py
     __package__ = "myvoice.web"
 
 from . import core, gemini_test, gptcli_test, power, steps as steps_mod  # noqa: E402
-from .jobs import (NHATKY_GIU_NGAY, bat_nhat_ky_tep, cac_ngay_nhat_ky,  # noqa: E402
-                   capture as log_capture, doc_nhat_ky, fb_log, fb_runner,
-                   log, runner, thu_muc_nhat_ky, upload_log, upload_runner)
+from .jobs import (capture as log_capture, fb_log, fb_runner,  # noqa: E402
+                   log, runner, upload_log, upload_runner)
 
 WEB_DIR = core.WEB_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
@@ -63,21 +58,7 @@ def _token() -> str:
 
 TOKEN = _token()
 
-async def _tat_viec_khi_server_tat() -> None:
-    """Server tắt êm (Ctrl+C ở chế độ --console, uvicorn shutdown) → dừng cả ba hàng đợi: kill
-    CẢ CÂY việc đang chạy (jobs._terminate taskkill /T) để runner đang giữ OmniVoice / Whisper /
-    worker VieNeu trên VRAM không sống sót sau khi app tắt (user chốt 09/11/2026: tắt app = trả
-    VRAM). Launcher chay.py đóng server bằng TerminateProcess nên hook này KHÔNG chạy ở đó — bên
-    đó tự taskkill /T cả cây (chay._tat_cay); worker VieNeu còn tự canh cha (--parent-pid).
-    Việc dở vẫn được nối lại khi mở web lần sau (cờ pending trong manifest, không phải RAM)."""
-    for r in (runner, upload_runner, fb_runner):
-        try:
-            r.stop_all()
-        except Exception as e:  # noqa: BLE001 — đang tắt, không để một hàng đợi lỗi chặn hàng khác
-            log(f"⚠️ Không dừng được hàng đợi lúc tắt server: {e}")
-
-
-app = FastAPI(title="myvoice — bảng điều khiển", on_shutdown=[_tat_viec_khi_server_tat])
+app = FastAPI(title="myvoice — bảng điều khiển")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 
@@ -341,15 +322,10 @@ def _voice_ctx() -> dict:
     starred = next((v["name"] for v in voices if v["fav"]), "")
     opts = core.load_options()
     hu = core.gui.hu
-    vn = core.gui.vn
     return {
         "opts": opts, "web": web, "voices": voices,
         "current_voice": (saved if saved in names
                           else starred or (voices[0]["name"] if voices else "")),
-        # 04/11/2026: chế độ 🗣 VieNeu — 25 giọng dựng sẵn (danh sách tĩnh, worker bật lúc chạy).
-        "vieneu_voices": list(vn.GIONG_DUNG_SAN),
-        "current_vieneu_voice": core.giong_vieneu_hop_le(web.get("vieneu_voice")),
-        "vieneu_da_cai": vn.trang_thai()["da_cai"],
         "effects": core.list_effects(),
         # 🎚 Mẫu giọng cài sẵn (02/11/2026): bảng hu.MAU_GIONG (chung GUI + app Thử giọng)
         # → ô <select> điền tông + 4 bộ lọc; mau_hien_tai = mẫu khớp đúng số đang lưu.
@@ -369,7 +345,6 @@ def _voice_ctx() -> dict:
         "sub_fonts": _sub_fonts(),
         "input_txt": core.default_input_path(web.get("input") or ""),
         "output_wav": out_wav, "has_audio": Path(out_wav).exists(),
-        "nghethu": _nghethu_nhan(),       # 🎧 mẫu nghe thử đang lưu (rỗng = chưa có)
         "voice_dir": str(core.VOICE_DIR),
         "tiktok_episode": core.thumbnail_episode() + 1,
     }
@@ -450,9 +425,9 @@ def _save_pipe_from_form(form) -> dict:
     """Nhớ cài đặt quy trình mỗi lần bấm chạy — y như GUI (_save_pipe_settings).
 
     KHÔNG đụng hai khoá "shutdown"/"sleep": đó là ô ⏻/🌙 của GUI Tkinter (ghi ra
-    file này), còn ô ⏻/🌙 “xong hết thì tắt máy / cho máy ngủ” của trang web nhớ
-    riêng ở web_settings.json khoá power_mode (power.py, 08/11/2026) — ghi đè hai
-    khoá kia mỗi lần chạy là âm thầm tắt cài đặt ⏻/🌙 của GUI.
+    file), còn ô ⏻/🌙 “xong hết thì tắt máy / cho máy ngủ” của trang web chỉ nhớ
+    trong bộ nhớ server (power.py) chứ không ghi ra file — ghi đè mỗi lần chạy là
+    âm thầm tắt cài đặt ⏻/🌙 của GUI.
     """
     pipe = core.load_pipeline()
     if form.get("gemini_backend") in ("firefox", "extension", "cli"):
@@ -460,7 +435,6 @@ def _save_pipe_from_form(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
-    _nho_bili_quality(pipe, form)
     # KHÔNG đụng khoá "upload": ô tick đó nằm ở khối "Đăng YouTube", không có trên
     # form này. Checkbox vắng mặt bị hiểu là tắt → mỗi lần bấm chạy ở khối 1 sẽ âm
     # thầm tắt chế độ tự đăng.
@@ -479,16 +453,8 @@ def _save_model_speed(form) -> dict:
     for k in ("model", "speed"):
         if form.get(k):
             pipe[k] = str(form[k])
-    _nho_bili_quality(pipe, form)
     core.save_pipeline(pipe)
     return pipe
-
-
-def _nho_bili_quality(pipe: dict, form) -> None:
-    """Ô "Tải Bilibili" (mức video khi tải link Bilibili qua Bili23). Form không có ô
-    này (bản cũ còn mở, nút gửi thiếu ô) thì GIỮ giá trị đang lưu."""
-    if form.get("bili_quality"):
-        pipe["bili_quality"] = core.gui.chuan_bili_quality(form["bili_quality"])
 
 
 def _upload_ready() -> bool:
@@ -856,17 +822,15 @@ def kieusub_xemtruoc(kieu: str = "hopbo", font: str = "", mau: str = "",
 
 @app.get("/giongnoi/khungdoc-xemtruoc")
 def khungdoc_xemtruoc(mau: str = "tím", lam_moi: int = 0):
-    """Ảnh xem trước BỐ CỤC DỌC (scripts/video_doc_khung.py) theo màu logo: nền là khung
-    hình thật của tập gần nhất làm mờ + dải video giữa + logo + tiêu đề mẫu + dòng kêu
-    gọi. Dải video theo ô ✂ che_chu_trung đang lưu (852 che / 1080 không che — file cache
-    riêng). Vẽ một lần rồi cache ở static/khungdoc (vẽ lại khi code bố cục đổi); lam_moi=1 vẽ lại."""
+    """Ảnh xem trước KHUNG DỌC tạo sẵn (scripts/video_doc_khung.py) theo màu: nền hoa +
+    khung màu quanh dải video gốc + tiêu đề/số/ảnh mèo mẫu + một khung hình thật của
+    tập gần nhất. Vẽ một lần rồi cache ở static/khungdoc; lam_moi=1 vẽ lại."""
     try:
         import video_doc_khung as vdk
         if mau not in vdk.MAU:
             mau = "tím"
-        che = bool(core.load_options().get("che_chu_trung", False))
-        p = vdk.xem_truoc(mau, core.WEB_DIR / "static" / "khungdoc" / f"xt_{mau}{'_che' if che else ''}.jpg",
-                          force=bool(lam_moi), log=log, che=che)
+        p = vdk.xem_truoc(mau, core.WEB_DIR / "static" / "khungdoc" / f"xt_{mau}.jpg",
+                          force=bool(lam_moi), log=log)
     except Exception as e:
         log(f"⚠️ Không vẽ được xem trước khung dọc: {e}")
         p = None
@@ -887,60 +851,6 @@ def play_audio(file: str = ""):
     if not path.is_file():
         return JSONResponse({"error": "chưa có file"}, status_code=404)
     return FileResponse(str(path))
-
-
-def _nghethu_nhan() -> str:
-    """Dòng 'Mẫu: tập 164 · 31 s' cạnh nút 🎧 lúc mở trang (chỉ đọc mau_goc.json)."""
-    try:
-        import taogiong_nghethu as nt
-        return nt.nhan_mau(nt.doc_mau())
-    except Exception:
-        return ""
-
-
-@app.post("/giongnoi/nghethu")
-def voice_preview(pitch: str = Form(""), vang_truong_do: str = Form(""),
-                  vang_cuong_do: str = Form(""), thieu_nien: str = Form(""),
-                  sang_giong: str = Form(""), am_luong_db: str = Form(""),
-                  chuan_am: str = Form(""), mode: str = Form(""), voice: str = Form(""),
-                  vieneu_voice: str = Form(""), instruct: str = Form("")):
-    """🎧 Nghe thử (06/11/2026): áp tông + bộ lọc + chuẩn âm + âm lượng ĐANG HIỆN trên
-    form (chưa cần lưu, route này không ghi cài đặt) lên mẫu ~30 s giọng gốc của một
-    tập rồi trả đường phát. Mẫu + cách chọn tập: scripts/taogiong_nghethu.py.
-
-    `def` thường (không async) để FastAPI chạy ở luồng phụ — ffmpeg mất 1–3 giây."""
-    import taogiong_nghethu as nt
-    hu = core.gui.hu
-    fx = dict(vang_truong_do=vang_truong_do, vang_cuong_do=vang_cuong_do,
-              thieu_nien=thieu_nien, sang_giong=sang_giong)
-    try:
-        kq = nt.nghe_thu(pitch=pitch, fx=fx, am_luong=am_luong_db, chuan_am=bool(chuan_am), log=log)
-    except nt.ChuaCoMau as e:
-        return JSONResponse({"ok": False, "loi": str(e)})
-    except Exception as e:
-        log(f"⚠️ Nghe thử lỗi: {e}")
-        return JSONResponse({"ok": False, "loi": f"Không dựng được bản nghe thử: {e}"},
-                            status_code=500)
-    mau = kq["mau"]
-    ghi_chu = []
-    # Mẫu đọc bằng giọng khác giọng đang chọn trên form (chỉ biết với tập tạo từ 06/11/2026).
-    g = mau.get("giong") or {}
-    dang_chon = {"vieneu": vieneu_voice, "clone": voice, "design": instruct}.get(mode, "")
-    if g.get("che_do") and mode and (g.get("che_do") != mode
-                                     or str(g.get("giong") or "") != str(dang_chon or "")):
-        ghi_chu.append(f"Mẫu đọc bằng giọng “{nt.ten_giong(g) or g.get('che_do')}”, khác giọng "
-                       "đang chọn — tạo giọng tập đầu bằng giọng mới thì mẫu đổi theo.")
-    # Clone: mức Sáng giọng còn EQ giọng mẫu lúc SINH câu — phần đó mẫu giữ ở mức cũ.
-    sang = hu.parse_fx(sang_giong)
-    if g.get("che_do") == "clone" and sang != int(mau.get("sang_goc") or 0):
-        ghi_chu.append(f"Mẫu sinh lúc Sáng giọng {int(mau.get('sang_goc') or 0)}; bài thật ở mức "
-                       f"{sang} còn EQ cả giọng mẫu nên sẽ khác đôi chút.")
-    return JSONResponse({
-        "ok": True,
-        "url": "/giongnoi/nghe?file=" + quote(str(kq["file"])),
-        "mau": nt.nhan_mau(mau), "mo_ta": kq["mo_ta"], "ghi_chu": ghi_chu,
-        "van_ban": mau.get("van_ban", ""),
-    })
 
 
 @app.post("/giongnoi/yeuthich/{kind}")
@@ -1117,10 +1027,6 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     hết rồi mới tới GPU. Trước đây mỗi tập một việc trọn gói: tập đầu dựng video xong
     tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO).
 
-    08/11/2026: cách xếp TUỲ CÁCH DỊCH (ô gemini_backend). "extension" (cần màn hình
-    sáng) → bốn đợt như trên. "cli" (GPT CLI) hay "firefox" → TUẦN TỰ TỪNG TẬP: mỗi tập
-    một việc chạy trọn các bước còn thiếu rồi mới sang tập sau (_xep_tung_tap).
-
     17/10/2026: link/file đang nằm trong ô Nguồn được NẠP trước (core.register_sources
     — ghi manifest với số tập đã cấp, cờ pending) rồi xếp như mọi tập thiếu đủ bước.
     Trước đây ⏩ chỉ dò thư mục tập, vừa dán link mà bấm ⏩ thì báo "không còn bước
@@ -1244,81 +1150,25 @@ def _run_resume(request: Request, form) -> RedirectResponse:
             runner.enqueue(f"⏩ {ten} — {len(buoc)} tập", buoc, episodes=eps)
             queued += 1
 
-    def _xep_dong_bili23() -> None:
-        """Việc nhẹ "Đóng app Bili23 (nếu bộ tải tự mở)" (08/11/2026, user yêu cầu) — luôn
-        nằm SAU việc tải cuối cùng: việc cũ cùng tên còn chờ thì bỏ đi rồi xếp lại ở cuối
-        (bấm ⏩ thêm tập giữa mẻ không làm app đóng rồi phải mở lại). Script tự kiểm: chỉ đóng
-        đúng tiến trình bộ tải đã mở, còn task đang tải (myvideo/tay) thì để lượt sau."""
-        for j in runner.state()["pending"]:
-            if j["title"] == steps_mod.DONG_BILI23_TITLE:
-                runner.remove(j["id"])
-        runner.enqueue(steps_mod.DONG_BILI23_TITLE, [steps_mod.dong_bili23_step()], light=True)
-
     def _la_link(src: str) -> bool:
         return str(src or "").strip().lower().startswith(("http://", "https://"))
 
     def _ten(keys: list[str]) -> str:
         return " → ".join(steps_mod.SINGLE_STEPS.get(k, k) for k in keys)
 
-    def _xep_tung_tap() -> None:
-        """TUẦN TỰ TỪNG TẬP (08/11/2026, user yêu cầu): mỗi tập MỘT việc chạy trọn các bước
-        còn thiếu (tải → nhận diện → dịch → input → SEO → thumbnail → giọng + video) rồi mới
-        sang tập sau. Dùng khi dịch bằng GPT CLI (hay Firefox): không cần màn hình sáng nên
-        không có lý do gộp bước dịch của mọi tập lại; chạy trọn tập thì tập nào xong là xong
-        hẳn, máy sập giữa đêm cũng không mất cả mẻ dở dang. Một việc = một lần gọi runner
-        nên bước sau tự thấy kết quả bước trước, không cần --require."""
-        nonlocal queued, blocked
-        co_link = False                 # có tập ĐÃ XẾP mà phải tải link → cần đóng Bili23 ở cuối
-        for r, front, back in viec:
-            keys = list(front) + list(back)
-            tai = "recognize" in front and _la_link(r["source"])
-            if tai:
-                keys.insert(0, "tai")
-            step, err = steps_mod.resume_step(
-                keys, r["source"], r["episode"], upload=upload_on,
-                label=f"Tập {r['episode']} — {_ten(keys)}")
-            if err:
-                log(f"⛔ {err}")
-                blocked += 1
-                continue
-            runner.enqueue(f"⏩ Tập {r['episode']} · {_ten(keys)}", [step],
-                           episodes=[r["episode"]])
-            queued += 1
-            co_link = co_link or tai
-        if co_link:
-            _xep_dong_bili23()      # sau tập CUỐI — giữa các tập còn cần app
-
-    # Cách xếp tuỳ CÁCH DỊCH (08/11/2026): extension Chrome cần màn hình sáng trong lúc
-    # dịch → gom bước dịch của mọi tập vào một đợt (bốn đợt bên dưới) để chỉ phải sáng một
-    # lượt; GPT CLI / Firefox không cần màn hình → chạy tuần tự từng tập.
-    backend = core.load_pipeline().get("gemini_backend") or core.gui.PIPE_DEFAULTS["gemini_backend"]
-    if viec:
-        if backend == "extension":
-            log("🧭 Dịch bằng extension (cần màn hình sáng) → xếp 4 đợt: tải hết → nhận diện hết "
-                "→ dịch + SEO hết → thumbnail + giọng + video.")
-        else:
-            log(f"🧭 Dịch bằng {'GPT CLI' if backend == 'cli' else backend} (không cần màn hình) "
-                "→ chạy TUẦN TỰ từng tập: xong trọn các bước của tập này mới sang tập sau.")
-    if viec and backend != "extension":
-        _xep_tung_tap()
-    else:
-        tai_link = [(r, ["tai"], None, "Tải")
-                    for r, front, _ in viec if "recognize" in front and _la_link(r["source"])]
-        _xep_dot("đợt 1 · tải video/audio", tai_link)
-        _xep_dot("đợt 2 · nhận diện tiếng Trung", [
-            (r, ["recognize"], None, "Nhận diện")
-            for r, front, _ in viec if "recognize" in front])
-        if tai_link:
-            # Đóng Bili23 SAU đợt 2 chứ không phải đợt 1: link tải hỏng ở đợt 1 thì đợt 2
-            # tải lại (mở lại app) — đóng sau đợt 1 là app lại nằm nền tới sáng.
-            _xep_dong_bili23()
-        _xep_dot("đợt 3 · dịch → input.docx → SEO", [
-            (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
-            for r, front, _ in viec
-            if (rest := [k for k in front if k != "recognize"])])
-        _xep_dot("đợt 4 · thumbnail → giọng + video", [
-            (r, back, ["translate", "input"] if front else None, _ten(back))
-            for r, front, back in viec if back])
+    _xep_dot("đợt 1 · tải video/audio", [
+        (r, ["tai"], None, "Tải")
+        for r, front, _ in viec if "recognize" in front and _la_link(r["source"])])
+    _xep_dot("đợt 2 · nhận diện tiếng Trung", [
+        (r, ["recognize"], None, "Nhận diện")
+        for r, front, _ in viec if "recognize" in front])
+    _xep_dot("đợt 3 · dịch → input.docx → SEO", [
+        (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
+        for r, front, _ in viec
+        if (rest := [k for k in front if k != "recognize"])])
+    _xep_dot("đợt 4 · thumbnail → giọng + video", [
+        (r, back, ["translate", "input"] if front else None, _ten(back))
+        for r, front, back in viec if back])
     if not queued:
         if blocked:
             log("⚠️ Có tập còn thiếu bước nhưng chưa xếp chạy được — xem lý do ở trên.")
@@ -1819,30 +1669,6 @@ def partial_queue(request: Request):
          "shutq": power.watcher.state(), "vram": _vram()})
 
 
-@app.get("/nhatky", response_class=HTMLResponse)
-def page_nhatky(request: Request, ngay: str = "", daydu: int = 0):
-    """📜 Nhật ký hàng đợi đọc lại từ TỆP (web/nhatky/hangdoi_<ngày>.log, 05/11/2026).
-
-    Console của server chỉ nằm trong RAM: mẻ chạy đêm xong ô ⏻ tắt máy là mất hết, sáng
-    ra không biết vì sao dừng. Mặc định chỉ hiện các MỐC CHÍNH (việc bắt đầu/xong/lỗi,
-    bước, tắt máy) của ngày mới nhất; ?daydu=1 hiện mọi dòng, ?ngay=YYYY-MM-DD chọn
-    ngày (ngày lạ → ngày mới nhất; doc_nhat_ky chỉ nhận ngày CÓ tệp nên không lọt đường
-    dẫn tuỳ ý)."""
-    ngay, raw, tong = doc_nhat_ky(ngay, chi_moc=not daydu)
-    lines = []
-    for ln in raw:                      # mỗi dòng trong tệp: "HH:MM:SS  nội dung"
-        text = ln[10:]
-        dau = text.lstrip()
-        lines.append({"gio": ln[:8], "text": text,
-                      "cls": ("l-loi" if dau.startswith(("❌", "⛔", "Lỗi")) else
-                              "l-canh" if dau.startswith("⚠") else "")})
-    thu_muc = thu_muc_nhat_ky()
-    return _page(request, "nhatky.html", active="log", ngay=ngay, lines=lines, tong=tong,
-                 daydu=bool(daydu), cac_ngay=cac_ngay_nhat_ky(), giu_ngay=NHATKY_GIU_NGAY,
-                 thu_muc=str(thu_muc) if thu_muc else "",
-                 tep=str(thu_muc / f"hangdoi_{ngay}.log") if thu_muc and ngay else "")
-
-
 @app.get("/api/nhatky-dang")
 def api_upload_log(since: int = -1):
     """Nhật ký hàng đợi ĐĂNG cho tiến trình khác (GUI) đọc.
@@ -1941,7 +1767,6 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
-             "am_luong_db": float,   # 🔊 âm lượng cơ bản (dB), "+3" / "2,5" đều đọc được
              # bộ lọc giọng kiểu CapCut, 0–100 (0 = tắt) — xem scripts/hieuung_giong.py
              "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "sang_giong": int,   # 🔆 sáng giọng (bớt ồm; EQ cả giọng mẫu lúc dựng prompt)
@@ -1968,8 +1793,6 @@ def _save_opts_from_form(form) -> dict:
                 opts[k] = cast(str(form[k]).replace(",", "."))
             except ValueError:
                 pass
-    if form.get("am_luong_db", "") != "":   # kẹp ngay lúc lưu: ô hiện đúng mức sẽ áp
-        opts["am_luong_db"] = core.gui.hu.parse_amluong(opts.get("am_luong_db"))
     for k in _TEXT_KEYS:
         if k in form:
             opts[k] = str(form[k])
@@ -1986,9 +1809,8 @@ def _save_voice_from_form(form) -> None:
     + chế độ/giọng/tệp của riêng bản web (web_settings.json)."""
     _save_opts_from_form(form)
     core.save_web_settings({
-        "mode": str(form.get("mode", core.WEB_DEFAULTS["mode"])),
+        "mode": str(form.get("mode", "clone")),
         "voice": str(form.get("voice", "")),
-        "vieneu_voice": core.giong_vieneu_hop_le(form.get("vieneu_voice")),
         "instruct": str(form.get("instruct", "")),
         "input": str(form.get("input_txt", "")),
         "output": str(form.get("output_wav", "")),
@@ -2181,13 +2003,7 @@ def main() -> None:
     print("  Chỉ mở được trên máy này (không nghe trên mạng LAN).")
     print(f"  Token nằm ở: {TOKEN_FILE}  (xoá file này = đổi token)")
     print("  Nhật ký chạy hiện ngay trong cửa sổ này. Đóng cửa sổ = tắt server.")
-    print(f"  Nhật ký còn được lưu ra tệp: {WEB_DIR / 'nhatky'}  (xem lại: trang 📜 Nhật ký)")
     print("=" * 68)
-
-    # Chép nhật ký hàng đợi ra tệp (05/11/2026): console chỉ nằm trong RAM, mẻ chạy đêm
-    # xong ô ⏻ tắt máy là mất hết lý do dừng. Bật Ở ĐÂY chứ không phải lúc import module:
-    # test và script lẻ import server/jobs thì không sinh tệp.
-    bat_nhat_ky_tep(WEB_DIR / "nhatky")
 
     if _should_open_browser():
         threading.Thread(target=_open_browser_when_ready, args=(port,),
@@ -2202,15 +2018,7 @@ def main() -> None:
         pass
 
     log("🌐 Bảng điều khiển web đã sẵn sàng.")
-    # ⏻/🌙 nhớ lựa chọn lần trước (08/11/2026, user yêu cầu — trước đó mặc định TẮT mỗi lần
-    # mở): bật lại ở đây, sau khi nhật ký tệp đã bật để dòng "Bật … khi xong" cũng vào tệp.
-    nho = power.watcher.khoi_phuc()
-    if nho:
-        log(f"{power.ICON[nho]} Nhớ lần trước: “Xong hết thì {power.LABEL[nho]}” đang BẬT — "
-            "không muốn thì bỏ tick trên trang web (lựa chọn mới cũng được nhớ).")
-    else:
-        log("⏻/🌙 “Xong hết thì tắt máy / cho máy ngủ” đang TẮT (như lần trước) — muốn thì tick "
-            "trên trang web, lần mở sau vẫn nhớ.")
+    log("⏻/🌙 “Xong hết thì tắt máy / cho máy ngủ” mặc định TẮT — muốn thì tick trên trang web.")
     # CHỈ 127.0.0.1: server chạy ffmpeg/GPU/Firefox và xoá file ngay trên máy bạn.
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 

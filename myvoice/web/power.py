@@ -16,23 +16,13 @@ giây một lần. Ba chốt an toàn, học từ ô ⏻ bên GUI:
   • bộ đếm nằm TRONG server, lệnh chỉ phát ra đúng lúc hết giờ → bỏ tick trên trang
     web là huỷ, kể cả lúc đang đếm ngược, không cần `shutdown /a`.
 
-Hàng đợi chính DỪNG VÌ LỖI GPU (05/11/2026, jobs.JobRunner._dung_vi_loi) cũng tính là
-“hết việc”: việc còn chờ không tự chạy được nữa, nên ⏻/🌙 vẫn tắt/ngủ đúng như đã tick
-(khởi động lại máy cũng chính là cách chữa driver card treo). Lý do dừng được ghi vào tệp
-nhật ký web/nhatky/hangdoi_<ngày>.log — sáng ra mở 📜 Nhật ký trên trang web là thấy.
-
 Hết giờ: ⏻ tắt NGAY (shutdown /s /f /t 0 — mọi app bị đóng không hỏi, đúng ý khi chạy
 mẻ qua đêm không ai ngồi máy); 🌙 gọi suspend_computer của GUI (SetSuspendState), hàm
 này chỉ trả về khi máy đã DẬY, server chạy tiếp bình thường. Trước khi đếm còn tập
 dựng xong CHƯA đăng thì ghi cảnh báo vào nhật ký đăng (chỉ báo, không tự đăng).
 
-NHỚ LẦN TRƯỚC (08/11/2026, user yêu cầu — trước đó mặc định TẮT mỗi lần mở server): mỗi lần
-người dùng tick/bỏ tick, lựa chọn ("" / "shutdown" / "sleep") ghi vào web_settings.json khoá
-`power_mode` (file riêng của bản web — KHÔNG đụng khoá "shutdown"/"sleep" của GUI Tkinter
-trong taogiong_pipeline.json); server mở lại thì khoi_phuc() bật y như lần trước. Hết giờ
-tự bỏ tick trong RAM nhưng KHÔNG đổi lựa chọn đã nhớ — mẻ đêm sau vẫn tắt/ngủ như đã
-chọn. Vẫn phải THẤY BẬN rồi mới đếm, nên mở server mà không chạy gì thì không tắt/ngủ.
-Đêm 08/11/2026: mẻ 2 chạy lúc 01:21 quên tick ⏻, card chết lúc 02:17 mà máy nằm cả đêm.
+MẶC ĐỊNH TẮT mỗi lần mở server — muốn chạy qua đêm rồi tắt/ngủ thì tick tay trên
+trang web hoặc cửa sổ desktop (chay.py — công tắc từ xa của hai ô này).
 """
 
 from __future__ import annotations
@@ -56,8 +46,6 @@ CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 MODES = ("shutdown", "sleep")
 ICON = {"shutdown": "⏻", "sleep": "🌙", "": ""}
 LABEL = {"shutdown": "tắt máy", "sleep": "cho máy ngủ", "": ""}
-# Khoá nhớ lựa chọn trong web_settings.json (xem đầu file).
-NHO_KHOA = "power_mode"
 
 
 def delay_min(mode: str) -> int:
@@ -77,8 +65,7 @@ class PowerWhenDone:
     """Trạng thái hai ô tick (một chế độ duy nhất) + luồng nền canh hàng đợi."""
 
     def __init__(self) -> None:
-        # Khởi tạo TẮT; server gọi khoi_phuc() lúc mở để lấy lại lựa chọn lần trước (xem đầu
-        # file) — không đọc file ở đây để import module trong test/script lẻ không bật gì.
+        # Mặc định TẮT (xem đầu file) — tick tay mới đếm giờ.
         self._mode = ""
         self._saw_busy = False
         self._due = 0.0            # 0 = chưa đếm ngược (mốc time.monotonic)
@@ -87,14 +74,10 @@ class PowerWhenDone:
         threading.Thread(target=self._watch, daemon=True).start()
 
     # ── API cho tầng web ────────────────────────────────────────────────────
-    def arm(self, mode, nho: bool = True) -> None:
+    def arm(self, mode) -> None:
         """Đặt chế độ: "" tắt, "shutdown" ⏻, "sleep" 🌙 (True/False kiểu cũ = ⏻/tắt).
-        Đổi ⏻ ↔ 🌙 giữa lúc đang đếm thì đếm lại từ đầu — phải thấy bận đã.
-        nho=True (người dùng tick): ghi lựa chọn ra web_settings.json cho lần mở sau;
-        khoi_phuc() gọi với nho=False vì chỉ đọc lại."""
+        Đổi ⏻ ↔ 🌙 giữa lúc đang đếm thì đếm lại từ đầu — phải thấy bận đã."""
         mode = _norm(mode)
-        if nho:
-            self._nho(mode)
         with self._lock:
             if mode == self._mode:
                 return
@@ -109,25 +92,6 @@ class PowerWhenDone:
             log(f"✖ Đã huỷ đếm ngược {LABEL[prev]}.")
         else:
             log(f"{ICON[prev]} Đã tắt chế độ {LABEL[prev]} khi xong.")
-
-    def _nho(self, mode: str) -> None:
-        """Ghi lựa chọn ra web_settings.json (khoá NHO_KHOA). Hỏng thì chỉ báo — không được
-        làm hỏng việc tick."""
-        try:
-            core.save_web_settings({NHO_KHOA: mode})
-        except Exception as e:          # noqa: BLE001
-            log(f"⚠️ Không ghi nhớ được lựa chọn {ICON[mode] or '⏻/🌙'} cho lần sau: {e}")
-
-    def khoi_phuc(self) -> str:
-        """Lúc mở server: bật lại chế độ đã chọn lần trước → tên chế độ ("" = lần trước để
-        tắt, không bật gì). Chỉ ĐỌC web_settings.json, không ghi lại."""
-        try:
-            mode = _norm(core.load_web_settings().get(NHO_KHOA, ""))
-        except Exception:               # noqa: BLE001 — file hỏng thì coi như tắt
-            mode = ""
-        if mode:
-            self.arm(mode, nho=False)
-        return mode
 
     def state(self) -> dict:
         """Dữ liệu cho khối hàng đợi (_queue.html, làm mới 2 giây/lần) và
@@ -209,18 +173,8 @@ class PowerWhenDone:
             if not self._due:
                 self._due = time.monotonic() + delay_min(mode) * 60
                 self._warn_due = True       # _warn_pending_upload lo phần soát
-                dung = runner.halted()
-                if dung:
-                    # Hàng đợi chính DỪNG VÌ LỖI (lỗi GPU, 05/11/2026): việc còn chờ không
-                    # tự chạy được nữa nên heavy_busy() coi là rảnh — vẫn tắt/ngủ đúng như
-                    # đã tick, nhưng ghi RÕ lý do để sáng ra đọc lại trong tệp nhật ký.
-                    log(f"{ICON[mode]} Hàng đợi DỪNG VÌ LỖI lúc {dung['at']} ở “{dung['title']}” "
-                        f"({dung['reason']}) — không còn việc nào tự chạy được → máy vẫn sẽ "
-                        f"{LABEL[mode].upper()} sau {delay_min(mode)} phút. Huỷ: bỏ tick trên "
-                        "trang web.")
-                else:
-                    log(f"{ICON[mode]} Hàng đợi đã xong — máy sẽ {LABEL[mode].upper()} sau "
-                        f"{delay_min(mode)} phút. Huỷ: bỏ tick trên trang web.")
+                log(f"{ICON[mode]} Hàng đợi đã xong — máy sẽ {LABEL[mode].upper()} sau "
+                    f"{delay_min(mode)} phút. Huỷ: bỏ tick trên trang web.")
                 return ""
             if time.monotonic() < self._due:
                 return ""

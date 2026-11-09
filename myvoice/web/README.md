@@ -46,16 +46,6 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 
-**✂ Che chữ Trung cháy sẵn trong clip** (khối ④ Video ngang, 08/11/2026; khoá
-`che_chu_trung` trong `taogiong_options.json`, **mặc định tắt**; GUI Tk chưa có ô → chạy
-như tắt): video ngang/dọc từ 08/11/2026 không còn khung trang trí và **không phóng to**
-(1:1). Tắt = giữ nguyên khung hình gốc, logo nhỏ góc trên phải, bản dọc dải 1080×1080
-giữa màn hình. Bật = cắt 8 % mép trên + 13 % mép dưới (phụ đề Trung + watermark bilibili),
-ngang lót dải đen mỏng trên/dưới với logo nằm trong dải dưới, bản dọc dải 1080×852. Trạng
-thái ghi vào `YOUTUBE_goc.json` (`che`) nên nút "Dựng lại video dọc" theo đúng bản ngang;
-ảnh xem trước khối ⑦ vẽ theo trạng thái đang lưu (cache `static/khungdoc/xt_<màu>[_che].jpg`).
-Xem `scripts/video_khung.py` (`loc_phu_kin`, `lop_logo`) và `scripts/video_doc_khung.py` (`bo_cuc`).
-
 **🎞 Lấy video tải xuống làm video nguồn** (khối ④ Video ngang, 24/10/2026; khoá
 `ngang_tu_nguon` + `ngang_nguon_zoom` trong `taogiong_options.json`, GUI có cùng ô):
 thay vì ghép clip `videongang/`, video ngang lấy hình từ CHÍNH video của tập — link
@@ -68,24 +58,6 @@ chưa tải…) → ghi cảnh báo rồi ghép clip theo “Nguồn clip ngang�
 (`doc_khung`) dựng từ `YOUTUBE_goc.mp4` nên cũng lấy hình này. Runner `run_episode.py`
 đưa thẳng đường dẫn video (`ngang_source_video`), còn nút ▶ Dựng lại / GUI tra
 `batch_manifest.json` theo thư mục tập (`gui.nguon_video_cua_tap`).
-
-**Ô “Tải Bilibili”** (cạnh Model + Tốc độ ở khối Nguồn và trang Nhận diện, 05/11/2026;
-khoá `bili_quality` trong `taogiong_pipeline.json`, mức ở `gui.BILI_QUALITIES`): mức
-video khi tải link Bilibili qua app Bili23 — `Cao nhất` (mặc định, như trước) / 1080P /
-720P / 480P / 360P. Kênh audio chỉ cần tiếng để nhận diện nên 360P là đủ. Bản thấp lưu
-tên RIÊNG `Downloads/<mã BV>_<mức>.mp4`; `<mã BV>.mp4` luôn là bản đầy đủ nên myvideo và
-🎞 không nhặt nhầm bản mờ (đã có bản đầy đủ thì dùng luôn, khỏi tải bản thấp). Đang bật
-🎞 thì vẫn tải bản cao nhất. Video thiếu đúng mức đã chọn → lấy mức gần nhất không vượt
-(`chon_muc` trong `myvideo/video_taibilibili.py`, tham số `--chat-luong`). GUI Tkinter
-không có ô này vì ở đó link tải bằng yt-dlp (chỉ mp3), không qua Bili23.
-
-**Tự đóng app Bili23 sau đợt tải** (08/11/2026): bộ tải tự mở app thì ghi dấu PID
-(`%TEMP%\omnivoice_bili23_tu_mo.json`); "⏩ đợt 1 · tải video/audio" có thêm bước cuối
-*Đóng app Bili23 (nếu bộ tải tự mở)* = `video_taibilibili.py --dong-app`
-(`steps.dong_bili23_step`) — chỉ đóng đúng tiến trình đã tự mở, app người dùng mở sẵn
-hay PID đã cấp lại thì để nguyên; đóng êm (WM_CLOSE) trước, 8 s còn sống mới ép. Đóng sau
-cả đợt chứ không sau từng tập (mở lại mất ~10 s). Chạy lẻ một tập (bước nhận diện tự
-tải) không tự đóng. Test: `myvoice/tests/test_dong_bili23.py`.
 
 **Nguồn clip ngang tick NHIỀU thư mục** (khối ③, 01/11/2026): ô chọn 1 thư mục con
 `videongang/` đổi thành cụm checkbox (GUI: nút thả menu có ô tick, cùng ô). Khoá
@@ -111,31 +83,11 @@ trang: hai khối giống nhau từng ký tự). Các nút quay về đúng tran
 `_back()` đọc Referer, còn nút Facebook trả thẳng khối đã vẽ lại nên trang nào
 cũng tự cập nhật tại chỗ.
 
-**🎧 Nghe thử cài đặt giọng (06/11/2026).** Hàng “3 Cài đặt tạo giọng” có nút 🎧 + thanh
-phát: `app.js` (khối “Nghe thử”) gửi các ô giọng đang hiện tới `POST /giongnoi/nghethu`
-(không ghi cài đặt), server áp lên mẫu ~30 s giọng gốc của tập đầu đợt mới nhất
-(`scripts/taogiong_nghethu.py`, lưu ở `voice/nghe_thu/`) rồi trả đường phát qua
-`/giongnoi/nghe`. Đã bấm 🎧 một lần thì đổi ô giọng nào là tự phát lại bản mới. Chi tiết
-cách chọn tập / lúc thay mẫu: mục 🎧 trong `myvoice/README.md`.
-
-**Hàng thu gọn (06/11/2026).** Từ khối “1 Nhận diện giọng nói” trở xuống (①②③ kịch
-bản · 8 khối giọng nói & video · thumbnail · đăng YouTube · đăng Facebook), mỗi khối
-là **một hàng trọn bề ngang, bấm đầu hàng để thu gọn/mở** — thay cho kiểu Home tự
-chia 2–3 cột bằng CSS columns trước đó. Mỗi hàng là
-`<details class="panel fold" data-fold="<khoá>">` + `<summary class="phead">` +
-`<div class="foldbody">` (luật ở `app.css`, khối “HÀNG THU GỌN”): thẻ `<details>` gốc
-của trình duyệt nên **ô trong hàng đang đóng vẫn gửi theo form** — tự lưu và các nút
-chạy không đổi gì. Trạng thái mở/đóng từng hàng nhớ ở `localStorage` (`mv.fold.v1`,
-khoá = `data-fold`, dùng chung mọi trang) và được áp lại sau mỗi lần htmx vẽ lại khối
-(IIFE cuối `app.js`); chưa bấm hàng nào thì theo thuộc tính `open` của template (mọi
-hàng mở, riêng “6 Kiểu phụ đề vẽ cứng” đóng). Hai nút `data-fold-all` ngay trên hàng
-đầu thu gọn / mở hết. Trong hàng: `.grid` dùng `auto-fill` (ô nhập không giãn hết
-hàng; `.w2`/`.w3` cho ô dài), `.chks` nằm ngang, `.hang` = nút + ô tick trên một dòng,
-`.foldsplit` = ô chỉnh bên trái · ảnh/bảng bên phải. Chữ giải thích dài của các khối
-này chuyển vào `title` (rê chuột vào ô/nút); “Nguồn clip ngang” dời từ khối 3 sang
-khối 4 *Video ngang*. Thêm khối mới thì dùng đúng khuôn trên và đặt `data-fold` riêng.
-Khối hàng loạt phía trên vẫn dùng `.batch-grid`: cột hẹp (nhập link · nút chạy) | cột
-rộng (bảng tập). Các trang riêng xếp dọc một cột, căn giữa màn hình như cũ.
+Ở Home, mỗi khối tự dàn thành nhiều cột bằng **CSS columns** (`body.p-home
+.form-grid`) — grid xếp theo hàng nên khối cao thấp lệch nhau để lại lỗ hổng, còn
+columns thì rót khối sau vào ngay chỗ trống. Riêng khối hàng loạt dùng
+`.batch-grid`: cột hẹp (nhập link · nút chạy) | cột rộng (bảng tập 10 cột).
+Các trang riêng vẫn xếp **dọc một cột theo đúng thứ tự bấm**, căn giữa màn hình.
 
 Giao diện: menu trái tím gradient (giữ nguyên mọi trang) + mỗi trang một tông màu
 riêng để nhìn là biết đang ở đâu — Home chàm · kịch bản tím · nhận diện xanh dương · giọng nói
@@ -145,26 +97,6 @@ hồng · thumbnail cam · SEO xanh ngọc. Tông màu khai báo ở đầu `sta
 
 **Nhật ký nằm ở cửa sổ console của server**, không còn panel dưới trang web:
 mọi dòng của tiến trình con in thẳng ra đó.
-
-**Nhật ký còn được chép ra tệp** (05/11/2026): `web/nhatky/hangdoi_<ngày>.log`, mỗi
-ngày một tệp, mỗi dòng kèm giờ, xả ra đĩa theo từng dòng, giữ 14 ngày
-(`jobs.NHATKY_GIU_NGAY`). Console chỉ nằm trong RAM — mẻ chạy đêm xong ô ⏻ tắt máy là
-mất hết, sáng ra không biết vì sao dừng (sự cố đêm 05/11/2026). Xem lại ở trang
-**📜 Nhật ký** (`/nhatky`, nút cạnh chữ *Hàng đợi*): mặc định chỉ các mốc chính (việc
-bắt đầu / xong / lỗi, bước, tắt máy), bấm *Đầy đủ* để xem mọi dòng; dòng lỗi tô đỏ.
-Chỉ server thật bật ghi tệp (`jobs.bat_nhat_ky_tep` trong `main()`), test import
-module thì không sinh tệp. myvideo dùng chung `JobRunner` nên cũng ghi, vào
-`myvideo/web/nhatky/`.
-
-**Lỗi GPU → hàng đợi TẠM DỪNG** (05/11/2026): runner trả mã thoát **79**
-(`gpu_batbuoc.MA_THOAT_GPU`) khi lượt chạy dừng vì `GpuLoi` — không có CUDA, thiếu
-VRAM, NVENC chết, worker VieNeu mất GPU. Các bước dùng GPU khai `Step.halt_codes`, hàng
-đợi thấy mã này thì đánh dấu việc lỗi rồi **tạm dừng, giữ nguyên việc còn chờ** (kể cả
-bước `continue_on_fail` trong một đợt) thay vì chạy tiếp các tập sau để hỏng y hệt.
-Đầu khối hàng đợi hiện băng đỏ nêu lý do + cách chạy lại; bấm *▶ Tiếp* là chạy tiếp
-việc còn chờ, tập vừa lỗi thì ⏩ Chạy tiếp để làm lại. Chế độ 🗣 VieNeu cũng **ép GPU**:
-worker bật với `--device cuda`, không dùng được CUDA là dừng ngay chứ không lặng lẽ
-chạy ONNX/CPU (chậm ~4 lần rồi vẫn dừng ở bước ASR kiểm tra).
 
 **Nút 💾 lưu tại chỗ, không tải lại trang** — mọi nút "💾 Lưu…" (và hai form
 Tập bỏ qua / Câu mở đầu) gửi qua htmx: lưu xong hiện mẩu "✓ đã lưu" cạnh nút
@@ -338,12 +270,10 @@ thiếu nghĩa là có tập đã đăng mà mình không thấy → xếp tiế
 Page, mà cache thiếu còn khiến bảng trên trang hiện tập đã đăng thành "chưa đăng".
 
 **⏻ Xong hết thì tắt máy / 🌙 Xong hết thì cho máy ngủ** — hai ô tick ngay đầu khối
-*Hàng đợi*, loại trừ nhau (tick ô này là bỏ ô kia), **nhớ lựa chọn lần trước** (từ
-08/11/2026: tick/bỏ tick là ghi khoá `power_mode` vào `web_settings.json`, mở server
-lại là bật y như cũ — trước đó mặc định TẮT mỗi lần mở; hết giờ tự bỏ tick trong RAM
-nhưng không đổi lựa chọn đã nhớ). Tick trên web hoặc cửa sổ desktop `chay.py` — ô bên
-đó là công tắc từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm —
-tick suông lúc chưa chạy gì thì không tắt/ngủ. Chạy xong CẢ hàng đợi chính lẫn hàng đợi đăng
+*Hàng đợi*, loại trừ nhau (tick ô này là bỏ ô kia), **mặc định TẮT mỗi lần mở
+server** (tick tay trên web hoặc cửa sổ desktop `chay.py` — ô bên đó là công tắc
+từ xa, cùng một trạng thái; phải từng thấy hàng đợi bận rồi mới đếm — tick suông
+lúc chưa chạy gì thì không tắt/ngủ). Chạy xong CẢ hàng đợi chính lẫn hàng đợi đăng
 YouTube/Facebook, rảnh thêm `SHUTDOWN_DELAY_MIN` / `SLEEP_DELAY_MIN` (đều 1 phút từ
 31/10/2026) thì phát `shutdown /s /f /t 0` hoặc gọi `suspend_computer`
 (SetSuspendState — ngủ: chạm chuột là dậy, server vẫn còn nguyên); có việc mới chen
@@ -352,9 +282,6 @@ bỏ tick là huỷ, kể cả lúc đang đếm ngược — không cần `shut
 còn tập dựng xong CHƯA đăng thì ghi cảnh báo vào nhật ký đăng (chỉ báo, không tự
 đăng). Route `/hangdoi/tatmay`: `on=1` tắt máy, `ngu=1` ngủ, không gì = tắt;
 `/api/trangthai` trả thêm `shutdown_mode` ("" / "shutdown" / "sleep").
-Hàng đợi chính **dừng vì lỗi GPU** cũng tính là "hết việc" (việc còn chờ không tự chạy
-được nữa — `JobRunner.heavy_busy()` bỏ qua chúng): ⏻/🌙 vẫn tắt/ngủ đúng như đã tick,
-và dòng đếm ngược ghi rõ lý do dừng vào tệp nhật ký.
 
 Code ở `power.py`, nhưng **số phút chờ + lệnh ngủ nằm bên GUI** (`SHUTDOWN_DELAY_MIN`,
 `SLEEP_DELAY_MIN`, `suspend_computer` trong `amain_taogiong_gui.py`) — ô bên GUI và ô
@@ -370,8 +297,7 @@ server — trang web không ghi đè khoá `shutdown`/`sleep` của GUI.
 web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
-  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console + tệp nhatky/; mã 79 (lỗi GPU) → tạm dừng hàng đợi
-  nhatky/        hangdoi_<ngày>.log — nhật ký hàng đợi chép ra tệp (tự sinh, giữ 14 ngày)
+  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console
   power.py       ô “⏻ tắt máy” / “🌙 cho máy ngủ” khi xong hết — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown/ngủ
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi
   runners/
