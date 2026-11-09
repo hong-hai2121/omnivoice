@@ -1767,6 +1767,7 @@ def fb_queue_remove(job_id: int, request: Request):
 # ── Cài đặt ─────────────────────────────────────────────────────────────────
 _NUM_KEYS = {"chunk": int,
              "pitch": float,   # tông giọng (bán cung), "+2.0" / "2,5" đều đọc được
+             "am_luong_db": float,   # 🔊 âm lượng cơ bản (dB), "+3" / "2,5" đều đọc được
              # bộ lọc giọng kiểu CapCut, 0–100 (0 = tắt) — xem scripts/hieuung_giong.py
              "vang_truong_do": int, "vang_cuong_do": int, "thieu_nien": int,
              "sang_giong": int,   # 🔆 sáng giọng (bớt ồm; EQ cả giọng mẫu lúc dựng prompt)
@@ -1793,6 +1794,8 @@ def _save_opts_from_form(form) -> dict:
                 opts[k] = cast(str(form[k]).replace(",", "."))
             except ValueError:
                 pass
+    if form.get("am_luong_db", "") != "":   # kẹp ngay lúc lưu: ô hiện đúng mức sẽ áp
+        opts["am_luong_db"] = core.gui.hu.parse_amluong(opts.get("am_luong_db"))
     for k in _TEXT_KEYS:
         if k in form:
             opts[k] = str(form[k])

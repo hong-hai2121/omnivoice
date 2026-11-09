@@ -1442,6 +1442,8 @@ def tts_settings() -> tuple[dict | None, str]:
         pitch=_f(opts.get("pitch"), gui.OPTS_DEFAULTS["pitch"], gui.PITCH_MIN, gui.PITCH_MAX),
         # Bộ lọc giọng kiểu CapCut (tiếng vang trường độ / cường độ, thiếu niên), 0–100.
         fx=gui.hu.fx_from(opts),
+        # 🔊 Âm lượng cơ bản (dB) cộng thẳng lên output.wav ở bước cuối — 0 = giữ nguyên.
+        am_luong=gui.hu.parse_amluong(opts.get("am_luong_db"), gui.OPTS_DEFAULTS["am_luong_db"]),
         make_video=bool(opts.get("make_video")), effect=effect_path,
         make_video_doc=bool(opts.get("make_video_doc")),
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),

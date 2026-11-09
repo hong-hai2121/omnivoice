@@ -117,6 +117,14 @@ SANG_LIMIT = 0.97                   # alimiter sau EQ: nâng +6 dB có thể đ�
 PITCH_MIN, PITCH_MAX = -6.0, 6.0
 _HAS_RUBBERBAND = None
 
+# 🔊 Âm lượng cơ bản (bản 06/11, mang về bản 02/11 ngày 09/11/2026): cộng thẳng N dB lên
+# cả bài — MỘT mức gain cho mọi mẫu, không nén, không đo LUFS (khác loudnorm của run_tts;
+# đặt SAU loudnorm). +6 dB ≈ biên độ gấp đôi. Mức dương kèm alimiter ghìm riêng các đỉnh
+# vượt AMLUONG_LIMIT (ghi 16-bit mà đỉnh quá 1,0 là cắt méo); đỉnh còn dưới trần thì bộ
+# chặn không đụng gì. Mức âm không cần.
+AMLUONG_MIN, AMLUONG_MAX = -10.0, 20.0
+AMLUONG_LIMIT = 0.97
+
 
 # ── ĐỌC / KẸP THAM SỐ ───────────────────────────────────────────────────────────
 def parse_fx(value, default: int = 0) -> int:
@@ -136,6 +144,58 @@ def parse_pitch(value, default: float = 0.0) -> float:
         return default
     v = round(v * 2) / 2
     return max(PITCH_MIN, min(v, PITCH_MAX))
+
+
+def parse_amluong(value, default: float = 0.0) -> float:
+    """Đọc mức 🔊 âm lượng (dB; ô nhập / JSON, "+3", "2,5") → float, làm tròn 0,5,
+    kẹp [AMLUONG_MIN, AMLUONG_MAX]. 0 = giữ nguyên."""
+    try:
+        v = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return default
+    if v != v:                                   # NaN
+        return default
+    v = round(v * 2) / 2
+    return max(AMLUONG_MIN, min(v, AMLUONG_MAX))
+
+
+def amluong_chain(db: float) -> list[str]:
+    """Các mắt filter ffmpeg của 🔊 âm lượng cơ bản; [] khi mức 0. Mức dương thêm
+    alimiter ghìm đỉnh (level=false: không tự kéo to; latency=true: không lệch giờ)."""
+    db = parse_amluong(db)
+    if abs(db) < 1e-9:
+        return []
+    chain = [f"volume={db:.1f}dB"]
+    if db > 0:
+        chain.append(f"alimiter=limit={AMLUONG_LIMIT}:attack=5:release=60:level=false:latency=true")
+    return chain
+
+
+def apply_amluong_file(src, db: float, out=None, codec: str = "pcm_s16le") -> Path:
+    """Cộng `db` dB lên `src` → `out` (giữ sample rate). out=None → ghi đè chính
+    file nguồn (qua file tạm; lỗi thì file cũ còn nguyên). Mức 0 → chỉ chép (hoặc
+    giữ nguyên nếu out == src)."""
+    src = Path(src)
+    out = Path(out) if out else src
+    chain = amluong_chain(db)
+    if not chain:
+        if out != src:
+            shutil.copyfile(src, out)
+        return out
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
+    sr = sample_rate_of(src)
+    tmp = out.with_name(out.stem + "_amluong.tmp" + (out.suffix or ".wav"))
+    cmd = [ffmpeg, "-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(src),
+           "-filter:a", ",".join(chain), "-ar", str(sr), "-c:a", codec, str(tmp)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 4096:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg đổi âm lượng lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+    tmp.replace(out)
+    return out
 
 
 def fx_from(opts: dict | None) -> dict:

@@ -201,6 +201,14 @@
         <input name="sang_giong" value="{{ opts.sang_giong }}" inputmode="numeric"
                title="Trị giọng clone nghe ồm: EQ bớt 150–500 Hz, nâng 3 kHz + dải cao (100 = ±6 dB, thêm exciter). Áp lên audio gốc VÀ lên giọng mẫu trong bộ nhớ lúc dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn). Nghe thử trước bằng voice/thu_giong.py.">
       </label>
+      {# 🔊 Âm lượng cơ bản (bản 06/11, mang về 09/11/2026): cộng thẳng N dB lên output.wav ở
+         bước cuối (sau tông, bộ lọc, loudnorm). Khoá am_luong_db chung với GUI; 0 = giữ nguyên. #}
+      <label class="field">
+        <span>🔊 Âm lượng (dB)</span>
+        <input name="am_luong_db" value="{{ opts.am_luong_db }}" list="amluongs" inputmode="decimal"
+               title="0 = giữ nguyên. + to hơn, − nhỏ hơn (−10 … +20, bước 0,5; +6 dB ≈ to gấp đôi). Cộng thẳng một mức lên cả bài, không nén; mức dương có bộ chặn đỉnh để không vỡ tiếng — nhật ký báo nếu bộ chặn phải ghìm. Áp sau cùng lên audio gốc (output.wav) nên video ngang/dọc/TikTok đều theo. Chỉ áp lúc tạo giọng; ♻ dùng lại audio thì giữ mức cũ.">
+        <datalist id="amluongs">{% for p in ["0","2","3","4","5","6","8","10"] %}<option value="{{ p }}">{% endfor %}</datalist>
+      </label>
       {# Nguồn clip ngang: tick được NHIỀU thư mục con videongang/ (01/11/2026) — clip
          gom chung rồi xáo ngẫu nhiên lúc ghép; không tick ô nào = cả kho. Hidden rỗng
          cùng tên để server biết form CÓ ô này dù bỏ tick hết; thư mục đã lưu nhưng
