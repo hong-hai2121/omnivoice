@@ -25,9 +25,10 @@ BASE_DIR   = WEB_DIR.parent                 # myvoice/
 REPO_ROOT  = BASE_DIR.parent                # gốc repo (chứa package omnivoice + venv)
 SCRIPTS_DIR = BASE_DIR / "scripts"
 YOUTUBE_DIR = BASE_DIR / "YOUTUBE"
+TRINHDUYET_DIR = BASE_DIR / "TRINHDUYET"      # đăng qua Chrome thật (YouTube Studio + TikTok Studio)
 VENV_PYTHON = REPO_ROOT / "venv" / "Scripts" / "python.exe"
 
-for _p in (str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR)):
+for _p in (str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), str(TRINHDUYET_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -52,7 +53,9 @@ PIPE_DEFAULTS = gui.PIPE_DEFAULTS
 # cho gọn. (save_opt_settings của GUI nay GIỮ lại khoá không nêu khi lưu, nên
 # khoá chỉ-web như tiktok_music_loop vẫn nằm chung taogiong_options.json được.)
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
-WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
+# 04/11/2026: mode mặc định "vieneu" (giọng dựng sẵn VieNeu-TTS, user chốt) — cùng
+# OPTS_DEFAULTS của GUI; vieneu_voice = 1 trong gui.vn.GIONG_DUNG_SAN.
+WEB_DEFAULTS = dict(mode="vieneu", vieneu_voice="Ngọc Huyền", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
                     # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
                     # ảnh nền mặc định, và có làm thêm bản dọc không.
@@ -67,7 +70,10 @@ WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
                     # Bản video đăng lên Page (15/09/2026): "full" = facebook.mp4
                     # trọn tập (nếp cũ) · "ngan" = tiktok.mp4 cắt ngắn giống TikTok.
                     # Áp cho CẢ tự động lẫn nút 📘 đăng tay — script đọc lúc chạy.
-                    fb_ban="full")
+                    fb_ban="full",
+                    # ⏻/🌙 "xong hết thì tắt máy / cho máy ngủ" của trang web — lựa chọn
+                    # lần trước ("" / "shutdown" / "sleep"), power.py ghi/đọc (08/11/2026).
+                    power_mode="")
 
 # ── Nguồn: lịch sử + kho file để chọn ───────────────────────────────────────
 SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
@@ -447,6 +453,12 @@ def list_voice_names() -> list[str]:
     return [r["name"] for r in list_voices()]
 
 
+def giong_vieneu_hop_le(ten) -> str:
+    """Tên giọng dựng sẵn VieNeu hợp lệ: không có / lạ → mặc định (Ngọc Huyền)."""
+    ten = str(ten or "").strip()
+    return ten if ten in gui.vn.GIONG_DUNG_SAN else WEB_DEFAULTS["vieneu_voice"]
+
+
 def toggle_voice_favorite(name: str) -> bool:
     """Bật/tắt ★ cho một giọng — chung file voice_favorites.json với GUI."""
     favs = gui.load_favorites()
@@ -523,6 +535,12 @@ def list_photos() -> list[str]:
 
 def list_ngang_sources() -> list[str]:
     return gui.list_ngang_sources()
+
+
+def ngang_source_list(value) -> list[str]:
+    """Ô "Nguồn clip ngang" → list tên thư mục con đã tick ([] = cả kho); nhận cả
+    chuỗi 1 tên cũ lẫn list (xem gui.ngang_source_list)."""
+    return gui.ngang_source_list(value)
 
 
 def list_music() -> list[str]:
@@ -1407,7 +1425,13 @@ def tts_settings() -> tuple[dict | None, str]:
     web = load_web_settings()
 
     mode = web.get("mode", "clone")
-    if mode == "clone":
+    if mode == gui.MODE_VIENEU:
+        # 04/11/2026: giọng dựng sẵn VieNeu (worker SDK, xem gui.nap_engine); tên giọng là voice_param.
+        if not gui.vn.trang_thai()["da_cai"]:
+            return None, ("VieNeu-TTS chưa cài (voice/VieNeu-TTS/.venv) — mở app Thử giọng → tab 🗣️ → "
+                          "⬇ Cài GPU, hoặc chọn chế độ 🎙 Clone.")
+        voice_param = giong_vieneu_hop_le(web.get("vieneu_voice"))
+    elif mode == "clone":
         voice = (web.get("voice") or "").strip()
         available = list_voice_names()
         if voice not in available:
@@ -1440,11 +1464,15 @@ def tts_settings() -> tuple[dict | None, str]:
         doc_speed=_f(opts.get("doc_speed"), 1.0, 0.5, 2.0),
         doc_percent=_i(opts.get("doc_percent"), 100, 1, 100),
         ngang_speed=_f(opts.get("ngang_speed"), 1.0, 0.5, 2.0),
-        ngang_source=opts.get("ngang_source") or NGANG_SOURCE_ALL,
+        # list tên thư mục con videongang/ đã tick (gộp clip, xáo chung); [] = cả kho
+        ngang_source=gui.ngang_source_list(opts.get("ngang_source")),
         # 🎞 Video ngang lấy VIDEO TẢI XUỐNG của tập làm nguồn hình (24/10/2026): tắt
         # tiếng gốc lúc dựng, phóng to % rồi cắt giữa; tắt = ghép clip videongang/.
         ngang_tu_nguon=bool(opts.get("ngang_tu_nguon")),
         ngang_nguon_zoom=_i(opts.get("ngang_nguon_zoom"), 120, 100, 200),
+        # ✂ Che chữ Trung cháy sẵn (08/11/2026): bật = cắt mép + dải đen / dải dọc 852;
+        # mặc định TẮT = giữ nguyên khung hình gốc 1:1.
+        che_chu_trung=bool(opts.get("che_chu_trung", False)),
         doc_from_ngang=bool(opts.get("doc_from_ngang")),
         doc_from_subfolder=bool(opts.get("doc_from_subfolder")),
         doc_no_effect=bool(opts.get("doc_no_effect")),
@@ -1454,6 +1482,9 @@ def tts_settings() -> tuple[dict | None, str]:
         # YouTube Short ≤2:50 cắt từ chính video TikTok, đăng tự động sau bản chính
         # 1 giờ (xem scripts/video_short.py + YOUTUBE/dang_tap_youtube.upload_short).
         make_short=bool(opts.get("make_short")),
+        chuan_am=bool(opts.get("chuan_am", False)),     # 🔉 chuẩn âm — mặc định tắt (05/11/2026)
+        # 🔊 Âm lượng cơ bản (dB) cộng thẳng lên output.wav ở bước cuối — 0 = giữ nguyên (06/11/2026).
+        am_luong=gui.hu.parse_amluong(opts.get("am_luong_db"), gui.OPTS_DEFAULTS["am_luong_db"]),
         tiktok_speed=_f(opts.get("tiktok_speed"), 1.0, 0.5, 2.0),
         tiktok_percent=_i(opts.get("tiktok_percent"), 50, 1, 100),
         tiktok_no_effect=bool(opts.get("tiktok_no_effect")),
@@ -1636,6 +1667,26 @@ def save_upload_settings(data: dict) -> dict:
         return {}
 
 
+# ── Cách đăng: "api" (Data API, hạn mức ~11 video/ngày) | "studio" (Chrome thật qua Playwright
+# Extension: YouTube Studio + TikTok Studio, xem myvoice/TRINHDUYET). Lưu ở taogiong_pipeline.json.
+UPLOAD_BACKENDS = {"api": "API YouTube (Data API)",
+                   "studio": "Trình duyệt Chrome (YouTube Studio + TikTok Studio)"}
+
+
+def upload_backend() -> str:
+    b = str(load_pipeline().get("upload_backend") or "api").strip().lower()
+    return b if b in UPLOAD_BACKENDS else "api"
+
+
+def trinhduyet_status() -> dict:
+    """{nền tảng: {"ok", "ly_do", "profile"}} của cấu hình đăng qua trình duyệt; lỗi nạp → {}."""
+    try:
+        import trinhduyet
+        return trinhduyet.trang_thai()
+    except Exception:
+        return {}
+
+
 def upload_choices() -> dict:
     """Danh sách lựa chọn cho form đăng: danh mục YouTube + các chế độ đăng."""
     try:
@@ -1715,6 +1766,6 @@ def subprocess_env() -> dict:
     from gemini_backend import DEFAULT_BACKEND
     env["OMNI_GEMINI_BACKEND"] = load_pipeline().get("gemini_backend") or DEFAULT_BACKEND
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), env.get("PYTHONPATH", "")]
+        [str(REPO_ROOT), str(SCRIPTS_DIR), str(YOUTUBE_DIR), str(TRINHDUYET_DIR), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
     return env

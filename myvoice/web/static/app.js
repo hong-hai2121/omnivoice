@@ -37,7 +37,7 @@
   const sourceForm = document.querySelector('form[action="/kichban/chay"]');
   if (!batch || !sourceForm) return;
   batch.addEventListener('formdata', (e) => {
-    for (const name of ['sources', 'episode', 'epsrc', 'model', 'speed']) {
+    for (const name of ['sources', 'episode', 'epsrc', 'model', 'speed', 'bili_quality']) {
       const field = sourceForm.elements.namedItem(name);
       if (field) e.formData.set(name, field.value);
     }
@@ -756,7 +756,7 @@ document.addEventListener("change", event => {
 });
 // ── Tab 🧩 Extension: thử kết nối / gửi thử qua Chrome Extension. Lượt thử chạy
 //    trong tiến trình server (web/gemini_test.py); trang hỏi /api/gemini-test mỗi
-//    giây khi đang chạy để in nhật ký và kết quả.
+//    giây khi đang chạy để in nhật ký và kết quả. (Tab 🤖 GPT CLI có khối riêng dưới.)
 (() => {
   const panel = document.getElementById('ext-test');
   if (!panel) return;
@@ -793,6 +793,134 @@ document.addEventListener("change", event => {
   }
   $('ext-check').addEventListener('click', () => start('check'));
   $('ext-send').addEventListener('click', () => start('send'));
+  refresh();
+})();
+
+
+// ── Tab 🤖 GPT CLI (web/gptcli_test.py, 29/10/2026) ──────────────────────────
+//    ① thẻ trạng thái: /api/gptcli-info (tìm codex + đăng nhập + model/mức sẽ dùng +
+//       cách dịch đang chọn, KHÔNG gọi model) — đọc lúc mở trang và sau mỗi lần ô cài
+//       đặt ② tự lưu (sự kiện mv:daluu do khối tự lưu bên dưới phát).
+//    ③ nhắn thử: POST /api/gptcli-test/chay rồi hỏi /api/gptcli-test mỗi giây; tin gửi
+//       và trả lời hiện kiểu hội thoại (bong bóng), nhật ký + đề bài gấp trong <details>.
+(() => {
+  const panel = document.getElementById('cli-test');
+  if (!panel) return;
+  const $ = id => document.getElementById(id);
+  const chat = $('cli-chat'), logBox = $('cli-log'), promptBox = $('cli-prompt');
+  const status = $('cli-status'), elapsed = $('cli-elapsed');
+  const MUC = { low: 'thấp', medium: 'vừa', high: 'cao', xhigh: 'rất cao', max: 'tối đa' };
+  const BACKEND = { cli: '🤖 GPT CLI', firefox: '🦊 Firefox / Selenium', extension: '🧩 Chrome Extension' };
+  let timer = null, cho = null, daThay = 0, moiGui = false;
+
+  function the(id, lop, chinh, phu) {
+    const el = $(id);
+    el.className = 'cli-stat' + (lop ? ' ' + lop : '');
+    el.querySelector('b').textContent = chinh;
+    el.querySelector('i').textContent = phu || '';
+  }
+  const tenMuc = e => e ? (MUC[e] || e) : 'mặc định';
+
+  async function docInfo() {
+    try {
+      const r = await fetch('/api/gptcli-info', { credentials: 'same-origin' });
+      const s = await r.json();
+      if (s.ok) {
+        the('st-codex', 'ok', '✅ codex-cli ' + s.version, s.path);
+        the('st-login', s.logged_in ? 'ok' : 'warn',
+            s.logged_in ? '✅ Đã đăng nhập' : '⚠️ Chưa đăng nhập', s.login);
+      } else {
+        the('st-codex', 'loi', '❌ Không thấy codex', s.error);
+        the('st-login', 'warn', '—', 'cài codex rồi chạy `codex login`');
+      }
+      the('st-model', '', (s.model || 'codex tự chọn') + ' · ' + tenMuc(s.effort),
+          'model: ' + s.model_nguon + ' · mức: ' + s.effort_nguon);
+      the('st-backend', s.backend === 'cli' ? 'ok' : 'warn', BACKEND[s.backend] || s.backend,
+          s.backend === 'cli' ? 'dịch / SEO / SRT xếp mới đi qua codex'
+                              : 'tick ô "Dùng GPT CLI làm cách dịch" ở khối ② để chuyển');
+    } catch (e) {
+      the('st-codex', 'loi', 'Không lấy được trạng thái', String(e));
+    }
+  }
+
+  function bong(lop, text, meta) {
+    const d = document.createElement('div');
+    d.className = 'cli-msg ' + lop;
+    if (meta) { const m = document.createElement('small'); m.textContent = meta; d.appendChild(m); }
+    d.appendChild(document.createTextNode(text));
+    const trong = chat.querySelector('.empty');
+    if (trong) trong.remove();
+    chat.appendChild(d);
+    d.scrollIntoView({ block: 'nearest' });
+    return d;
+  }
+  function metaBan(s) {
+    return 'Bạn' + (s.mode === 'check' ? ' · 🔌 lệnh thử ngắn' : s.full ? ' · như lúc dịch thật' : '');
+  }
+  function metaTraLoi(s) {
+    const i = s.info || {};
+    return 'GPT CLI · ' + (i.model || 'model codex tự chọn') + ' · mức ' + tenMuc(i.effort)
+      + (s.elapsed ? ' · trả lời sau ' + Math.round(s.elapsed) + ' s' : '');
+  }
+  function hienKetQua(s) {
+    if (cho) { cho.remove(); cho = null; }
+    if (s.error) bong('loi', '❌ ' + s.error, 'GPT CLI · lỗi');
+    else if (s.result) bong('ai', s.result, metaTraLoi(s));
+  }
+
+  async function refresh() {
+    clearTimeout(timer);
+    try {
+      const r = await fetch('/api/gptcli-test', { credentials: 'same-origin' });
+      const s = await r.json();
+      logBox.textContent = s.lines.length ? s.lines.join('\n') : 'Chưa chạy.';
+      promptBox.textContent = s.prompt || '';
+      status.textContent = s.running ? '⌛ đang chạy…' : s.error ? '❌ lỗi — xem khối ③'
+        : s.finished ? '✅ xong' : '';
+      elapsed.textContent = (!s.running && s.finished && s.elapsed)
+        ? 'CLI trả lời sau ' + Math.round(s.elapsed) + ' s' : '';
+      $('cli-check').disabled = $('cli-send').disabled = Boolean(s.running);
+      logBox.scrollTop = logBox.scrollHeight;
+      if (moiGui && s.text) {                       // lượt vừa bấm: bong bóng "Bạn" + chờ
+        moiGui = false;
+        bong('me', s.text, metaBan(s));
+        cho = bong('cho', '⌛ GPT CLI đang trả lời…');
+      }
+      if (s.running) { timer = setTimeout(refresh, 1000); return; }
+      if (s.finished && s.finished !== daThay) {    // lượt vừa xong (hoặc lượt cũ khi mới mở trang)
+        daThay = s.finished;
+        if (!chat.querySelector('.cli-msg.me') && s.text) bong('me', s.text, metaBan(s) + ' · lượt trước');
+        hienKetQua(s);
+        docInfo();                                  // 🔌 có thể vừa đổi trạng thái đăng nhập / codex
+      }
+    } catch (e) {
+      status.textContent = 'Không lấy được trạng thái: ' + e;
+    }
+  }
+  async function start(mode) {
+    const fd = new FormData();
+    fd.set('mode', mode);
+    fd.set('text', $('cli-text').value);
+    if ($('cli-full').checked) fd.set('full_prefix', '1');
+    status.textContent = '⌛ đang gửi yêu cầu…';
+    const resp = await fetch('/api/gptcli-test/chay', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const s = await resp.json().catch(() => ({}));
+    if (!resp.ok) { status.textContent = '❌ ' + (s.error || ('HTTP ' + resp.status)); return; }
+    moiGui = true;
+    refresh();
+  }
+
+  // Ô chọn model: "Nhập tay…" mới hiện ô gõ tên.
+  const sel = $('cli-model'), khac = $('cli-model-khac-field');
+  if (sel && khac) sel.addEventListener('change', () => { khac.hidden = sel.value !== '__khac__'; });
+  // Ô ② vừa tự lưu xong → đọc lại thẻ "Model · mức" / "Cách dịch" ở ①.
+  document.addEventListener('mv:daluu', (e) => {
+    const f = e.detail && e.detail.form;
+    if (f && f.closest('#cli-caidat')) docInfo();
+  });
+  $('cli-check').addEventListener('click', () => start('check'));
+  $('cli-send').addEventListener('click', () => start('send'));
+  docInfo();
   refresh();
 })();
 
@@ -1031,6 +1159,8 @@ window.mvNguon = (function () {
   }
 
   function daLuu(el, html) {
+    // Báo cho khối nào cần làm mới sau khi lưu (tab 🤖: thẻ "Model · mức" ở khối ①).
+    document.dispatchEvent(new CustomEvent('mv:daluu', { detail: { form: el.form } }));
     // Mẩu "✓ đã lưu" của server → ô .luunote cùng khối (nếu khối đó có).
     const khoi = el.closest('.panel, .savebar, form');
     const note = khoi && khoi.querySelector('.luunote');
@@ -1161,5 +1291,134 @@ window.xemTruocThumb = function () {
                    + 'và output/ không bị đụng)')) return;
       goiXoa('/tap/xoa-tatca', new FormData(), het);
     }
+  });
+})();
+
+
+// ── Hàng thu gọn details.fold (06/11/2026) ───────────────────────────────────
+// Mỗi khối từ "1 Nhận diện giọng nói" trở xuống là một <details class="fold"
+// data-fold="khoá">. Mở/đóng do trình duyệt lo; ở đây chỉ NHỚ trạng thái từng hàng
+// vào localStorage (dùng chung mọi trang/tab — cùng khoá là cùng hàng) rồi áp lại
+// lúc tải trang và sau mỗi lần htmx vẽ lại (khối Facebook tự thay chính nó 6 s/lần
+// khi hàng đợi còn việc). Chưa từng bấm hàng nào thì theo thuộc tính open của
+// template. Hai nút [data-fold-all="mo"|"dong"] mở / thu gọn mọi hàng trên trang.
+(function () {
+  const KEY = 'mv.fold.v1';
+  const doc = () => {
+    try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (_) { return {}; }
+  };
+  const ghi = (v) => {
+    try { localStorage.setItem(KEY, JSON.stringify(v)); } catch (_) { /* chế độ riêng tư… */ }
+  };
+  const hang = (root) => (root || document).querySelectorAll('details.fold[data-fold]');
+
+  function apLai() {
+    const st = doc();
+    hang().forEach((d) => {
+      const v = st[d.dataset.fold];
+      if (typeof v === 'boolean' && d.open !== v) d.open = v;
+    });
+  }
+
+  // Ghi theo cú BẤM vào đầu hàng (bàn phím Enter/Space cũng ra click), không theo sự
+  // kiện toggle: toggle còn bắn lúc tải trang và lúc apLai() tự đặt open — ghi ở đó
+  // là "đóng đinh" luôn mặc định của template vào máy người dùng.
+  document.addEventListener('click', (e) => {
+    const nut = e.target.closest('[data-fold-all]');
+    if (nut) {
+      const mo = nut.dataset.foldAll === 'mo';
+      const st = doc();
+      hang().forEach((d) => { d.open = mo; st[d.dataset.fold] = mo; });
+      ghi(st);
+      return;
+    }
+    const s = e.target.closest('summary');
+    const d = s && s.parentElement;
+    if (!d || !d.matches('details.fold[data-fold]')) return;
+    setTimeout(() => {              // sau khi trình duyệt đổi open xong
+      const st = doc();
+      st[d.dataset.fold] = d.open;
+      ghi(st);
+    }, 0);
+  });
+
+  apLai();
+  document.addEventListener('htmx:afterSwap', apLai);
+})();
+
+
+// ── 🎧 Nghe thử cài đặt giọng (06/11/2026) ───────────────────────────────────
+// Nút [data-nghethu] trong hàng "Cài đặt tạo giọng": gửi các ô giọng ĐANG HIỆN (chưa
+// cần lưu) tới /giongnoi/nghethu — server áp lên mẫu ~30 s giọng gốc của một tập
+// (scripts/taogiong_nghethu.py) rồi trả đường phát. Đã bấm 🎧 một lần thì đổi ô giọng
+// nào (kể cả chọn 🎚 mẫu giọng) là dựng + phát lại luôn, khỏi bấm lại.
+(function () {
+  const GUI = ['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien', 'sang_giong',
+               'am_luong_db', 'mode', 'voice', 'vieneu_voice', 'instruct'];
+  const NGHE_LAI = new Set(['pitch', 'vang_truong_do', 'vang_cuong_do', 'thieu_nien',
+                            'sang_giong', 'am_luong_db', 'chuan_am', 'mau_giong']);
+  let luot = 0;         // chỉ lượt bấm sau cùng được phát (bấm dồn / đổi ô liên tiếp)
+  let hen = null;
+
+  async function nghe(box) {
+    const form = box.closest('form');
+    const nut = box.querySelector('[data-nghethu]');
+    const au = box.querySelector('audio');
+    const note = box.querySelector('[data-nghethu-note]');
+    if (!form || !nut || !au) return;
+    const fd = new FormData();
+    GUI.forEach((k) => {
+      const el = form.elements[k];           // radio cùng tên → RadioNodeList, .value = ô đang chọn
+      if (el && el.value != null) fd.append(k, el.value);
+    });
+    const ca = form.elements['chuan_am'];
+    if (ca && ca.checked) fd.append('chuan_am', '1');
+    const toi = ++luot;
+    nut.disabled = true;
+    if (note) note.textContent = 'đang dựng…';
+    try {
+      const r = await fetch('/giongnoi/nghethu', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const j = await r.json();
+      if (toi !== luot) return;
+      if (!j.ok) {
+        if (note) note.textContent = '';
+        window.mvToast(['⚠️ ' + (j.loi || 'Không nghe thử được.')]);
+        return;
+      }
+      au.hidden = false;
+      au.src = j.url;
+      au.title = j.van_ban ? 'Mẫu đọc: ' + j.van_ban : '';
+      if (note) {
+        note.textContent = j.mau + ' · ' + j.mo_ta;
+        note.title = au.title;
+      }
+      if (j.ghi_chu && j.ghi_chu.length) window.mvToast(j.ghi_chu.map((s) => '⚠️ ' + s));
+      box.dataset.dangNghe = '1';
+      au.play().catch(() => {});             // trình duyệt chặn tự phát → vẫn bấm ▶ trên thanh được
+    } catch (err) {
+      if (toi !== luot) return;
+      if (note) note.textContent = '';
+      window.mvToast(['⚠️ Nghe thử lỗi: ' + err.message]);
+    } finally {
+      if (toi === luot) nut.disabled = false;
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const nut = e.target.closest('[data-nghethu]');
+    if (!nut) return;
+    e.preventDefault();
+    const box = nut.closest('[data-nghethu-box]');
+    if (box) nghe(box);
+  });
+
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (!el || !el.form || !NGHE_LAI.has(el.name)) return;
+    const box = el.form.querySelector('[data-nghethu-box][data-dang-nghe]');
+    if (!box) return;
+    clearTimeout(hen);
+    // 🎚 Mẫu giọng điền 5 ô ngay trong chính sự kiện change này → hẹn một nhịp rồi mới đọc ô.
+    hen = setTimeout(() => nghe(box), 200);
   });
 })();

@@ -14,8 +14,9 @@ TAG" thì ghi <base>_seo.json = {"title", "desc", "tags"}. File này là nguồn
 caption cho cả đăng YouTube (dang_youtube.py) lẫn lên lịch Facebook (FACEBOOK/…).
 Extension gửi lỗi giữa chừng (chưa kết nối, "Gemini chưa xác nhận"...) thì tự
 chuyển Firefox cho các video còn lại — y khuôn seo_youtube_gemini bên myvoice
-(03/10/2026). Trong lúc chạy, giu_man_hinh giữ màn hình không tắt (màn hình tắt
-là Chrome bóp tab Gemini, SEO hỏng).
+(03/10/2026). Màn hình tắt là Chrome bóp tab Gemini, SEO hỏng — driver extension
+(myvoice/scripts/gemini_extension.py) tự đánh thức/nhích chuột trong lúc gửi–đợi
+Gemini (02/11/2026); đường Firefox không giữ màn hình.
 
 ⚠️ Dùng đường Firefox thì Firefox đang mở phải ĐÓNG trước (Selenium khoá profile).
 Tên kênh (nếu muốn nhắc trong mô tả) đặt ở khoá `seo_kenh` trong
@@ -39,7 +40,6 @@ SETTINGS_FILE = ROOT / "myvideo" / "web" / "web_settings.json"
 
 sys.path.insert(0, str(ROOT / "myvoice" / "scripts"))
 import dich_gemini as dg  # noqa: E402  (bộ lái Gemini dùng chung — extension/Firefox)
-from giu_man_hinh import giu_man_hinh  # noqa: E402  (giữ màn hình khi dịch/SEO)
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -177,38 +177,35 @@ def main() -> int:
             return driver, None
 
     try:
-        # Màn hình tắt là Chrome bóp tab Gemini → SEO hỏng (bài học 03/10/2026
-        # bên myvoice) — giữ màn hình suốt mẻ SEO.
-        with giu_man_hinh():
-            for i, (base, srt) in enumerate(viec):
-                print(f"📑 [{i + 1}/{len(viec)}] {ten_hienthi(base)}")
-                noi_dung = _srt_text(srt)[:MAX_INPUT_CHARS]
-                seo = None
-                for lan in range(1, ATTEMPTS + 1):
-                    # Mỗi lượt một CHAT MỚI — gửi vào chat cũ dễ đọc nhầm câu trả
-                    # lời trước đó (bài học tập 55-58 bên myvoice dùng chung SEO).
-                    if not dg.is_driver_alive(driver):
-                        driver = dg.restart_firefox(driver)
-                    else:
-                        driver.get(dg.GEMINI_URL)
-                        time.sleep(6)
-                    driver, tra_loi = _gui(driver, _prompt(noi_dung, kenh))
-                    seo = _parse(tra_loi or "")
-                    if seo:
-                        break
-                    print(f"  ⚠️ Lượt {lan}: câu trả lời không đúng định dạng"
-                          + (" — thử lại chat mới..." if lan < ATTEMPTS else ""))
-                if not seo:
-                    # KHÔNG ghi bừa kết quả hỏng — thiếu SEO thì đăng bài dùng tên
-                    # video, còn hơn mang tiêu đề sai của video khác.
-                    print(f"  ⛔ Bỏ qua {ten_hienthi(base)} — Gemini không trả đúng định dạng.")
-                    loi += 1
-                    continue
-                seo["made_at"] = datetime.now().isoformat(timespec="seconds")
-                out = OUTPUT_DIR / f"{base}_seo.json"
-                out.write_text(json.dumps(seo, ensure_ascii=False, indent=2),
-                               encoding="utf-8")
-                print(f"  ✅ «{seo['title']}» → {out.name}")
+        for i, (base, srt) in enumerate(viec):
+            print(f"📑 [{i + 1}/{len(viec)}] {ten_hienthi(base)}")
+            noi_dung = _srt_text(srt)[:MAX_INPUT_CHARS]
+            seo = None
+            for lan in range(1, ATTEMPTS + 1):
+                # Mỗi lượt một CHAT MỚI — gửi vào chat cũ dễ đọc nhầm câu trả
+                # lời trước đó (bài học tập 55-58 bên myvoice dùng chung SEO).
+                if not dg.is_driver_alive(driver):
+                    driver = dg.restart_firefox(driver)
+                else:
+                    driver.get(dg.GEMINI_URL)
+                    time.sleep(6)
+                driver, tra_loi = _gui(driver, _prompt(noi_dung, kenh))
+                seo = _parse(tra_loi or "")
+                if seo:
+                    break
+                print(f"  ⚠️ Lượt {lan}: câu trả lời không đúng định dạng"
+                      + (" — thử lại chat mới..." if lan < ATTEMPTS else ""))
+            if not seo:
+                # KHÔNG ghi bừa kết quả hỏng — thiếu SEO thì đăng bài dùng tên
+                # video, còn hơn mang tiêu đề sai của video khác.
+                print(f"  ⛔ Bỏ qua {ten_hienthi(base)} — Gemini không trả đúng định dạng.")
+                loi += 1
+                continue
+            seo["made_at"] = datetime.now().isoformat(timespec="seconds")
+            out = OUTPUT_DIR / f"{base}_seo.json"
+            out.write_text(json.dumps(seo, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            print(f"  ✅ «{seo['title']}» → {out.name}")
     finally:
         try:
             driver.quit()

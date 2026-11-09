@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from gemini_backend import BRIDGE_PORT, EXTENSION_CONNECT_TIMEOUT, connection_token
+from giu_man_hinh import CHO_SANG, danh_thuc, giu_neu_ranh
 
 
 class BridgeServer(ThreadingHTTPServer):
@@ -190,7 +191,13 @@ class ExtensionBridge:
 
 
 class ChromeExtensionDriver:
-    """The browser operations used by translation, blank retry and SEO."""
+    """The browser operations used by translation, blank retry and SEO.
+
+    Màn hình (02/11/2026): Chrome bóp tab Gemini khi màn hình tắt, nên CHÍNH driver này
+    đánh thức màn hình lúc kết nối và nhích chuột 1 px khi máy rảnh lâu TRONG LÚC đang
+    gửi/đợi Gemini (scripts/giu_man_hinh.py). Ngoài extension (Firefox, GPT CLI, nhận
+    diện, tải, tạo giọng, dựng video…) không ai giữ màn hình — tắt theo Windows.
+    """
     is_chrome_extension = True
 
     def __init__(self, url, bridge=None, connect_timeout=EXTENSION_CONNECT_TIMEOUT):
@@ -207,6 +214,9 @@ class ChromeExtensionDriver:
                     why = (f"không có Chrome nào hỏi lệnh trong {int(connect_timeout)} giây — mở "
                            "Chrome có cài extension OmniVoice Gemini và bật kết nối trong popup")
                 raise RuntimeError(f"Chrome Extension chưa kết nối: {why}.")
+            # Có Chrome hỏi lệnh rồi → đánh thức màn hình (máy rảnh lâu thì chờ CHO_SANG
+            # giây cho sáng hẳn, Chrome thả tab) trước khi điều khiển.
+            danh_thuc(CHO_SANG)
             self.get(url)
         except Exception:
             self.quit()
@@ -216,6 +226,7 @@ class ChromeExtensionDriver:
         parsed = urlsplit(url)
         if parsed.scheme != "https" or parsed.netloc != "gemini.google.com":
             raise ValueError("Extension chỉ mở https://gemini.google.com")
+        giu_neu_ranh(CHO_SANG)   # mở chat mới sau khi driver nằm chờ lâu: màn hình có thể đã tắt
         self.bridge.call("navigate", url=url)
 
     @property
@@ -223,11 +234,13 @@ class ChromeExtensionDriver:
         return self.bridge.call("status")["url"]
 
     def responses(self, selectors):
+        giu_neu_ranh()           # đang đợi Gemini trả lời: máy rảnh NHICH_SAU giây thì nhích
         state = self.bridge.call("responses", selectors=selectors)
         self.generating = bool(state.get("generating"))
         return [SimpleNamespace(text=t) for t in state["texts"]]
 
     def submit(self, text, editor_selectors, send_selectors):
+        giu_neu_ranh(CHO_SANG)   # sắp gửi: rảnh lâu đến mức màn hình có thể tắt → đánh thức + chờ sáng
         self.bridge.call("submit", text=text, editor_selectors=editor_selectors,
                          send_selectors=send_selectors)
 

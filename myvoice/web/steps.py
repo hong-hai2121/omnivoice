@@ -14,13 +14,23 @@ from pathlib import Path
 from . import core
 from .jobs import Step, fb_runner, log, upload_runner
 
+# Mã "LỖI GPU" của runner (run_episode.py / run_tts.py, 05/11/2026): tập sau cũng sẽ dính
+# nên bước mang mã này làm cả hàng đợi TẠM DỪNG (Step.halt_codes) thay vì chạy tiếp.
+# Lấy thẳng từ scripts/gpu_batbuoc.py — module nhẹ, `core` đã vá sys.path tới scripts/.
+from gpu_batbuoc import MA_THOAT_GPU as GPU_CODE  # noqa: E402
+
 RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
 RUNNER_UPLOAD = core.WEB_DIR / "runners" / "run_upload.py"
+# Đăng qua Chrome thật (YouTube Studio + TikTok Studio) — chọn ở ô "Cách đăng" của khối Đăng YouTube.
+RUNNER_TRINHDUYET = core.WEB_DIR / "runners" / "run_dang_trinhduyet.py"
 # Lấp đoạn "(trống)" trong gemini_result.docx — script CLI có sẵn, không đi qua
 # run_episode.py (nó không phải một bước của quy trình, chỉ là việc sửa tay có trợ giúp).
 RETRANS_SCRIPT = core.SCRIPTS_DIR / "dich_lai_trong.py"
+# Script tải Bilibili qua app Bili23 (cùng file runner gọi: run_episode.TAIBILI_SCRIPT) —
+# ở đây chỉ dùng chế độ `--dong-app` cho bước cuối của đợt tải.
+TAIBILI_SCRIPT = core.WEB_DIR.parent.parent / "myvideo" / "video_taibilibili.py"
 TMP_DIR = core.WEB_DIR / ".tmp"
 
 # Mã "dừng có chủ ý" của runner — phải khớp STOP trong runners/run_episode.py.
@@ -70,7 +80,9 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
     pipe = core.load_pipeline()
     argv = [core.python_exe(), "-u", str(RUNNER), "--steps", step_names,
             "--model", str(pipe.get("model", "medium")),
-            "--speed", str(pipe.get("speed", "0.7"))]
+            "--speed", str(pipe.get("speed", "0.7")),
+            # Mức video khi tải link Bilibili (ô "Tải Bilibili"; "auto" = cao nhất).
+            "--bili-quality", core.gui.chuan_bili_quality(pipe.get("bili_quality"))]
     if source:
         argv += ["--source", source]
     if episode:
@@ -80,8 +92,33 @@ def _base_argv(step_names: str, source: str, episode: str, force: bool) -> list[
     return argv
 
 
+# Tên việc đóng Bili23 trong hàng đợi — server tìm theo tên này để DỜI nó về cuối khi có
+# đợt tải mới xếp thêm (bấm ⏩ lần nữa giữa mẻ), khỏi đóng rồi mở lại.
+DONG_BILI23_TITLE = "⏩ Đóng app Bili23 (nếu bộ tải tự mở)"
+
+
+def dong_bili23_step() -> Step:
+    """Bước CUỐI của đợt tải (08/11/2026, user yêu cầu): đóng app Bili23 nếu chính bộ tải đã
+    tự mở nó — app người dùng mở sẵn từ trước thì để nguyên (script tự kiểm bằng dấu PID,
+    xem video_taibilibili.py). Đặt ở cuối ĐỢT chứ không sau từng tập: tập sau lại cần app,
+    đóng/mở liên tục tốn ~10 s mỗi lần. continue_on_fail: dọn dẹp hỏng không được biến đợt
+    tải thành "lỗi"; không có halt_codes vì bước này không đụng GPU."""
+    argv = [core.python_exe(), "-u", str(TAIBILI_SCRIPT), "--dong-app"]
+    return Step(label="Đóng app Bili23 (nếu bộ tải tự mở)", argv=argv,
+                cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(), continue_on_fail=True)
+
+
 def upload_steps(episode: str) -> list[Step]:
-    """Bước ĐĂNG YouTube cho 1 tập (chạy ở hàng đợi riêng upload_runner)."""
+    """Bước ĐĂNG YouTube cho 1 tập (chạy ở hàng đợi riêng upload_runner).
+
+    Cách đăng "studio" (30/10/2026): runner run_dang_trinhduyet.py đăng YouTube Studio + TikTok
+    Studio qua Chrome thật; biên nhận cùng khuôn youtube_upload.json nên bảng tiến độ không đổi."""
+    if core.upload_backend() == "studio":
+        argv = [core.python_exe(), "-u", str(RUNNER_TRINHDUYET), "--episode", str(episode),
+                "--nen-tang", "youtube", "tiktok"]
+        return [Step(label=f"Đăng YouTube + TikTok (trình duyệt) tập {episode}", argv=argv,
+                     cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
+                     soft_fail_codes=(STOP_CODE,))]
     argv = [core.python_exe(), "-u", str(RUNNER_UPLOAD), "--episode", str(episode)]
     return [Step(label=f"Đăng YouTube tập {episode}", argv=argv,
                  cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(),
@@ -252,6 +289,7 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
                           # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
                           soft_fail_codes=(STOP_CODE,) if go_on else (STOP_CODE, SEO_SOFT_CODE),
                           continue_codes=(SEO_SOFT_CODE,) if go_on else (),
+                          halt_codes=(GPU_CODE,),
                           on_success=on_success))
     return steps, ""
 
@@ -293,6 +331,9 @@ def resume_step(missing: list[str], source: str, episode: str,
     # mới trả STOP_CODE (có dựng video) hoặc SEO_SOFT_CODE (chỉ SEO/thumbnail).
     return Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE, SEO_SOFT_CODE),
+                # Lỗi GPU thì KHÔNG "chạy tiếp tập sau" dù đang trong đợt (continue_on_fail):
+                # tập sau cũng hỏng y hệt — hàng đợi tạm dừng (xem Step.halt_codes).
+                halt_codes=(GPU_CODE,),
                 continue_on_fail=continue_on_fail, on_success=on_success), ""
 
 
@@ -326,7 +367,8 @@ def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = Fal
     label = {"ngang": "Dựng lại video ngang", "doc": "Dựng lại video dọc",
              "tiktok": "Dựng lại video TikTok"}.get(rebuild, "Tạo giọng + video")
     return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
-                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,))], ""
+                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,),
+                 halt_codes=(GPU_CODE,))], ""
 
 
 def thumbnail_steps(title: str, episode: str = "", photo: str = "",

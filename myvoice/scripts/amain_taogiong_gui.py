@@ -68,7 +68,10 @@ from pathlib import Path
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
-VOICE_DIR  = BASE_DIR / "voice"
+# Kho giọng mẫu (wav/mp3 + .prompt.pt đã dựng). Từ 04/11/2026 gom vào voice/giong_mau/ —
+# voice/ chỉ còn code (thu_giong.py), kho VieNeu-TTS và kết quả thử. Web (core.VOICE_DIR),
+# app Thử giọng và myvideo (VOICE_DIRS) cùng trỏ vào đây nên kho vẫn DÙNG CHUNG.
+VOICE_DIR  = BASE_DIR / "voice" / "giong_mau"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 OUTPUT_DIR = SCRIPT_DIR / "output"                    # nơi gom mọi kết quả (wav + video + chunks)
 VIDEODOC_DIR   = BASE_DIR / "videodoc"                # kho clip DỌC (có thể chia thư mục con theo chủ đề)
@@ -82,6 +85,18 @@ import dich_input_docx as inputdocx   # noqa: E402
 # Bộ lọc giọng kiểu CapCut (tiếng vang / thiếu niên) + lõi đổi tông/tốc độ bằng
 # ffmpeg — chung cho bài thật, web và voice/thu_giong.py (xem khối ĐỔI TÔNG GIỌNG).
 import hieuung_giong as hu            # noqa: E402
+# 04/11/2026: VieNeu-TTS — chế độ 🗣 VieNeu (giọng dựng sẵn, MẶC ĐỊNH theo chốt của user).
+# Model chạy bằng SDK trong .venv RIÊNG của kho voice/VieNeu-TTS qua tiến trình con
+# (voice/vieneu_worker.py); bên này chỉ cần client HTTP voice/vieneu_client.py — không
+# import gói vieneu vào venv OmniVoice (torch/transformers khác bản).
+_VOICE_PKG_DIR = str(BASE_DIR / "voice")
+if _VOICE_PKG_DIR not in sys.path:
+    sys.path.insert(0, _VOICE_PKG_DIR)
+import vieneu_client as vn            # noqa: E402
+# GPU bắt buộc (27/10/2026): OmniVoice / Whisper / NVENC lỗi → GpuLoi, báo lỗi rồi dừng
+# cả lượt (tập coi như CHƯA xong), không âm thầm rớt về CPU.
+from gpu_batbuoc import GpuLoi        # noqa: E402
+import gpu_batbuoc                    # noqa: E402  (ghi_loi/xoa_loi — xem khối except của run_tts)
 from hieuung_giong import (           # noqa: E402,F401  (tên cũ, chỗ khác còn gọi)
     PITCH_MIN, PITCH_MAX, parse_pitch, has_rubberband, pitch_factor, atempo_chain,
     build_audio_filter)
@@ -98,6 +113,12 @@ DOWNLOAD_DIR = Path(__file__).resolve().parent / "downloads_zh"  # mp3 tải t�
 TAI_VE_DIR = Path.home() / "Downloads"
 BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
 BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
+# 05/11/2026: MỨC CHẤT LƯỢNG khi tải link Bilibili qua app Bili23 (ô "Tải Bilibili" trên
+# web, khoá bili_quality trong taogiong_pipeline.json). "auto" = cao nhất tải được (như
+# trước). Kênh audio chỉ cần TIẾNG để nhận diện nên 360P là đủ, tải nhanh hơn nhiều.
+# Bản thấp lưu tên RIÊNG <mã BV>_<mức>.mp4 — <mã BV>.mp4 luôn là bản đầy đủ, nên myvideo
+# và 🎞 "lấy video tải xuống làm video nguồn" không bao giờ nhặt nhầm bản mờ.
+BILI_QUALITIES = ("auto", "1080P", "720P", "480P", "360P")
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".ts", ".m4v"}
 DRIVE_SCRIPT_FOLDER_ID = "1cDUrHiQmzyIK7a8rqY3pFspHsizaceei"  # thư mục Drive "kịch bản"
 FAV_FILE   = BASE_DIR / "voice_favorites.json"        # danh sách giọng mẫu yêu thích
@@ -108,11 +129,16 @@ OPTS_FILE  = BASE_DIR / "taogiong_options.json"        # cài đặt mục "Cài
 # upload=False: ĐĂNG YOUTUBE mặc định TẮT — đăng là việc hướng ra ngoài, chỉ chạy
 # khi bạn chủ động tick.
 PIPE_DEFAULTS = dict(auto2=True, auto3=True, auto_tts=True, seo=True, model="medium", speed="0.7",
-                     shutdown=False, upload=False, gemini_backend="extension")
+                     shutdown=False, sleep=False, upload=False, gemini_backend="extension",
+                     bili_quality="auto")
 # Số phút chờ trước khi tắt máy khi bật ô "⏻ Xong thì tắt máy" (huỷ bằng: shutdown /a).
 # NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py đọc lại hằng này).
-# (Ô 🌙 "cho máy ngủ" + suspend_computer đã bỏ 26/10/2026 — chỉ còn tắt máy.)
-SHUTDOWN_DELAY_MIN = 5
+# 31/10/2026: user hạ 5 → 1 phút.
+SHUTDOWN_DELAY_MIN = 1
+# Số phút chờ trước khi CHO MÁY NGỦ khi bật ô "🌙 Xong thì cho máy ngủ" (ô này bị bỏ
+# 26/10/2026, user cho quay lại 31/10/2026 với 1 phút). Ngủ dễ huỷ: bỏ tick là xong,
+# lỡ ngủ rồi thì chạm chuột là dậy — không mất gì cả. Web (power.py) cũng đọc hằng này.
+SLEEP_DELAY_MIN = 1
 AUDIO_EXTS = {".mp3", ".wav", ".MP3", ".WAV", ".flac", ".FLAC"}
 STAR       = "★ "                                     # tiền tố hiển thị cho giọng yêu thích
 
@@ -133,6 +159,34 @@ DEFAULT_EFFECT = "bubbles_overlay_6.mov"               # hiệu ứng chọn s�
 #     tốn thêm dung lượng đĩa bằng đúng một bản video nữa trong lúc ghi đè.
 SUB_MODE_SRT  = "file .srt rời"
 SUB_MODE_BURN = "vẽ cứng vào hình"
+
+
+def suspend_computer() -> str:
+    """Đưa máy vào chế độ NGỦ ngay. Trả "" nếu gọi được, hoặc mô tả lỗi.
+
+    Hàm chỉ trả về khi máy đã DẬY lại (SetSuspendState chặn tại đó).
+
+    Tham số (bHibernate=0, bForce=1, bWakeupEventsDisabled=0): số 0 đầu là xin NGỦ
+    chứ không ngủ đông. Máy nào đang bật sẵn ngủ đông vẫn có thể vào hibernate thay
+    vì sleep — muốn ngủ thật thì tắt nó một lần bằng:  powercfg -h off
+
+    NGUỒN DUY NHẤT cho cả GUI lẫn bảng web (myvoice/web/power.py gọi lại hàm này).
+    """
+    import ctypes
+    import subprocess
+    try:
+        if ctypes.windll.powrprof.SetSuspendState(0, 1, 0):
+            return ""
+    except Exception as e:
+        logging.warning(f"⚠️ Gọi SetSuspendState không được ({e}) — thử lại bằng rundll32.")
+    # Dự phòng: đúng lệnh ngủ Windows vẫn dùng, chạy ở tiến trình riêng nên không
+    # dính chuyện quyền/hàm nạp hỏng của tiến trình đang chạy.
+    try:
+        subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+                       check=False, creationflags=CREATE_NO_WINDOW)
+        return ""
+    except Exception as e:
+        return str(e)
 
 
 def _ensure_youtube_path():
@@ -169,11 +223,27 @@ def video_gansub_max_chars_doc(default: int = 27) -> int:
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=160,
+    # 04/11/2026: CHẾ ĐỘ GIỌNG — "vieneu" (VieNeu-TTS giọng dựng sẵn, mặc định theo chốt của
+    # user: nhanh gấp 5–10 lần clone, VRAM ~0,7 GB), "clone" (OmniVoice nhái giọng mẫu),
+    # "design", "default". Nhớ lần chạy trước. vieneu_voice: 1 trong 25 giọng dựng sẵn
+    # (vieneu_client.GIONG_DUNG_SAN), mặc định Ngọc Huyền.
+    mode="vieneu", vieneu_voice="Ngọc Huyền",
+    # 05/11/2026: CHUẨN ÂM (nén nhẹ SPEECH_COMPRESSOR + loudnorm −14 LUFS + neo cả bài về
+    # −18 dBFS trong _balance_chunk_levels) — user "bỏ chuẩn âm đi luôn" sau khi nghe bản
+    # VieNeu to hơn mẫu thô 6 dB và "ồm". Tắt = giữ mức gốc của giọng, chỉ cân mức TƯƠNG
+    # ĐỐI giữa các đoạn (±CHUNK_GAIN_MAX_DB). Bật lại ở ô 🔉 mục Cài đặt (GUI / web).
+    chuan_am=False,
+    # 06/11/2026: 🔊 ÂM LƯỢNG CƠ BẢN (dB, + to / − nhỏ, 0 = giữ nguyên) — cộng thẳng một
+    # mức gain lên output.wav ở bước CUỐI (sau tông, bộ lọc và chuẩn âm nếu bật), mức dương
+    # có bộ chặn đỉnh (hu.amluong_chain). Dùng khi tắt chuẩn âm mà giọng gốc nghe nhỏ.
+    am_luong_db=0.0,
     # 20/10/2026: TÔNG GIỌNG (bán cung, + cao / − trầm, 0 = giữ nguyên) áp lên
     # output.wav ngay sau khi ghép (giữ tốc độ) → mọi bản video/cắt/tăng tốc kế
     # thừa. Mặc định +1 (20/10/2026: hạ từ +2 theo chốt của user sau khi so
     # trên app Thử giọng).
-    pitch=1.0,
+    # 05/11/2026: về 0 (trước +1) — user "tắt hết về mức mặc định" khi engine mặc định đã
+    # là VieNeu giọng dựng sẵn; muốn cao hơn thì kéo tay / chọn mẫu 🎚 "Sáng + cao nhẹ".
+    pitch=0.0,
     # 20/10/2026: BỘ LỌC GIỌNG kiểu CapCut, thang 0–100, 0 = tắt (scripts/hieuung_giong.py):
     # 🔔 tiếng vang (trường độ = độ dài đuôi vang, cường độ = mức trộn — bật khi > 0)
     # và 🧒 giọng thiếu niên (dời formant + nhỉnh cao độ). Áp cùng lúc với tông.
@@ -181,12 +251,19 @@ OPTS_DEFAULTS = dict(
     # 23/10/2026: 🔆 SÁNG GIỌNG (0–100) — trị giọng clone "ồm": EQ bớt 150–500 Hz,
     # nâng 3 kHz + dải cao, áp lên output.wav VÀ lên giọng mẫu trong bộ nhớ lúc
     # dựng prompt clone (file mẫu không đổi; đổi mức là sinh lại các đoạn).
-    sang_giong=80,   # mặc định 80 — user chốt 23/10/2026 sau khi nghe demo các mức
+    # 05/11/2026: về 0 (trước 80, chốt 23/10 cho clone ồm) — giọng VieNeu dựng sẵn đã sáng,
+    # áp 60–80 vào là mỏng + chói (đo M163: trọng tâm phổ 1100 → 1500 Hz). Clone mẫu tối
+    # mới cần bật: kéo tay hoặc chọn mẫu 🎚 "Sáng rõ" (80).
+    sang_giong=0,
     make_video=True, ngang_speed="1.0", ngang_source=NGANG_SOURCE_ALL, effect=DEFAULT_EFFECT,
     # 24/10/2026: 🎞 video ngang lấy VIDEO TẢI XUỐNG của tập làm nguồn hình (tắt tiếng
     # gốc lúc dựng, phóng to ngang_nguon_zoom % rồi cắt giữa, kéo thời lượng khớp
     # giọng đọc) thay vì ghép clip videongang/. Mặc định tắt = ghép clip như cũ.
     ngang_tu_nguon=False, ngang_nguon_zoom=120,
+    # 08/11/2026: ✂ che chữ Trung cháy sẵn trong clip — bật: cắt 8 % mép trên + 13 % mép
+    # dưới, lót dải đen mỏng (ngang) / dải dọc 1080×852 (dọc). Mặc định TẮT = giữ nguyên
+    # khung hình gốc 1:1, không cắt, không phóng (user chốt: "để tỷ lệ cũ không phóng to").
+    che_chu_trung=False,
     make_video_doc=True, doc_speed="1.0", doc_percent=100,
     doc_from_ngang=False,
     doc_from_subfolder=False,
@@ -282,23 +359,128 @@ def list_ngang_sources() -> list[str]:
         return []
 
 
-def resolve_ngang_source(name: str, log=print):
-    """TÊN thư mục con videongang/ → Path hợp lệ (có .mp4); None → dùng cả kho videongang/.
+def ngang_source_list(value) -> list[str]:
+    """Ô "Nguồn ngang" (taogiong_options.json / form web / tham số) → danh sách TÊN
+    thư mục con videongang/ đã chọn; [] = cả kho (tất cả).
 
-    name rỗng hoặc = NGANG_SOURCE_ALL → None. Thư mục con không tồn tại / không có
-    clip .mp4 cũng trả None (fallback dùng cả kho) để không chặn việc dựng video.
+    Nhận: None, 1 tên (chuỗi cũ như "nauan"), NGANG_SOURCE_ALL, chuỗi nhiều tên nối
+    bằng "|" (ký tự Windows không cho đặt tên thư mục), hoặc list/tuple tên. Bỏ
+    trống/trùng, giữ thứ tự. Từ 01/11/2026 tick được NHIỀU thư mục: clip của các thư
+    mục đã tick gom chung rồi xáo ngẫu nhiên lúc ghép (video_khung.gom_clip_kho).
     """
-    name = (name or "").strip()
-    if not name or name == NGANG_SOURCE_ALL:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.split("|")
+    else:
+        try:
+            parts = [str(p) for p in value]
+        except TypeError:
+            parts = [str(value)]
+    out: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if p and p != NGANG_SOURCE_ALL and p not in out:
+            out.append(p)
+    return out
+
+
+def ten_ngang_source(value, toi_da: int = 2) -> str:
+    """Chữ hiện trên ô chọn: "(tất cả)" / "nauan" / "nauan + vlog" / "nauan + vlog +1"."""
+    names = ngang_source_list(value)
+    if not names:
+        return NGANG_SOURCE_ALL
+    s = " + ".join(names[:toi_da])
+    if len(names) > toi_da:
+        s += f" +{len(names) - toi_da}"
+    return s
+
+
+def resolve_ngang_source(value, log=print):
+    """Ô "Nguồn ngang" → danh sách Path thư mục con videongang/ hợp lệ (có .mp4);
+    None → dùng cả kho videongang/.
+
+    Rỗng / NGANG_SOURCE_ALL → None. Thư mục con không tồn tại hoặc không có clip .mp4
+    bị bỏ (ghi log); bỏ hết thì trả None (fallback cả kho) để không chặn việc dựng.
+    Chuỗi 1 tên như trước vẫn nhận (xem ngang_source_list).
+    """
+    names = ngang_source_list(value)
+    if not names:
         return None
-    sub = VIDEONGANG_DIR / name
-    if not sub.is_dir():
-        log(f"[video ngang] Thư mục con '{name}' không có trong videongang/ → dùng cả kho.")
+    dirs = []
+    for name in names:
+        sub = VIDEONGANG_DIR / name
+        if not sub.is_dir():
+            log(f"[video ngang] Thư mục con '{name}' không có trong videongang/ → bỏ qua.")
+        elif not any(sub.glob("*.mp4")):
+            log(f"[video ngang] Thư mục con '{name}' không có .mp4 → bỏ qua.")
+        else:
+            dirs.append(sub)
+    if not dirs:
+        log("[video ngang] Không thư mục con nào đã chọn dùng được → dùng cả kho videongang/.")
         return None
-    if not any(sub.glob("*.mp4")):
-        log(f"[video ngang] Thư mục con '{name}' không có .mp4 → dùng cả kho videongang/.")
-        return None
-    return sub
+    return dirs
+
+
+class NguonNgangChon(ttk.Menubutton):
+    """Ô "Nguồn ngang" bên GUI: nút thả menu có ô tick, tick được NHIỀU thư mục con
+    của videongang/ (01/11/2026; trước là combobox chọn 1).
+
+    get() → list tên đã tick ([] = cả kho); set(value) nhận đúng dạng lưu trong
+    taogiong_options.json (chuỗi cũ 1 tên hoặc list). Mỗi lần mở menu là quét lại
+    thư mục con → tạo thư mục mới không cần mở lại app. Tick "(tất cả)" là bỏ tick
+    các thư mục; bỏ tick hết cũng = "(tất cả)". Thư mục đã tick nhưng không còn trên
+    đĩa vẫn hiện "(không thấy)" để bỏ tick được.
+    """
+
+    def __init__(self, master, value=None, width=16, **kw):
+        self._text = tk.StringVar()
+        # Style "Nguon.TMenubutton" (màu nhấn hồng, chữ trắng đậm) khai ở App._apply_theme.
+        kw.setdefault("style", "Nguon.TMenubutton")
+        super().__init__(master, textvariable=self._text, width=width, direction="below", **kw)
+        # Menu thả xuống cùng tông: nền trắng, dòng đang rê chuột + dấu tick màu nhấn.
+        self._menu = tk.Menu(self, tearoff=0, postcommand=self._dung_menu,
+                             bg=UI["field"], fg=UI["fg"], activeborderwidth=0,
+                             activebackground=UI["accent"], activeforeground="#ffffff",
+                             selectcolor=UI["accent"], font=("Segoe UI", 10),
+                             relief="flat", bd=1)
+        self.configure(menu=self._menu)
+        self._vars: dict[str, tk.BooleanVar] = {}
+        self._tat_ca = tk.BooleanVar(value=True)
+        self.set(value)
+
+    def get(self) -> list[str]:
+        return [n for n, v in self._vars.items() if v.get()]
+
+    def set(self, value):
+        chon = ngang_source_list(value)
+        for v in self._vars.values():
+            v.set(False)
+        for n in chon:
+            self._vars.setdefault(n, tk.BooleanVar()).set(True)
+        self._cap_nhat()
+
+    def _dung_menu(self):
+        self._menu.delete(0, "end")
+        self._menu.add_checkbutton(label=NGANG_SOURCE_ALL, variable=self._tat_ca,
+                                   command=self._chon_tat_ca)
+        self._menu.add_separator()
+        tren_dia = list_ngang_sources()
+        for name in sorted(set(tren_dia) | set(self.get())):
+            v = self._vars.setdefault(name, tk.BooleanVar())
+            self._menu.add_checkbutton(
+                label=name if name in tren_dia else f"{name} (không thấy)",
+                variable=v, command=self._cap_nhat)
+
+    def _chon_tat_ca(self):
+        for v in self._vars.values():
+            v.set(False)
+        self._cap_nhat()
+
+    def _cap_nhat(self):
+        chon = self.get()
+        self._tat_ca.set(not chon)
+        self._text.set(ten_ngang_source(chon))
 
 
 def ten_tai_bilibili(src: str) -> str:
@@ -310,6 +492,19 @@ def ten_tai_bilibili(src: str) -> str:
     duoi = re.sub(r"[^0-9A-Za-z]+", "",
                   (src or "").rstrip("/").rsplit("/", 1)[-1].split("?")[0])
     return f"b23_{duoi[:24]}" if duoi else ""
+
+
+def chuan_bili_quality(value) -> str:
+    """Giá trị đã lưu / nhận từ form → một mức trong BILI_QUALITIES (lạ, trống → "auto")."""
+    muc = str(value or "").strip().upper()
+    return muc if muc in BILI_QUALITIES else "auto"
+
+
+def ten_file_bilibili(src: str, chat_luong="auto") -> str:
+    """Tên file (không đuôi) của bản tải ở mức `chat_luong`: bản đầy đủ là <mã BV>,
+    bản thấp là <mã BV>_<mức> (vd BV1CGpc6YEub_360P) — xem ghi chú ở BILI_QUALITIES."""
+    ten, muc = ten_tai_bilibili(src), chuan_bili_quality(chat_luong)
+    return ten if (not ten or muc == "auto") else f"{ten}_{muc}"
 
 
 def nguon_video_path(source: str):
@@ -334,6 +529,12 @@ def nguon_video_path(source: str):
             p = TAI_VE_DIR / f"{ten}{ext}"
             if p.is_file():
                 return p, ""
+        # Bản tải mức thấp (ô "Tải Bilibili" = 360P…) chỉ để nghe — không lấy làm hình.
+        thap = next((TAI_VE_DIR / f"{ten}_{m}.mp4" for m in BILI_QUALITIES
+                     if m != "auto" and (TAI_VE_DIR / f"{ten}_{m}.mp4").is_file()), None)
+        if thap:
+            return None, (f"chỉ có bản tải chất lượng thấp {thap.name} (chỉ để nhận diện) — "
+                          f"muốn lấy làm hình thì tải lại bản đầy đủ {ten}.mp4")
         return None, f"chưa thấy {ten}.mp4 trong {TAI_VE_DIR} (chạy bước tải trước)"
     if src.lower().startswith(("http://", "https://")):
         return None, "link không phải Bilibili → chỉ tải được mp3, không có hình"
@@ -392,7 +593,7 @@ SCRIPT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Tự chuyển input.txt cũ từ voice/ sang kịch_bản/ nếu chưa có
-_old_input = VOICE_DIR / "input.txt"
+_old_input = BASE_DIR / "voice" / "input.txt"
 _new_input = SCRIPT_DIR / "input.txt"
 if not _new_input.exists():
     if _old_input.exists():
@@ -987,7 +1188,7 @@ def _speech_rms(data: np.ndarray, sr: int) -> float:
     return float(np.sqrt(np.mean(speech ** 2)))
 
 
-def _balance_chunk_levels(parts: list, sr: int) -> list:
+def _balance_chunk_levels(parts: list, sr: int, moc: bool = True) -> list:
     """Kéo mọi đoạn về CÙNG mức to trước khi ghép — hết cảnh đoạn to đoạn nhỏ.
 
     Mốc là TRUNG VỊ mức tiếng nói của cả bài (không phải trung bình): vài đoạn
@@ -1000,6 +1201,9 @@ def _balance_chunk_levels(parts: list, sr: int) -> list:
 
     Chỉ đổi ÂM LƯỢNG tổng của từng đoạn, không đụng gì bên trong đoạn → nhấn nhá
     trong câu giữ nguyên, không có tiếng "bơm" như khi nén động.
+
+    moc=False (05/11/2026, cài đặt chuan_am tắt): CHỈ cân tương đối quanh trung vị, KHÔNG
+    kéo cả bài về SPEECH_RMS_DBFS — giữ mức gốc của giọng (mẫu VieNeu ≈ −20 LUFS).
     """
     levels = [_speech_rms(p, sr) for p in parts]
     ok = [lv for lv in levels if lv > 1e-4]
@@ -1022,6 +1226,8 @@ def _balance_chunk_levels(parts: list, sr: int) -> list:
         logging.info(f"🔊 Cân âm lượng {len(gains)} đoạn về cùng mức "
                      f"(chỉnh {min(gains):+.1f} … {max(gains):+.1f} dB).")
 
+    if not moc:
+        return out
     # Đưa cả bài về mốc cố định, nhưng không bao giờ để chạm trần 0dBFS.
     g_all = 10 ** (SPEECH_RMS_DBFS / 20) / max(target, 1e-6)
     peak_all = max((float(np.max(np.abs(p))) for p in out if p.size), default=0.0)
@@ -1145,11 +1351,18 @@ def load_omnivoice(device=None):
     MỘT chỗ nạp cho cả bài thật (run_tts, kể cả lượt nạp lại sau khi ASR kiểm
     mất chữ), app Thử giọng (voice/thu_giong.py) và myvideo/taogiong_srt.py —
     trước 24/10/2026 mỗi nơi tự gọi from_pretrained một kiểu (gộp theo yêu cầu:
-    code trùng hai bản thì giữ một bản dùng chung)."""
+    code trùng hai bản thì giữ một bản dùng chung).
+
+    GPU bắt buộc (27/10/2026): thiết bị không phải CUDA → ném GpuLoi, không nạp
+    lên CPU (chậm hàng chục lần) — kiểm TRƯỚC khi import torch/model cho nhẹ."""
+    if device is None:
+        from omnivoice.utils.common import get_best_device
+        device = get_best_device()
+    if not str(device).startswith("cuda"):
+        raise GpuLoi(f"không có GPU CUDA cho OmniVoice (thiết bị chọn được: {device}) — "
+                     "DỪNG, không tạo giọng bằng CPU.")
     import torch
     from omnivoice.models.omnivoice import OmniVoice
-    from omnivoice.utils.common import get_best_device
-    device = device or get_best_device()
     logging.info(f"⏳ Đang tải model OmniVoice ({device})…")
     model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device,
                                       dtype=torch.float16)
@@ -1316,6 +1529,62 @@ def _voice_prompt(model, ref_audio, sang_giong: int = 0):
     return prompt
 
 
+# ── ENGINE THEO CHẾ ĐỘ (04/11/2026) ─────────────────────────────────────────
+MODE_VIENEU = "vieneu"
+MODES = (MODE_VIENEU, "clone", "design", "default")   # thứ tự hàng radio trong GUI
+
+
+def che_do_da_luu(opt: dict) -> tuple[str, str]:
+    """(mode, vieneu_voice) từ cài đặt đã lưu (taogiong_options.json) — giá trị lạ hay thiếu
+    (file của bản cũ chưa có khoá) → mặc định OPTS_DEFAULTS, để radio không bao giờ trống."""
+    mode = str(opt.get("mode") or OPTS_DEFAULTS["mode"])
+    gv = str(opt.get("vieneu_voice") or OPTS_DEFAULTS["vieneu_voice"])
+    return (mode if mode in MODES else OPTS_DEFAULTS["mode"],
+            gv if gv in vn.GIONG_DUNG_SAN else OPTS_DEFAULTS["vieneu_voice"])
+
+
+def nap_engine(mode, device=None):
+    """(model, sr) cho chế độ `mode` — MỘT chỗ cho run_tts (kể cả lượt nạp lại sau ASR).
+
+    "vieneu" → bật worker SDK VieNeu (vieneu_client.SdkWorker: tiến trình con trong .venv của
+    kho, GPU, 48 kHz; không nạp OmniVoice). Chưa cài / worker không lên → RuntimeError, lượt
+    dừng (tập coi như CHƯA xong) chứ không âm thầm đổi sang clone.
+    GPU bắt buộc cho cả VieNeu (05/11/2026): worker bật với device="cuda", không dùng được
+    CUDA → GpuLoi, KHÔNG để SDK lặng lẽ rớt về ONNX/CPU (đêm 05/11/2026 driver NVIDIA treo:
+    5 tập sinh đủ đoạn bằng CPU, chậm gấp ~4 lần, rồi mới dừng ở bước ASR kiểm tra).
+    Còn lại → OmniVoice qua load_omnivoice (24 kHz, GPU bắt buộc)."""
+    if mode == MODE_VIENEU:
+        tt = vn.trang_thai()
+        if not tt["da_cai"]:
+            raise RuntimeError("VieNeu-TTS chưa cài (voice/VieNeu-TTS/.venv) — mở app Thử giọng "
+                               "(voice/thu_giong.py) → tab 🗣️ → ⬇ Cài GPU, hoặc chuyển về chế độ 🎙 Clone.")
+        w = vn.SdkWorker()
+        logging.info("⏳ Bật VieNeu worker (SDK trong voice/VieNeu-TTS/.venv, ép GPU)…")
+        try:
+            # Log của worker vào Nhật ký, trừ dòng 🔊 từng đoạn (bài trăm đoạn là trăm dòng).
+            w.bat(device="cuda",
+                  on_line=lambda s: logging.info(f"[vieneu] {s}") if s.strip() and not s.startswith("🔊") else None)
+        except vn.KhongCoGpu as e:
+            raise GpuLoi(f"{e} — DỪNG, không tạo giọng VieNeu bằng CPU.") from None
+        # cách đọc "mau" = từng mẩu qua infer_stream (mặc định từ 09/11/2026 — đường sống qua
+        # test phân định trên RTX 4060; "gop" fused batch làm card TDR). Xem đầu vieneu_worker.py.
+        logging.info(f"✅ VieNeu sẵn sàng: backend={w.backend}, cách đọc={getattr(w, 'cach', '?')}, "
+                     f"{len(w.giong)} giọng dựng sẵn, {w.sr} Hz.")
+        return w, w.sr
+    return load_omnivoice(device)
+
+
+def do_engine(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ"):
+    """Dỡ engine, trả None để chỗ gọi gán lại `model` (y như _do_omnivoice).
+    Worker VieNeu → tắt tiến trình con (trả ~0,7 GB VRAM; nạp lại ~10 s qua nap_engine);
+    OmniVoice → _do_omnivoice (rồi chỗ gọi _tra_vram như cũ)."""
+    if isinstance(model, vn.SdkWorker):
+        model.tat()
+        logging.info(f"🧹 Đã tắt VieNeu worker ({ly_do}).")
+        return None
+    return _do_omnivoice(model, ly_do)
+
+
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
 def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0, sang_giong=0):
     # language="vi": cả pipeline này chỉ sinh tiếng Việt, khai báo rõ giúp model
@@ -1325,6 +1594,11 @@ def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0, sang_giong=0
     # sang_giong: mức 🔆 Sáng giọng — chế độ clone EQ giọng mẫu lúc dựng prompt
     # (xem _voice_prompt); mức khác → prompt khác → giọng khác.
     chunk = " ".join(chunk.split())   # bỏ dấu "\n" hết đoạn văn (xem split_chunks)
+    if mode == MODE_VIENEU:
+        # VieNeu: worker SDK đọc nguyên câu bằng giọng dựng sẵn `voice_param` (tên giọng).
+        # Model tự hồi quy, không có khung thời lượng / num_step → dur_scale, sang_giong
+        # không áp (render lại = re-roll). Trả (audio float32, sr) cùng dạng result[0].
+        return model.doc(chunk, voice_param), model.sr
     dur = vn_duration(chunk)
     if dur is not None:
         dur *= dur_scale
@@ -1763,6 +2037,81 @@ def _doc_fx_da_ap(tmp_dir) -> dict:
         return hu.fx_from(None)
 
 
+AMLUONG_MARK = "_amluong.txt"            # trong thư mục chunk: số dB đã cộng lên output.wav
+AMLUONG_HUT_DB = 1.0                     # độ to lên hụt ≥ mức này so với số dB cộng → cảnh báo bẹt tiếng
+
+
+def _ghi_amluong_da_ap(tmp_dir, db: float) -> None:
+    """Ghi mức 🔊 âm lượng đã cộng lên output.wav vào thư mục chunk (cho luồng ♻ đọc lại)."""
+    try:
+        (Path(tmp_dir) / AMLUONG_MARK).write_text(f"{db:.1f}", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _doc_amluong_da_ap(tmp_dir) -> float:
+    """Mức 🔊 âm lượng đã cộng lần tạo trước; tập tạo bằng bản cũ chưa có file → 0."""
+    try:
+        return float((Path(tmp_dir) / AMLUONG_MARK).read_text(encoding="utf-8").strip())
+    except Exception:
+        return 0.0
+
+
+def _do_lufs_nhanh(path, ffmpeg: str):
+    """Độ to cả bài (LUFS, float) bằng filter ebur128; None nếu không đo được.
+
+    Chỉ để GHI NHẬT KÝ. Không dùng _measure_loudness ở đây: lượt đo của loudnorm nội
+    suy lên 192 kHz nên chậm gấp ~10 lần (đo E168 dài 33 phút, 06/11/2026: loudnorm
+    35,7 s, ebur128 3,1 s, cùng ra −19,5 LUFS) mà mấy số còn lại nó trả về ở đây không cần."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
+             "-af", "ebur128=framelog=quiet", "-f", "null", "-"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW)
+    except OSError:
+        return None
+    m = re.findall(r"\bI:\s+(-?\d+(?:\.\d+)?) LUFS", r.stderr or "")
+    try:
+        v = float(m[-1])
+    except (IndexError, ValueError):
+        return None
+    return v if v > -69.0 else None              # −70 LUFS = bài câm / quá ngắn để đo
+
+
+def _tang_am_luong_file(wav, db: float) -> str:
+    """Cộng `db` dB lên `wav` (ghi đè, xem hu.apply_amluong_file) → câu mô tả cho nhật ký.
+
+    Đo độ to (LUFS) + đỉnh TRƯỚC và độ to SAU để nhật ký nói đúng chuyện đã xảy ra:
+    đỉnh + mức cộng còn dưới trần thì đây là gain thuần; vượt trần thì bộ chặn gọt các
+    đỉnh vượt. Gọt vài đỉnh lẻ thì độ to vẫn lên đủ số dB đã cộng (đo F169/E168 06/11/2026:
+    gốc −19,6 LUFS đỉnh −0,5 dBFS, +6 dB → −13,6 LUFS); độ to lên HỤT từ AMLUONG_HUT_DB
+    trở lên nghĩa là bộ chặn đang đè cả câu chứ không chỉ đỉnh → tiếng bẹt, báo để hạ mức."""
+    import shutil
+    wav = Path(wav)
+    ffmpeg = shutil.which("ffmpeg")
+    truoc = _do_lufs_nhanh(wav, ffmpeg) if ffmpeg else None
+    dinh = _detect_peak_db(wav, ffmpeg, seconds=36000) if ffmpeg else None
+    hu.apply_amluong_file(wav, db)
+    sau = _do_lufs_nhanh(wav, ffmpeg) if truoc is not None else None
+    do_duoc = truoc is not None and sau is not None
+    mo_ta = f"{db:+.1f} dB"
+    if do_duoc:
+        mo_ta += f": {truoc:.1f} → {sau:.1f} LUFS"
+    if dinh is None or db <= 0:
+        return mo_ta
+    tran = 20 * float(np.log10(hu.AMLUONG_LIMIT))
+    if dinh + db <= tran:
+        return f"{mo_ta} (đỉnh {dinh:.1f} → {dinh + db:.1f} dBFS, chưa chạm trần)"
+    mo_ta += f" (đỉnh gốc {dinh:.1f} dBFS → bộ chặn ghìm các đỉnh vượt trần {tran:.1f} dBFS"
+    hut = db - (sau - truoc) if do_duoc else 0.0
+    if hut >= AMLUONG_HUT_DB:
+        mo_ta += (f"; độ to lên hụt {hut:.1f} dB vì bộ chặn phải đè nhiều — tiếng dễ bẹt, "
+                  "nên hạ mức 🔊")
+    return mo_ta + ")"
+
+
 def _ghi_pitch_da_ap(tmp_dir, pitch: float) -> None:
     """Ghi tông đã áp lên output.wav vào thư mục chunk (cho luồng ♻ đọc lại)."""
     try:
@@ -1980,7 +2329,7 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
     tạm trước, xong mới thay thế, để video cũ không mất nếu ffmpeg chết giữa chừng.
 
     Whisper được giải phóng khỏi VRAM ở cuối: bước sau còn dựng video bằng NVENC,
-    thiếu VRAM là rớt về CPU (libx264) chậm hẳn.
+    thiếu VRAM là NVENC lỗi → GpuLoi, dừng cả lượt (27/10/2026: không còn rớt về CPU).
     """
     video_path, script_path = Path(video_path), Path(script_path)
     if not video_path.exists():
@@ -2064,6 +2413,8 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                 tmp_mp4.unlink(missing_ok=True)
                 logging.error("📝 Vẽ cứng phụ đề LỖI → giữ nguyên video, chỉ còn file .srt.")
         return srt_path
+    except GpuLoi:
+        raise                 # GPU bắt buộc: báo lỗi rồi dừng cả lượt (xem gpu_batbuoc)
     except Exception as e:
         logging.error(f"📝 Lỗi tạo phụ đề: {e}")
         return None
@@ -2267,13 +2618,14 @@ class _NullWidget:
     configure = config
 
 
-def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None):
+def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run, btn_pause, btn_preview, pause_event, make_video=False, effect=None, make_video_doc=False, doc_speed=1.0, doc_percent=100, ngang_speed=1.0, reuse=False, doc_from_ngang=False, doc_no_effect=False, doc_from_subfolder=False, ngang_out=None, doc_out=None, make_tiktok=False, tiktok_out=None, tiktok_speed=1.0, tiktok_no_effect=False, tiktok_caption=None, tiktok_caption_pos=40, tiktok_music=False, tiktok_music_db=-12.0, tiktok_music_loop=False, video_only=False, ngang_source=None, tiktok_percent=50, make_sub=False, sub_mode=SUB_MODE_SRT, sub_model="medium", sub_max_chars=50, sub_kieu="hopbo", sub_font="", sub_mau="", sub_vitri="", sub_cochu="", sub_bengang="", sub_dong=1, sub_mau_vien="", make_sub_doc=False, make_short=False, short_out=None, doc_khung=False, pitch=0.0, fx=None, ngang_tu_nguon=False, ngang_nguon_zoom=120, ngang_source_video=None, chuan_am=False, am_luong=0.0, che_chu_trung=False):
     import torch
     from omnivoice.models.omnivoice import OmniVoice
     from omnivoice.utils.common import get_best_device
 
     failed = False
     model = None        # khai báo sớm: khối finally dưới cùng luôn dọn được VRAM
+    gpu_batbuoc.xoa_loi()   # lỗi GPU của lượt trước không dính sang lượt này (xem khối except)
 
     # Bước dựng video báo tiến trình qua THANH (progress_var) + dòng trạng thái,
     # KHÔNG spam % ra nhật ký. label đứng trước, % chạy trên thanh.
@@ -2294,6 +2646,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # (xem _voice_prompt) nên phải vào chữ ký bên dưới (chỉ khi > 0, để chữ ký
         # của các tập đã tạo trước đó không đổi).
         sang_mau = hu.fx_from(fx)["sang_giong"]
+        # 🔊 Âm lượng cơ bản (dB) — hậu kỳ thuần, KHÔNG vào chữ ký (đổi mức không sinh lại đoạn).
+        am_luong = hu.parse_amluong(am_luong)
 
         # video_only: BỎ QUA tạo giọng, chỉ DỰNG VIDEO từ audio có sẵn (nút "Dựng
         # lại" riêng của từng mục). Cần audio đã tồn tại.
@@ -2342,10 +2696,21 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             if not video_only and fx_cu != fx_moi:
                 logging.info(f"🔔 Audio cũ bộ lọc: {hu.fx_describe(**fx_cu)}; đang chọn: "
                              f"{hu.fx_describe(**fx_moi)} → GIỮ bản cũ (bỏ tick ♻ để tạo lại).")
+            # 🔊 Âm lượng cũng chỉ cộng lúc TẠO (cộng chồng lên bản đã qua bộ chặn đỉnh là
+            # gọt đỉnh hai lần; video đã dựng lại lệch mức với audio).
+            am_cu = _doc_amluong_da_ap(tmp_dir)
+            if not video_only and abs(am_cu - am_luong) > 1e-9:
+                logging.info(f"🔊 Audio cũ âm lượng {am_cu:+.1f} dB, mức đang chọn {am_luong:+.1f} dB → "
+                             "GIỮ mức cũ (bỏ tick ♻ để tạo lại giọng ở mức mới).")
             # Audio của các tập dựng bằng bản cũ chưa qua chuẩn hoá → chuẩn nốt,
             # không thì tập cũ dựng lại vẫn to nhỏ thất thường. Chỉ đụng vào file
             # còn LỆCH mức đích: file đã chuẩn rồi mà nén thêm lần nữa là bẹt giọng.
-            if _chuan_am_neu_can(output_path, status_var):
+            # Bản đã cộng 🔊 thì lệch mức đích đúng bằng số dB đã cộng — đo sẽ tưởng
+            # "chưa chuẩn" rồi nén lần hai và xoá luôn mức cộng → không đo, giữ nguyên.
+            if chuan_am and abs(am_cu) > 1e-9:
+                logging.info(f"🔊 Audio cũ đã cộng âm lượng {am_cu:+.1f} dB → không đo/chuẩn âm lại "
+                             "(bỏ tick ♻ để tạo lại nếu muốn chuẩn âm bản này).")
+            elif chuan_am and _chuan_am_neu_can(output_path, status_var):
                 # Audio gốc vừa đổi mức → bản %/tăng tốc/trộn nhạc làm từ bản
                 # CŨ không còn khớp nữa, phải dựng lại từ bản vừa chuẩn.
                 reuse_derived = False
@@ -2368,6 +2733,12 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         "chunk cũ, tạo lại từ đầu."
                     )
                 sig_file.write_text(sig, encoding="utf-8")
+            # 🎧 Ghi chế độ + tên giọng sinh các câu này (cho mẫu nghe thử biết nó đọc bằng giọng nào).
+            try:
+                import taogiong_nghethu as _nt
+                _nt.ghi_giong(tmp_dir, mode, voice_param)
+            except Exception:
+                pass
 
             logging.info(f"Tổng {total} đoạn — tải model...")
             if sang_mau and mode == "clone":
@@ -2376,7 +2747,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             status_var.set("Đang tải model...")
 
             device = get_best_device()
-            model, sr = load_omnivoice(device)
+            model, sr = nap_engine(mode, device)
 
             for i, chunk in enumerate(chunks):
                 # Chờ nếu đang tạm dừng
@@ -2468,7 +2839,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 _mc = None
                 logging.warning(f"⚠️ Bỏ qua kiểm tra mất chữ + tiếng lạ (thiếu module: {e})")
             if _mc is not None:
-                model = _do_omnivoice(model)
+                model = do_engine(model)
                 _tra_vram()          # dỡ xong mới thật sự còn chỗ cho turbo
                 status_var.set("Kiểm tra mất chữ & tiếng lạ (ASR đối chiếu)...")
                 logging.info("Kiểm tra mất chữ + tiếng lạ toàn bộ chunks (ASR đối chiếu văn bản)...")
@@ -2485,7 +2856,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     _mc.giai_phong()
                     status_var.set("Nạp lại OmniVoice để render lại...")
                     logging.info("↩ Nạp lại OmniVoice để render các đoạn lỗi...")
-                    model, _ = load_omnivoice(device)
+                    model, _ = nap_engine(mode, device)
                     for i in sorted(miss):
                         logging.info(f"  [{i:04d}] lỗi: {' | '.join(miss[i])}")
                         status_var.set(f"Render lại đoạn lỗi {i+1}/{total} "
@@ -2500,7 +2871,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                         if spikes:
                             logging.warning(f"  [{i:04d}] bản render lại có spike "
                                             f"tại {spikes[:3]}s — nghe kiểm tra tay.")
-                    model = _do_omnivoice(model)   # trả VRAM lại cho lượt quét sau
+                    model = do_engine(model)   # trả VRAM lại cho lượt quét sau
                     _tra_vram()
                     miss = _mc.quet_va_xac_minh(chunks, tmp_dir,
                                                 on_log=logging.info,
@@ -2527,7 +2898,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # Phải làm ở đây chứ không phải trên file đã ghép: sau khi ghép thì
             # không còn biết ranh giới đoạn nào với đoạn nào nữa.
             status_var.set("Đang cân âm lượng các đoạn...")
-            parts = _balance_chunk_levels(parts, sr)
+            parts = _balance_chunk_levels(parts, sr, moc=chuan_am)
 
             # Ghép với khoảng NGHỈ THEO DẤU CÂU (xem _join_with_pauses): cắt bớt im
             # lặng model tự để ở mép mỗi đoạn rồi chèn đúng độ dài nghỉ cho loại
@@ -2565,8 +2936,36 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # Làm NGAY tại đây vì mọi bản dẫn xuất (cắt TikTok, tăng tốc, trộn
             # nhạc) đều lấy từ output.wav — chuẩn một lần ở gốc là cả dây
             # chuyền chuẩn theo.
-            status_var.set("Đang chuẩn hoá âm lượng...")
-            _loudnorm_file(output_path, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
+            if chuan_am:
+                status_var.set("Đang chuẩn hoá âm lượng...")
+                _loudnorm_file(output_path, VOICE_LUFS, pre_filter=SPEECH_COMPRESSOR)
+            else:
+                logging.info("⏭ Không chuẩn âm (ô 🔉 đang tắt — mặc định từ 05/11/2026): giữ mức gốc "
+                             "của giọng, không nén, không loudnorm.")
+
+            # 🔊 ÂM LƯỢNG CƠ BẢN (06/11/2026): cộng thẳng N dB lên cả bài. Đứng CUỐI —
+            # đặt trước loudnorm thì bị nó kéo về −14 LUFS mất, đặt trước bộ nén thì lệch
+            # ngưỡng nén (tính theo mức tuyệt đối). Mọi bản dẫn xuất lấy từ output.wav
+            # nên theo luôn. Ghi mức đã cộng vào _amluong.txt cho luồng ♻.
+            if abs(am_luong) > 1e-9:
+                status_var.set(f"Đang chỉnh âm lượng {am_luong:+.1f} dB...")
+                try:
+                    logging.info(f"🔊 Âm lượng {_tang_am_luong_file(output_path, am_luong)}.")
+                except Exception as e:
+                    am_luong = 0.0
+                    logging.warning(f"⚠️ Không chỉnh được âm lượng ({e}) → giữ mức gốc.")
+            _ghi_amluong_da_ap(tmp_dir, am_luong)
+
+            # 🎧 MẪU NGHE THỬ (06/11/2026): tập ĐẦU của đợt kịch bản mới vừa có giọng thì lấy
+            # ~30 s câu gốc của nó (output_chunks, chưa qua tông/bộ lọc/âm lượng) làm mẫu cho
+            # nút 🎧 Nghe thử, thay mẫu cũ; lưu ở voice/nghe_thu nên xoá tập mẫu vẫn còn.
+            # Chỉ tính thư mục tập trong kịch_bản/ — xem taogiong_nghethu.chon_tap.
+            if output_path.parent.parent == SCRIPT_DIR and episode_of(output_path.parent.name):
+                try:
+                    import taogiong_nghethu as _nt
+                    _nt.cap_nhat(log=logging.info)
+                except Exception as e:
+                    logging.warning(f"⚠️ Không cập nhật được mẫu nghe thử: {e}")
 
             progress_var.set(100)
             status_var.set(f"Xong!  →  {output}")
@@ -2576,11 +2975,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # ── GIẢI PHÓNG OMNIVOICE KHỎI VRAM ─────────────────────────────
             # Audio đã tạo + ghép xong; các bước còn lại (cắt, dựng video bằng
             # h264_nvenc) KHÔNG dùng tới OmniVoice. Model nạp mới mỗi lần chạy
-            # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC — tránh
-            # thiếu VRAM khiến dựng video rớt về CPU (libx264) chậm.
+            # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC — thiếu VRAM
+            # là NVENC lỗi → GpuLoi, dừng cả lượt (27/10/2026: không còn rớt về CPU).
             # Bước kiểm tra mất chữ ở trên thường đã dỡ sẵn rồi (model = None) →
             # lúc đó hàm này không làm gì.
-            model = _do_omnivoice(model, "trước khi dựng video")
+            model = do_engine(model, "trước khi dựng video")
             _tra_vram()
 
         # ── TỰ DỰNG VIDEO NGANG TỪ AUDIO FULL (nếu bật) ────────────────────
@@ -2601,7 +3000,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             try:
                 from video_khung import build_video
                 progress_var.set(0)
-                ngang_src_dir = resolve_ngang_source(ngang_source, log=logging.info)
+                # list thư mục con đã tick (gộp clip, xáo chung) hoặc None = cả kho
+                ngang_src_dirs = resolve_ngang_source(ngang_source, log=logging.info)
                 # 🎞 Lấy video tải xuống làm video nguồn (24/10/2026): hình = chính
                 # video của tập (tiếng gốc TẮT lúc dựng — nhận diện/dịch đã xong trước
                 # đó), phóng to ngang_nguon_zoom % cắt giữa, kéo thời lượng khớp giọng
@@ -2625,13 +3025,16 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 video_out = build_video(ngang_audio, log=logging.info, effect=effect,
                                         progress=_video_progress("🎬 Dựng video ngang..."),
                                         skip_existing=skip_video, output=ngang_out,
-                                        source_dir=ngang_src_dir, goc_out=goc_out,
+                                        source_dir=ngang_src_dirs, goc_out=goc_out,
                                         source_video=ngang_src_video,
-                                        source_zoom=float(ngang_nguon_zoom or 100) / 100.0)
+                                        source_zoom=float(ngang_nguon_zoom or 100) / 100.0,
+                                        che_chu=bool(che_chu_trung))
                 progress_var.set(100)
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
+            except GpuLoi:
+                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt (xem gpu_batbuoc)
             except Exception as e:
                 logging.error(f"Lỗi dựng video: {e}")
                 status_var.set(f"Audio xong, lỗi dựng video: {e}")
@@ -2751,6 +3154,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     vdoc_out, doc_sub_trong_hinh = vdk.dung_cho_tap(
                         output_path.parent, audio=doc_audio, output=fb_out,
                         cover_png=cover_doc, caption=tiktok_caption, log=logging.info,
+                        che_chu=bool(che_chu_trung),
                         progress=_video_progress("📱 Dựng video dọc (khung)..."),
                         skip_existing=skip_video)
                 else:
@@ -2765,6 +3169,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
+            except GpuLoi:
+                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt
             except Exception as e:
                 logging.error(f"Lỗi dựng video dọc: {e}")
                 status_var.set(f"Lỗi video dọc: {e}")
@@ -2898,6 +3304,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(100)
                 status_var.set(f"Xong! Video TikTok → {tk_out.name}")
                 logging.info(f"Đã tạo video TikTok → {tk_out.name}")
+            except GpuLoi:
+                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt
             except Exception as e:
                 logging.error(f"Lỗi dựng video TikTok: {e}")
                 status_var.set(f"Lỗi video TikTok: {e}")
@@ -2923,6 +3331,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     build_short(tk_video_out, sh_out, voice_audio=tk_voice,
                                 skip_existing=skip_video, log=logging.info)
                     status_var.set(f"Xong! YouTube Short → {sh_out.name}")
+                except GpuLoi:
+                    raise      # GPU bắt buộc: báo lỗi rồi dừng cả lượt
                 except Exception as e:
                     # Short là video PHỤ — hỏng thì bỏ, không kéo đổ cả mẻ video.
                     logging.error(f"Lỗi cắt video Short: {e}")
@@ -2948,8 +3358,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 # Khung dọc tạo sẵn: chữ phải nằm TRONG dải video (đáy dải ~y 1333)
                 # → vị trí cố định theo khung, không theo % của khung ngang.
                 if doc_khung:
-                    from video_doc_khung import SUB_VITRI as _vt
-                    doc_vitri = _vt
+                    import video_doc_khung as _vdk
+                    doc_vitri = _vdk.sub_vitri(bool(che_chu_trung))
                 else:
                     doc_vitri = sub_vitri
                 make_youtube_sub(doc_video, inputdocx.input_for(output_path.parent),
@@ -2965,6 +3375,11 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
 
     except Exception as e:
         failed = True
+        # Lỗi GPU (GpuLoi, hay worker VieNeu mất CUDA giữa chừng) là lỗi mà tập SAU cũng sẽ
+        # dính: ghi lại để runner web trả mã dừng-cả-hàng-đợi thay vì mã lỗi thường (đêm
+        # 05/11/2026 hàng đợi chạy tiếp 5 tập sau khi driver card treo — xem gpu_batbuoc).
+        if isinstance(e, (GpuLoi, vn.KhongCoGpu)):
+            gpu_batbuoc.ghi_loi(e)
         logging.error(f"Lỗi: {e}")
         status_var.set(f"Lỗi: {e}")
     finally:
@@ -2972,7 +3387,7 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         # vẫn nằm nguyên trong VRAM — mà GUI thì sống mãi, nên card kẹt tới lần
         # chạy sau. Chạy trót lọt thì model đã là None, đoạn này không tốn gì.
         if model is not None:
-            model = _do_omnivoice(model, "dọn sau khi lỗi")
+            model = do_engine(model, "dọn sau khi lỗi")
             _tra_vram()
         # Lỗi ngay trong lượt quét mất chữ thì large-v3-turbo cũng còn nằm đó.
         # giai_phong() gọi lại nhiều lần vô hại nên cứ gọi cho chắc.
@@ -2985,6 +3400,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         btn_run.config(state="normal")
         btn_pause.config(state="disabled", text="⏸  Tạm dừng")
         _play_done_sound(success=not failed)   # âm báo khi chạy xong (hoặc lỗi)
+    # False = lỗi (GpuLoi, hết VRAM, ffmpeg chết…): bản tự động (_batch_run_tts) coi tập
+    # CHƯA xong để hàng đợi không đi tiếp đăng video hỏng (GPU bắt buộc, 27/10/2026).
+    return not failed
 
 
 # ── GIAO DIỆN ────────────────────────────────────────────────────────────────
@@ -3002,9 +3420,15 @@ class App(tk.Tk):
         self._last_output = None
         self._pipe_busy = False
         self._pipe_settings = load_pipe_settings()   # auto-chain + model/tốc độ đã lưu
-        # ⏻ Xong thì tắt máy — ô DÙNG CHUNG cho 2 chỗ tick (tab Giọng nói + bước ③),
-        # nên tạo ở đây, TRƯỚC khi dựng panel: tick ở đâu cũng là một cài đặt duy nhất.
+        # ⏻ Xong thì tắt máy / 🌙 Xong thì cho máy ngủ — mỗi ô DÙNG CHUNG cho 2 chỗ
+        # tick (tab Giọng nói + bước ③), nên tạo ở đây, TRƯỚC khi dựng panel: tick ở
+        # đâu cũng là một cài đặt duy nhất. Hai ô loại trừ nhau (xem _pick_power_mode).
         self.var_shutdown = tk.BooleanVar(value=self._pipe_settings.get("shutdown", False))
+        self.var_sleep = tk.BooleanVar(value=self._pipe_settings.get("sleep", False))
+        # Đếm ngược giờ ngủ bằng threading.Timer chứ không phải after(): cờ bận được
+        # hạ ở LUỒNG CHẠY VIỆC (finally của các _pipe_set_busy(False)), mà gọi after()
+        # từ luồng khác là chuyện Tk không hứa.
+        self._sleep_timer = None
         self._opt_settings = load_opt_settings()      # mục "Cài đặt" của lần chạy trước
         self._favorites = load_favorites()
         self._effect_favorites = load_effect_favorites()
@@ -3112,6 +3536,17 @@ class App(tk.Tk):
         st.configure("Accent.TButton", background=C["accent"], foreground="#ffffff",
                      padding=(20, 9), font=("Segoe UI", 10, "bold"))
         st.map("Accent.TButton",
+               background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
+                           ("disabled", C["accent_soft"])],
+               foreground=[("disabled", "#ffffff")])
+
+        # Ô "Nguồn ngang" (NguonNgangChon): nút thả menu tô màu nhấn hồng + chữ trắng
+        # đậm như nút chính, để thấy ngay đang ghép clip từ thư mục nào (user 01/11/2026).
+        st.configure("Nguon.TMenubutton", background=C["accent"], foreground="#ffffff",
+                     arrowcolor="#ffffff", bordercolor=C["accent_dk"],
+                     lightcolor=C["accent"], darkcolor=C["accent"], relief="flat",
+                     focusthickness=0, padding=(10, 5), font=("Segoe UI", 10, "bold"))
+        st.map("Nguon.TMenubutton",
                background=[("active", C["accent_dk"]), ("pressed", C["accent_dk"]),
                            ("disabled", C["accent_soft"])],
                foreground=[("disabled", "#ffffff")])
@@ -3272,11 +3707,15 @@ class App(tk.Tk):
         sec_mode.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         sec_mode.columnconfigure(0, weight=1)
 
-        self.var_mode = tk.StringVar(value="clone")
+        # 04/11/2026: 🗣 VieNeu đứng đầu và là MẶC ĐỊNH (user chốt); chế độ nhớ lần chạy
+        # trước (khoá "mode" trong taogiong_options.json), giá trị lạ → mặc định.
+        mode_truoc, giong_vieneu_truoc = che_do_da_luu(self._opt_settings)
+        self.var_mode = tk.StringVar(value=mode_truoc)
         mode_row = ttk.Frame(sec_mode)
         mode_row.grid(row=0, column=0, sticky="w")
         for label, val, desc in [
-            ("🎙  Clone",   "clone",   "Nhái giọng mẫu"),
+            ("🗣  VieNeu",  MODE_VIENEU, "Giọng dựng sẵn · nhanh"),
+            ("🎙  Clone",   "clone",   "OmniVoice nhái giọng mẫu"),
             ("🎨  Thiết kế", "design",  "Mô tả giọng"),
             ("🔊  Mặc định", "default", "Model tự chọn"),
         ]:
@@ -3329,6 +3768,20 @@ class App(tk.Tk):
         self._design_sep = ", "
         self._build_design_dropdowns()
 
+        # VieNeu — 25 giọng dựng sẵn v3 Turbo, mặc định Ngọc Huyền (danh sách tĩnh trong
+        # vieneu_client để hiện được khi worker chưa bật; worker bật lúc ▶ Chạy).
+        self.frm_vieneu = ttk.Frame(self.voice_frame)
+        ttk.Label(self.frm_vieneu, text="Giọng VieNeu:", width=11, anchor="w").pack(side="left", padx=(0, 6))
+        self.var_vieneu_voice = tk.StringVar(value=giong_vieneu_truoc)
+        self.cb_vieneu = ttk.Combobox(self.frm_vieneu, textvariable=self.var_vieneu_voice,
+                                      values=list(vn.GIONG_DUNG_SAN), width=30, state="readonly")
+        self.cb_vieneu.pack(side="left")
+        _tt = vn.trang_thai()
+        ttk.Label(self.frm_vieneu, style="Hint.TLabel",
+                  text=("SDK trong voice/VieNeu-TTS/.venv · 48 kHz · ~0,7 GB VRAM" if _tt["da_cai"]
+                        else "⚠ chưa cài — app Thử giọng (voice/thu_giong.py) → tab 🗣️ → ⬇ Cài GPU")
+                  ).pack(side="left", padx=(10, 0))
+
         # Default
         self.frm_default = ttk.Frame(self.voice_frame)
         ttk.Label(self.frm_default, text="Model tự động chọn giọng phù hợp với văn bản",
@@ -3370,6 +3823,25 @@ class App(tk.Tk):
         ttk.Label(gem_row, text="(gemini_result.docx → input.docx)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
+        # 🔉 Chuẩn âm (05/11/2026, mặc định TẮT theo chốt của user — xem OPTS_DEFAULTS).
+        ca_row = ttk.Frame(sec_opt)
+        ca_row.pack(anchor="w", fill="x", pady=(0, 8))
+        self.var_chuan_am = tk.BooleanVar(value=bool(self._opt_settings.get("chuan_am", False)))
+        ttk.Checkbutton(ca_row, text="🔉  Chuẩn âm giọng: nén nhẹ + loudnorm −14 LUFS + neo −18 dBFS",
+                        variable=self.var_chuan_am).pack(side="left")
+        # 🔊 Âm lượng cơ bản (06/11/2026): cộng thẳng N dB lên output.wav ở bước cuối
+        # (sau tông, bộ lọc, chuẩn âm). Cùng khoá "am_luong_db" với ô bên web. Nằm CHUNG
+        # hàng với ô 🔉 (cùng là chuyện độ to) chứ không thêm hàng: cột Cài đặt vốn đã
+        # cao hơn cửa sổ mặc định. Ô nhập đứng trước chú thích để cửa sổ hẹp không che mất.
+        ttk.Label(ca_row, text="🔊 Âm lượng:").pack(side="left", padx=(16, 6))
+        self.var_am_luong = tk.StringVar(value=f"{self._am_luong_tu_cai_dat():.1f}")
+        ttk.Spinbox(ca_row, from_=hu.AMLUONG_MIN, to=hu.AMLUONG_MAX, increment=0.5,
+                    format="%.1f", textvariable=self.var_am_luong, width=6).pack(side="left")
+        ttk.Label(ca_row, text="dB").pack(side="left", padx=(4, 0))
+        ttk.Label(ca_row, text="(chuẩn âm tắt = giữ mức gốc, chỉ cân mức giữa các đoạn · âm lượng: "
+                               "+ to / − nhỏ, 0 = giữ nguyên, cộng sau cùng, có chặn đỉnh)",
+                  style="Hint.TLabel").pack(side="left", padx=8)
+
         chunk_row = ttk.Frame(sec_opt)
         chunk_row.pack(anchor="w", fill="x")
         ttk.Label(chunk_row, text="Độ dài đoạn (ký tự):").pack(side="left", padx=(0, 8))
@@ -3379,17 +3851,29 @@ class App(tk.Tk):
         ttk.Label(chunk_row, text="(mỗi đoạn = 1 câu; câu dài hơn số này thì cắt thêm ở dấu ; : ,)",
                   style="Hint.TLabel").pack(side="left", padx=8)
 
-        # Nguồn clip VIDEO NGANG theo chủ đề = 1 thư mục con của videongang/
-        # (vd thiennhien, nauan). NGANG_SOURCE_ALL = ghép random từ CẢ kho videongang/.
-        # Dồn về PHẢI của hàng cho gọn.
-        self.var_ngang_source = tk.StringVar()
-        _ngang_sources = [NGANG_SOURCE_ALL] + list_ngang_sources()
-        _saved_src = self._opt_settings.get("ngang_source", NGANG_SOURCE_ALL)
-        self.var_ngang_source.set(_saved_src if _saved_src in _ngang_sources else NGANG_SOURCE_ALL)
-        self.cb_ngang_source = ttk.Combobox(chunk_row, textvariable=self.var_ngang_source,
-                                            values=_ngang_sources, width=14, state="readonly")
-        self.cb_ngang_source.pack(side="right")
+        # Nguồn clip VIDEO NGANG theo chủ đề = các thư mục con của videongang/
+        # (vd thiennhien, nauan). Tick được NHIỀU thư mục (01/11/2026): clip gom chung
+        # rồi xáo ngẫu nhiên lúc ghép; "(tất cả)" = cả kho. Dồn về PHẢI của hàng cho gọn.
+        # .get() trả list tên — lưu thẳng vào taogiong_options.json (chung với web).
+        self.var_ngang_source = NguonNgangChon(
+            chunk_row, value=self._opt_settings.get("ngang_source", NGANG_SOURCE_ALL))
+        self.var_ngang_source.pack(side="right")
         ttk.Label(chunk_row, text="Nguồn ngang:").pack(side="right", padx=(0, 6))
+
+        # 🎚 MẪU GIỌNG cài sẵn (02/11/2026): chọn một mẫu là điền luôn tông + 4 bộ lọc
+        # bên dưới theo bảng hu.MAU_GIONG (dùng chung app Thử giọng / web). Sửa tay ô
+        # nào thì nhãn tự về "Tuỳ chỉnh". "Mặc định" = tắt hết (bản clone thuần).
+        mau_row = ttk.Frame(sec_opt)
+        mau_row.pack(anchor="w", fill="x", pady=(8, 0))
+        ttk.Label(mau_row, text="🎚 Mẫu giọng:").pack(side="left", padx=(0, 8))
+        self.var_mau_giong = tk.StringVar()
+        self._dang_ap_mau = False
+        cb_mau = ttk.Combobox(mau_row, textvariable=self.var_mau_giong, width=16,
+                              state="readonly", values=hu.mau_ten() + [hu.MAU_TUY_CHINH])
+        cb_mau.pack(side="left")
+        cb_mau.bind("<<ComboboxSelected>>", lambda _e: self._ap_mau_giong())
+        self.lbl_mau_giong = ttk.Label(mau_row, text="", style="Hint.TLabel")
+        self.lbl_mau_giong.pack(side="left", padx=8)
 
         # Tông giọng (bán cung): áp lên output.wav ngay sau khi ghép, giữ tốc độ.
         # Cùng khoá "pitch" với ô bên web (chung taogiong_options.json).
@@ -3425,6 +3909,10 @@ class App(tk.Tk):
         ttk.Label(loc_row, text="0–100, 0 = tắt (vang bật khi cường độ > 0; sáng giọng = bớt ồm, "
                                "EQ cả giọng mẫu lúc dựng prompt); nghe thử bằng voice/thu_giong.py",
                   style="Hint.TLabel").pack(side="left", padx=8)
+        # Nhãn 🎚 đi theo 5 ô: gõ/quay ô nào là tính lại tên mẫu khớp (hoặc "Tuỳ chỉnh").
+        for v in (self.var_pitch, *self.var_fx.values()):
+            v.trace_add("write", lambda *_: self._cap_nhat_mau_giong())
+        self._cap_nhat_mau_giong()
 
         video_row = ttk.Frame(sec_opt)
         video_row.pack(anchor="w", fill="x", pady=(8, 0))
@@ -3751,8 +4239,9 @@ class App(tk.Tk):
         #               qua video đã dựng — chỉ dựng phần còn thiếu. Mặc định TẮT
         #               (mỗi lần mở app) để tránh vô tình dùng lại bản cũ.
         #  ⬆️ hiện cửa sổ: tới bước clone giọng thì GUI tự bật lên trên (mỗi link 1 lần).
-        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a).
-        #               Dùng CHUNG biến với ô tick ở bước ③.
+        #  ⏻ tắt máy : hẹn tắt sau SHUTDOWN_DELAY_MIN phút khi xong (huỷ: shutdown /a);
+        #  🌙 ngủ    : cho máy ngủ sau SLEEP_DELAY_MIN phút khi xong (huỷ: bỏ tick).
+        #               Cả hai dùng CHUNG biến với ô tick ở bước ③.
         # Cột giữa có weight=0 (co theo nội dung) nên hàng này phải ngắn, kẻo cột
         # giữa phình ra lấn sang cột video bên phải.
         act2 = ttk.Frame(left)
@@ -3764,7 +4253,10 @@ class App(tk.Tk):
         ttk.Checkbutton(act2, text="⬆️  Hiện cửa sổ khi tạo giọng",
                         variable=self.var_bring_front).pack(side="left", padx=(14, 0))
         ttk.Checkbutton(act2, text="⏻  Xong thì tắt máy", variable=self.var_shutdown,
-                        command=self._save_shutdown_choice
+                        command=lambda: self._pick_power_mode("shutdown")
+                        ).pack(side="left", padx=(14, 0))
+        ttk.Checkbutton(act2, text="🌙  Xong thì ngủ", variable=self.var_sleep,
+                        command=lambda: self._pick_power_mode("sleep")
                         ).pack(side="left", padx=(14, 0))
 
         # ── Tiến trình ── GỘP LÀM 1 với thanh dưới bước 3: self.progress/self.status
@@ -5563,15 +6055,28 @@ class App(tk.Tk):
         self.var_instruct.set(self._design_sep.join(parts))
 
     def _on_mode_change(self):
-        for frm in (self.frm_clone, self.frm_design, self.frm_default):
+        for frm in (self.frm_vieneu, self.frm_clone, self.frm_design, self.frm_default):
             frm.pack_forget()
-        {"clone":   self.frm_clone,
+        {MODE_VIENEU: self.frm_vieneu,
+         "clone":   self.frm_clone,
          "design":  self.frm_design,
          "default": self.frm_default}[self.var_mode.get()].pack(anchor="w")
 
     def _current_voice(self) -> str:
         """Tên file giọng mẫu thật đang chọn (đã bỏ tiền tố ★)."""
         return strip_star(self.var_ref.get())
+
+    def _vieneu_voice_param(self):
+        """Tên giọng dựng sẵn VieNeu đang chọn (voice_param của chế độ 🗣 VieNeu).
+        Kho chưa cài → hộp cảnh báo nói rõ cài ở đâu, trả None (không chạy)."""
+        if not vn.trang_thai()["da_cai"]:
+            messagebox.showwarning(
+                "VieNeu-TTS chưa cài",
+                "Chế độ 🗣 VieNeu cần kho voice/VieNeu-TTS đã cài (.venv riêng).\n"
+                "Mở app Thử giọng (voice/thu_giong.py) → tab 🗣️ VieNeu-TTS → ⬇ Cài GPU,\n"
+                "hoặc chuyển sang chế độ 🎙 Clone.")
+            return None
+        return self.var_vieneu_voice.get().strip() or OPTS_DEFAULTS["vieneu_voice"]
 
     def _reload_voice_combo(self, keep: str | None = None):
         """Dựng lại danh sách giọng: yêu thích (★) lên đầu, còn lại theo a-z.
@@ -5701,11 +6206,50 @@ class App(tk.Tk):
         giọng) đang chọn trên GUI, đã kẹp 0–100 — cùng dạng dict mà run_tts(fx=) nhận."""
         return {k: hu.parse_fx(v.get(), OPTS_DEFAULTS[k]) for k, v in self.var_fx.items()}
 
+    def _am_luong_tu_cai_dat(self) -> float:
+        """Mức 🔊 âm lượng (dB) đã lưu trong cài đặt, đã kẹp — giá trị mở đầu của ô."""
+        return hu.parse_amluong(self._opt_settings.get("am_luong_db"),
+                                OPTS_DEFAULTS["am_luong_db"])
+
+    def _am_luong_tu_o(self) -> float:
+        """Mức 🔊 âm lượng (dB) đang gõ trên GUI, đã kẹp — cùng dạng run_tts(am_luong=) nhận."""
+        return hu.parse_amluong(self.var_am_luong.get(), OPTS_DEFAULTS["am_luong_db"])
+
+    def _ap_mau_giong(self):
+        """Chọn mẫu ở ô 🎚 (02/11/2026): điền tông + 4 bộ lọc theo bảng hu.MAU_GIONG;
+        "Tuỳ chỉnh" thì giữ nguyên các ô. Lưu cùng mục Cài đặt khi bấm Chạy như mọi ô."""
+        ts = hu.mau_thong_so(self.var_mau_giong.get())
+        if ts is None:
+            self._cap_nhat_mau_giong()
+            return
+        self._dang_ap_mau = True        # 5 lần set bên dưới không tính lại nhãn từng lần
+        try:
+            self.var_pitch.set(f"{ts['pitch']:.1f}")
+            for k, v in ts["fx"].items():
+                self.var_fx[k].set(str(v))
+        finally:
+            self._dang_ap_mau = False
+        self._cap_nhat_mau_giong()
+
+    def _cap_nhat_mau_giong(self):
+        """Nhãn ô 🎚 = tên mẫu khớp ĐÚNG 5 ô đang chọn, không khớp → "Tuỳ chỉnh"."""
+        if getattr(self, "_dang_ap_mau", False) or not hasattr(self, "lbl_mau_giong"):
+            return
+        ten = hu.mau_khop(parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
+                          self._fx_from_vars())
+        self.var_mau_giong.set(ten)
+        self.lbl_mau_giong.config(
+            text=hu.MAU_MO_TA.get(ten, "bộ số riêng của bạn — chọn một mẫu để điền lại"))
+
     def _save_opt_settings(self):
         """Lưu cài đặt mục 'Cài đặt' hiện tại để lần sau mở lại dùng làm mặc định."""
         try:
             save_opt_settings(dict(
                 from_gemini=self.var_from_gemini.get(),
+                mode=self.var_mode.get(),
+                vieneu_voice=self.var_vieneu_voice.get(),
+                chuan_am=self.var_chuan_am.get(),
+                am_luong_db=self._am_luong_tu_o(),
                 chunk=int(self.var_chunk.get()),
                 pitch=parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
                 **self._fx_from_vars(),
@@ -6280,16 +6824,25 @@ class App(tk.Tk):
                            "mỗi ngày 2 tập)",
                   style="Hint.TLabel").grid(row=8, column=0, sticky="w", pady=(2, 0))
 
-        # TẮT MÁY khi chạy xong — để chạy batch qua đêm. Một lần duy nhất: xong là
-        # tự bỏ tick, khỏi lỡ tắt ở lần chạy sau. Biến dùng chung với ô tick bên tab
-        # Giọng nói (tạo ở __init__). (Ô 🌙 cho máy ngủ đã bỏ 26/10/2026.)
+        # TẮT MÁY / CHO MÁY NGỦ khi chạy xong — để chạy batch qua đêm. Một lần duy
+        # nhất: xong là tự bỏ tick, khỏi lỡ tắt/ngủ ở lần chạy sau. Biến dùng chung
+        # với ô tick bên tab Giọng nói (tạo ở __init__), và hai ô loại trừ nhau —
+        # hẹn tắt máy rồi lại cho ngủ thì lệnh tắt nổ ngay lúc máy dậy.
         ttk.Checkbutton(
             s3, text=f"⏻  Xong hết thì TẮT MÁY (sau {SHUTDOWN_DELAY_MIN} phút)",
             variable=self.var_shutdown,
-            command=self._save_shutdown_choice
+            command=lambda: self._pick_power_mode("shutdown")
         ).grid(row=3, column=0, sticky="w", pady=(6, 0))
         ttk.Label(s3, text="Huỷ bất cứ lúc nào: mở CMD gõ  shutdown /a",
                   style="Hint.TLabel").grid(row=4, column=0, sticky="w")
+        ttk.Checkbutton(
+            s3, text=f"🌙  Xong hết thì CHO MÁY NGỦ (sau {SLEEP_DELAY_MIN} phút)",
+            variable=self.var_sleep,
+            command=lambda: self._pick_power_mode("sleep")
+        ).grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(s3, text="Huỷ: bỏ tick ô này. Ngủ rồi thì chạm chuột là dậy, "
+                           "mọi thứ còn nguyên.",
+                  style="Hint.TLabel").grid(row=6, column=0, sticky="w")
 
         self._pipe_steps = (s1, s2, s3)
 
@@ -6321,7 +6874,7 @@ class App(tk.Tk):
         # Ba dòng trạng thái này dùng CHUNG biến với tab '🎧 Nhận diện' (②→⑤ ghi vào
         # đây). Label không wraplength thì đòi bề ngang đúng bằng chữ → cột quy trình
         # nở ra theo câu trạng thái, nhìn như giao diện bị nhảy. wraplength đặt lại
-        # theo kiểu dàn trang ở _pipeline_set_layout (dọc hẹp ở Home / ngang rộng ở
+        # theo kiểu dàn trang ở _pipeline_set_layout (dọc hẹp ở Home / ngưang rộng ở
         # tab Tạo kịch bản).
         self._pipe_status_labels = (lb_link, lb_stt, lb_up)
 
@@ -6378,7 +6931,7 @@ class App(tk.Tk):
 
     def _run_tts_then_shutdown(self, *args, **kwargs):
         """Bọc run_tts cho các luồng ở tab Giọng nói (không đi qua _pipe_set_busy):
-        chạy xong/lỗi thì xét ô tick ⏻ để hẹn tắt máy. Gọi lại trên luồng Tk
+        chạy xong/lỗi thì xét ô tick ⏻/🌙 để hẹn tắt máy hoặc cho máy ngủ. Gọi lại trên luồng Tk
         bằng after() vì BooleanVar không an toàn khi đụng từ thread khác."""
         try:
             run_tts(*args, **kwargs)
@@ -6388,22 +6941,100 @@ class App(tk.Tk):
             except Exception:
                 pass
 
-    def _save_shutdown_choice(self):
-        """Bấm ô ⏻ (ở tab Giọng nói hay bước ③) → nhớ ngay vào taogiong_pipeline.json."""
+    def _pick_power_mode(self, which: str):
+        """⏻ và 🌙 loại trừ nhau — tick ô này thì bỏ ô kia.
+
+        Hẹn tắt máy rồi lại cho máy ngủ là kiểu hỏng nhất: lệnh `shutdown /s` vẫn
+        nằm đó và nổ ngay khi máy vừa dậy, giữa lúc bạn đang ngồi làm việc.
+        """
+        if which == "sleep" and self.var_sleep.get():
+            self.var_shutdown.set(False)
+        elif which == "shutdown" and self.var_shutdown.get():
+            self.var_sleep.set(False)
+        if not self.var_sleep.get():        # vừa bỏ tick 🌙 → huỷ luôn lệnh đang đếm
+            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
         try:
             self._save_pipe_settings()
         except Exception as e:
             logging.warning(f"⚠️ Không lưu được cài đặt pipeline: {e}")
 
-    def _maybe_schedule_shutdown(self):
-        """Xong hết thì TẮT MÁY (ô ⏻) — để chạy batch qua đêm. Chỉ hẹn khi KHÔNG còn
-        tiến trình nào chạy.
+    def _sleep_status(self, msg: str):
+        """Ghi dòng trạng thái, bỏ qua nếu cửa sổ đã đóng — mấy hàm dưới đây chạy ở
+        luồng Timer, không được phép chết vì một dòng chữ."""
+        try:
+            self.pipe_status.set(msg)
+        except Exception:
+            pass
 
-        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt ngoài ý
+    def _cancel_sleep(self, msg: str = "") -> bool:
+        """Huỷ đếm ngược giờ ngủ nếu đang có. True = vừa huỷ được một lệnh."""
+        timer, self._sleep_timer = self._sleep_timer, None
+        if timer is None:
+            return False
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+        if msg:
+            logging.warning(msg)
+            self._sleep_status(msg)
+        return True
+
+    def _schedule_sleep(self):
+        """Đếm ngược SLEEP_DELAY_MIN phút rồi cho máy ngủ.
+
+        KHÔNG bỏ tick ngay như ô ⏻: lệnh tắt máy còn huỷ được bằng `shutdown /a`,
+        còn lệnh ngủ này là của chính app — giữ tick lại chính là nút huỷ. Tick chỉ
+        tự bỏ khi máy đã thật sự ngủ (một lần duy nhất).
+        """
+        if self._sleep_timer is not None:      # đang đếm rồi, đừng chồng lệnh
+            return
+        timer = threading.Timer(SLEEP_DELAY_MIN * 60, self._do_sleep)
+        timer.daemon = True                    # đóng app là lệnh ngủ cũng tan theo
+        self._sleep_timer = timer
+        timer.start()
+        logging.warning(f"🌙 ĐÃ HẸN CHO MÁY NGỦ sau {SLEEP_DELAY_MIN} phút — "
+                        "muốn huỷ thì bỏ tick ô 🌙.")
+        self._sleep_status(f"🌙 Máy ngủ sau {SLEEP_DELAY_MIN} phút — huỷ: bỏ tick 🌙")
+
+    def _do_sleep(self):
+        """Tới giờ ngủ (chạy ở luồng của Timer nên không treo cửa sổ lúc máy ngủ)."""
+        self._sleep_timer = None
+        try:
+            if not self.var_sleep.get():       # vừa bỏ tick sát giờ
+                return
+            if self._pipe_busy:                # có việc mới chen vào → để lượt sau
+                logging.warning("🌙 Có việc đang chạy → hoãn cho máy ngủ.")
+                return
+            self.var_sleep.set(False)          # một lần duy nhất
+            self._save_pipe_settings()
+        except Exception as e:
+            # Cửa sổ vừa đóng / Tk không trả lời → KHÔNG ngủ. Đọc không ra ý người
+            # dùng mà vẫn úp máy xuống thì phiền hơn nhiều so với bỏ qua lượt này.
+            logging.warning(f"⚠️ Bỏ qua lệnh cho máy ngủ: {e}")
+            return
+        logging.warning("🌙 Cho máy ngủ… (chạm chuột/bàn phím là dậy, mọi thứ còn nguyên)")
+        self._sleep_status("🌙 Đang cho máy ngủ…")
+        err = suspend_computer()               # chỉ trả về khi máy đã DẬY
+        if err:
+            logging.error(f"Không cho máy ngủ được: {err}")
+            self._sleep_status("❌ Không cho máy ngủ được — xem nhật ký.")
+            return
+        logging.warning("☀️ Máy đã dậy — app chạy tiếp bình thường.")
+        self._sleep_status("☀️ Máy đã dậy — sẵn sàng chạy tiếp.")
+
+    def _maybe_schedule_shutdown(self):
+        """Xong hết thì TẮT MÁY (ô ⏻) hoặc CHO MÁY NGỦ (ô 🌙) — để chạy batch qua đêm.
+        Chỉ hẹn khi KHÔNG còn tiến trình nào chạy.
+
+        MỘT LẦN DUY NHẤT: hẹn xong tự bỏ tick, tránh lần chạy sau bị tắt/ngủ ngoài ý
         muốn. Vẫn hẹn khi luồng kết thúc do LỖI — máy đằng nào cũng rảnh, log đã ghi
-        lại lỗi. Huỷ: `shutdown /a`.
+        lại lỗi. Huỷ: `shutdown /a` (tắt máy) hoặc bỏ tick 🌙 (ngủ).
         """
         if self._pipe_busy:
+            return
+        if getattr(self, "var_sleep", None) is not None and self.var_sleep.get():
+            self._schedule_sleep()
             return
         var = getattr(self, "var_shutdown", None)
         if var is None or not var.get():
@@ -6430,6 +7061,10 @@ class App(tk.Tk):
 
     def _pipe_set_busy(self, busy: bool):
         self._pipe_busy = busy
+        # Việc mới chen vào giữa lúc đang đếm ngược giờ ngủ → huỷ đếm, chờ xong hết
+        # đã. Ô tick 🌙 vẫn giữ nguyên nên xong việc này là hẹn lại từ đầu.
+        if busy:
+            self._cancel_sleep("🌙 Có việc mới → huỷ đếm ngược ngủ, chờ xong hết đã.")
         state = "disabled" if busy else "normal"
         for button in getattr(self, "_backend_buttons", ()):
             button.config(state=state)
@@ -6451,6 +7086,9 @@ class App(tk.Tk):
     def _save_pipe_settings(self):
         """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
         save_pipe_settings(dict(
+            # Ô "Tải Bilibili" chỉ có trên web (GUI tải link bằng yt-dlp, không qua
+            # Bili23) → chép lại giá trị đang lưu, kẻo bấm chạy ở GUI là web mất lựa chọn.
+            bili_quality=chuan_bili_quality(load_pipe_settings().get("bili_quality")),
             auto2=self.var_auto2.get(), auto3=self.var_auto3.get(),
             auto_tts=self.var_auto_tts.get(), seo=self.var_seo.get(),
             model=self.pipe_var_model.get(), speed=self.pipe_var_speed.get(),
@@ -6458,6 +7096,7 @@ class App(tk.Tk):
             # chỉ đổi qua ô chọn (_save_backend_choice) hoặc nút reset.
             gemini_backend=self._sync_backend_from_file(),
             shutdown=getattr(self, "var_shutdown", tk.BooleanVar()).get(),
+            sleep=getattr(self, "var_sleep", tk.BooleanVar()).get(),
             upload=getattr(self, "var_upload", tk.BooleanVar()).get(),
         ))
 
@@ -6486,6 +7125,9 @@ class App(tk.Tk):
         set_backend(PIPE_DEFAULTS["gemini_backend"])
         if hasattr(self, "var_shutdown"):
             self.var_shutdown.set(PIPE_DEFAULTS["shutdown"])
+        if hasattr(self, "var_sleep"):
+            self.var_sleep.set(PIPE_DEFAULTS["sleep"])
+            self._cancel_sleep("✖ Đã huỷ hẹn cho máy ngủ.")
         if hasattr(self, "var_upload"):
             self.var_upload.set(PIPE_DEFAULTS["upload"])
         self.pipe_var_model.set(PIPE_DEFAULTS["model"])
@@ -6695,7 +7337,11 @@ class App(tk.Tk):
 
         Trả về dict cài đặt, hoặc None nếu cấu hình sai (đã hiện cảnh báo)."""
         mode = self.var_mode.get()
-        if mode == "clone":
+        if mode == MODE_VIENEU:
+            voice_param = self._vieneu_voice_param()
+            if not voice_param:
+                return None
+        elif mode == "clone":
             voice_name = self._current_voice()
             if not voice_name:
                 messagebox.showwarning("Thiếu giọng mẫu",
@@ -6758,6 +7404,8 @@ class App(tk.Tk):
             doc_no_effect=self.var_doc_no_effect.get(),
             make_tiktok=self.var_make_tiktok.get(), tiktok_speed=tiktok_speed,
             make_short=self.var_make_short.get(),
+            chuan_am=self.var_chuan_am.get(),           # 🔉 chuẩn âm (mặc định tắt 05/11/2026)
+            am_luong=self._am_luong_tu_o(),             # 🔊 âm lượng cơ bản (dB, bước cuối)
             tiktok_percent=self._parse_percent(self.var_tiktok_percent),
             tiktok_no_effect=self.var_tiktok_no_effect.get(),
             tiktok_caption_pos=tiktok_caption_pos,
@@ -7015,7 +7663,7 @@ class App(tk.Tk):
         logging.info(f"🎧 Tạo giọng OmniVoice cho tập {folder.name} ({len(chunks)} đoạn)...")
         # Tiến trình chi tiết (tạo giọng + dựng video) hiện ở THANH TTS (self.progress/
         # self.status); thanh "Tạo kịch bản" để hiển thị tiến độ tổng theo số tập.
-        run_tts(
+        ok_tts = run_tts(
             ts["mode"], ts["voice_param"], chunks, str(output),
             self.progress, self.status,
             stub, stub, stub, pause_event,
@@ -7039,6 +7687,8 @@ class App(tk.Tk):
             make_tiktok=ts.get("make_tiktok", False),
             tiktok_out=folder / "tiktok.mp4",      # video TIKTOK (cắt theo %)
             make_short=ts.get("make_short", False),
+            chuan_am=ts.get("chuan_am", False),
+            am_luong=ts.get("am_luong", 0.0),      # 🔊 âm lượng cơ bản (dB) cộng lên audio gốc
             short_out=folder / "short.mp4",        # YOUTUBE SHORT (≤2:50, đăng tự động)
             tiktok_speed=ts.get("tiktok_speed", 1.0),
             tiktok_percent=ts.get("tiktok_percent", 50),
@@ -7069,6 +7719,12 @@ class App(tk.Tk):
             # Bản dọc từ video gốc + khung dọc tạo sẵn (08/09/2026) — xem video_doc_khung.
             doc_khung=ts.get("doc_khung", False),
         )                                          # render phần còn thiếu (vd video dọc).
+        if not ok_tts:
+            # GPU bắt buộc (27/10/2026): NVENC/CUDA lỗi (hay lỗi khác) thì run_tts đã ghi
+            # "Lỗi: …" và dừng; tập này coi như CHƯA xong để hàng đợi không đi tiếp.
+            logging.error(f"⛔ {folder.name}: tạo giọng/dựng video DỪNG vì lỗi "
+                          "(xem dòng 'Lỗi:' phía trên) → KHÔNG tính là xong.")
+            return False
         logging.info(f"🎧 Xong tạo giọng tập {folder.name} → {output.name}")
         # ⚠️ CHỐT ĐỘ DÀI AUDIO: so thời lượng output.wav với số ký tự input.txt. Bắt ca
         # TTS hụt chunk / file bị cắt cụt — audio đã tạo xong nên chỉ CẢNH BÁO (kèm beep)
@@ -8180,7 +8836,11 @@ class App(tk.Tk):
         self._save_pipe_settings()   # ấn ▶ Chạy → nhớ cài đặt quy trình cho lần sau
         self._save_opt_settings()    # nhớ cả mục "Cài đặt" để lần sau làm mặc định
         mode = self.var_mode.get()
-        if mode == "clone":
+        if mode == MODE_VIENEU:
+            voice_param = self._vieneu_voice_param()
+            if not voice_param:
+                return None
+        elif mode == "clone":
             voice_name = self._current_voice()
             if not voice_name:
                 messagebox.showwarning("Thiếu giọng mẫu",
@@ -8247,6 +8907,10 @@ class App(tk.Tk):
         fx = self._fx_from_vars()
         if hu.fx_active(**fx):
             logging.info(f"🔔 Bộ lọc giọng: {hu.fx_describe(**fx)} (áp lên audio gốc).")
+        # 🔊 Âm lượng cơ bản (dB) — cộng lên output.wav ở bước cuối
+        am_luong = self._am_luong_tu_o()
+        if abs(am_luong) > 1e-9:
+            logging.info(f"🔊 Âm lượng {am_luong:+.1f} dB (cộng lên audio gốc, bước cuối).")
 
         # Tốc độ audio cho VIDEO TIKTOK (cắt theo %) — atempo, giữ cao độ
         make_tiktok = self.var_make_tiktok.get()
@@ -8332,6 +8996,8 @@ class App(tk.Tk):
                   ngang_speed, reuse, doc_from_ngang, doc_no_effect),
             kwargs={"make_tiktok": make_tiktok,   # video TikTok (cắt theo %)
                     "make_short": self.var_make_short.get(),   # Short ≤2:50 cắt từ TikTok
+                    "chuan_am": self.var_chuan_am.get(),
+                    "am_luong": am_luong,                       # 🔊 âm lượng cơ bản (dB)
                     "tiktok_speed": tiktok_speed,
                     "tiktok_percent": tiktok_percent,
                     "tiktok_no_effect": tiktok_no_effect,

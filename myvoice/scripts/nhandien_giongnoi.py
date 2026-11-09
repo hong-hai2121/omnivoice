@@ -26,6 +26,8 @@ import shutil
 import subprocess
 import sys
 
+from gpu_batbuoc import GpuLoi   # noqa: E402  GPU bắt buộc (27/10/2026): không CUDA → dừng
+
 # Bảo đảm console Windows in được tiếng Trung/Việt
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -166,7 +168,8 @@ def free_model():
 def get_model(model_name, use_batched=True):
     """Lấy model faster-whisper (có cache). Trả về (model, batched_pipeline|None, device).
 
-    - Tự dùng GPU (CUDA, float16) nếu có, không thì CPU (int8).
+    - GPU (CUDA, float16) BẮT BUỘC — không có thì ném GpuLoi, không lùi về CPU int8
+      (27/10/2026: chức năng dùng GPU mà rớt về CPU là báo lỗi rồi dừng).
     - batched_pipeline: chạy nhiều cửa sổ 30s song song → nhanh hơn 2-4× cho file dài.
     """
     if _CACHE["name"] == model_name and _CACHE["model"] is not None:
@@ -179,13 +182,15 @@ def get_model(model_name, use_batched=True):
         print("❌ Chưa cài faster-whisper. Chạy: pip install faster-whisper")
         sys.exit(1)
 
-    device, compute_type = "cpu", "int8"
+    # GPU bắt buộc (27/10/2026): không có CUDA thì ném GpuLoi — báo lỗi rồi dừng,
+    # không âm thầm nhận diện bằng CPU int8 chậm gấp nhiều lần.
     try:
         import torch
-        if torch.cuda.is_available():
-            device, compute_type = "cuda", "float16"
-    except Exception:
-        pass
+    except Exception as e:
+        raise GpuLoi(f"không nạp được torch để nhận diện bằng GPU: {e}")
+    if not torch.cuda.is_available():
+        raise GpuLoi("không có GPU CUDA để nhận diện giọng nói — DỪNG, không chạy CPU.")
+    device, compute_type = "cuda", "float16"
 
     local_dir = _find_local_model(model_name)
     if local_dir:
@@ -308,7 +313,7 @@ def _repair_looped_segments(model, audio_path, records, suspects):
     return n_fixed
 
 
-def transcribe_chinese(media_path, model_name="medium", batch_size=8,
+def transcribe_chinese(media_path, model_name="medium", batch_size=4,
                        use_batched=True, on_segment=None, on_progress=None,
                        partial_path=None, speed=0.7):
     """Nhận diện 1 file audio/video thành văn bản tiếng Trung.
@@ -545,8 +550,11 @@ def main():
         help="Xuất kèm phiên âm pinyin (cần cài pypinyin).",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=8,
-        help="Số cửa sổ 30s chạy song song (lớn hơn = nhanh hơn nhưng tốn VRAM hơn).",
+        "--batch-size", type=int, default=4,
+        help="Số cửa sổ 30s chạy song song (lớn hơn = nhanh hơn nhưng tốn VRAM hơn). "
+             "Hạ 8 → 4 ngày 08/11/2026: card RTX 4060 8 GB dùng chung màn hình bị TDR "
+             "(driver treo, python sập 0xC0000409) khi chạy batch 8; kết quả nhận diện "
+             "không đổi, chỉ chậm hơn một ít.",
     )
     parser.add_argument(
         "--speed", type=float, default=0.7,

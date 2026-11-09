@@ -1,30 +1,34 @@
 """
 video_doc_khung.py — Dựng video DỌC 1080×1920 từ VIDEO GỐC của bản ngang, KHÔNG ghép
-clip dọc nữa (yêu cầu 08/09/2026: tiết kiệm thời gian, bản dọc dùng lại video ngang).
+clip dọc (yêu cầu 08/09/2026: tiết kiệm thời gian, bản dọc dùng lại video ngang).
 
-"Video gốc" = đoạn video đã ghép của bản ngang TRƯỚC khi lồng khung khung0/khung1/khung2
-(video_khung.build_video(goc_out=...) xuất thêm file YOUTUBE_goc.mp4 ngay trong cùng một
-lượt ffmpeg). Tập cũ không có file gốc thì CẮT vùng trong khung1 của YOUTUBE.mp4 — hình y
-hệt, chỉ khác là đã có phụ đề ngang trong hình.
+"Video gốc" = YOUTUBE_goc.mp4: đoạn video đã ghép của bản ngang, NGUYÊN cỡ clip, chưa cắt,
+chưa dán logo (video_khung.build_video(goc_out=...) xuất thêm ngay trong cùng một lượt ffmpeg;
+YOUTUBE_goc.json có "goc": "raw" + "che"). Bản dọc cắt đúng vùng giữa theo pixel GỐC (1:1,
+không phóng — user chốt 08/11/2026 "giữ video nguồn gốc không cần phóng to"; bản đầu 08/11
+phóng kín dải 1080×1180 thì mờ):
+  • ô ✂ che chữ Trung TẮT (mặc định): dải 1080×1080 = cả chiều cao clip, lấy 1080 px giữa.
+  • ô ✂ BẬT: dải 1080×852 = bỏ mép trên CAT_TREN_MIN / dưới CAT_DUOI_MIN (watermark + phụ đề
+    cháy sẵn) rồi lấy 1080 px giữa.
+Tập cũ không có file gốc thì cắt từ YOUTUBE.mp4: bản khung cũ cắt vùng trong khung1 rồi phóng
+cho vừa dải, bản toàn màn hình ("layout": "toanman") lấy nguyên khung hình.
 
-Bố cục (bản thiết kế "Màn hình dọc Mimi audio", đã xem trên web + ảnh ở Downloads):
-  • NỀN      : nền hoa xoay dọc (YOUTUBE/thumbnail/khung nen*.png) — cùng bộ thumbnail dọc.
-  • GIỮA     : dải video BAND (y 587→1333, tỉ lệ đúng vùng trong khung1 ≈ 1,45) — video gốc
-               phủ kín; viền là khung "anhdoc <màu>.png" (bộ thumbnail) XOAY NGANG.
-  • TRÊN     : logo (trái) + thẻ Số đầu mèo (phải) + TIÊU ĐỀ tập trên tờ giấy.
-  • DƯỚI     : ảnh mèo (kho Anh/) + thẻ "Nghe trọn tập tại kênh Mimi audio" (font Coiny
-               dễ thương) + nút Đăng ký (cắt từ khung2 của bản ngang) + #MimiAudioSoN.
+Bố cục "Dọc B" (08/11/2026, user chọn sau khi xem mockup — thay bộ khung hoa + thẻ giấy
+tiêu đề + thẻ Số + ảnh mèo + nút Đăng ký cũ che mất 62 % màn hình), toạ độ theo bo_cuc(che):
+  • NỀN      : chính vùng video phóng kín 1080×1920, làm MỜ + tối NEN_MO_TOI (kiểu TikTok).
+  • GIỮA     : dải video đặt giữa màn hình — pixel gốc 1:1.
+  • TRÊN     : logo Mimi audio nhỏ góc trái + TIÊU ĐỀ tập chữ trắng viền đen (không thẻ giấy).
+  • DƯỚI     : một dòng "Nghe trọn tập tại kênh Mimi audio"; ~1/5 đáy để trống (TikTok/Reels
+               đè nút + caption lên đó).
+Màu logo lấy theo logo bản ngang đã dùng (YOUTUBE_goc.json), không rõ thì ngẫu nhiên.
+Mỗi tập vẽ MỘT lớp phủ PNG trong suốt (ve_lop_tap) rồi một lệnh ffmpeg: video gốc →
+nền mờ + dải video → đè lớp PNG → audio (build_video_doc_khung).
 
-Bộ khung TĨNH ba màu (tím / xanh / đỏ) được TẠO SẴN MỘT LẦN vào Backbround/khungdoc/
-("khungdoc <màu>.png" + khungdoc.json ghi toạ độ) — tao_khung_san(). Lần dựng sau chỉ
-đọc file trong thư mục (muốn đổi hình, sửa/thay PNG ở đó hoặc chạy `--tao-khung --force`).
-Mỗi tập vẽ thêm tiêu đề / số / ảnh mèo / hashtag lên bản sao (ve_lop_tap) rồi một lệnh
-ffmpeg: video gốc scale vào dải + đè lớp PNG + audio (build_video_doc_khung).
+Bộ khung tĩnh cũ ở Backbround/khungdoc/ không dùng nữa (để nguyên, không xoá).
 
 Cách dùng:
-    python video_doc_khung.py --tao-khung [--force]     # tạo/tạo lại bộ khung tĩnh
-    python video_doc_khung.py --xem-truoc [THƯ_MỤC]     # ảnh xem trước 3 màu
-    python video_doc_khung.py --tap "kịch_bản/K104 - …"  # dựng facebook.mp4 cho 1 tập
+    python video_doc_khung.py --xem-truoc [THƯ_MỤC] [--che]   # ảnh xem trước 3 màu logo
+    python video_doc_khung.py --tap "kịch_bản/K104 - …" [--che]  # dựng facebook.mp4 cho 1 tập
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -53,58 +57,77 @@ for _p in (_SCRIPTS_DIR, BASE_DIR / "YOUTUBE"):
         sys.path.insert(0, str(_p))
 
 from video_khung import (get_duration, get_resolution, has_nvenc,   # noqa: E402
-                         run_ffmpeg_progress)
+                         run_ffmpeg_progress, nvenc_batbuoc, dung_neu_nvenc_loi,
+                         CAT_TREN_MIN, CAT_DUOI_MIN)
 
-BG_DIR = BASE_DIR / "Backbround"
-KHUNGDOC_DIR = BG_DIR / "khungdoc"                   # bộ khung dọc tạo sẵn
 THUMB_DIR = BASE_DIR / "YOUTUBE" / "thumbnail"
 FONTS_DIR = BASE_DIR / "fonts"
-ANH_DIR = BASE_DIR / "Anh"
 SCRIPT_DIR = BASE_DIR / "kịch_bản"
 
 W, H = 1080, 1920
-# Dải video: tỉ lệ đúng vùng đặt video của khung1 (1248×861 sau nới OVERSCAN, đo
-# 08/09/2026) → rộng 1080 thì cao 745 → lấy 746 (chẵn), đặt giữa.
-BAND = (0, 587, 1080, 1333)
-VIEN_DE = 14                 # khung màu đè lên mép video bấy nhiêu px (che đường ghép)
-# Vùng trong khung1 trên canvas 1920×1080 (video_khung.detect_inner_box, các màu cùng
-# hình) — dùng khi phải CẮT YOUTUBE.mp4 cũ thay cho video gốc.
+# Dải video giữa, rộng kín 1080, KHÔNG phóng (1:1 pixel gốc của clip 1920×1080) → nét bằng clip:
+#   không che → cao 1080 (cả chiều cao clip, lấy 1080 px giữa = 56 % bề ngang gốc), dải vuông.
+#   che       → cao 852 = chiều cao còn lại sau khi bỏ mép trên 8 % / dưới 13 %.
+# (Bản đầu 08/11: 1080×1180 phủ kín → phóng 1,38× → mờ, user bỏ.)
+BAND_CAO_FULL = 1080
+BAND_CAO_CHE = 852
+# Nền = vùng video phủ kín 1080×1920, làm mờ ở cỡ nhỏ NEN_NHO rồi phóng lên (nhanh, mờ đều),
+# tối bớt NEN_MO_TOI (0–1) cho chữ nổi.
+NEN_NHO = (270, 480)
+NEN_MO_TOI = 0.35
+# Khối trên (dồn sát mép trên của dải): tiêu đề chữ trắng viền đen cao TIEU_DE_CAO canh giữa,
+# logo cao LOGO_H góc trái phía trên tiêu đề.
+LOGO_H = 150
+TIEU_DE_CAO = 170
+TIEU_DE_CO = (64, 40)                                # cỡ chữ thử từ lớn xuống nhỏ (bước 2)
+VIEN_CHU = 5                                         # viền đen quanh chữ
+# Khối dưới: một dòng kêu gọi, cách đáy dải CTA_CACH.
+CTA_TEXT = "Nghe trọn tập tại kênh Mimi audio"
+CTA_CACH, CTA_CO = 134, 42
+FONT_CHU = "BeVietnamPro-Black.ttf"
+# Vùng trong khung1 trên canvas 1920×1080 của BỘ KHUNG CŨ (các màu cùng hình) — dùng khi
+# phải CẮT YOUTUBE.mp4 tập cũ thay cho video gốc.
 INNER_MACDINH = (346, 120, 1228, 841)
-VIEN_CHAM = 72               # đường viền chấm của khung1 nằm sâu bấy nhiêu px trong vùng trong
-GOC_NAME = "YOUTUBE_goc.mp4"                         # video gốc trước khi lồng khung
+VIEN_CHAM = 72               # đường viền chấm của khung1 cũ nằm sâu bấy nhiêu px trong vùng trong
+GOC_NAME = "YOUTUBE_goc.mp4"                         # video gốc trước khi dán logo
 LOP_TAP_NAME = "khungdoc_tap.png"                    # lớp phủ đã vẽ cho tập (tạm)
-# Phụ đề dọc nằm TRONG dải video: đáy chữ cách đáy khung 1920-(1333-36)=623 px ≈ 32,4%
-# (kieusub.vitri_margin nhận % chiều cao từ đáy).
-SUB_VITRI = "32.4"
 
-# tên màu → (khung anhdoc, logo, nền hoa) — đều trong YOUTUBE/thumbnail
-MAU = {
-    "tím":  ("anhdoc tím.png",  "logo tím.png",  "khung nen 1.png"),
-    "xanh": ("anhdoc xanh.png", "logo xanh.png", "khung nen 3.png"),
-    "đỏ":   ("anhdoc đỏ.png",   "logo đỏ.png",   "khung nen 4.png"),
-}
-# Bố cục khối trên / dưới (px trên canvas 1080×1920)
-LOGO_POS, LOGO_H = (64, 72), 210
-BADGE_W, BADGE_POS = 250, (1080 - 64 - 250, 62)
-PAPER = (56, 300, 1024, 556)                         # tờ giấy tiêu đề
-PAPER_PAD = (44, 30, 44, 30)                         # lề trong giấy (trái, trên, phải, dưới)
-CAT_BOX = (64, 1395, 364, 1775)                      # khung ảnh mèo (viền 12 px)
-CAT_VIEN = 12
-CTA = (420, 1415, 1016, 1815)                        # thẻ "Nghe trọn tập…"
-SUBSCRIBE_CROP = (14, 683, 306, 777)                 # nút Đăng ký trong Backbround/khung2.png
-NEN_CAM = (253, 246, 234)                            # màu giấy
-CHU_TOI = (74, 28, 46)                               # chữ tối trên thẻ trắng
-TIEU_DE_MAU = (123, 26, 43)                          # màu tiêu đề (như thumbnail)
+# tên màu → logo cùng màu trong YOUTUBE/thumbnail
+MAU = {"tím": "logo tím.png", "xanh": "logo xanh.png", "đỏ": "logo đỏ.png"}
 
+# GPU (NVENC) bắt buộc (27/10/2026): không có / lỗi → GpuLoi, dừng, không rớt về CPU.
 USE_GPU = True
 NVENC_CQ = 18
 X264_CRF = 18
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
+# ── bố cục theo ô ✂ che chữ Trung ─────────────────────────────────────────────
+def bo_cuc(che: bool) -> dict:
+    """Toạ độ bố cục: dải video cao 852 (che) hay 1080 (không che) đặt GIỮA màn hình; tiêu đề +
+    logo dồn lên sát mép trên dải, dòng kêu gọi dưới dải. Trả về dict band / tieu_de / logo / cta_y."""
+    cao = BAND_CAO_CHE if che else BAND_CAO_FULL
+    y0 = (H - cao) // 2
+    tieu_de = (60, y0 - 25 - TIEU_DE_CAO, 1020, y0 - 25)
+    return {"band": (0, y0, W, y0 + cao),
+            "tieu_de": tieu_de,
+            "logo": (40, tieu_de[1] - LOGO_H - 15),
+            "cta_y": y0 + cao + CTA_CACH}
+
+
+def sub_vitri(che: bool) -> str:
+    """Vị trí phụ đề dọc (% chiều cao từ đáy, kieusub.vitri_margin): đáy chữ cách đáy dải 36 px
+    → nằm TRONG dải video. Không che ≈ 23,8 %, che ≈ 29,7 %."""
+    band = bo_cuc(che)["band"]
+    return f"{(H - (band[3] - 36)) / H * 100:.1f}"
+
+
+SUB_VITRI = sub_vitri(False)       # giữ tên cũ cho code ngoài (mặc định = không che)
+
+
 # ── tiện ích ──────────────────────────────────────────────────────────────────
 def _th():
-    """Module vẽ thumbnail (font tiêu đề, ngắt dòng cân đối, logo, thẻ số, nền hoa)."""
+    """Module vẽ thumbnail (ngắt dòng cân đối, logo cắt sát, dán có bóng)."""
     import dien_tieu_de_thumbnail as th
     return th
 
@@ -116,302 +139,69 @@ def _font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(p), size=size)
 
 
-def _bbox_alpha(im: Image.Image):
-    return im.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox()
+def duong_logo(mau: str) -> Path:
+    """File logo theo màu; thiếu thì logo.png (hồng)."""
+    p = THUMB_DIR / MAU.get(mau, "logo.png")
+    return p if p.exists() else THUMB_DIR / "logo.png"
 
 
-def _lo_trong(im: Image.Image) -> tuple[int, int, int, int]:
-    """Lỗ trong (alpha = 0) của một khung viền: quét hàng/cột giữa → (x0, x1, y0, y1)."""
-    a = im.getchannel("A")
-    w, h = im.size
-
-    def khoang(seq):
-        best, s = (0, 0, 0), None
-        for i, v in enumerate(list(seq) + [255]):
-            if v == 0 and s is None:
-                s = i
-            if v != 0 and s is not None:
-                if i - s > best[0]:
-                    best = (i - s, s, i)
-                s = None
-        return best
-
-    gx = khoang(a.getpixel((x, h // 2)) for x in range(w))
-    gy = khoang(a.getpixel((w // 2, y)) for y in range(h))
-    return gx[1], gx[2], gy[1], gy[2]
-
-
-def _dan(base: Image.Image, layer: Image.Image, pos: tuple[int, int]) -> None:
-    """Dán layer RGBA lên base tại pos, cắt phần lòi ra ngoài canvas (pos có thể âm)."""
-    x, y = pos
-    lx0, ly0 = max(0, -x), max(0, -y)
-    lx1 = min(layer.width, base.width - x)
-    ly1 = min(layer.height, base.height - y)
-    if lx1 <= lx0 or ly1 <= ly0:
-        return
-    base.alpha_composite(layer.crop((lx0, ly0, lx1, ly1)), dest=(x + lx0, y + ly0))
-
-
-def _bo_goc(im: Image.Image, r: int) -> Image.Image:
-    """Bo góc ảnh RGBA bán kính r (nhân vào alpha)."""
-    mask = Image.new("L", im.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, im.width - 1, im.height - 1), r, fill=255)
-    im = im.copy()
-    im.putalpha(ImageChops.multiply(im.getchannel("A"), mask))
-    return im
-
-
-def _bong(base: Image.Image, box, r: int, mo: int = 22, do_dam: int = 70) -> None:
-    """Bóng mờ dưới một khối bo góc (giống box-shadow của bản thiết kế)."""
-    from PIL import ImageFilter
-    x0, y0, x1, y1 = box
-    pad = mo * 2
-    sh = Image.new("RGBA", (x1 - x0 + pad * 2, y1 - y0 + pad * 2), (0, 0, 0, 0))
-    ImageDraw.Draw(sh).rounded_rectangle((pad, pad + 10, pad + x1 - x0, pad + y1 - y0 + 10),
-                                         r, fill=(80, 30, 50, do_dam))
-    sh = sh.filter(ImageFilter.GaussianBlur(mo))
-    _dan(base, sh, (x0 - pad, y0 - pad))
-
-
-def accent_cua(mau: str) -> tuple[int, int, int]:
-    """Màu chủ đạo của logo cùng màu (nhuộm thẻ số, viền, chữ nhấn)."""
-    return tuple(_th().logo_accent_colour(THUMB_DIR / MAU[mau][1]))
-
-
-# ── 1) BỘ KHUNG TĨNH tạo sẵn ──────────────────────────────────────────────────
-def duong_khung(mau: str) -> Path:
-    return KHUNGDOC_DIR / f"khungdoc {mau}.png"
-
-
-def _ve_giay(base: Image.Image, box, accent) -> None:
-    """Tờ giấy kem có dòng kẻ, viền chấm màu nhấn, băng dính trên (tiêu đề vẽ sau)."""
-    x0, y0, x1, y1 = box
-    _bong(base, box, 18)
-    giay = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
-    d = ImageDraw.Draw(giay)
-    d.rounded_rectangle((0, 0, giay.width - 1, giay.height - 1), 18, fill=(*NEN_CAM, 255))
-    for y in range(PAPER_PAD[1] + 74, giay.height - PAPER_PAD[3], 74):   # dòng kẻ
-        d.line((PAPER_PAD[0], y, giay.width - PAPER_PAD[2], y), fill=(120, 90, 100, 40), width=3)
-    # viền chấm màu nhấn
-    d.rounded_rectangle((12, 12, giay.width - 13, giay.height - 13), 12,
-                        outline=(*accent, 140), width=5)
-    base.alpha_composite(giay, dest=(x0, y0))
-    tape = Image.new("RGBA", (220, 50), (255, 255, 255, 140))
-    ImageDraw.Draw(tape).rectangle((0, 0, 219, 49), outline=(255, 255, 255, 210), width=2)
-    tape = tape.rotate(3, expand=True, resample=Image.BICUBIC)
-    _dan(base, tape, ((x0 + x1) // 2 - tape.width // 2, y0 - 22))
-
-
-def _ve_the_cta(base: Image.Image, box, accent) -> dict:
-    """Thẻ trắng "Nghe trọn tập tại kênh / Mimi audio" + nút Đăng ký. Trả về chỗ vẽ hashtag."""
-    x0, y0, x1, y1 = box
-    _bong(base, box, 30)
-    the = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
-    d = ImageDraw.Draw(the)
-    d.rounded_rectangle((0, 0, the.width - 1, the.height - 1), 30, fill=(255, 255, 255, 236))
-    # đuôi bong bóng chỉ sang ảnh mèo
-    d.polygon([(0, 70), (-1, 70), (0, 102)], fill=(255, 255, 255, 236))
-    cx = the.width // 2
-    # Dòng 1: "Nghe trọn tập tại kênh" — font Coiny bầu bĩnh, "trọn tập" màu nhấn
-    f1 = _font("Coiny-Regular.ttf", 46)
-    parts = [("Nghe ", CHU_TOI), ("trọn tập", accent), (" tại kênh", CHU_TOI)]
-    tw = sum(d.textlength(t, font=f1) for t, _ in parts)
-    x = cx - tw / 2
-    for t, mau in parts:
-        d.text((x, 38), t, font=f1, fill=(*mau, 255))
-        x += d.textlength(t, font=f1)
-    # Dòng 2: "Mimi audio" to, màu nhấn viền trắng (cute)
-    f2 = _font("Coiny-Regular.ttf", 64)
-    d.text((cx, 128), "Mimi audio", font=f2, fill=(*accent, 255), anchor="mt",
-           stroke_width=5, stroke_fill=(255, 255, 255, 255))
-    # nút Đăng ký cắt từ khung2 của bản ngang
-    k2 = BG_DIR / "khung2.png"
-    sub_y = 218
-    if k2.exists():
-        nut = Image.open(k2).convert("RGBA").crop(SUBSCRIBE_CROP)
-        nut = nut.resize((round(nut.width * 96 / nut.height), 96), Image.LANCZOS)
-        the.alpha_composite(nut, dest=(cx - nut.width // 2, sub_y))
-    # bóng nhẹ dưới nút để nổi trên thẻ trắng: bỏ qua cho gọn
-    base.alpha_composite(the, dest=(x0, y0))
-    # tam giác đuôi chỉ sang trái (vẽ thẳng lên base cho khỏi bị cắt)
-    ImageDraw.Draw(base).polygon([(x0 - 24, y0 + 86), (x0 + 2, y0 + 70), (x0 + 2, y0 + 102)],
-                                 fill=(255, 255, 255, 236))
-    return {"tag": (x0 + cx, y0 + 344)}                # tâm dòng hashtag
-
-
-def _ve_khung_tinh(mau: str) -> tuple[Image.Image, dict]:
-    """Ghép lớp tĩnh của một màu → (ảnh RGBA 1080×1920 có lỗ ở dải video, toạ độ)."""
-    th = _th()
-    anhdoc, logo_name, nen = MAU[mau]
-    accent = accent_cua(mau)
-    base = th.vertical_background(THUMB_DIR / nen).convert("RGBA")
-    if base.size != (W, H):
-        base = ImageOps.fit(base, (W, H), method=Image.LANCZOS)
-    # làm dịu hai đầu (chữ nổi hơn) — như lớp .bg-dim của bản thiết kế
-    dim = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    dd = ImageDraw.Draw(dim)
-    for y in range(H):
-        t = y / H
-        a = 26 * (1 - t / 0.30) if t < 0.30 else (46 * (t - 0.70) / 0.30 if t > 0.70 else 0)
-        if a > 0:
-            dd.line((0, y, W, y), fill=(40, 10, 30, int(a)))
-    base.alpha_composite(dim)
-    # lỗ video
-    lo = Image.new("L", (W, H), 255)
-    ImageDraw.Draw(lo).rectangle((BAND[0], BAND[1], BAND[2] - 1, BAND[3] - 1), fill=0)
-    base.putalpha(ImageChops.multiply(base.getchannel("A"), lo))
-    # khung màu (anhdoc) xoay ngang, kéo cho lỗ trong ôm đúng dải video (+VIEN_DE mỗi cạnh)
-    fr = Image.open(THUMB_DIR / anhdoc).convert("RGBA")
-    fr = fr.crop(_bbox_alpha(fr)).transpose(Image.ROTATE_270)
-    ox0, ox1, oy0, oy1 = _lo_trong(fr)
-    bw, bh = BAND[2] - BAND[0], BAND[3] - BAND[1]
-    sx = (bw + 2 * VIEN_DE) / (ox1 - ox0)
-    sy = (bh + 2 * VIEN_DE) / (oy1 - oy0)
-    fr = fr.resize((round(fr.width * sx), round(fr.height * sy)), Image.LANCZOS)
-    _dan(base, fr, (round(BAND[0] - VIEN_DE - ox0 * sx), round(BAND[1] - VIEN_DE - oy0 * sy)))
-    # logo cùng màu
-    logo = th.load_logo_cropped(THUMB_DIR / logo_name)
-    logo = logo.resize((round(logo.width * LOGO_H / logo.height), LOGO_H), Image.LANCZOS)
-    th.paste_with_shadow(base, logo, LOGO_POS)
-    # tờ giấy tiêu đề (chữ vẽ theo tập)
-    _ve_giay(base, PAPER, accent)
-    # khung ảnh mèo (ảnh dán theo tập)
-    _bong(base, CAT_BOX, 22)
-    ImageDraw.Draw(base).rounded_rectangle(CAT_BOX, 22, fill=(255, 255, 255, 255),
-                                           outline=(*accent, 255), width=CAT_VIEN)
-    toa_do = _ve_the_cta(base, CTA, accent)
-    toa_do.update({
-        "band": list(BAND), "paper": list(PAPER), "paper_pad": list(PAPER_PAD),
-        "badge": [BADGE_POS[0], BADGE_POS[1], BADGE_W],
-        "cat": [CAT_BOX[0] + CAT_VIEN, CAT_BOX[1] + CAT_VIEN, CAT_BOX[2] - CAT_VIEN, CAT_BOX[3] - CAT_VIEN],
-        "accent": list(accent), "sub_vitri": SUB_VITRI,
-    })
-    return base, toa_do
-
-
-def tao_khung_san(force: bool = False, log=print) -> dict:
-    """Tạo bộ khung tĩnh 3 màu vào Backbround/khungdoc/ (bỏ qua màu đã có, trừ khi force).
-    Trả về dict toạ độ (cũng ghi ra khungdoc.json)."""
-    KHUNGDOC_DIR.mkdir(parents=True, exist_ok=True)
-    meta_path = KHUNGDOC_DIR / "khungdoc.json"
-    meta = {}
-    if meta_path.exists() and not force:
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {}
-    for mau in MAU:
-        p = duong_khung(mau)
-        if p.exists() and not force and mau in meta:
-            continue
-        log(f"🖼 Tạo khung dọc màu {mau} → {p.name}")
-        im, toa_do = _ve_khung_tinh(mau)
-        im.save(p, optimize=True)
-        meta[mau] = toa_do
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    return meta
-
-
-def doc_meta(mau: str, log=print) -> dict:
-    """Toạ độ của khung màu `mau`; thiếu khung/json thì tự tạo (lần chạy đầu)."""
-    meta_path = KHUNGDOC_DIR / "khungdoc.json"
-    meta = {}
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            meta = {}
-    if mau not in meta or not duong_khung(mau).exists():
-        meta = tao_khung_san(log=log)
-    return meta[mau]
-
-
-# ── 2) LỚP THEO TẬP: tiêu đề, số, ảnh mèo, hashtag ────────────────────────────
-def _ve_tieu_de(base: Image.Image, box, title: str) -> None:
-    """Tiêu đề trên giấy: font serif đậm của thumbnail, ngắt dòng cân đối, co cỡ cho vừa."""
+# ── 1) LỚP PHỦ THEO TẬP: logo, tiêu đề, dòng kêu gọi ──────────────────────────
+def _ve_tieu_de(d: ImageDraw.ImageDraw, box, title: str) -> None:
+    """Tiêu đề chữ trắng viền đen canh giữa box: ngắt dòng cân đối (2 rồi 3 dòng), co cỡ
+    chữ từ TIEU_DE_CO[0] xuống TIEU_DE_CO[1] cho vừa; vẫn không vừa thì cắt bớt từ cuối."""
     th = _th()
     x0, y0, x1, y1 = box
     bw, bh = x1 - x0, y1 - y0
-    d = ImageDraw.Draw(base)
     chon = None
-    for size in range(76, 36, -2):
-        font = th.find_font(size)
+    for size in range(TIEU_DE_CO[0], TIEU_DE_CO[1] - 1, -2):
+        font = _font(FONT_CHU, size)
+        lh = round(size * 1.2)
         for max_lines in (2, 3):
-            lines = th.balanced_wrap(d, title, font, bw, max_lines)
-            if not lines:
-                continue
-            lh = round(size * 1.18)
-            if lh * len(lines) <= bh and all(d.textlength(l, font=font) <= bw for l in lines):
+            lines = th.balanced_wrap(d, title, font, bw - 2 * VIEN_CHU, max_lines)
+            if lines and lh * len(lines) <= bh:
                 chon = (font, lines, lh)
                 break
         if chon:
             break
     if not chon:                       # tiêu đề quá dài → cắt bớt từ cuối
-        font = th.find_font(40)
+        font = _font(FONT_CHU, TIEU_DE_CO[1])
         words = title.split()
         while words and d.textlength(" ".join(words), font=font) > bw * 2.8:
             words.pop()
         lines = th.balanced_wrap(d, " ".join(words) + "…", font, bw, 3) or [" ".join(words)]
-        chon = (font, lines, 47)
+        chon = (font, lines, round(TIEU_DE_CO[1] * 1.2))
     font, lines, lh = chon
     y = y0 + (bh - lh * len(lines)) // 2
     for line in lines:
         d.text((x0 + bw / 2, y + lh / 2), line, font=font, anchor="mm",
-               fill=(*TIEU_DE_MAU, 255), stroke_width=1, stroke_fill=(*TIEU_DE_MAU, 255))
+               fill=(255, 255, 255, 255), stroke_width=VIEN_CHU, stroke_fill=(0, 0, 0, 235))
         y += lh
 
 
-def chon_anh_meo(folder: Path | None = None) -> Path | None:
-    """Ảnh mèo cho khối dưới: ưu tiên ảnh đã dùng cho thumbnail dọc nếu ghi lại được,
-    không thì random trong kho Anh/ (ảnh cao hơn rộng ưu tiên vì khung đứng)."""
-    try:
-        files = _th().list_photo_files(ANH_DIR)
-    except Exception:
-        files = sorted(p for p in ANH_DIR.glob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp"))
-    if not files:
-        return None
-    dung = [p for p in files if p.suffix.lower() != ".png"]     # bỏ ảnh 2000×2000 nặng
-    return random.choice(dung or files)
-
-
-def ve_lop_tap(mau: str, episode: str, title: str, out_png: Path,
-               photo: Path | None = None, log=print) -> Path:
-    """Vẽ lớp phủ cho MỘT tập: khung tĩnh + tiêu đề + thẻ số + ảnh mèo + hashtag → out_png."""
+def ve_lop_tap(mau: str, episode: str, title: str, out_png: Path, log=print,
+               che: bool = False) -> Path:
+    """Vẽ lớp phủ TRONG SUỐT 1080×1920 cho MỘT tập theo bo_cuc(che): logo màu `mau` góc trái +
+    tiêu đề + dòng "Nghe trọn tập…" → out_png. Phần dải video và nền để trống (ffmpeg lót video)."""
     th = _th()
-    meta = doc_meta(mau, log=log)
-    base = Image.open(duong_khung(mau)).convert("RGBA")
-    accent = tuple(meta["accent"])
-    # thẻ số đầu mèo (sprite của thumbnail dọc: nhuộm màu + "SỐ" + số tập)
-    so = str(int(re.sub(r"\D", "", str(episode)) or 0)) if re.sub(r"\D", "", str(episode)) else str(episode)
-    th_badge_w = th.V_BADGE_WIDTH
-    try:
-        th.V_BADGE_WIDTH = meta["badge"][2]
-        badge = th._vertical_badge_sprite(so, accent)
-    finally:
-        th.V_BADGE_WIDTH = th_badge_w
-    th.paste_with_shadow(base, badge, (meta["badge"][0], meta["badge"][1]))
-    # tiêu đề
-    px0, py0, px1, py1 = meta["paper"]
-    pl, pt, pr, pb = meta["paper_pad"]
-    _ve_tieu_de(base, (px0 + pl, py0 + pt, px1 - pr, py1 - pb), (title or "").strip() or f"Mimi audio Số {so}")
-    # ảnh mèo
-    photo = Path(photo) if photo else chon_anh_meo()
-    if photo and photo.exists():
-        cx0, cy0, cx1, cy1 = meta["cat"]
-        anh = ImageOps.fit(Image.open(photo).convert("RGBA"), (cx1 - cx0, cy1 - cy0),
-                           method=Image.LANCZOS)
-        base.alpha_composite(_bo_goc(anh, 12), dest=(cx0, cy0))
-    # hashtag
-    tx, ty = meta["tag"]
-    ImageDraw.Draw(base).text((tx, ty), f"#MimiAudioSo{so}", font=_font("Baloo2-ExtraBold.ttf", 34),
-                              fill=(*accent, 255), anchor="mm")
+    bc = bo_cuc(che)
+    base = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # logo cùng màu, cắt sát, cao LOGO_H, có bóng mềm
+    logo = th.load_logo_cropped(duong_logo(mau))
+    logo = logo.resize((round(logo.width * LOGO_H / logo.height), LOGO_H), Image.LANCZOS)
+    th.paste_with_shadow(base, logo, bc["logo"])
+    d = ImageDraw.Draw(base)
+    so = re.sub(r"\D", "", str(episode or ""))
+    tieu_de = (title or "").strip() or (f"Mimi audio Số {int(so)}" if so else "Mimi audio")
+    _ve_tieu_de(d, bc["tieu_de"], tieu_de)
+    d.text((W // 2, bc["cta_y"]), CTA_TEXT, font=_font(FONT_CHU, CTA_CO), anchor="mm",
+           fill=(255, 255, 255, 255), stroke_width=4, stroke_fill=(0, 0, 0, 235))
     out_png = Path(out_png)
     out_png.parent.mkdir(parents=True, exist_ok=True)
     base.save(out_png)
     return out_png
 
 
-# ── 3) THÔNG TIN TẬP + NGUỒN VIDEO GỐC ────────────────────────────────────────
+# ── 2) THÔNG TIN TẬP + NGUỒN VIDEO GỐC ────────────────────────────────────────
 def thong_tin_tap(folder: Path, caption: str | None = None) -> dict:
     """{'episode', 'title'} của thư mục tập: số từ tên thư mục ("K104 - …") hoặc chữ TikTok
     'Mimi audio Số 104'; tiêu đề từ youtube_seo.txt (dòng sau "TIÊU ĐỀ YOUTUBE", bỏ
@@ -459,55 +249,88 @@ def _doc_goc_json(folder: Path) -> dict:
         return {}
 
 
+def che_cua_tap(folder: Path | None, che: bool | None = None) -> bool:
+    """Trạng thái ô ✂ che chữ Trung dùng cho tập: truyền thẳng (`che`) thì theo đó, không thì
+    đọc khoá "che" bản ngang đã ghi trong YOUTUBE_goc.json; không có → False (mặc định)."""
+    if che is not None:
+        return bool(che)
+    return bool(_doc_goc_json(folder).get("che", False)) if folder else False
+
+
 def chon_mau(folder: Path | None = None) -> str:
-    """Màu khung dọc: cùng màu viền khung1 của bản ngang (ghi ở YOUTUBE_goc.json), không rõ
-    (khung1.png hồng, tập cũ) thì random."""
+    """Màu logo bản dọc: cùng màu logo bản ngang (khoá "logo" trong YOUTUBE_goc.json; bản
+    khung cũ ghi "frame" = viền khung1 cùng màu), không rõ (logo.png hồng, tập cũ) thì random."""
     if folder:
-        khung = (_doc_goc_json(folder).get("frame") or "").lower()
+        goc = _doc_goc_json(folder)
+        ten = ((goc.get("logo") or "") + " " + (goc.get("frame") or "")).lower()
         for mau in MAU:
-            if mau in khung:
+            if mau in ten:
                 return mau
     return random.choice(list(MAU))
 
 
-def nguon_goc(folder: Path, ngang: Path | None = None):
-    """(video_nguồn, crop hoặc None, phụ_đề_đã_trong_hình). Ưu tiên YOUTUBE_goc.mp4; không có
-    thì cắt vùng trong khung1 của YOUTUBE.mp4 (tập cũ)."""
+def nguon_goc(folder: Path, ngang: Path | None = None, che: bool | None = None):
+    """(video_nguồn, crop (w, h, x, y) hoặc None, phụ_đề_đã_trong_hình). Ưu tiên YOUTUBE_goc.mp4:
+    bản "goc": "raw" (nguyên cỡ clip) → crop đúng cỡ dải (bo_cuc(che)) ở giữa vùng cho phép
+    (che: bỏ mép trên CAT_TREN_MIN / dưới CAT_DUOI_MIN; không che: cả khung) = 1:1 không phóng;
+    clip nhỏ hơn dải thì crop cả vùng cho phép rồi bên dựng phóng cho vừa. Bản gốc cũ đã cắt →
+    None. Không có thì lấy YOUTUBE.mp4 (tập cũ): bố cục toàn màn hình → nguyên khung hình; bộ
+    khung cũ → cắt vùng trong khung1."""
     folder = Path(folder)
+    meta = _doc_goc_json(folder)
+    che = che_cua_tap(folder, che)
     goc = folder / GOC_NAME
     if goc.exists() and goc.stat().st_size > 4096:
-        return goc, None, False
+        if meta.get("goc") != "raw":
+            return goc, None, False
+        vw, vh = get_resolution(goc)
+        if che:
+            tren, duoi = (meta.get("cat") or [CAT_TREN_MIN, CAT_DUOI_MIN])[:2]
+        else:
+            tren, duoi = 0.0, 0.0
+        y0 = int(vh * float(tren)) // 2 * 2
+        vung_h = int(vh * (1.0 - float(tren) - float(duoi))) // 2 * 2
+        band = bo_cuc(che)["band"]
+        bw, bh = band[2] - band[0], band[3] - band[1]
+        if vw >= bw and vung_h >= bh:          # đủ lớn → lấy đúng bw×bh ở giữa, 1:1
+            return goc, (bw, bh, (vw - bw) // 2 // 2 * 2, (y0 + (vung_h - bh) // 2) // 2 * 2), False
+        return goc, (vw, vung_h, 0, y0), False
     cands = [Path(ngang)] if ngang else []
     cands += [folder / "YOUTUBE.mp4"] + sorted(folder.glob("*_videodone.mp4"))
     for v in cands:
         if v and v.exists() and v.stat().st_size > 4096:
+            co_sub = (v.with_suffix(".ass").exists() or v.with_suffix(".srt").exists())
+            if meta.get("layout") == "toanman":
+                return v, None, co_sub            # cả khung hình là video (logo nhỏ góc, ngoài dải cắt)
             vw, vh = get_resolution(v)
-            box = _doc_goc_json(folder).get("inner") or list(INNER_MACDINH)
-            # Lùi vào VIEN_CHAM: đường viền CHẤM của khung1 nằm sâu ~70 px trong vùng
+            box = meta.get("inner") or list(INNER_MACDINH)
+            # Lùi vào VIEN_CHAM: đường viền CHẤM của khung1 cũ nằm sâu ~70 px trong vùng
             # trong (đo 08/09/2026), cắt sát vùng trong là lộ đường chấm trong bản dọc.
             bx, by = box[0] + VIEN_CHAM, box[1] + VIEN_CHAM
             bw, bh = box[2] - 2 * VIEN_CHAM, box[3] - 2 * VIEN_CHAM
             kx, ky = vw / 1920, vh / 1080
             crop = (round(bw * kx) // 2 * 2, round(bh * ky) // 2 * 2,
                     round(bx * kx), round(by * ky))                  # w, h, x, y
-            co_sub = (v.with_suffix(".ass").exists() or v.with_suffix(".srt").exists())
             return v, crop, co_sub
     return None, None, False
 
 
-# ── 4) DỰNG VIDEO ─────────────────────────────────────────────────────────────
+# ── 3) DỰNG VIDEO ─────────────────────────────────────────────────────────────
 def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                           overlay_png: Path, *, crop=None, cover_png: Path | None = None,
-                          log=print, progress=None, skip_existing: bool = False) -> Path:
-    """Video gốc → scale phủ kín dải BAND → đè lớp PNG (khung + trên + dưới) → ghép audio.
-    crop = (w, h, x, y) cắt trước khi scale (khi nguồn là YOUTUBE.mp4 đã lồng khung).
+                          log=print, progress=None, skip_existing: bool = False,
+                          che: bool = False) -> Path:
+    """Video gốc → nền mờ tối phủ kín 1080×1920 + chính nó trong dải video (bo_cuc(che)) → đè lớp
+    PNG (logo + tiêu đề + dòng kêu gọi) → ghép audio.
+    crop = (w, h, x, y) cắt trước khi dùng (vùng giữa của video gốc nguyên cỡ, hoặc vùng trong
+    khung1 khi nguồn là YOUTUBE.mp4 bộ khung cũ). Nguồn đã cắt đúng cỡ dải thì KHÔNG phóng (1:1).
     cover_png = thumbnail dọc đè lên frame đầu (ảnh bìa Facebook/TikTok) — như video_doc."""
     audio_file, source_video, output = Path(audio_file), Path(source_video), Path(output)
     overlay_png = Path(overlay_png)
     if skip_existing and output.exists() and output.stat().st_size > 0:
         log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
         return output
-    for p, ten in ((audio_file, "audio"), (source_video, "video gốc"), (overlay_png, "lớp khung")):
+    for p, ten in ((audio_file, "audio"), (source_video, "video gốc"), (overlay_png, "lớp phủ")):
         if not p.exists():
             raise RuntimeError(f"Không tìm thấy {ten}: {p}")
     cover_png = Path(cover_png) if cover_png else None
@@ -515,11 +338,20 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
         log(f"[Cảnh báo] Không tìm thấy ảnh bìa, bỏ qua: {cover_png}")
         cover_png = None
     audio_dur = get_duration(audio_file)
-    bw, bh = BAND[2] - BAND[0], BAND[3] - BAND[1]
+    band = bo_cuc(che)["band"]
+    bw, bh = band[2] - band[0], band[3] - band[1]
 
-    log(f"Khung dọc  : {W}x{H} — video gốc trong dải {bw}x{bh} tại y={BAND[1]} (khung dọc tạo sẵn)")
-    log(f"Video nguồn: {source_video.name}" + (f" (cắt vùng trong khung {crop[0]}x{crop[1]})" if crop else " (video gốc trước khi lồng khung)"))
-    log(f"Lớp khung  : {overlay_png.name}")
+    log(f"Bố cục dọc : {W}x{H} — dải video {bw}x{bh} tại y={band[1]} (pixel gốc, không phóng"
+        f"{', ✂ che chữ Trung' if che else ''}), nền là chính video làm mờ (tối {NEN_MO_TOI:.0%}), "
+        f"logo + tiêu đề trên, dòng kêu gọi dưới")
+    if crop and (crop[0], crop[1]) == (bw, bh):
+        cach = f" (cắt {crop[0]}x{crop[1]} tại x={crop[2]} y={crop[3]}, 1:1 không phóng)"
+    elif crop:
+        cach = f" (cắt {crop[0]}x{crop[1]} tại x={crop[2]} y={crop[3]} rồi phóng cho vừa dải)"
+    else:
+        cach = " (dùng nguyên khung hình, phóng/cắt cho vừa dải)"
+    log(f"Video nguồn: {source_video.name}{cach}")
+    log(f"Lớp phủ    : {overlay_png.name}")
     log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
     if cover_png:
         log(f"Ảnh bìa    : {cover_png.name} (đè frame đầu)")
@@ -527,9 +359,15 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
 
     src = "[0:v]" + (f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]}," if crop else "")
     filt = (
-        f"{src}scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},setsar=1[v];"
-        f"color=c=0xf3d9e2:s={W}x{H}:r=25[bg];"
-        f"[bg][v]overlay={BAND[0]}:{BAND[1]}:shortest=1[b1];"
+        f"{src}split[nen][vid];"
+        # nền: thu nhỏ → làm mờ → phóng kín 1080×1920 → tối bớt
+        f"[nen]scale={NEN_NHO[0]}:{NEN_NHO[1]}:force_original_aspect_ratio=increase,"
+        f"crop={NEN_NHO[0]}:{NEN_NHO[1]},boxblur=12:2,scale={W}:{H}:flags=bicubic,"
+        f"drawbox=c=black@{NEN_MO_TOI:g}:t=fill,setsar=1[bg];"
+        # dải video: nguồn đã cắt đúng bw×bh thì scale là no-op (1:1); nguồn khác cỡ thì
+        # phóng/thu (lanczos) phủ kín rồi cắt giữa
+        f"[vid]scale={bw}:{bh}:force_original_aspect_ratio=increase:flags=lanczos,crop={bw}:{bh},setsar=1[v];"
+        f"[bg][v]overlay={band[0]}:{band[1]}:shortest=1[b1];"
         f"[b1][1:v]overlay=0:0" + ("[b2];" if cover_png else "[out]")
     )
     if cover_png:
@@ -542,7 +380,7 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                  else ["-c:v", "libx264", "-preset", "slow", "-crf", str(X264_CRF), "-profile:v", "high"])
         cmd = ["ffmpeg", "-y",
                "-stream_loop", "-1", "-i", str(source_video),      # 0: video gốc (lặp nếu ngắn)
-               "-loop", "1", "-i", str(overlay_png),               # 1: lớp khung
+               "-loop", "1", "-i", str(overlay_png),               # 1: lớp phủ
                "-i", str(audio_file)]                              # 2: audio
         if cover_png:
             cmd += ["-loop", "1", "-i", str(cover_png)]            # 3: ảnh bìa
@@ -551,15 +389,12 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                 "-c:a", "aac", "-b:a", "192k", str(output)]
         return cmd
 
-    use_gpu = USE_GPU and has_nvenc()
+    use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
     log("Đang dựng video dọc từ video gốc... (GPU - h264_nvenc)" if use_gpu
         else "Đang dựng video dọc từ video gốc... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log,
-                                       label="Dựng video dọc (khung)", progress=progress)
-    if rc != 0 and use_gpu:
-        log("GPU lỗi, chuyển sang CPU (libx264)...")
-        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
-                                           label="Dựng video dọc (khung)", progress=progress)
+                                       label="Dựng video dọc", progress=progress)
+    dung_neu_nvenc_loi(rc, err_tail, use_gpu)   # NVENC lỗi → GpuLoi, KHÔNG thử lại bằng CPU
     if rc != 0:
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
     final_dur = get_duration(output)
@@ -570,40 +405,54 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
 
 def dung_cho_tap(folder: Path, audio: Path | None = None, output: Path | None = None, *,
                  mau: str | None = None, cover_png: Path | None = None, caption: str | None = None,
-                 log=print, progress=None, skip_existing: bool = False) -> tuple[Path, bool]:
-    """Trọn gói cho 1 thư mục tập: chọn nguồn gốc → vẽ lớp theo tập → dựng.
+                 log=print, progress=None, skip_existing: bool = False,
+                 che_chu: bool | None = None) -> tuple[Path, bool]:
+    """Trọn gói cho 1 thư mục tập: chọn nguồn gốc → vẽ lớp phủ theo tập → dựng.
     caption = chữ TikTok 'Mimi audio Số N' (nguồn số tập dự phòng khi tên thư mục không có số).
+    che_chu = ô ✂ che chữ Trung (None → theo YOUTUBE_goc.json của bản ngang, không có → tắt).
     Trả về (facebook.mp4, phụ_đề_đã_có_trong_hình)."""
     folder = Path(folder)
     audio = Path(audio) if audio else folder / "output.wav"
     output = Path(output) if output else folder / "facebook.mp4"
-    src, crop, co_sub = nguon_goc(folder)
+    che = che_cua_tap(folder, che_chu)
+    src, crop, co_sub = nguon_goc(folder, che=che)
     if src is None:
         raise RuntimeError("chưa có video ngang / video gốc trong thư mục tập để dựng bản dọc")
     mau = mau or chon_mau(folder)
     info = thong_tin_tap(folder, caption)
-    lop = ve_lop_tap(mau, info["episode"], info["title"], folder / LOP_TAP_NAME, log=log)
-    log(f"🖼 Lớp khung dọc: màu {mau}, tập {info['episode']}, tiêu đề: {info['title'][:60]}")
+    lop = ve_lop_tap(mau, info["episode"], info["title"], folder / LOP_TAP_NAME, log=log, che=che)
+    log(f"🖼 Lớp phủ dọc: logo {mau}, tập {info['episode']}, tiêu đề: {info['title'][:60]}")
     out = build_video_doc_khung(audio, src, output, lop, crop=crop, cover_png=cover_png,
-                                log=log, progress=progress, skip_existing=skip_existing)
+                                log=log, progress=progress, skip_existing=skip_existing, che=che)
     return out, co_sub
 
 
-# ── 5) ẢNH XEM TRƯỚC cho web ──────────────────────────────────────────────────
-def _khung_hinh_mau(tmp_dir: Path) -> Image.Image | None:
-    """Một khung hình video gốc để xem trước: lấy từ tập gần nhất có video."""
+# ── 4) ẢNH XEM TRƯỚC cho web ──────────────────────────────────────────────────
+def _khung_hinh_mau(tmp_dir: Path, che: bool = False) -> Image.Image | None:
+    """Một khung hình video để xem trước: lấy từ tập gần nhất có video, không có thì từ một
+    clip trong kho videongang/ (che → bỏ mép trên/dưới như bản dọc thật)."""
     try:
         import amain_taogiong_gui as gui
         folders = sorted(gui.episode_dirs(), key=lambda p: p.stat().st_mtime, reverse=True)
     except Exception:
         folders = sorted((p for p in SCRIPT_DIR.iterdir() if p.is_dir()),
                          key=lambda p: p.stat().st_mtime, reverse=True) if SCRIPT_DIR.exists() else []
+    nguon: list[tuple[Path, str]] = []
     for f in folders:
-        src, crop, _ = nguon_goc(f)
-        if src is None:
-            continue
-        out = tmp_dir / "khungdoc_mau_frame.jpg"
-        vf = (f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]}" if crop else "null")
+        src, crop, _ = nguon_goc(f, che=che)
+        if src is not None:
+            nguon.append((src, f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]}" if crop else "null"))
+    try:
+        if che:
+            con = 1.0 - CAT_TREN_MIN - CAT_DUOI_MIN
+            vf = f"crop=iw:ih*{con:.4f}:0:ih*{CAT_TREN_MIN:g}"
+        else:
+            vf = "null"
+        nguon += [(v, vf) for v in sorted((BASE_DIR / "videongang").rglob("*.mp4"))[:3]]
+    except Exception:
+        pass
+    out = tmp_dir / "khungdoc_mau_frame.jpg"
+    for src, vf in nguon:
         try:
             dur = get_duration(src)
             r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(1.0, dur * 0.2):.2f}",
@@ -616,26 +465,30 @@ def _khung_hinh_mau(tmp_dir: Path) -> Image.Image | None:
     return None
 
 
-def xem_truoc(mau: str, out_path: Path, force: bool = False, log=print) -> Path:
-    """Ảnh JPEG 540×960 xem trước khung dọc màu `mau` với tiêu đề/số/ảnh mẫu + một khung
-    hình video gốc thật (không có thì nền màu). Có sẵn và khung chưa đổi thì trả ngay."""
+def xem_truoc(mau: str, out_path: Path, force: bool = False, log=print, che: bool = False) -> Path:
+    """Ảnh JPEG 540×960 xem trước bố cục dọc (bo_cuc(che)) với logo màu `mau`, tiêu đề mẫu + một
+    khung hình video thật (không có thì nền màu). Có sẵn và code bố cục chưa đổi thì trả ngay."""
     out_path = Path(out_path)
-    khung = duong_khung(mau)
-    if out_path.exists() and not force and khung.exists() \
-            and out_path.stat().st_mtime >= khung.stat().st_mtime:
+    me = Path(__file__)
+    if out_path.exists() and not force \
+            and out_path.stat().st_mtime >= me.stat().st_mtime:
         return out_path
     tmp = Path(tempfile.gettempdir())
     lop = ve_lop_tap(mau, "104", "Màn Lật Kèo Đầy Nghẹt Thở Của Nữ Tướng Quân Phản Diện",
-                     tmp / f"khungdoc_xemtruoc_{mau}.png", log=log)
-    base = Image.new("RGBA", (W, H), (243, 217, 226, 255))
-    bw, bh = BAND[2] - BAND[0], BAND[3] - BAND[1]
-    frame = _khung_hinh_mau(tmp)
+                     tmp / f"khungdoc_xemtruoc_{mau}.png", log=log, che=che)
+    band = bo_cuc(che)["band"]
+    bw, bh = band[2] - band[0], band[3] - band[1]
+    frame = _khung_hinh_mau(tmp, che)
     if frame is not None:
-        base.alpha_composite(ImageOps.fit(frame, (bw, bh), method=Image.LANCZOS), dest=(BAND[0], BAND[1]))
+        nen = ImageOps.fit(frame.convert("RGB"), NEN_NHO, method=Image.LANCZOS)
+        nen = nen.filter(ImageFilter.GaussianBlur(6)).resize((W, H), Image.BICUBIC)
+        base = Image.blend(nen, Image.new("RGB", (W, H), "black"), NEN_MO_TOI).convert("RGBA")
+        base.alpha_composite(ImageOps.fit(frame, (bw, bh), method=Image.LANCZOS), dest=(band[0], band[1]))
     else:
+        base = Image.new("RGBA", (W, H), (60, 44, 60, 255))
         d = ImageDraw.Draw(base)
-        d.rectangle(BAND, fill=(120, 80, 110, 255))
-        d.text(((BAND[0] + BAND[2]) // 2, (BAND[1] + BAND[3]) // 2), "video gốc của bản ngang",
+        d.rectangle(band, fill=(120, 80, 110, 255))
+        d.text(((band[0] + band[2]) // 2, (band[1] + band[3]) // 2), "video gốc của bản ngang",
                font=_font("Baloo2-ExtraBold.ttf", 48), fill=(255, 255, 255, 255), anchor="mm")
     base.alpha_composite(Image.open(lop).convert("RGBA"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -646,25 +499,25 @@ def xem_truoc(mau: str, out_path: Path, force: bool = False, log=print) -> Path:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 def main(argv=None) -> int:
     import argparse
-    ap = argparse.ArgumentParser(description="Video dọc từ video gốc của bản ngang + khung dọc tạo sẵn.")
-    ap.add_argument("--tao-khung", action="store_true", help="Tạo bộ khung tĩnh 3 màu vào Backbround/khungdoc/.")
-    ap.add_argument("--force", action="store_true", help="Tạo lại cả khung đã có.")
-    ap.add_argument("--xem-truoc", nargs="?", const=str(KHUNGDOC_DIR / "xemtruoc"), default=None,
-                    metavar="THƯ_MỤC", help="Xuất ảnh xem trước 3 màu (mặc định Backbround/khungdoc/xemtruoc).")
+    ap = argparse.ArgumentParser(description="Video dọc từ video gốc của bản ngang (nền mờ + logo + tiêu đề).")
+    ap.add_argument("--xem-truoc", nargs="?", const=str(BASE_DIR / "Backbround" / "khungdoc" / "xemtruoc"),
+                    default=None, metavar="THƯ_MỤC",
+                    help="Xuất ảnh xem trước 3 màu logo (mặc định Backbround/khungdoc/xemtruoc).")
     ap.add_argument("--tap", metavar="THƯ_MỤC", help="Dựng facebook.mp4 cho một thư mục tập.")
-    ap.add_argument("--mau", choices=list(MAU), help="Ép màu khung (mặc định theo khung ngang / random).")
+    ap.add_argument("--mau", choices=list(MAU), help="Ép màu logo (mặc định theo logo bản ngang / random).")
+    ap.add_argument("--che", action="store_true",
+                    help="✂ Che chữ Trung: dải 1080×852 bỏ mép trên/dưới (mặc định: theo YOUTUBE_goc.json / tắt).")
     args = ap.parse_args(argv)
-    if args.tao_khung:
-        tao_khung_san(force=args.force)
-        print(f"✅ Bộ khung ở {KHUNGDOC_DIR}")
+    che = True if args.che else None
     if args.xem_truoc:
         d = Path(args.xem_truoc)
         for mau in MAU:
-            print("→", xem_truoc(mau, d / f"xemtruoc {mau}.jpg", force=True))
+            print("→", xem_truoc(mau, d / f"xemtruoc {mau}{' che' if args.che else ''}.jpg",
+                                 force=True, che=bool(args.che)))
     if args.tap:
-        out, co_sub = dung_cho_tap(Path(args.tap), mau=args.mau)
+        out, co_sub = dung_cho_tap(Path(args.tap), mau=args.mau, che_chu=che)
         print("✅", out, "(phụ đề đã có trong hình)" if co_sub else "")
-    if not (args.tao_khung or args.xem_truoc or args.tap):
+    if not (args.xem_truoc or args.tap):
         ap.print_help()
     return 0
 

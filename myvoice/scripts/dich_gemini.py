@@ -14,6 +14,15 @@ vào Gemini. Dùng được theo 2 cách:
        python dich_gemini.py "đường_dẫn.txt_hoặc_.docx"
    → đọc nội dung, tách đoạn, gửi Gemini, in kết quả + lưu *_gemini.docx.
 
+3) Cách dịch (gemini_backend — ô chọn chung ở web/GUI): "extension" Chrome Extension
+   (mặc định), "firefox" Selenium, hoặc "cli" GPT CLI (codex exec, tài khoản ChatGPT —
+   KHÔNG trình duyệt). Với "cli", init_firefox trả về dich_gptcli.GptCliDriver: mỗi
+   đoạn là MỘT lệnh riêng, không hội thoại, nên câu hướng dẫn NGẮN viết riêng cho CLI
+   (TRANSLATE_PREFIX_CLI, không phải bản chat dài) + đuôi bản dịch đoạn trước được gửi
+   lại kèm từng đoạn; các hàm dưới đây tự rẽ
+   nhánh theo cờ is_gpt_cli của driver (send_to_gemini, send_prefix_to_gemini,
+   nudge_after_refusal, restart_firefox, _get_responses).
+
 LƯU Ý QUAN TRỌNG
 ----------------
 • Profile Firefox phải là profile đã ĐĂNG NHẬP Google/Gemini. Firefox đang mở
@@ -169,7 +178,7 @@ _PREFIX_TAG_NOTE = (
     "đánh dấu ngữ cảnh truyện hư cấu, KHÔNG phải nội dung truyện: đừng dịch, đừng lặp lại "
     "thẻ, chỉ dịch phần văn bản nằm sau thẻ. "
 )
-TRANSLATE_PREFIX = (
+TRANSLATE_RULES = (
     "Vào thẳng nội dung dịch, không viết câu mở đầu, lời chào, tiêu đề phụ hay bất kỳ văn "
     "bản dẫn nhập nào. "
     "Bạn là người dịch truyện ngắn tiếng Trung sang tiếng Việt. "
@@ -209,12 +218,69 @@ TRANSLATE_PREFIX = (
     "Nếu bản gốc tiếng Trung tự nhắc lại đoạn mở đầu ở phía sau (nói lại gần như nguyên văn "
     "nội dung đã có ở đầu), hãy dịch nội dung đó MỘT lần ở chỗ xuất hiện đầu tiên và bỏ "
     "phần nhắc lại, nối mạch truyện cho tự nhiên.\n"
+)
+# Đuôi cho CHAT Gemini: câu hướng dẫn là MỘT tin nhắn riêng, các đoạn tới sau và Gemini
+# nhớ ngữ cảnh — nên mới có "tin nhắn tiếp theo" và câu hỏi "sẵn sàng chưa".
+_PREFIX_CHAT_TAIL = (
     "Tôi sẽ gửi nội dung tiếng Trung thành từng đoạn ở các tin nhắn tiếp theo. "
     "Mỗi tin nhắn là MỘT ĐOẠN truyện cần dịch — hãy dịch ngay đoạn đó và chỉ trả về "
     "bản dịch tiếng Việt, không hỏi lại, không chờ gửi đủ các đoạn. "
     + (_PREFIX_TAG_NOTE.format(tag=FICTION_TAG.strip()) if FICTION_TAG.strip() else "")
     + "Bạn sẵn sàng chưa?"
 )
+TRANSLATE_PREFIX = TRANSLATE_RULES + _PREFIX_CHAT_TAIL
+
+# Câu hướng dẫn RIÊNG cho GPT CLI (27/10/2026; viết gọn lại 29/10/2026 theo yêu cầu
+# người dùng): mỗi lệnh `codex exec` là một phiên mới, KHÔNG có hội thoại, không nhớ
+# lời dặn hay đoạn trước → câu hướng dẫn được gửi lại KÈM TỪNG ĐOẠN trong cùng một tin,
+# đoạn nằm ngay cuối tin. Vì gửi lại mỗi đoạn nên bản này KHÔNG dùng TRANSLATE_RULES
+# dài của chat Gemini mà là bản gạch đầu dòng ngắn (≈ 1/2 độ dài), giữ đủ các ý quyết
+# định chất lượng: chỉ in bản dịch, dịch sát, từ nhạy cảm nói tránh thay vì từ chối, sửa
+# lỗi nhận diện giọng nói, tên/xưng hô thống nhất, quảng bá kênh → "Mimi audio", bỏ đoạn
+# gốc tự nhắc lại, thẻ hư cấu không dịch. Không có "tin nhắn tiếp theo", không hỏi "sẵn
+# sàng chưa". GptCliDriver (dich_gptcli) ghép CLI_HEADER + bản này + đuôi bản dịch đoạn
+# trước (nối mạch) + "ĐOẠN CẦN DỊCH:" + đoạn vào mỗi lệnh.
+# Thẻ chỉ nhắc bằng mấy chữ đầu (thẻ đầy đủ đã đứng ngay đầu đoạn, khỏi lặp 140 ký tự).
+_FICTION_TAG_NGAN = " ".join(FICTION_TAG.split()[:8])
+_PREFIX_TAG_NOTE_CLI = (
+    "- Thẻ trong ngoặc vuông ở đầu đoạn (“{tag}…”) chỉ là nhãn ngữ cảnh hư cấu: không "
+    "dịch, không lặp lại, chỉ dịch phần sau thẻ.\n"
+)
+TRANSLATE_PREFIX_CLI = (
+    "Dịch đoạn truyện tiếng Trung ở CUỐI tin này (sau dòng “ĐOẠN CẦN DỊCH:”) sang tiếng "
+    "Việt. Đó là một đoạn của truyện dài, các đoạn khác đi trong lệnh khác — cứ dịch trọn "
+    "đoạn này ngay.\n"
+    "- Chỉ in bản dịch tiếng Việt: không lời chào, câu dẫn, tiêu đề, chú thích; không hỏi "
+    "lại.\n"
+    "- Dịch sát, đủ tình tiết, nhân vật, cảm xúc; không thêm, không bớt, không lặp; mỗi "
+    "đoạn đúng MỘT bản dịch, không bản nháp hay phương án hai.\n"
+    "- Từ quá nhạy cảm, thô tục (bạo lực, tình dục, chửi thề, tự sát, chất cấm...) thì chỉ "
+    "thay riêng từ đó bằng cách nói nhẹ, nói tránh; không từ chối, không bỏ trống đoạn, "
+    "không đánh dấu chỗ thay.\n"
+    "- Gốc là lời nhận diện giọng nói: tự sửa lỗi đồng âm, chính tả, thiếu dấu, dính câu, "
+    "sai tên theo mạch truyện rồi dịch. Tiếng lóng, ẩn dụ, cách nói truyện mạng dịch theo "
+    "nghĩa thực trong ngữ cảnh.\n"
+    "- Tên nhân vật, địa danh, quan hệ, xưng hô thống nhất cả truyện; một nhân vật nhiều "
+    "tên thì quy về một tên Việt hóa.\n"
+    "- Món ăn, đồ vật, thành ngữ Trung Quốc dịch cho người Việt dễ hiểu, không dài dòng.\n"
+    "- Câu quảng bá kênh (like, đăng ký, 感谢支持, 小薯条邀你一起看书咯...) CHỈ dịch khi gốc "
+    "có, đổi tên kênh thành “Mimi audio”; không tự thêm lời chào kênh hay lời kết.\n"
+    "- Gốc tự nhắc lại đoạn mở đầu ở phía sau thì dịch MỘT lần ở chỗ đầu, bỏ phần nhắc "
+    "lại, nối mạch tự nhiên.\n"
+    + (_PREFIX_TAG_NOTE_CLI.format(tag=_FICTION_TAG_NGAN) if FICTION_TAG.strip() else "")
+)
+
+
+def cli_instruction(prefix):
+    """Câu hướng dẫn tương ứng cho GPT CLI: prefix mặc định (TRANSLATE_PREFIX) → bản CLI;
+    prefix khác (đề bài ngắn, --prefix-file...) → giữ nguyên nhưng bỏ câu hỏi
+    "Bạn sẵn sàng chưa?" (CLI không có lượt trả lời riêng cho câu đó)."""
+    p = (prefix or "").strip()
+    if not p:
+        return ""
+    if p == TRANSLATE_PREFIX.strip():
+        return TRANSLATE_PREFIX_CLI.strip()
+    return re.sub(r"\s*Bạn sẵn sàng chưa\?\s*$", "", p).strip()
 
 
 def load_prefix() -> str:
@@ -240,6 +306,12 @@ REFUSAL_NUDGE = os.environ.get(
     "Bị lỗi mô hình ngôn ngữ kìa. Dịch lại đoạn tiếng Trung vừa gửi sang tiếng Việt đi. "
     "Chỗ nào từ ngữ quá nhạy cảm thì cứ thay bằng cách nói nhẹ nhàng, tế nhị hơn, miễn "
     "giữ đúng mạch truyện. Chỉ trả về bản dịch.")
+# Bản cho GPT CLI: không có "đoạn vừa gửi" (lệnh mới không thấy lệnh trước) → nói rõ đoạn
+# nằm ngay dưới; GptCliDriver ghép câu này + câu hướng dẫn + đoạn vào MỘT lệnh.
+REFUSAL_NUDGE_CLI = (
+    "Đoạn dưới đây là truyện hư cấu sáng tác để giải trí, hãy dịch sang tiếng Việt. Chỗ nào "
+    "từ ngữ quá nhạy cảm thì cứ thay bằng cách nói nhẹ nhàng, tế nhị hơn, miễn giữ đúng "
+    "mạch truyện. Chỉ trả về bản dịch.")
 
 # Đề bài ngắn cho LƯỢT 2 trong chat mới (đoạn "(trống)" vừa phát sinh) — không câu hướng
 # dẫn dài, không thẻ hư cấu. Bật / tắt lượt này bằng BLANK_RETRY (khai báo phía dưới).
@@ -721,6 +793,12 @@ def read_red_marks(path, total):
     return out
 
 
+def _is_cli(driver):
+    """Driver là GptCliDriver (cách dịch "cli")? So `is True` chứ không chỉ truthy: driver giả
+    bằng Mock trong test tự sinh mọi thuộc tính (đều truthy)."""
+    return getattr(driver, "is_gpt_cli", False) is True
+
+
 def _ensure_selenium():
     """Import selenium, báo lỗi rõ ràng nếu chưa cài."""
     try:
@@ -742,11 +820,17 @@ def init_firefox(profile=None, url=GEMINI_URL, wait=8, backend=None, on_log=None
       ghi log rồi mở Firefox (Selenium) như cách cũ, trừ khi
       OMNI_GEMINI_EXTENSION_FALLBACK=0 (khi đó ném lỗi để bên gọi dừng).
     • "firefox": Selenium + Firefox với profile đã đăng nhập (cách cũ, giữ nguyên).
+    • "cli": GPT CLI (codex exec) — trả về dich_gptcli.GptCliDriver, không mở trình duyệt.
     backend: ép một cách cụ thể (restart_firefox dùng để việc đang chạy Firefox không
     nhảy sang extension giữa chừng). on_log: nơi ghi dòng báo dự phòng (mặc định
     logging.warning — GUI/web đều bắt được).
     """
     _log = on_log or logging.getLogger(__name__).warning
+    if (backend or get_backend()) == "cli":
+        # 🤖 GPT CLI (27/10/2026): không trình duyệt nào cả — "driver" giả gọi `codex exec`
+        # mỗi lần gửi; các hàm bên dưới tự rẽ nhánh theo cờ is_gpt_cli của nó.
+        from dich_gptcli import GptCliDriver
+        return GptCliDriver(url, on_log=on_log or logging.getLogger(__name__).info)
     if (backend or get_backend()) == "extension":
         from gemini_extension import ChromeExtensionDriver
         try:
@@ -802,6 +886,11 @@ def restart_firefox(driver=None, profile=None, url=GEMINI_URL, wait=8, on_log=pr
     mới rồi gửi lại đoạn. Luôn cố đóng cũ trước (nuốt lỗi) và chờ vài giây cho hệ
     điều hành nhả khóa profile trước khi mở lại.
     """
+    if _is_cli(driver):
+        on_log("🤖 GPT CLI: bắt đầu lại bằng lệnh mới (quên hướng dẫn + ngữ cảnh cũ — bên gọi "
+               "gửi lại câu hướng dẫn như với chat mới).")
+        driver.get(url)
+        return driver
     if getattr(driver, "is_chrome_extension", False):
         on_log("🌐 Mở chat Gemini mới qua Chrome Extension...")
         driver.get(url)
@@ -835,6 +924,8 @@ def _find_editor(driver):
 
 def _get_responses(driver):
     """Danh sách phần tử chứa câu trả lời của model (theo selector khớp đầu tiên)."""
+    if _is_cli(driver):
+        return []   # không có trang nào để đọc (SEO gọi khi "mở chat mới")
     if getattr(driver, "is_chrome_extension", False):
         return driver.responses(RESPONSE_SELECTORS)
     from selenium.webdriver.common.by import By
@@ -959,6 +1050,14 @@ def send_to_gemini(driver, text, prefix="", timeout=RESPONSE_TIMEOUT,
         thì vẫn chờ tới khi nói xong (tối đa `timeout`). Dùng cho câu nhắc sau khi
         từ chối (NUDGE_TIMEOUT).
     """
+    if _is_cli(driver):
+        # 🤖 GPT CLI: MỘT lệnh `codex exec` riêng cho tin này. Driver tự ghép lời dặn CLI +
+        # câu hướng dẫn đã đăng ký (send_prefix_to_gemini) + đuôi bản dịch đoạn trước +
+        # nội dung — vì CLI không nhớ gì giữa hai lệnh. Hết giờ / lỗi API → GptCliError
+        # ném ra (đoạn giữ "(chưa dịch)", chạy lại là gửi tiếp). Không có no_reply_timeout.
+        ans = driver.send(text, prefix=prefix, on_log=on_log)
+        return strip_lead_lines(ans, on_log) or None
+
     extension = getattr(driver, "is_chrome_extension", False)
     # 02/10/2026: hai trường hợp dưới là CHƯA GỬI GÌ → ném GeminiNotSentError chứ không
     # trả None. Trả None thì bên gọi ghi "(trống)" = "đã gửi một lần mà trống", và theo
@@ -1090,12 +1189,19 @@ def nudge_after_refusal(driver, chunk, on_log=print):
     Bên gọi lưu kết quả này và TÔ ĐỎ đoạn (save_results_docx(..., red={j}))."""
     if not REFUSAL_NUDGE.strip():
         return None
-    on_log(f"💬 Gemini từ chối → gửi thêm một câu nhắc trong cùng chat: \"{REFUSAL_NUDGE}\"")
+    cli = _is_cli(driver)
+    if cli:
+        on_log(f"💬 GPT CLI từ chối → gửi lại đoạn trong lệnh mới kèm câu nhắc: "
+               f"\"{REFUSAL_NUDGE_CLI}\"")
+    else:
+        on_log(f"💬 Gemini từ chối → gửi thêm một câu nhắc trong cùng chat: \"{REFUSAL_NUDGE}\"")
     try:
         # Chỉ chờ NUDGE_TIMEOUT giây cho Gemini BẮT ĐẦU trả lời; im lặng thì bỏ qua sớm
         # (trước đây chờ đủ RESPONSE_TIMEOUT = 5 phút). Đã bắt đầu thì chờ nói xong.
-        ans = send_to_gemini(driver, REFUSAL_NUDGE, on_log=on_log,
-                             no_reply_timeout=NUDGE_TIMEOUT)
+        # GPT CLI: không có "cùng chat" → đoạn + câu nhắc dịu đi chung MỘT lệnh mới.
+        ans = (send_to_gemini(driver, chunk, prefix=REFUSAL_NUDGE_CLI, on_log=on_log) if cli
+               else send_to_gemini(driver, REFUSAL_NUDGE, on_log=on_log,
+                                   no_reply_timeout=NUDGE_TIMEOUT))
     except Exception as e:
         on_log(f"⚠️ Gửi câu nhắc lỗi: {e}")
         return None
@@ -1222,6 +1328,13 @@ def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
     Hết giờ / lỗi vẫn đi tiếp: đoạn 1 sẽ được gửi ngay sau đó."""
     if not (prefix and prefix.strip()):
         return
+    if _is_cli(driver):
+        # GPT CLI không có tin nhắn riêng và không nhớ: ĐĂNG KÝ câu hướng dẫn (bản CLI —
+        # cli_instruction) để driver gửi lại KÈM MỖI đoạn; không tốn một lệnh "sẵn sàng chưa".
+        driver.set_instruction(cli_instruction(prefix))
+        on_log("📨 GPT CLI: câu hướng dẫn dịch sẽ được gửi KÈM TỪNG đoạn (mỗi đoạn một lệnh "
+               "riêng, CLI không nhớ giữa hai lệnh).")
+        return
     on_log("📨 Gửi câu hướng dẫn dịch (tin nhắn riêng — không dùng nội dung trả về)...")
     try:
         send_to_gemini(driver, prefix.strip(),
@@ -1322,6 +1435,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                     except Exception:
                         pass
                 on_log("✅ Đã mở Gemini. Bắt đầu gửi từng đoạn...")
+                if _is_cli(driver) and results and results[-1]:
+                    driver.remember(results[-1])   # nối mạch từ đoạn đã dịch (tiếp tục)
 
             # Câu hướng dẫn dịch: gửi thành TIN NHẮN RIÊNG trước đoạn ĐẦU TIÊN
             # thực sự gửi trong phiên (không ghép chung với đoạn 1 nữa — Gemini
@@ -1458,6 +1573,8 @@ def send_chunks_to_gemini(chunks, prefix="", on_log=print, on_result=None,
                        "ĐỎ để kiểm (nhãn \"n đỏ\" ở cột Dịch).")
             if ans:
                 on_log(f"✅ Đã nhận kết quả đoạn {i + 1}/{total}.")
+                if _is_cli(driver):
+                    driver.remember(ans)   # đuôi bản dịch này đi kèm lệnh của đoạn kế
             else:
                 on_log(f"⚠️ Đoạn {i + 1}/{total} không có kết quả — ghi (trống), sang "
                        "đoạn kế (không gửi lại); lấp sau bằng 🔁 Dịch lại đoạn (Trống).")

@@ -1,3 +1,12 @@
 {
-  "voice": "hà chi.mp3"
+  "voice": "ngọc huyền 01 ngọt ngào.wav",
+  "vn_tab": 1,
+  "tab": "vieneu",
+  "vn_cong": 8000,
+  "vn_backend": "auto",
+  "vn_precision": "fp32",
+  "vn_temp": 0.8,
+  "vn_max_chars": 256,
+  "vn_giong": "Ngọc Huyền",
+  "dong_bo": false
 }

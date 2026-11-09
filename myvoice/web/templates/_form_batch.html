@@ -18,7 +18,7 @@
       </div>
       <label class="field">
         <span>Link hoặc đường dẫn file — mỗi dòng một nguồn (link Bilibili tự
-          tải VIDEO bản cao nhất qua app Bili23; link lỗi note vào
+          tải VIDEO qua app Bili23 theo mức ở ô Tải Bilibili; link lỗi note vào
           <code>kịch_bản/link_tai_loi.txt</code>)</span>
         {# Cùng MỘT ô Nguồn với trang Tạo kịch bản — xem _form_script.html. #}
         <textarea name="sources" rows="3" data-ver="{{ src_draft.ver }}"
@@ -42,6 +42,7 @@
             {% endfor %}
           </select>
         </label>
+        {% include "_bili_quality.html" %}
       </div>
       <div class="actions">
         <button class="primary" name="action" value="recognize">🎧 Nhận diện các link rồi ngưng</button>

@@ -8,7 +8,7 @@
     "**/.git/objects/**": true,
     "**/whisper_cache/**": true,
     "**/myvoice/mp4/**": true,
-    "**/myvoice/voice/**": true,
+    "**/myvoice/voice/giong_mau/**": true,
     "**/myvoice/videodoc/**": true,
     "**/myvoice/videongang/**": true,
     "**/myvoice/Backbround/**": true,
@@ -26,7 +26,7 @@
     "**/__pycache__": true,
     "**/whisper_cache": true,
     "**/myvoice/mp4": true,
-    "**/myvoice/voice": true,
+    "**/myvoice/voice/giong_mau": true,
     "**/myvoice/videodoc": true,
     "**/myvoice/videongang": true,
     "**/myvoice/Backbround": true,
@@ -46,7 +46,8 @@
     "**/.venv/**",
     "**/whisper_cache/**",
     "**/myvoice/mp4/**",
-    "**/myvoice/voice/**"
+    "**/myvoice/voice/giong_mau/**",
+    "**/myvoice/voice/VieNeu-TTS/**"
   ],
   "python.analysis.indexing": true,
   "python.analysis.diagnosticMode": "openFilesOnly",

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}GPT CLI — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">🤖</span> GPT CLI — Codex (tài khoản ChatGPT)</h1>
+  <p class="muted">Dịch truyện theo đoạn, 🔁 dịch lại đoạn trống, 📑 SEO và dịch SRT bên myvideo bằng lệnh
+     <code>codex exec</code> — <b>không mở trình duyệt</b>, không cần giữ màn hình. Model và mức cố gắng
+     chọn ở khối ② dùng cho <b>mọi lệnh dịch</b>.</p>
+</div>
+
+{# ① Trạng thái: 4 thẻ do app.js đổ từ /api/gptcli-info (không gọi model); 🔌 gửi thêm một lệnh ngắn. #}
+<div class="panel" id="cli-trangthai">
+  <div class="phead">
+    <span class="num">1</span><h2>Trạng thái</h2>
+    <span class="spacer"></span>
+    <button type="button" id="cli-check">🔌 Kiểm tra kết nối</button>
+    <span class="muted small" id="cli-status"></span>
+  </div>
+  <div class="cli-stats">
+    <div class="cli-stat" id="st-codex"><span>Codex CLI</span><b>⌛ đang tìm…</b><i></i></div>
+    <div class="cli-stat" id="st-login"><span>Đăng nhập ChatGPT</span><b>…</b><i></i></div>
+    <div class="cli-stat" id="st-model"><span>Model · mức cố gắng sẽ dùng</span><b>…</b><i></i></div>
+    <div class="cli-stat" id="st-backend"><span>Cách dịch đang chọn</span><b>…</b><i></i></div>
+  </div>
+  <p class="hint">🔌 gửi thêm một lệnh thử ngắn bằng đúng model / mức ở khối ② (~5–20 s) — bắt luôn lỗi
+     “model not supported” khi model không hợp tài khoản. Trả lời hiện ở khối ③.</p>
+</div>
+
+{# ② Cài đặt: HAI form riêng cùng gửi về /gpt-cli/luu, tự lưu khi đổi (data-tuluu, app.js).
+   Tách form để đổi model không gửi kèm ô "dùng GPT CLI" (ô tick vắng mặt = tắt). #}
+<div class="panel" id="cli-caidat">
+  <div class="phead">
+    <span class="num">2</span><h2>Cài đặt dùng khi dịch</h2>
+    <span class="luunote" id="luunote-cli"></span>
+    <p class="hint">Tự lưu khi đổi, áp dụng cho việc xếp hàng từ giờ: dịch truyện theo đoạn, 🔁 dịch lại
+       đoạn trống, 📑 SEO, dịch SRT bên myvideo — một ô chung cho web myvoice, web myvideo và GUI.</p>
+  </div>
+  <form method="post" action="/gpt-cli/luu" data-tuluu="/gpt-cli/luu">
+    <div class="grid">
+      <label class="field"><span>Model</span>
+        <select name="model" id="cli-model">
+          <option value="" {{ 'selected' if not cai_dat.model }}>Theo config.toml của codex{% if cfg.model %} — {{ cfg.model }}{% endif %}</option>
+          {% for m in models %}
+          <option value="{{ m.slug }}" {{ 'selected' if cai_dat.model == m.slug }}>{{ m.ten }}{% if m.mo_ta %} — {{ m.mo_ta }}{% endif %}</option>
+          {% endfor %}
+          <option value="__khac__" {{ 'selected' if model_khac }}>Nhập tay tên model…</option>
+        </select></label>
+      <label class="field" id="cli-model-khac-field" {{ '' if model_khac else 'hidden' }}><span>Tên model (nhập tay)</span>
+        <input type="text" name="model_khac" value="{{ cai_dat.model if model_khac else '' }}" placeholder="vd gpt-6.1-sol"></label>
+    </div>
+    <div class="field"><span>Mức cố gắng (reasoning effort) — càng cao càng chậm và tốn hạn mức</span></div>
+    <div class="modes">
+      <label class="mode {{ 'on' if not cai_dat.effort }}">
+        <input type="radio" name="effort" value="" {{ 'checked' if not cai_dat.effort }}>
+        <b>⚙️ Mặc định</b><span class="muted">theo config.toml{% if cfg.effort %} — {{ cfg.effort }}{% endif %}</span>
+      </label>
+      {% for key, ten, mo_ta in muc %}
+      <label class="mode {{ 'on' if cai_dat.effort == key }}">
+        <input type="radio" name="effort" value="{{ key }}" {{ 'checked' if cai_dat.effort == key }}>
+        <b>{{ ten }}</b><span class="muted">{{ mo_ta }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </form>
+  <form method="post" action="/gpt-cli/luu" data-tuluu="/gpt-cli/luu" class="chks">
+    <input type="hidden" name="co_dung_cli" value="1">
+    <label class="chk"><input type="checkbox" name="dung_cli" {{ 'checked' if backend_is_cli }}>
+      <span>🤖 <b>Dùng GPT CLI làm cách dịch</b> (thay Chrome Extension) — cùng ô với khối “Chạy cho những
+      tập đã tick” ở <a href="/">Home</a> và bảng myvideo; bỏ tick là về Chrome Extension.</span></label>
+  </form>
+  <p class="hint">Danh sách model lấy từ file codex tự tải (<code>~/.codex/models_cache.json</code>); model nào
+     tài khoản không dùng được thì lệnh báo “model not supported” — bấm 🔌 là thấy. Biến môi trường
+     <code>OMNI_GPT_CLI_MODEL</code> / <code>OMNI_GPT_CLI_EFFORT</code> (nếu đặt) thắng ô này.</p>
+</div>
+
+{# ③ Nhắn thử: hội thoại Bạn ↔ GPT CLI; nhật ký + đề bài đã ghép gấp lại cho gọn. #}
+<div class="panel" id="cli-test">
+  <div class="phead">
+    <span class="num">3</span><h2>Nhắn thử và đợi CLI trả lời</h2>
+    <span class="muted small" id="cli-elapsed"></span>
+  </div>
+  <label class="field"><span>Tin nhắn (tiếng gì cũng được — tiếng Trung thì CLI dịch sang Việt)</span>
+    <textarea id="cli-text" rows="3">{{ sample_text }}</textarea></label>
+  <div class="chks">
+    <label class="chk"><input type="checkbox" id="cli-full">
+      Gửi như lúc dịch thật: câu hướng dẫn dịch (bản CLI) + thẻ hư cấu ghép kèm trong CÙNG một lệnh</label>
+  </div>
+  <div class="actions">
+    <button type="button" class="primary" id="cli-send">🧪 Gửi và đợi trả lời</button>
+    <span class="muted small">một lệnh <code>codex exec</code> với model / mức ở khối ② · thường 10–40 s · không ghi file</span>
+  </div>
+  <div class="cli-chat" id="cli-chat"><p class="empty">Chưa gửi tin nào.</p></div>
+  <details class="hintmore"><summary>📜 Nhật ký lượt vừa chạy</summary>
+    <pre class="copybox" id="cli-log">Chưa chạy.</pre></details>
+  <details class="hintmore"><summary>📄 Đề bài đã ghép gửi đi (soi câu hướng dẫn gửi kèm từng lệnh)</summary>
+    <pre class="copybox" id="cli-prompt"></pre></details>
+  <details class="hintmore"><summary>📝 Câu hướng dẫn dịch bản CLI đang dùng ({{ cli_huongdan|length }} ký tự — gửi lại kèm MỖI đoạn)</summary>
+    <p class="hint">Bản ngắn viết riêng cho CLI (không phải câu hướng dẫn dài của chat Gemini). Mỗi lệnh =
+       dòng mở đầu + câu hướng dẫn này + đuôi bản dịch đoạn trước + “ĐOẠN CẦN DỊCH:” + đoạn. Sửa ở
+       <code>TRANSLATE_PREFIX_CLI</code> trong <code>scripts/dich_gemini.py</code>.</p>
+    <pre class="copybox">{{ cli_header }}
+
+{{ cli_huongdan }}</pre></details>
+</div>
+
+{# ④ Cài một lần — gọn, cuối trang. #}
+<div class="panel">
+  <div class="phead"><span class="num">4</span><h2>Cài một lần</h2></div>
+  <ol>
+    <li>Cài Codex CLI: <code>npm i -g @openai/codex</code> (cần Node.js).</li>
+    <li>Đăng nhập tài khoản ChatGPT trong terminal: <code>codex login</code> (mở trình duyệt một lần).</li>
+    <li>Bấm <b>🔌 Kiểm tra kết nối</b> ở khối ①; thấy ✅ thì tick <b>Dùng GPT CLI làm cách dịch</b> ở khối ②.</li>
+  </ol>
+  <p class="hint">Máy có nhiều bản codex trên PATH thì ứng dụng tự lấy bản <b>mới nhất</b> (bản cũ hay báo
+     “model not supported when using Codex with a ChatGPT account”); ép bản khác bằng biến
+     <code>OMNI_GPT_CLI</code>. Mỗi lệnh chạy trong thư mục tạm rỗng, sandbox chỉ đọc — không đọc được
+     kịch bản, không ghi được gì. Mỗi đoạn là <b>một lệnh riêng</b>, CLI không nhớ gì giữa hai lệnh, nên câu
+     hướng dẫn dịch được gửi lại kèm từng đoạn (xem “Đề bài đã ghép” ở khối ③).</p>
+</div>
+{% endblock %}

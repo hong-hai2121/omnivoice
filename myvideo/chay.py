@@ -7,7 +7,9 @@
 Cửa sổ nhỏ bật server (cổng 8766 — bận thì tự nhảy 8767, 8768, …; myvoice cũng
 mặc định 8766 nên hai bảng chạy cùng lúc vẫn được), server sẵn sàng là TỰ MỞ trang web trong
 trình duyệt (nút '🌐 Mở link web' chỉ để mở LẠI khi lỡ đóng tab).
-Đóng cửa sổ = tắt server (nếu server do cửa sổ này bật).
+Đóng cửa sổ = tắt server (nếu server do cửa sổ này bật) KÈM CẢ CÂY việc đang chạy — bước
+③ đang giữ OmniVoice / worker VieNeu trên VRAM, ffmpeg… đều tắt theo (taskkill /T, xem
+_tat_cay; user chốt 09/11/2026: tắt app = trả VRAM).
 
 Hai chế độ "xong hết thì…" — ⏻ TẮT MÁY hoặc 🌙 cho máy NGỦ sau 3 phút rảnh,
 CHỌN MỘT, MẶC ĐỊNH không tick gì. Cả hai do SERVER giữ (web/power.py canh hàng
@@ -39,6 +41,34 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except Exception:
         pass
+
+
+def _tat_cay(proc: subprocess.Popen | None, cho: float = 8.0) -> None:
+    """Tắt tiến trình server VÀ CẢ CÂY con cháu (runner hàng đợi → script bước ③ → worker
+    VieNeu / OmniVoice / ffmpeg). proc.terminate() trên Windows chỉ chạm đúng server: bước
+    đang chạy vẫn sống, model vẫn nằm trên VRAM tới khi tắt máy (user chốt 09/11/2026: tắt
+    app = trả VRAM). taskkill /T /F quét cả cây — cùng cách myvoice.web.jobs._terminate dừng
+    một việc; không quét được thì ít nhất kill server. Bản sao y ở myvoice/chay.py."""
+    if proc is None or proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], check=False,
+                           capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=cho)
+        except Exception:
+            pass
+    else:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=cho)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
 
 def _is_venv_python() -> bool:
@@ -461,16 +491,7 @@ def _run_launcher(port: int) -> int:
         root.after(400, _poll, 0)
 
     def _stop_server() -> None:
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=5)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+        _tat_cay(proc)
 
     def _open() -> None:
         if url_var.get():
@@ -641,7 +662,7 @@ def _run_launcher(port: int) -> int:
             # hẹn (lệnh `shutdown /s` ĐÃ nổ thì vẫn chạy — huỷ: shutdown /a).
             log("✖ Tắt server = huỷ luôn chế độ ngủ/tắt máy đang chờ.")
         if owner:
-            log("⏹ Đang tắt server…")
+            log("⏹ Đang tắt server + việc đang chạy (trả VRAM)…")
             root.update_idletasks()
             _stop_server()
         root.destroy()

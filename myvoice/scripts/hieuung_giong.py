@@ -44,6 +44,11 @@ Ba bộ lọc (tên + thang 0–100 đặt theo đúng CapCut để chỉnh cho 
      (web/web_settings.json → taogiong_srt.py --sang; bên đó EQ mẫu lúc dựng
      prompt + EQ audio tổng _vi_audio.wav sau khi trộn).
 
+  🔊 ÂM LƯỢNG CƠ BẢN — số dB cộng thẳng lên cả bài (06/11/2026; khoá am_luong_db
+     trong taogiong_options.json, 0 = giữ nguyên). Không phải bộ lọc âm sắc: chỉ
+     là filter `volume` + alimiter ghìm đỉnh khi mức dương, áp SAU CÙNG (sau tông,
+     bộ lọc và cả chuẩn âm) — xem amluong_chain / apply_amluong_file.
+
 Các hàm đổi tông / tốc độ (has_rubberband, pitch_factor, atempo_chain,
 build_audio_filter) chuyển về đây làm "nhà" chung; amain_taogiong_gui import
 lại để bài thật, app Thử giọng và web cùng một đường — nghe thử ra sao thì bài
@@ -117,6 +122,13 @@ SANG_LIMIT = 0.97                   # alimiter sau EQ: nâng +6 dB có thể đ�
 PITCH_MIN, PITCH_MAX = -6.0, 6.0
 _HAS_RUBBERBAND = None
 
+# 🔊 Âm lượng cơ bản (06/11/2026): cộng thẳng N dB lên cả bài — MỘT mức gain cho mọi
+# mẫu, không nén, không đo LUFS (khác hẳn ô 🔉 Chuẩn âm). +6 dB ≈ biên độ gấp đôi.
+# Mức dương kèm alimiter ghìm riêng các đỉnh vượt AMLUONG_LIMIT (ghi 16-bit mà đỉnh
+# quá 1,0 là cắt méo); đỉnh còn dưới trần thì bộ chặn không đụng gì. Mức âm không cần.
+AMLUONG_MIN, AMLUONG_MAX = -10.0, 20.0
+AMLUONG_LIMIT = 0.97
+
 
 # ── ĐỌC / KẸP THAM SỐ ───────────────────────────────────────────────────────────
 def parse_fx(value, default: int = 0) -> int:
@@ -136,6 +148,58 @@ def parse_pitch(value, default: float = 0.0) -> float:
         return default
     v = round(v * 2) / 2
     return max(PITCH_MIN, min(v, PITCH_MAX))
+
+
+def parse_amluong(value, default: float = 0.0) -> float:
+    """Đọc mức 🔊 âm lượng (dB; ô nhập / JSON, "+3", "2,5") → float, làm tròn 0,5,
+    kẹp [AMLUONG_MIN, AMLUONG_MAX]. 0 = giữ nguyên."""
+    try:
+        v = float(str(value).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return default
+    if v != v:                                   # NaN
+        return default
+    v = round(v * 2) / 2
+    return max(AMLUONG_MIN, min(v, AMLUONG_MAX))
+
+
+def amluong_chain(db: float) -> list[str]:
+    """Các mắt filter ffmpeg của 🔊 âm lượng cơ bản; [] khi mức 0. Mức dương thêm
+    alimiter ghìm đỉnh (level=false: không tự kéo to; latency=true: không lệch giờ)."""
+    db = parse_amluong(db)
+    if abs(db) < 1e-9:
+        return []
+    chain = [f"volume={db:.1f}dB"]
+    if db > 0:
+        chain.append(f"alimiter=limit={AMLUONG_LIMIT}:attack=5:release=60:level=false:latency=true")
+    return chain
+
+
+def apply_amluong_file(src, db: float, out=None, codec: str = "pcm_s16le") -> Path:
+    """Cộng `db` dB lên `src` → `out` (giữ sample rate). out=None → ghi đè chính
+    file nguồn (qua file tạm; lỗi thì file cũ còn nguyên). Mức 0 → chỉ chép (hoặc
+    giữ nguyên nếu out == src)."""
+    src = Path(src)
+    out = Path(out) if out else src
+    chain = amluong_chain(db)
+    if not chain:
+        if out != src:
+            shutil.copyfile(src, out)
+        return out
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("Không tìm thấy ffmpeg trong PATH.")
+    sr = sample_rate_of(src)
+    tmp = out.with_name(out.stem + "_amluong.tmp" + (out.suffix or ".wav"))
+    cmd = [ffmpeg, "-y", "-hide_banner", "-nostats", "-loglevel", "error", "-i", str(src),
+           "-filter:a", ",".join(chain), "-ar", str(sr), "-c:a", codec, str(tmp)]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", creationflags=CREATE_NO_WINDOW)
+    if r.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 4096:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg đổi âm lượng lỗi: {(r.stderr or '')[-300:] or r.returncode}")
+    os.replace(tmp, out)
+    return out
 
 
 def fx_from(opts: dict | None) -> dict:
@@ -181,6 +245,58 @@ def fx_describe(vang_truong_do: int = 0, vang_cuong_do: int = 0, thieu_nien: int
     if parse_fx(sang_giong) > 0:
         parts.append(f"sáng giọng {parse_fx(sang_giong)}")
     return ", ".join(parts) or "không"
+
+
+# ── MẪU GIỌNG CÀI SẴN (02/11/2026) ──────────────────────────────────────────────
+# Một mẫu = bộ 5 số (tông + 4 bộ lọc) ghi vào ĐÚNG các khoá taogiong_options.json
+# mà bài thật đọc (pitch + FX_KEYS) — chọn mẫu ở app Thử giọng / GUI / web đều ra
+# cùng một bài. "Mặc định" = tắt hết = bản clone thuần (mức đang dùng tới
+# 02/11/2026 — nghe "ồm" vì giọng clone dồn 150–500 Hz). Các mẫu còn lại là gợi ý
+# trị ồm xếp từ nhẹ tới đậm; chọn xong vẫn kéo thanh chỉnh tiếp được, lúc đó
+# nhãn mẫu thành "Tuỳ chỉnh". Sáng giọng > 0 còn EQ giọng mẫu lúc dựng prompt
+# (xem _voice_prompt bên amain) → đổi mẫu là sinh lại các đoạn, không dùng lại được.
+MAU_MAC_DINH = "Mặc định"
+MAU_TUY_CHINH = "Tuỳ chỉnh"
+MAU_GIONG: dict[str, dict] = {
+    MAU_MAC_DINH:     dict(pitch=0.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=0),
+    "Sáng rõ":        dict(pitch=0.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=80),
+    "Sáng + cao nhẹ": dict(pitch=1.0, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=0,  sang_giong=80),
+    "Trong trẻo":     dict(pitch=0.5, vang_truong_do=0,  vang_cuong_do=0,  thieu_nien=25, sang_giong=65),
+    "Kể chuyện ấm":   dict(pitch=0.0, vang_truong_do=25, vang_cuong_do=12, thieu_nien=0,  sang_giong=60),
+    "Sân khấu":       dict(pitch=0.0, vang_truong_do=45, vang_cuong_do=25, thieu_nien=0,  sang_giong=70),
+}
+MAU_MO_TA: dict[str, str] = {
+    MAU_MAC_DINH:     "bản clone thuần, không chỉnh gì (mức đang dùng tới 02/11/2026)",
+    "Sáng rõ":        "bớt ồm 150–500 Hz, nâng 3 kHz + dải cao — mức 80 đã chốt 23/10 (khuyên dùng)",
+    "Sáng + cao nhẹ": "như Sáng rõ + lên 1 bán cung (mặc định cũ 20–23/10)",
+    "Trong trẻo":     "sáng vừa + thiếu niên nhẹ + lên nửa cung: trẻ và thanh hơn",
+    "Kể chuyện ấm":   "sáng vừa + vang phòng nhỏ: kiểu radio kể chuyện đêm",
+    "Sân khấu":       "sáng + vang hội trường vừa: kịch tính hơn, hợp đoạn cao trào",
+}
+
+
+def mau_ten() -> list[str]:
+    """Tên các mẫu theo thứ tự hiển thị (Mặc định đứng đầu)."""
+    return list(MAU_GIONG)
+
+
+def mau_thong_so(ten: str) -> dict | None:
+    """Bộ số của mẫu `ten` → {"pitch": float, "fx": {4 khoá}} (bản sao, đã kẹp);
+    tên lạ / "Tuỳ chỉnh" → None (không có gì để áp)."""
+    m = MAU_GIONG.get(str(ten or "").strip())
+    if m is None:
+        return None
+    return dict(pitch=parse_pitch(m.get("pitch"), 0.0), fx=fx_from(m))
+
+
+def mau_khop(pitch, fx: dict | None) -> str:
+    """Tên mẫu có ĐÚNG bộ số đang chọn (tông + 4 bộ lọc); không mẫu nào khớp →
+    MAU_TUY_CHINH. Dùng để nhãn mẫu trên app/GUI/web đi theo thanh chỉnh."""
+    p, f = parse_pitch(pitch, 0.0), fx_from(fx)
+    for ten, m in MAU_GIONG.items():
+        if abs(parse_pitch(m.get("pitch"), 0.0) - p) < 1e-6 and fx_from(m) == f:
+            return ten
+    return MAU_TUY_CHINH
 
 
 # ── ĐỔI TÔNG / TỐC ĐỘ (chuyển từ amain_taogiong_gui sang, giữ nguyên hành vi) ──
@@ -499,14 +615,18 @@ def _cli(argv=None):
     ap.add_argument("--sang", type=int, default=0, help="sáng giọng (bớt ồm): cường độ 0–100")
     ap.add_argument("--pitch", type=float, default=0.0, help="tông giọng (bán cung)")
     ap.add_argument("--speed", type=float, default=1.0, help="tốc độ (giữ cao độ)")
+    ap.add_argument("--amluong", type=float, default=0.0,
+                    help=f"âm lượng cơ bản (dB, {AMLUONG_MIN:g}…{AMLUONG_MAX:g}; áp sau cùng)")
     a = ap.parse_args(argv)
     src = Path(a.src)
     out = Path(a.out) if a.out else src.with_name(src.stem + "_fx.wav")
     apply_fx_file(src, out, speed=a.speed, pitch=parse_pitch(a.pitch),
                   vang_truong_do=a.vang[0], vang_cuong_do=a.vang[1], thieu_nien=a.thieunien,
                   sang_giong=a.sang)
+    apply_amluong_file(out, a.amluong)           # bước cuối, như bài thật
     print(json.dumps({"out": str(out), "fx": fx_describe(a.vang[0], a.vang[1], a.thieunien, a.sang),
-                      "pitch": a.pitch, "speed": a.speed}, ensure_ascii=False))
+                      "pitch": a.pitch, "speed": a.speed, "amluong": parse_amluong(a.amluong)},
+                     ensure_ascii=False))
 
 
 if __name__ == "__main__":
