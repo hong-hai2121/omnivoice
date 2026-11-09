@@ -87,10 +87,6 @@ import dich_input_docx as inputdocx   # noqa: E402
 import hieuung_giong as hu            # noqa: E402
 # (09/11/2026: chế độ 🗣 VieNeu-TTS đã GỠ theo yêu cầu user — card RTX 4060 TDR khi chạy SDK
 # đó; code nằm ở nhánh luu-sau-02-11-vieneu. Chỉ còn OmniVoice: clone / design / default.)
-# GPU bắt buộc (27/10/2026): OmniVoice / Whisper / NVENC lỗi → GpuLoi, báo lỗi rồi dừng
-# cả lượt (tập coi như CHƯA xong), không âm thầm rớt về CPU.
-from gpu_batbuoc import GpuLoi        # noqa: E402
-import gpu_batbuoc                    # noqa: E402  (ghi_loi/xoa_loi — xem khối except của run_tts)
 from hieuung_giong import (           # noqa: E402,F401  (tên cũ, chỗ khác còn gọi)
     PITCH_MIN, PITCH_MAX, parse_pitch, has_rubberband, pitch_factor, atempo_chain,
     build_audio_filter)
@@ -1343,18 +1339,11 @@ def load_omnivoice(device=None):
     MỘT chỗ nạp cho cả bài thật (run_tts, kể cả lượt nạp lại sau khi ASR kiểm
     mất chữ), app Thử giọng (voice/thu_giong.py) và myvideo/taogiong_srt.py —
     trước 24/10/2026 mỗi nơi tự gọi from_pretrained một kiểu (gộp theo yêu cầu:
-    code trùng hai bản thì giữ một bản dùng chung).
-
-    GPU bắt buộc (27/10/2026): thiết bị không phải CUDA → ném GpuLoi, không nạp
-    lên CPU (chậm hàng chục lần) — kiểm TRƯỚC khi import torch/model cho nhẹ."""
-    if device is None:
-        from omnivoice.utils.common import get_best_device
-        device = get_best_device()
-    if not str(device).startswith("cuda"):
-        raise GpuLoi(f"không có GPU CUDA cho OmniVoice (thiết bị chọn được: {device}) — "
-                     "DỪNG, không tạo giọng bằng CPU.")
+    code trùng hai bản thì giữ một bản dùng chung)."""
     import torch
     from omnivoice.models.omnivoice import OmniVoice
+    from omnivoice.utils.common import get_best_device
+    device = device or get_best_device()
     logging.info(f"⏳ Đang tải model OmniVoice ({device})…")
     model = OmniVoice.from_pretrained("k2-fsa/OmniVoice", device_map=device,
                                       dtype=torch.float16)
@@ -2284,7 +2273,7 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
     tạm trước, xong mới thay thế, để video cũ không mất nếu ffmpeg chết giữa chừng.
 
     Whisper được giải phóng khỏi VRAM ở cuối: bước sau còn dựng video bằng NVENC,
-    thiếu VRAM là NVENC lỗi → GpuLoi, dừng cả lượt (27/10/2026: không còn rớt về CPU).
+    thiếu VRAM là NVENC lỗi (ffmpeg phải thử lại bằng CPU, chậm).
     """
     video_path, script_path = Path(video_path), Path(script_path)
     if not video_path.exists():
@@ -2368,8 +2357,6 @@ def make_youtube_sub(video_path: Path, script_path: Path, mode: str,
                 tmp_mp4.unlink(missing_ok=True)
                 logging.error("📝 Vẽ cứng phụ đề LỖI → giữ nguyên video, chỉ còn file .srt.")
         return srt_path
-    except GpuLoi:
-        raise                 # GPU bắt buộc: báo lỗi rồi dừng cả lượt (xem gpu_batbuoc)
     except Exception as e:
         logging.error(f"📝 Lỗi tạo phụ đề: {e}")
         return None
@@ -2580,7 +2567,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
 
     failed = False
     model = None        # khai báo sớm: khối finally dưới cùng luôn dọn được VRAM
-    gpu_batbuoc.xoa_loi()   # lỗi GPU của lượt trước không dính sang lượt này (xem khối except)
 
     # Bước dựng video báo tiến trình qua THANH (progress_var) + dòng trạng thái,
     # KHÔNG spam % ra nhật ký. label đứng trước, % chạy trên thanh.
@@ -2930,8 +2916,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             # ── GIẢI PHÓNG OMNIVOICE KHỎI VRAM ─────────────────────────────
             # Audio đã tạo + ghép xong; các bước còn lại (cắt, dựng video bằng
             # h264_nvenc) KHÔNG dùng tới OmniVoice. Model nạp mới mỗi lần chạy
-            # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC — thiếu VRAM
-            # là NVENC lỗi → GpuLoi, dừng cả lượt (27/10/2026: không còn rớt về CPU).
+            # (không cache), nên xóa ngay để trả ~vài GB VRAM cho NVENC (thiếu VRAM là
+            # NVENC lỗi, ffmpeg phải thử lại bằng CPU chậm).
             # Bước kiểm tra mất chữ ở trên thường đã dỡ sẵn rồi (model = None) →
             # lúc đó hàm này không làm gì.
             model = do_engine(model, "trước khi dựng video")
@@ -2988,8 +2974,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 ngang_video_path = video_out
                 status_var.set(f"Xong! Video → {video_out}")
                 logging.info(f"Đã tạo video → {video_out}")
-            except GpuLoi:
-                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt (xem gpu_batbuoc)
             except Exception as e:
                 logging.error(f"Lỗi dựng video: {e}")
                 status_var.set(f"Audio xong, lỗi dựng video: {e}")
@@ -3124,8 +3108,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(100)
                 status_var.set(f"Xong! Video dọc → {vdoc_out.name}")
                 logging.info(f"Đã tạo video dọc → {vdoc_out.name}")
-            except GpuLoi:
-                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt
             except Exception as e:
                 logging.error(f"Lỗi dựng video dọc: {e}")
                 status_var.set(f"Lỗi video dọc: {e}")
@@ -3259,8 +3241,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 progress_var.set(100)
                 status_var.set(f"Xong! Video TikTok → {tk_out.name}")
                 logging.info(f"Đã tạo video TikTok → {tk_out.name}")
-            except GpuLoi:
-                raise          # GPU bắt buộc: báo lỗi rồi dừng cả lượt
             except Exception as e:
                 logging.error(f"Lỗi dựng video TikTok: {e}")
                 status_var.set(f"Lỗi video TikTok: {e}")
@@ -3286,8 +3266,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     build_short(tk_video_out, sh_out, voice_audio=tk_voice,
                                 skip_existing=skip_video, log=logging.info)
                     status_var.set(f"Xong! YouTube Short → {sh_out.name}")
-                except GpuLoi:
-                    raise      # GPU bắt buộc: báo lỗi rồi dừng cả lượt
                 except Exception as e:
                     # Short là video PHỤ — hỏng thì bỏ, không kéo đổ cả mẻ video.
                     logging.error(f"Lỗi cắt video Short: {e}")
@@ -3330,11 +3308,6 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
 
     except Exception as e:
         failed = True
-        # Lỗi GPU (GpuLoi) là lỗi mà tập SAU cũng sẽ dính: ghi lại để runner web trả mã
-        # dừng-cả-hàng-đợi thay vì mã lỗi thường (đêm 05/11/2026 hàng đợi chạy tiếp 5 tập
-        # sau khi driver card treo — xem gpu_batbuoc).
-        if isinstance(e, GpuLoi):
-            gpu_batbuoc.ghi_loi(e)
         logging.error(f"Lỗi: {e}")
         status_var.set(f"Lỗi: {e}")
     finally:
@@ -3355,8 +3328,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
         btn_run.config(state="normal")
         btn_pause.config(state="disabled", text="⏸  Tạm dừng")
         _play_done_sound(success=not failed)   # âm báo khi chạy xong (hoặc lỗi)
-    # False = lỗi (GpuLoi, hết VRAM, ffmpeg chết…): bản tự động (_batch_run_tts) coi tập
-    # CHƯA xong để hàng đợi không đi tiếp đăng video hỏng (GPU bắt buộc, 27/10/2026).
+    # False = lỗi (hết VRAM, ffmpeg chết…): bản tự động (_batch_run_tts) coi tập
+    # CHƯA xong để hàng đợi không đi tiếp đăng video hỏng.
     return not failed
 
 
@@ -7641,7 +7614,7 @@ class App(tk.Tk):
             doc_khung=ts.get("doc_khung", False),
         )                                          # render phần còn thiếu (vd video dọc).
         if not ok_tts:
-            # GPU bắt buộc (27/10/2026): NVENC/CUDA lỗi (hay lỗi khác) thì run_tts đã ghi
+            # NVENC/CUDA lỗi (hay lỗi khác) thì run_tts đã ghi
             # "Lỗi: …" và dừng; tập này coi như CHƯA xong để hàng đợi không đi tiếp.
             logging.error(f"⛔ {folder.name}: tạo giọng/dựng video DỪNG vì lỗi "
                           "(xem dòng 'Lỗi:' phía trên) → KHÔNG tính là xong.")

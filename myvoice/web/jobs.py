@@ -256,11 +256,6 @@ class Step:
     # (17/10/2026: một việc ⏩ = một ĐỢT gồm nhiều tập, mỗi tập một bước — tập hỏng
     # không được kéo cả đợt dừng theo). Không gọi on_success cho bước hỏng.
     continue_on_fail: bool = False
-    # Mã thoát nghĩa là "lỗi mà việc SAU cũng sẽ dính" (05/11/2026: lỗi GPU — runner trả
-    # gpu_batbuoc.MA_THOAT_GPU). Việc này hỏng VÀ cả hàng đợi TẠM DỪNG, kể cả khi bước
-    # mang continue_on_fail: đêm 05/11/2026 driver card treo, đợt 6 tập cứ chạy tiếp và
-    # hỏng y hệt 5 lần. Xem JobRunner._dung_vi_loi.
-    halt_codes: tuple[int, ...] = ()
     # Gọi sau khi bước này CHẠY XONG KHÔNG LỖI. Dùng để nối việc sang hàng đợi khác
     # (dựng video xong → xếp việc đăng YouTube vào upload_runner) mà không bắt hàng
     # đợi chính đứng chờ. Lỗi trong callback không được làm hỏng công việc.
@@ -311,10 +306,6 @@ class JobRunner:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._paused = False
-        # Dừng VÌ LỖI (05/11/2026): một bước trả mã trong Step.halt_codes → _paused bật
-        # kèm lý do ở đây ({at, title, step, reason}); None = không dừng vì lỗi.
-        # "▶ Tiếp" và "⏹ Dừng hết" xoá.
-        self._halt: dict | None = None
         self._step_tail: deque[str] = deque(maxlen=20)   # vài dòng cuối của bước đang chạy
         self._skip_current = False
         self._ids = itertools.count(1)
@@ -359,14 +350,8 @@ class JobRunner:
 
     def resume(self) -> None:
         self._paused = False
-        self._halt = None           # người dùng đã xem lý do và cho chạy tiếp
         self.note("▶ Chạy tiếp hàng đợi.")
         self._wake.set()
-
-    def halted(self) -> dict | None:
-        """Lý do hàng đợi đang DỪNG VÌ LỖI ({at, title, step, reason}); None = không."""
-        with self._lock:
-            return dict(self._halt) if self._halt else None
 
     def skip_current(self) -> None:
         """Bỏ việc đang chạy (kill tiến trình con), hàng đợi vẫn chạy tiếp."""
@@ -388,7 +373,6 @@ class JobRunner:
                 self._history.appendleft(job)
             self._pending.clear()
             proc, cur = self._proc, self._current
-            self._halt = None
         self._paused = False
         if cur is not None:
             self._skip_current = True
@@ -410,8 +394,6 @@ class JobRunner:
         with self._lock:
             return {
                 "paused": self._paused,
-                # Dừng VÌ LỖI: {at, title, step, reason} để trang web nêu rõ lý do; None = không.
-                "halt": dict(self._halt) if self._halt else None,
                 "current": self._current.as_dict() if self._current else None,
                 "pending": [j.as_dict() for j in self._pending],
                 "history": [j.as_dict() for j in list(self._history)[:12]],
@@ -424,17 +406,10 @@ class JobRunner:
 
     def heavy_busy(self) -> bool:
         """busy() nhưng BỎ QUA các việc `light` — nguồn sự thật cho ô ⏻
-        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt tắt máy.
-
-        Hàng đợi đang DỪNG VÌ LỖI (halted) thì việc còn CHỜ cũng không tính: chúng không
-        tự chạy được nữa cho tới khi có người bấm “▶ Tiếp”. Nhờ vậy ô ⏻/🌙 vẫn tắt/ngủ
-        đúng như đã tick thay vì để máy thức cả đêm với card đã hỏng (lý do dừng nằm
-        trong tệp nhật ký — xem bat_nhat_ky_tep)."""
+        (power.py và /api/trangthai): chỉ mẻ thật mới kích hoạt tắt máy."""
         with self._lock:
             if self._current is not None and not self._current.light:
                 return True
-            if self._halt:
-                return False
             return any(not j.light for j in self._pending)
 
     # ── Worker ──────────────────────────────────────────────────────────────
@@ -482,13 +457,6 @@ class JobRunner:
                 job.status = "stopped"
                 job.message = f"Đã dừng ở bước “{step.label}”."
                 return
-            if code in step.halt_codes:
-                # Xét TRƯỚC continue_on_fail: lỗi kiểu này thì tập sau trong đợt cũng dính.
-                job.status = "failed"
-                job.message = (f"Bước “{step.label}” lỗi (mã {code}) — việc sau cũng sẽ dính "
-                               "nên hàng đợi TẠM DỪNG; lý do nêu ở đầu khối hàng đợi.")
-                self._dung_vi_loi(job, step, code)
-                return
             if code in step.continue_codes:
                 self.note(f"⚠️ {job.title}: “{step.label}” chưa xong (mã {code}) — "
                           "vẫn chạy tiếp bước sau.")
@@ -527,26 +495,6 @@ class JobRunner:
         else:
             job.message = "Hoàn tất."
             self.note(f"✅ {job.title} — xong.")
-
-    def _dung_vi_loi(self, job: Job, step: Step, code: int) -> None:
-        """Một bước trả mã trong halt_codes → tạm dừng cả hàng đợi, GIỮ NGUYÊN việc còn chờ.
-
-        Lý do = dòng ⛔/❌ cuối cùng bước đó in ra (runner in “⛔ LỖI GPU … → dừng cả hàng
-        đợi: …” ngay trước khi thoát). Nó hiện ở đầu khối hàng đợi trên trang web
-        (state()["halt"]) tới khi người dùng bấm “▶ Tiếp” (sửa xong, chạy tiếp việc còn
-        chờ) hoặc “⏹ Dừng hết”."""
-        ly_do = next((ln.strip() for ln in reversed(self._step_tail)
-                      if ln.strip().startswith(("⛔", "❌"))), "")
-        with self._lock:
-            cho = len(self._pending)
-            self._paused = True
-            self._halt = {"at": datetime.now().strftime("%H:%M:%S"), "title": job.title,
-                          "step": step.label,
-                          "reason": ly_do or f"mã thoát {code} — xem nhật ký"}
-        self.note(f"⛔ {job.title}: “{step.label}” lỗi (mã {code}) mà việc sau cũng sẽ dính → "
-                  f"TẠM DỪNG hàng đợi, giữ nguyên {cho} việc còn chờ. Sửa xong (lỗi GPU: "
-                  "khởi động lại máy nếu driver card treo, hoặc đóng app đang chiếm VRAM) "
-                  "rồi bấm “▶ Tiếp”.")
 
     def _run_step(self, step: Step) -> int:
         self._step_tail.clear()

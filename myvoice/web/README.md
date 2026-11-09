@@ -156,14 +156,6 @@ Chỉ server thật bật ghi tệp (`jobs.bat_nhat_ky_tep` trong `main()`), tes
 module thì không sinh tệp. myvideo dùng chung `JobRunner` nên cũng ghi, vào
 `myvideo/web/nhatky/`.
 
-**Lỗi GPU → hàng đợi TẠM DỪNG** (05/11/2026): runner trả mã thoát **79**
-(`gpu_batbuoc.MA_THOAT_GPU`) khi lượt chạy dừng vì `GpuLoi` — không có CUDA, thiếu
-VRAM, NVENC chết. Các bước dùng GPU khai `Step.halt_codes`, hàng
-đợi thấy mã này thì đánh dấu việc lỗi rồi **tạm dừng, giữ nguyên việc còn chờ** (kể cả
-bước `continue_on_fail` trong một đợt) thay vì chạy tiếp các tập sau để hỏng y hệt.
-Đầu khối hàng đợi hiện băng đỏ nêu lý do + cách chạy lại; bấm *▶ Tiếp* là chạy tiếp
-việc còn chờ, tập vừa lỗi thì ⏩ Chạy tiếp để làm lại.
-
 **Nút 💾 lưu tại chỗ, không tải lại trang** — mọi nút "💾 Lưu…" (và hai form
 Tập bỏ qua / Câu mở đầu) gửi qua htmx: lưu xong hiện mẩu "✓ đã lưu" cạnh nút
 rồi tự mờ đi, chỗ đang cuộn và các ô đang gõ dở giữ nguyên. Trình duyệt tắt JS
@@ -368,7 +360,7 @@ server — trang web không ghi đè khoá `shutdown`/`sleep` của GUI.
 web/
   server.py      FastAPI: route + token
   core.py        cầu nối sang scripts/ — hằng đường dẫn, trạng thái tập, cài đặt, SEO
-  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console + tệp nhatky/; mã 79 (lỗi GPU) → tạm dừng hàng đợi
+  jobs.py        hàng đợi MỘT worker; mỗi bước là một tiến trình con; log() → console + tệp nhatky/
   nhatky/        hangdoi_<ngày>.log — nhật ký hàng đợi chép ra tệp (tự sinh, giữ 14 ngày)
   power.py       ô “⏻ tắt máy” / “🌙 cho máy ngủ” khi xong hết — luồng nền canh ba hàng đợi, đếm ngược rồi shutdown/ngủ
   steps.py       yêu cầu từ giao diện → danh sách bước cho hàng đợi

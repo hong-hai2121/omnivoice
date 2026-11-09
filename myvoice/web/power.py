@@ -16,11 +16,6 @@ giây một lần. Ba chốt an toàn, học từ ô ⏻ bên GUI:
   • bộ đếm nằm TRONG server, lệnh chỉ phát ra đúng lúc hết giờ → bỏ tick trên trang
     web là huỷ, kể cả lúc đang đếm ngược, không cần `shutdown /a`.
 
-Hàng đợi chính DỪNG VÌ LỖI GPU (05/11/2026, jobs.JobRunner._dung_vi_loi) cũng tính là
-“hết việc”: việc còn chờ không tự chạy được nữa, nên ⏻/🌙 vẫn tắt/ngủ đúng như đã tick
-(khởi động lại máy cũng chính là cách chữa driver card treo). Lý do dừng được ghi vào tệp
-nhật ký web/nhatky/hangdoi_<ngày>.log — sáng ra mở 📜 Nhật ký trên trang web là thấy.
-
 Hết giờ: ⏻ tắt NGAY (shutdown /s /f /t 0 — mọi app bị đóng không hỏi, đúng ý khi chạy
 mẻ qua đêm không ai ngồi máy); 🌙 gọi suspend_computer của GUI (SetSuspendState), hàm
 này chỉ trả về khi máy đã DẬY, server chạy tiếp bình thường. Trước khi đếm còn tập
@@ -209,17 +204,7 @@ class PowerWhenDone:
             if not self._due:
                 self._due = time.monotonic() + delay_min(mode) * 60
                 self._warn_due = True       # _warn_pending_upload lo phần soát
-                dung = runner.halted()
-                if dung:
-                    # Hàng đợi chính DỪNG VÌ LỖI (lỗi GPU, 05/11/2026): việc còn chờ không
-                    # tự chạy được nữa nên heavy_busy() coi là rảnh — vẫn tắt/ngủ đúng như
-                    # đã tick, nhưng ghi RÕ lý do để sáng ra đọc lại trong tệp nhật ký.
-                    log(f"{ICON[mode]} Hàng đợi DỪNG VÌ LỖI lúc {dung['at']} ở “{dung['title']}” "
-                        f"({dung['reason']}) — không còn việc nào tự chạy được → máy vẫn sẽ "
-                        f"{LABEL[mode].upper()} sau {delay_min(mode)} phút. Huỷ: bỏ tick trên "
-                        "trang web.")
-                else:
-                    log(f"{ICON[mode]} Hàng đợi đã xong — máy sẽ {LABEL[mode].upper()} sau "
+                log(f"{ICON[mode]} Hàng đợi đã xong — máy sẽ {LABEL[mode].upper()} sau "
                         f"{delay_min(mode)} phút. Huỷ: bỏ tick trên trang web.")
                 return ""
             if time.monotonic() < self._due:

@@ -57,7 +57,7 @@ for _p in (_SCRIPTS_DIR, BASE_DIR / "YOUTUBE"):
         sys.path.insert(0, str(_p))
 
 from video_khung import (get_duration, get_resolution, has_nvenc,   # noqa: E402
-                         run_ffmpeg_progress, nvenc_batbuoc, dung_neu_nvenc_loi,
+                         run_ffmpeg_progress,
                          CAT_TREN_MIN, CAT_DUOI_MIN)
 
 THUMB_DIR = BASE_DIR / "YOUTUBE" / "thumbnail"
@@ -95,7 +95,7 @@ LOP_TAP_NAME = "khungdoc_tap.png"                    # lớp phủ đã vẽ cho
 # tên màu → logo cùng màu trong YOUTUBE/thumbnail
 MAU = {"tím": "logo tím.png", "xanh": "logo xanh.png", "đỏ": "logo đỏ.png"}
 
-# GPU (NVENC) bắt buộc (27/10/2026): không có / lỗi → GpuLoi, dừng, không rớt về CPU.
+# Ưu tiên GPU (NVENC), tự fallback CPU (libx264) nếu GPU lỗi.
 USE_GPU = True
 NVENC_CQ = 18
 X264_CRF = 18
@@ -389,12 +389,15 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                 "-c:a", "aac", "-b:a", "192k", str(output)]
         return cmd
 
-    use_gpu = nvenc_batbuoc(USE_GPU)      # không có h264_nvenc → GpuLoi (dừng)
+    use_gpu = USE_GPU and has_nvenc()
     log("Đang dựng video dọc từ video gốc... (GPU - h264_nvenc)" if use_gpu
         else "Đang dựng video dọc từ video gốc... (CPU - libx264)")
     rc, err_tail = run_ffmpeg_progress(build_cmd(use_gpu), audio_dur, log,
                                        label="Dựng video dọc", progress=progress)
-    dung_neu_nvenc_loi(rc, err_tail, use_gpu)   # NVENC lỗi → GpuLoi, KHÔNG thử lại bằng CPU
+    if rc != 0 and use_gpu:
+        log("GPU lỗi, chuyển sang CPU (libx264)...")
+        rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
+                                           label="Dựng video dọc", progress=progress)
     if rc != 0:
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
     final_dur = get_duration(output)

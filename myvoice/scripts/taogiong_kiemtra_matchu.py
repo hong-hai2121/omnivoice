@@ -39,9 +39,8 @@ CÁCH HOẠT ĐỘNG: một tầng duy nhất — quét TẤT CẢ đoạn bằn
 
 VRAM: bên gọi phải DỠ OmniVoice khỏi VRAM TRƯỚC khi gọi, và gọi giai_phong()
 để trả VRAM lại TRƯỚC khi nạp OmniVoice render lại — card 8GB không chứa nổi
-cả hai. Còn dưới VRAM_TOI_THIEU_GB trống (hoặc không có CUDA) thì ném GpuLoi —
-báo lỗi rồi DỪNG (27/10/2026); bản cũ lùi về CPU int8 chậm gấp nhiều lần mà
-không ai hay. quet_va_xac_minh KHÔNG nuốt GpuLoi (chỉ nuốt lỗi thiếu model).
+cả hai. Còn dưới VRAM_TOI_THIEU_GB trống thì tự lùi về CPU int8: chậm hơn
+nhiều nhưng vẫn ra kết quả, không chặn pipeline.
 
 DÙNG TRONG run_tts (amain_taogiong_gui.py):
     bad = quet_va_xac_minh(chunks, tmp_dir, on_log=logging.info)
@@ -56,8 +55,6 @@ import re
 import unicodedata
 import difflib
 from pathlib import Path
-
-from gpu_batbuoc import GpuLoi   # GPU bắt buộc (27/10/2026): thiếu GPU/VRAM → dừng
 
 # Cùng cache offline với nhandien_giongnoi (models--<chủ repo>--faster-whisper-*).
 WHISPER_CACHE = Path(__file__).resolve().parent / "whisper_cache"
@@ -108,12 +105,11 @@ ON_RMS_SAN = 0.006   # ... và không dưới sàn tuyệt đối này — đo�
 ON_KHUNG_MS = 50     # cỡ khung đo RMS (ms) — trùng _FRAME_MS của detect_spike
 
 # Còn ít hơn ngần này VRAM trống thì nạp lên GPU chỉ tổ tràn sang RAM (chậm hơn
-# cả CPU) — ném GpuLoi để dừng (bên gọi phải dỡ OmniVoice / dọn VRAM trước).
-# turbo float16 chiếm ~1.6 GB, chừa dư một ít.
+# cả CPU) — lùi về CPU cho chắc. turbo float16 chiếm ~1.6 GB, chừa dư một ít.
 VRAM_TOI_THIEU_GB = 2.5
 
 _MODELS = {}          # tên model → WhisperModel (nạp 1 lần cho mỗi lượt quét)
-_THIET_BI = ""        # "cuda/float16" — chỉ để ghi log (GPU bắt buộc, không còn cpu/int8)
+_THIET_BI = ""        # "cuda/float16" | "cpu/int8" — chỉ để ghi log
 
 _W = re.compile(r"[0-9a-zà-ỹ]+")
 _DIGIT_CHU = re.compile(r"(?<=\d)(?=[a-zà-ỹ])|(?<=[a-zà-ỹ])(?=\d)")
@@ -128,26 +124,21 @@ def _norm_words(s):
 
 
 def _chon_thiet_bi():
-    """(device, compute_type) = ("cuda", "float16"); không đủ GPU thì ném GpuLoi.
+    """(device, compute_type): GPU nếu CÒN ĐỦ VRAM TRỐNG, không thì CPU.
 
     Đo VRAM trống ngay lúc gọi chứ không chỉ hỏi cuda.is_available(): bên gọi đã
-    dỡ OmniVoice ra rồi thì trống thật, còn nếu quên dỡ (hoặc Chrome/CapCut đang
-    ăn hết) thì nạp lên chỉ tổ tràn sang RAM. Bản cũ lùi về CPU int8 (chậm gấp
-    nhiều lần) mà không ai hay; từ 27/10/2026 GPU là bắt buộc: báo lỗi rồi dừng,
-    người dùng dọn VRAM (đóng app chiếm GPU, dỡ model) rồi chạy lại.
+    dỡ OmniVoice ra rồi thì trống thật, còn nếu quên dỡ (hoặc Chrome đang ăn hết)
+    thì lùi về CPU vẫn hơn là nạp lên rồi tràn sang RAM.
     """
     try:
         import torch
-    except Exception as e:
-        raise GpuLoi(f"không nạp được torch để chạy ASR kiểm tra trên GPU: {e}")
-    if not torch.cuda.is_available():
-        raise GpuLoi("không có GPU CUDA cho ASR kiểm tra mất chữ — DỪNG, không chạy CPU.")
-    free_b, total_b = torch.cuda.mem_get_info()
-    if free_b / 2**30 < VRAM_TOI_THIEU_GB:
-        raise GpuLoi(f"VRAM trống {free_b / 2**30:.1f}/{total_b / 2**30:.1f} GB < "
-                     f"{VRAM_TOI_THIEU_GB} GB cần cho ASR kiểm tra — DỪNG, không lùi về CPU. "
-                     "Dỡ model / đóng Chrome, CapCut đang chiếm VRAM rồi chạy lại.")
-    return "cuda", "float16"
+        if torch.cuda.is_available():
+            free_b, _ = torch.cuda.mem_get_info()
+            if free_b / 2**30 >= VRAM_TOI_THIEU_GB:
+                return "cuda", "float16"
+    except Exception:
+        pass
+    return "cpu", "int8"
 
 
 def _get_model(name=MODEL_NAME):
@@ -368,15 +359,12 @@ def quet_va_xac_minh(chunks, tmp_dir, on_log=None, chi_cac_doan=None,
     status       : callable(str) cập nhật dòng trạng thái GUI (tùy chọn).
 
     Trả {idx: [mô tả lỗi: cụm chữ bị mất / "tiếng lạ ..."]}.
-    Thiếu thư viện/model thì cảnh báo rồi trả {} (không chặn pipeline); KHÔNG có
-    GPU / thiếu VRAM thì ném GpuLoi lên bên gọi (GPU bắt buộc, 27/10/2026).
+    Thiếu thư viện/model thì cảnh báo rồi trả {} (không chặn pipeline).
     """
     log = on_log or (lambda *_: None)
     tmp_dir = Path(tmp_dir)
     try:
         model = _get_model()
-    except GpuLoi:
-        raise                     # GPU bắt buộc: báo lỗi rồi dừng, không bỏ qua bước kiểm
     except RuntimeError as e:
         log(f"⚠️ Bỏ qua kiểm tra mất chữ + tiếng lạ: {e}")
         return {}

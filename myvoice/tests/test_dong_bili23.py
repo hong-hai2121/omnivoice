@@ -176,7 +176,6 @@ class BuocCuoiDotTaiTests(unittest.TestCase):
         self.assertEqual(steps.TAIBILI_SCRIPT, run_episode.TAIBILI_SCRIPT)
         self.assertTrue(run_episode.TAIBILI_SCRIPT.is_file())
         self.assertTrue(s.continue_on_fail)          # dọn dẹp hỏng không làm đợt tải "lỗi"
-        self.assertEqual(s.halt_codes, ())           # không đụng GPU
         self.assertIn("Bili23", s.label)
 
 

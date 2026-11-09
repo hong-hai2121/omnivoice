@@ -14,11 +14,6 @@ from pathlib import Path
 from . import core
 from .jobs import Step, fb_runner, log, upload_runner
 
-# Mã "LỖI GPU" của runner (run_episode.py / run_tts.py, 05/11/2026): tập sau cũng sẽ dính
-# nên bước mang mã này làm cả hàng đợi TẠM DỪNG (Step.halt_codes) thay vì chạy tiếp.
-# Lấy thẳng từ scripts/gpu_batbuoc.py — module nhẹ, `core` đã vá sys.path tới scripts/.
-from gpu_batbuoc import MA_THOAT_GPU as GPU_CODE  # noqa: E402
-
 RUNNER = core.WEB_DIR / "runners" / "run_episode.py"
 RUNNER_TTS = core.WEB_DIR / "runners" / "run_tts.py"
 RUNNER_THUMB = core.WEB_DIR / "runners" / "run_thumbnail.py"
@@ -102,7 +97,7 @@ def dong_bili23_step() -> Step:
     tự mở nó — app người dùng mở sẵn từ trước thì để nguyên (script tự kiểm bằng dấu PID,
     xem video_taibilibili.py). Đặt ở cuối ĐỢT chứ không sau từng tập: tập sau lại cần app,
     đóng/mở liên tục tốn ~10 s mỗi lần. continue_on_fail: dọn dẹp hỏng không được biến đợt
-    tải thành "lỗi"; không có halt_codes vì bước này không đụng GPU."""
+    tải thành "lỗi"."""
     argv = [core.python_exe(), "-u", str(TAIBILI_SCRIPT), "--dong-app"]
     return Step(label="Đóng app Bili23 (nếu bộ tải tự mở)", argv=argv,
                 cwd=str(core.SCRIPTS_DIR), env=core.subprocess_env(), continue_on_fail=True)
@@ -289,7 +284,6 @@ def build_steps(step_keys: list[str], source: str = "", episode: str = "",
                           # đoạn): kết quả hợp lệ của một chốt an toàn, không phải sự cố.
                           soft_fail_codes=(STOP_CODE,) if go_on else (STOP_CODE, SEO_SOFT_CODE),
                           continue_codes=(SEO_SOFT_CODE,) if go_on else (),
-                          halt_codes=(GPU_CODE,),
                           on_success=on_success))
     return steps, ""
 
@@ -331,9 +325,6 @@ def resume_step(missing: list[str], source: str, episode: str,
     # mới trả STOP_CODE (có dựng video) hoặc SEO_SOFT_CODE (chỉ SEO/thumbnail).
     return Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE, SEO_SOFT_CODE),
-                # Lỗi GPU thì KHÔNG "chạy tiếp tập sau" dù đang trong đợt (continue_on_fail):
-                # tập sau cũng hỏng y hệt — hàng đợi tạm dừng (xem Step.halt_codes).
-                halt_codes=(GPU_CODE,),
                 continue_on_fail=continue_on_fail, on_success=on_success), ""
 
 
@@ -367,8 +358,7 @@ def tts_steps(input_txt: str = "", output_wav: str = "", from_gemini: bool = Fal
     label = {"ngang": "Dựng lại video ngang", "doc": "Dựng lại video dọc",
              "tiktok": "Dựng lại video TikTok"}.get(rebuild, "Tạo giọng + video")
     return [Step(label=label, argv=argv, cwd=str(core.SCRIPTS_DIR),
-                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,),
-                 halt_codes=(GPU_CODE,))], ""
+                 env=core.subprocess_env(), soft_fail_codes=(STOP_CODE,))], ""
 
 
 def thumbnail_steps(title: str, episode: str = "", photo: str = "",
