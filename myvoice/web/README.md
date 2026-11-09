@@ -80,12 +80,27 @@ tên RIÊNG `Downloads/<mã BV>_<mức>.mp4`; `<mã BV>.mp4` luôn là bản đ�
 không có ô này vì ở đó link tải bằng yt-dlp (chỉ mp3), không qua Bili23.
 
 **Tự đóng app Bili23 sau đợt tải** (08/11/2026): bộ tải tự mở app thì ghi dấu PID
-(`%TEMP%\omnivoice_bili23_tu_mo.json`); "⏩ đợt 1 · tải video/audio" có thêm bước cuối
-*Đóng app Bili23 (nếu bộ tải tự mở)* = `video_taibilibili.py --dong-app`
+(`%TEMP%\omnivoice_bili23_tu_mo.json`); ⏩ xếp thêm một việc nhẹ ở CUỐI (sau tập cuối cùng
+có link) *Đóng app Bili23 (nếu bộ tải tự mở)* = `video_taibilibili.py --dong-app`
 (`steps.dong_bili23_step`) — chỉ đóng đúng tiến trình đã tự mở, app người dùng mở sẵn
 hay PID đã cấp lại thì để nguyên; đóng êm (WM_CLOSE) trước, 8 s còn sống mới ép. Đóng sau
-cả đợt chứ không sau từng tập (mở lại mất ~10 s). Chạy lẻ một tập (bước nhận diện tự
+tập cuối chứ không sau từng tập (mở lại mất ~10 s). Chạy lẻ một tập (bước nhận diện tự
 tải) không tự đóng. Test: `myvoice/tests/test_dong_bili23.py`.
+
+**⏩ Chạy tiếp = TUẦN TỰ TỪNG TẬP** (09/11/2026, user chốt — thay cho cách xếp 4 đợt
+17/10–08/11): mỗi tập còn việc là MỘT việc trong hàng đợi chạy trọn các bước còn thiếu
+(tải → nhận diện → dịch → input.docx → SEO → thumbnail → giọng + video; dựng xong thì nối
+việc đăng YouTube / lên lịch Facebook của tập đó sang hàng đợi đăng) rồi mới sang tập sau;
+tập hỏng ở bước nào thì runner dừng tập đó, hàng đợi sang tập kế (`server._run_resume` →
+`_xep_tung_tap`). Tập đã dựng đủ mà chưa đăng thì xếp thẳng vào hàng đợi đăng (chạy song
+song, không chờ các tập đang dựng); tập đã có việc đăng đang chạy/chờ thì không xếp thêm
+(`steps._da_xep`). **Video cụt không còn tính là "đã có"** (`core.video_hop_le` →
+`video_khung.video_hop_le`: file ≥ 200 KB và ffprobe đọc ra thời lượng, cache theo size +
+mtime): ffmpeg bị ngắt giữa chừng (máy sập, card TDR, Dừng hàng đợi) để lại mp4 không có
+moov, trước đây `exists()` coi là xong nên ⏩ bỏ qua dựng mà đem đăng file hỏng. Các bộ dựng
+(`video_khung` / `video_doc` / `video_doc_khung`) cũng chỉ ♻ bỏ qua khi file dùng được, và
+xoá file dựng dở khi ffmpeg trả mã lỗi (`xoa_video_cut`). Test: `tests/test_web_resume.py`,
+`tests/test_video_hop_le.py`.
 
 **Nguồn clip ngang tick NHIỀU thư mục** (khối ③, 01/11/2026): ô chọn 1 thư mục con
 `videongang/` đổi thành cụm checkbox (GUI: nút thả menu có ô tick, cùng ô). Khoá

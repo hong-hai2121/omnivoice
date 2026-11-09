@@ -38,7 +38,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 # Tái dùng các tiện ích đã có của bản ngang (đọc thời lượng, dò NVENC, ghép playlist, tìm audio).
 from video_khung import (get_duration, has_nvenc, build_playlist, find_audio,
-                         run_ffmpeg_progress, probe_durations)
+                         run_ffmpeg_progress, probe_durations, video_hop_le, xoa_video_cut)
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VIDEO_DIR  = BASE_DIR / "videodoc"     # kho video DỌC để ghép random
@@ -95,7 +95,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
     output = Path(output) if output else audio_file.parent / (audio_file.stem + "_doc.mp4")
-    if skip_existing and output.exists() and output.stat().st_size > 0:
+    if skip_existing and output.exists() and not video_hop_le(output):
+        log(f"⚠️ {output.name} có sẵn nhưng CỤT/không đọc được (ffmpeg lần trước bị ngắt) → dựng lại.")
+    if skip_existing and video_hop_le(output):
         log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
         return output
 
@@ -272,6 +274,7 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         except OSError:
             pass
     if rc != 0:
+        xoa_video_cut(output, log=log)     # không để file cụt lại thành "đã có"
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     final_dur = get_duration(output)

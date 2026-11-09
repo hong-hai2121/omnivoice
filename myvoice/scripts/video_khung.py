@@ -231,9 +231,9 @@ def _ffprobe_json(args, path: Path, tries: int = 3):
     raise RuntimeError(f"Không đọc được {path.name}: {last}")
 
 
-def get_duration(path: Path) -> float:
+def get_duration(path: Path, tries: int = 3) -> float:
     path = Path(path)
-    data = _ffprobe_json(["-show_entries", "format=duration"], path)
+    data = _ffprobe_json(["-show_entries", "format=duration"], path, tries=tries)
     try:
         return float(data["format"]["duration"])
     except (KeyError, TypeError, ValueError):
@@ -252,7 +252,46 @@ def get_resolution(path: Path) -> tuple[int, int]:
         raise RuntimeError(f"File không có luồng video hợp lệ: {path.name}") from None
 
 
-def probe_durations(videos, log=print) -> dict:
+# Dưới cỡ này thì chắc chắn không phải video đầy đủ (vài giây 1080p đã hơn 1 MB).
+VIDEO_MIN_BYTES = 200_000
+
+
+def video_hop_le(path) -> bool:
+    """File video DÙNG ĐƯỢC: tồn tại, không quá nhỏ và ffprobe đọc ra thời lượng > 1 s.
+
+    ffmpeg bị ngắt giữa chừng (máy sập, card TDR, NVENC chết, Dừng hàng đợi) để lại file mp4
+    CỤT không có moov → ffprobe đọc không ra. Trước 09/11/2026 mọi chỗ chỉ hỏi `exists()` nên
+    file cụt được coi là "đã có": ⏩ không dựng lại mà đem đăng YouTube/Facebook luôn. Nay
+    folder_steps (web), skip_existing (các bộ dựng) đều hỏi hàm này. Thời lượng lấy qua
+    probe_durations (cache theo size + mtime) nên file tốt chỉ probe một lần."""
+    try:
+        p = Path(path)
+        if not p.is_file() or p.stat().st_size < VIDEO_MIN_BYTES:
+            return False
+        # tries=1: file hỏng thì khỏi thử lại 3 lần (bảng tập hỏi hàm này mỗi lần vẽ).
+        dur = probe_durations([p], log=lambda *_: None, tries=1).get(p)
+        return dur is not None and dur > 1.0
+    except Exception:
+        return False
+
+
+def xoa_video_cut(*paths, log=print) -> None:
+    """Xoá file video ffmpeg vừa dựng DỞ (mã lỗi ≠ 0) để lượt sau dựng lại từ đầu thay vì
+    thấy file "đã có". Chỉ xoá file nhỏ/không đọc được (video_hop_le False) — file lành lặn
+    (vd lỗi ở bước mux cuối mà ffmpeg vẫn ghi xong) thì để nguyên."""
+    for p in paths:
+        if p is None:
+            continue
+        try:
+            p = Path(p)
+            if p.exists() and not video_hop_le(p):
+                p.unlink()
+                log(f"🧹 Xoá file video dựng dở: {p.name}")
+        except OSError as e:
+            log(f"[Cảnh báo] Không xoá được file dựng dở {p}: {e}")
+
+
+def probe_durations(videos, log=print, tries: int = 3) -> dict:
     """Thời lượng của cả kho clip — có cache, và BỎ QUA clip lỗi thay vì chết cả lượt.
 
     Trước đây đây là chỗ hay hỏng nhất: mỗi clip một tiến trình ffprobe (kho
@@ -278,7 +317,7 @@ def probe_durations(videos, log=print) -> dict:
             if isinstance(hit, list) and len(hit) == 3 and hit[:2] == sig:
                 durations[v] = float(hit[2])
                 continue
-            dur = get_duration(v)
+            dur = get_duration(v, tries=tries)
             _probe_cache[key] = [*sig, dur]
             durations[v] = dur
             added += 1
@@ -521,9 +560,11 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     # Trả về sớm nếu đã có sẵn (chế độ dùng lại) — tránh dựng lại tốn thời gian.
     audio_file = Path(audio_file)
     output = Path(output) if output else audio_file.parent / (audio_file.stem + "_videodone.mp4")
-    if skip_existing and output.exists() and output.stat().st_size > 0:
+    if skip_existing and video_hop_le(output):
         log(f"♻ Video ngang đã có → bỏ qua dựng lại: {output.name}")
         return output
+    if skip_existing and output.exists():
+        log(f"⚠️ {output.name} có sẵn nhưng CỤT/không đọc được (ffmpeg lần trước bị ngắt) → dựng lại.")
 
     logo = Path(logo) if logo else random_logo()
 
@@ -714,6 +755,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
         except OSError:
             pass
     if rc != 0:
+        xoa_video_cut(output, goc_out, log=log)     # không để file cụt lại thành "đã có"
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
 
     if goc_out and goc_out.exists():

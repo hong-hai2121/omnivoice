@@ -136,10 +136,22 @@ def retranslate_steps(episode: str, blanks: list[int] | None = None) -> list[Ste
                  soft_fail_codes=(STOP_CODE,))]
 
 
+def _da_xep(runner_, episode: str, viec: str) -> bool:
+    """Tập đã có việc `viec` ĐANG CHẠY/CHỜ trong hàng đợi đó chưa (09/11/2026): bấm ⏩ lúc lượt
+    đăng của tập còn đang chạy (06/11: tập 164 bị xếp đăng lần hai, rớt mã 77) thì thôi."""
+    if episode in runner_.queued_episodes():
+        log(f"⏳ Tập {episode}: việc {viec} đã có trong hàng đợi — không xếp thêm.")
+        return True
+    return False
+
+
 def queue_upload(episode: str) -> None:
     """Xếp việc đăng 1 tập vào hàng đợi RIÊNG — trả về ngay, không chờ tải xong."""
     episode = str(episode).strip().zfill(2)
-    upload_runner.enqueue(f"⬆ Đăng YouTube tập {episode}", upload_steps(episode))
+    if _da_xep(upload_runner, episode, "đăng YouTube"):
+        return
+    upload_runner.enqueue(f"⬆ Đăng YouTube tập {episode}", upload_steps(episode),
+                          episodes=[episode])
 
 
 def short_steps(episode: str) -> list[Step]:
@@ -154,7 +166,10 @@ def short_steps(episode: str) -> list[Step]:
 def queue_short(episode: str) -> None:
     """Xếp việc đăng Short của 1 tập vào hàng đợi đăng (cùng hàng với YouTube)."""
     episode = str(episode).strip().zfill(2)
-    upload_runner.enqueue(f"⬆ Đăng Short tập {episode}", short_steps(episode))
+    if _da_xep(upload_runner, episode, "đăng YouTube/Short"):
+        return
+    upload_runner.enqueue(f"⬆ Đăng Short tập {episode}", short_steps(episode),
+                          episodes=[episode])
 
 
 # Kịch bản lên lịch Facebook — file độc lập, tự đọc token từ .env gốc repo.
@@ -198,8 +213,10 @@ def queue_facebook(episode: str) -> None:
     lịch Page, không ai đợi ai — mà hàng đợi chính cũng đi tiếp tập sau ngay.
     """
     episode = str(episode).strip().zfill(2)
+    if _da_xep(fb_runner, episode, "lên lịch Facebook"):
+        return
     fb_runner.enqueue(f"📘 Lên lịch Facebook tập {episode}",
-                      facebook_steps(episodes=[episode]))
+                      facebook_steps(episodes=[episode]), episodes=[episode])
 
 
 def queue_after_build(episode: str, upload: bool) -> None:

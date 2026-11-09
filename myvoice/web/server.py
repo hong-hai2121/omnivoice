@@ -1104,17 +1104,13 @@ def delete_all_episodes():
 
 
 def _run_resume(request: Request, form) -> RedirectResponse:
-    """Nút ⏩ Chạy tiếp: chạy ĐÚNG các bước còn thiếu của từng tập, HAI LƯỢT
-    (04/10/2026, giống nút ⚡ bên GUI):
-      lượt 1 — nhận diện → dịch → input.docx → SEO của MỌI tập (mỗi tập một việc);
-      lượt 2 — thumbnail → giọng + video (→ đăng) của từng tập.
-    Hàng đợi chạy lần lượt theo thứ tự xếp, nên việc cần Gemini/màn hình sáng xong
-    hết rồi mới tới GPU. Trước đây mỗi tập một việc trọn gói: tập đầu dựng video xong
-    tập sau mới được dịch/SEO (đêm 04/10 máy sập lúc dựng E126 → F127, G128 chưa SEO).
-
-    08/11/2026: cách xếp TUỲ CÁCH DỊCH (ô gemini_backend). "extension" (cần màn hình
-    sáng) → bốn đợt như trên. "cli" (GPT CLI) hay "firefox" → TUẦN TỰ TỪNG TẬP: mỗi tập
-    một việc chạy trọn các bước còn thiếu rồi mới sang tập sau (_xep_tung_tap).
+    """Nút ⏩ Chạy tiếp: chạy ĐÚNG các bước còn thiếu của từng tập, TUẦN TỰ TỪNG TẬP
+    (09/11/2026, user chốt): mỗi tập MỘT việc chạy trọn các bước còn thiếu (tải → nhận
+    diện → dịch → input.docx → SEO → thumbnail → giọng + video → đăng) rồi mới sang tập
+    sau (_xep_tung_tap). Lịch sử: 04/10–08/11 xếp theo ĐỢT (mọi tập cùng một bước rồi mới
+    sang bước sau) để gom lượt cần màn hình sáng của Gemini extension; từ 02/11 driver
+    extension tự đánh thức màn hình lúc gửi nên không còn lý do gom, và user muốn tập nào
+    xong là xong hẳn (máy sập giữa đêm không mất cả mẻ dở dang).
 
     17/10/2026: link/file đang nằm trong ô Nguồn được NẠP trước (core.register_sources
     — ghi manifest với số tập đã cấp, cờ pending) rồi xếp như mọi tập thiếu đủ bước.
@@ -1175,7 +1171,7 @@ def _run_resume(request: Request, form) -> RedirectResponse:
     # hai lần (hay ⏩ ở ô Nguồn rồi ⏩ ở khối tập) không nhân đôi việc.
     dang_cho = runner.queued_episodes()
     da_xep = 0
-    viec = []                           # (dòng tập, bước đợt trước, bước đợt sau)
+    viec = []                           # (dòng tập, bước đầu: nhận diện/dịch/input/SEO, bước sau: thumbnail/tts)
     for r in sorted(targets, key=lambda r: int(r["episode"])):
         missing = core.missing_steps(
             r["steps"], fb_ban, options=options,
@@ -1213,32 +1209,6 @@ def _run_resume(request: Request, form) -> RedirectResponse:
         viec.append((r, [k for k in missing if k in core.FRONT_STEPS],
                      [k for k in missing if k not in core.FRONT_STEPS]))
 
-    # BỐN ĐỢT (17/10/2026 — yêu cầu: tải hết → nhận diện hết → dịch hết). Mỗi đợt là
-    # MỘT việc trong hàng đợi, một bước cho mỗi tập (continue_on_fail: tập hỏng thì
-    # đợt vẫn đi tiếp tập sau), nên 6 link = 4 việc chứ không phải 12–24 dòng.
-    #   ① tải video/audio — chỉ nguồn là link; file đã có thì bộ tải bỏ qua tức thì
-    #   ② nhận diện tiếng Trung
-    #   ③ dịch → input.docx → SEO  (--require recognize nếu ② có việc cho tập đó)
-    #   ④ thumbnail → giọng + video (→ đăng)  (--require translate,input nếu ③ có việc:
-    #      dịch/input dừng ⛔ ở ③ — đoạn trống, tô đỏ chưa kiểm… — thì không tạo giọng;
-    #      SEO hỏng vẫn đi tiếp như trước: dựng giọng + video ngang, không tự đăng)
-    def _xep_dot(ten: str, muc: list) -> None:
-        nonlocal queued, blocked
-        buoc, eps = [], []
-        for r, keys, require, label in muc:
-            step, err = steps_mod.resume_step(
-                keys, r["source"], r["episode"], upload=upload_on, require=require,
-                label=f"{label} tập {r['episode']}", continue_on_fail=True)
-            if err:
-                log(f"⛔ {err}")
-                blocked += 1
-                continue
-            buoc.append(step)
-            eps.append(r["episode"])
-        if buoc:
-            runner.enqueue(f"⏩ {ten} — {len(buoc)} tập", buoc, episodes=eps)
-            queued += 1
-
     def _xep_dong_bili23() -> None:
         """Việc nhẹ "Đóng app Bili23 (nếu bộ tải tự mở)" (08/11/2026, user yêu cầu) — luôn
         nằm SAU việc tải cuối cùng: việc cũ cùng tên còn chờ thì bỏ đi rồi xếp lại ở cuối
@@ -1256,12 +1226,11 @@ def _run_resume(request: Request, form) -> RedirectResponse:
         return " → ".join(steps_mod.SINGLE_STEPS.get(k, k) for k in keys)
 
     def _xep_tung_tap() -> None:
-        """TUẦN TỰ TỪNG TẬP (08/11/2026, user yêu cầu): mỗi tập MỘT việc chạy trọn các bước
-        còn thiếu (tải → nhận diện → dịch → input → SEO → thumbnail → giọng + video) rồi mới
-        sang tập sau. Dùng khi dịch bằng GPT CLI (hay Firefox): không cần màn hình sáng nên
-        không có lý do gộp bước dịch của mọi tập lại; chạy trọn tập thì tập nào xong là xong
-        hẳn, máy sập giữa đêm cũng không mất cả mẻ dở dang. Một việc = một lần gọi runner
-        nên bước sau tự thấy kết quả bước trước, không cần --require."""
+        """TUẦN TỰ TỪNG TẬP (08/11/2026 cho GPT CLI/Firefox; 09/11/2026 cho MỌI cách dịch):
+        mỗi tập MỘT việc chạy trọn các bước còn thiếu (tải → nhận diện → dịch → input → SEO →
+        thumbnail → giọng + video, dựng xong là nối việc đăng của tập đó) rồi mới sang tập sau.
+        Một việc = một lần gọi runner nên bước sau tự thấy kết quả bước trước, không cần
+        --require; tập hỏng ở bước nào thì runner dừng tập đó, hàng đợi sang tập kế."""
         nonlocal queued, blocked
         co_link = False                 # có tập ĐÃ XẾP mà phải tải link → cần đóng Bili23 ở cuối
         for r, front, back in viec:
@@ -1283,37 +1252,10 @@ def _run_resume(request: Request, form) -> RedirectResponse:
         if co_link:
             _xep_dong_bili23()      # sau tập CUỐI — giữa các tập còn cần app
 
-    # Cách xếp tuỳ CÁCH DỊCH (08/11/2026): extension Chrome cần màn hình sáng trong lúc
-    # dịch → gom bước dịch của mọi tập vào một đợt (bốn đợt bên dưới) để chỉ phải sáng một
-    # lượt; GPT CLI / Firefox không cần màn hình → chạy tuần tự từng tập.
-    backend = core.load_pipeline().get("gemini_backend") or core.gui.PIPE_DEFAULTS["gemini_backend"]
     if viec:
-        if backend == "extension":
-            log("🧭 Dịch bằng extension (cần màn hình sáng) → xếp 4 đợt: tải hết → nhận diện hết "
-                "→ dịch + SEO hết → thumbnail + giọng + video.")
-        else:
-            log(f"🧭 Dịch bằng {'GPT CLI' if backend == 'cli' else backend} (không cần màn hình) "
-                "→ chạy TUẦN TỰ từng tập: xong trọn các bước của tập này mới sang tập sau.")
-    if viec and backend != "extension":
+        log(f"🧭 ⏩ chạy TUẦN TỰ từng tập ({len(viec)} tập): xong trọn các bước của tập này mới "
+            "sang tập sau; tập đã dựng đủ mà chưa đăng thì xếp đăng ngay (hàng đợi đăng riêng).")
         _xep_tung_tap()
-    else:
-        tai_link = [(r, ["tai"], None, "Tải")
-                    for r, front, _ in viec if "recognize" in front and _la_link(r["source"])]
-        _xep_dot("đợt 1 · tải video/audio", tai_link)
-        _xep_dot("đợt 2 · nhận diện tiếng Trung", [
-            (r, ["recognize"], None, "Nhận diện")
-            for r, front, _ in viec if "recognize" in front])
-        if tai_link:
-            # Đóng Bili23 SAU đợt 2 chứ không phải đợt 1: link tải hỏng ở đợt 1 thì đợt 2
-            # tải lại (mở lại app) — đóng sau đợt 1 là app lại nằm nền tới sáng.
-            _xep_dong_bili23()
-        _xep_dot("đợt 3 · dịch → input.docx → SEO", [
-            (r, rest, ["recognize"] if "recognize" in front else None, _ten(rest))
-            for r, front, _ in viec
-            if (rest := [k for k in front if k != "recognize"])])
-        _xep_dot("đợt 4 · thumbnail → giọng + video", [
-            (r, back, ["translate", "input"] if front else None, _ten(back))
-            for r, front, back in viec if back])
     if not queued:
         if blocked:
             log("⚠️ Có tập còn thiếu bước nhưng chưa xếp chạy được — xem lý do ở trên.")

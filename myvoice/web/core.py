@@ -860,8 +860,10 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         "seo": seo_docx_valid(folder / "seoYoutube.docx"),
         "thumbnail": (folder / f"thumbnail{episode}.png").exists(),
         "audio": (folder / "output.wav").exists(),
-        "video_ngang": (folder / "YOUTUBE.mp4").exists()
-                        or bool(list(folder.glob("*_videodone.mp4"))),
+        # 09/11/2026: "có" = file DÙNG ĐƯỢC (video_hop_le), không chỉ tồn tại — file cụt
+        # của lượt dựng bị ngắt từng bị coi là xong → ⏩ bỏ qua dựng mà đem đăng.
+        "video_ngang": video_hop_le(folder / "YOUTUBE.mp4")
+                        or any(video_hop_le(p) for p in folder.glob("*_videodone.mp4")),
         # '[Full] … .mp4' (trước 20/09/2026: 'facebook <ngày giờ>.mp4') là tên sau
         # khi đăng YouTube (xem rename_doc) — thiếu nhánh này là tập đã đăng lại
         # hiện "chưa có video dọc".
@@ -871,7 +873,7 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # Page khi ô radio chọn "bản cắt ngắn" (fb_ban = ngan).
         "video_tiktok": _tiktok_video_exists(folder),
         # File Short khác với cột "short" (biên nhận ĐÃ ĐĂNG Short).
-        "video_short": (folder / "short.mp4").is_file(),
+        "video_short": video_hop_le(folder / "short.mp4"),
         # Đã đăng YouTube chưa — suy từ bản ghi mà dang_tap_youtube để lại.
         "upload": (folder / "youtube_upload.json").exists(),
         # Short: cùng bản ghi đó, chỉ khi có short_video_id (upload_short thành công;
@@ -887,6 +889,17 @@ def folder_steps(folder, episode: str, pairs: tuple[list, list] | None = None,
         # còn chờ SEO (xem DOC_CHO_SEO) → missing_steps thêm "tts".
         "doc_cho_seo": (folder / DOC_CHO_SEO).exists(),
     }
+
+
+def video_hop_le(path) -> bool:
+    """Video của tập DÙNG ĐƯỢC chưa (xem video_khung.video_hop_le): file cụt do ffmpeg bị
+    ngắt (máy sập / card TDR / Dừng hàng đợi) KHÔNG tính là đã có → ⏩ dựng lại chứ không đem
+    đăng. Có cache theo size + mtime nên bảng tập không chậm; chỉ file hỏng là probe lại."""
+    try:
+        import video_khung                      # scripts/ đã nằm trong sys.path
+        return video_khung.video_hop_le(path)
+    except Exception:
+        return Path(path).is_file()
 
 
 def doc_video_fallback(folder: Path) -> Path | None:
@@ -908,23 +921,29 @@ def doc_video_fallback(folder: Path) -> Path | None:
     return None
 
 
-def _doc_video_exists(folder: Path) -> bool:
-    """Tập có video dọc đầy đủ để đăng Page không — cùng phép tìm với script
-    Facebook (find_video_full: facebook.mp4 → tên ghi ở youtube_upload.json →
-    mẫu tên)."""
+def _doc_video_path(folder: Path) -> Path | None:
+    """Đường dẫn video dọc đầy đủ của tập — cùng phép tìm với script Facebook
+    (find_video_full: facebook.mp4 → tên ghi ở youtube_upload.json → mẫu tên)."""
     try:
-        return facebook_module().find_video_full(Path(folder)) is not None
+        return facebook_module().find_video_full(Path(folder))
     except Exception:
-        return doc_video_fallback(folder) is not None
+        return doc_video_fallback(folder)
+
+
+def _doc_video_exists(folder: Path) -> bool:
+    """Tập có video dọc đầy đủ DÙNG ĐƯỢC để đăng Page không (file cụt không tính)."""
+    p = _doc_video_path(folder)
+    return p is not None and video_hop_le(p)
 
 
 def _tiktok_video_exists(folder: Path) -> bool:
-    """Tập có bản TikTok để đăng Page không — cùng phép tìm với script Facebook
+    """Tập có bản TikTok DÙNG ĐƯỢC để đăng Page không — cùng phép tìm với script Facebook
     (find_video_ngan: tiktok.mp4 → tên ghi ở youtube_upload.json → mẫu tên)."""
     try:
-        return facebook_module().find_video_ngan(Path(folder)) is not None
+        p = facebook_module().find_video_ngan(Path(folder))
     except Exception:
-        return (Path(folder) / "tiktok.mp4").exists()
+        p = Path(folder) / "tiktok.mp4"
+    return p is not None and video_hop_le(p)
 
 
 def _short_posted(folder: Path) -> bool:

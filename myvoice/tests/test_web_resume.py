@@ -89,6 +89,9 @@ class MissingStepsTests(unittest.TestCase):
             self.assertFalse(state["video_short"])
             (folder / "short.mp4").touch()
             state = core.folder_steps(folder, "126")
+            self.assertFalse(state["video_short"])      # file rỗng = cụt → chưa có (09/11/2026)
+            with patch.object(core, "video_hop_le", lambda p: Path(p).is_file()):
+                state = core.folder_steps(folder, "126")
             self.assertTrue(state["video_short"])
             self.assertFalse(state["short"])
 
@@ -150,8 +153,8 @@ class ResumeRouteTests(unittest.TestCase):
                 self.run_resume(selected)
                 self.queue.assert_called_once()
                 title, built = self.queue.call_args.args
-                # 17/10/2026: việc xếp theo ĐỢT, số tập nằm ở kwargs episodes.
-                self.assertIn("đợt 4", title)
+                # 09/11/2026: mỗi tập một việc, số tập nằm ở kwargs episodes.
+                self.assertIn("Tập 126", title)
                 self.assertEqual(self.queue.call_args.kwargs["episodes"], ["126"])
                 argv = built[0].argv
                 self.assertEqual(argv[argv.index("--steps") + 1], "tts")
@@ -232,9 +235,9 @@ class ResumeRouteTests(unittest.TestCase):
         self.queue.assert_not_called()
         self.assertIn("Không tìm thấy", self.logs.call_args.args[0])
 
-    def test_cli_backend_runs_each_episode_to_completion_in_order(self):
-        """08/11/2026: dịch bằng GPT CLI (không cần màn hình) → mỗi tập một việc trọn bước,
-        tập nhỏ trước; link Bilibili thì có bước tải và một việc đóng Bili23 ở cuối."""
+    def test_each_episode_runs_to_completion_in_order(self):
+        """09/11/2026: MỌI cách dịch → mỗi tập một việc trọn bước, tập nhỏ trước; link
+        Bilibili thì có bước tải và một việc đóng Bili23 ở cuối."""
         self.mock(core, "load_pipeline", return_value={"gemini_backend": "cli"})
         self.rows.return_value = [
             {**row(127, recognize=False, translate=False, input=False, seo=False,
@@ -260,31 +263,38 @@ class ResumeRouteTests(unittest.TestCase):
         self.assertEqual(s_dong.argv[-1], "--dong-app")
         self.assertTrue(jobs[2].kwargs["light"])
 
-    def test_cli_backend_without_links_does_not_close_bili23(self):
+    def test_without_links_does_not_close_bili23(self):
         self.mock(core, "load_pipeline", return_value={"gemini_backend": "firefox"})
         self.rows.return_value = [row(126, seo=False)]
         self.run_resume()
         self.assertEqual(self.queue.call_count, 1)
         self.assertIn("Tập 126", self.queue.call_args.args[0])
 
-    def test_extension_backend_keeps_four_batches(self):
+    def test_extension_backend_is_sequential_too(self):
+        """09/11/2026: trước đây extension xếp 4 đợt (gom lượt cần màn hình sáng); nay driver
+        extension tự đánh thức màn hình nên cũng tuần tự từng tập như mọi cách dịch."""
         self.mock(core, "load_pipeline", return_value={"gemini_backend": "extension"})
         self.rows.return_value = [row(ep, seo=False, video_doc=False) for ep in (127, 126)]
         self.run_resume()
-        titles = [call.args[0] for call in self.queue.call_args_list]
-        self.assertEqual(len(titles), 2)
-        self.assertIn("đợt 3", titles[0])
-        self.assertIn("đợt 4", titles[1])
-        self.assertEqual(self.queue.call_args_list[0].kwargs["episodes"], ["126", "127"])
+        jobs = self.queue.call_args_list
+        self.assertEqual([c.args[0].split(" · ")[0] for c in jobs], ["⏩ Tập 126", "⏩ Tập 127"])
+        self.assertEqual([c.kwargs["episodes"] for c in jobs], [["126"], ["127"]])
+        for c in jobs:
+            (built,) = c.args[1]
+            self.assertEqual(built.argv[built.argv.index("--steps") + 1], "seo,tts")
+            self.assertNotIn("--require", built.argv)
+            self.assertFalse(built.continue_on_fail)     # tập hỏng → runner dừng tập đó
+            self.assertIsNotNone(built.on_success)       # dựng xong → nối đăng của tập đó
+        self.assertFalse(any("đợt" in c.args[0] for c in jobs))
 
-    def test_extension_backend_closes_bili23_after_batch_2_and_moves_old_close_job(self):
-        """Link Bilibili: việc đóng Bili23 nằm SAU đợt 2 (đợt 2 có thể tải lại link hỏng ở
-        đợt 1); việc đóng cũ còn chờ trong hàng đợi thì bị bỏ để xếp lại ở cuối."""
+    def test_close_bili23_after_last_episode_and_moves_old_close_job(self):
+        """Link Bilibili: việc đóng Bili23 nằm SAU tập cuối cùng (giữa các tập còn cần app);
+        việc đóng cũ còn chờ trong hàng đợi thì bị bỏ để xếp lại ở cuối."""
         self.mock(core, "load_pipeline", return_value={"gemini_backend": "extension"})
         remove = self.mock(server.runner, "remove", return_value=True)
         self.mock(server.runner, "state", return_value={"pending": [
             {"id": 7, "title": server.steps_mod.DONG_BILI23_TITLE},
-            {"id": 8, "title": "⏩ đợt 3 · dịch → input.docx → SEO — 1 tập"}]})
+            {"id": 8, "title": "⏩ Tập 125 · Tạo giọng + video"}]})
         self.rows.return_value = [
             {**row(127, recognize=False, translate=False, input=False, seo=False,
                    thumbnail=False, video_doc=False),
@@ -293,11 +303,11 @@ class ResumeRouteTests(unittest.TestCase):
         ]
         self.run_resume()
         titles = [call.args[0] for call in self.queue.call_args_list]
-        self.assertEqual([t.split(" — ")[0] for t in titles],
-                         ["⏩ đợt 1 · tải video/audio", "⏩ đợt 2 · nhận diện tiếng Trung",
-                          server.steps_mod.DONG_BILI23_TITLE,
-                          "⏩ đợt 3 · dịch → input.docx → SEO",
-                          "⏩ đợt 4 · thumbnail → giọng + video"])
+        self.assertEqual([t.split(" · ")[0] for t in titles],
+                         ["⏩ Tập 126", "⏩ Tập 127", server.steps_mod.DONG_BILI23_TITLE])
+        (s127,) = self.queue.call_args_list[1].args[1]
+        self.assertEqual(s127.argv[s127.argv.index("--steps") + 1],
+                         "tai,recognize,translate,input,seo,thumbnail,tts")
         self.assertTrue(self.queue.call_args_list[2].kwargs["light"])
         remove.assert_called_once_with(7)
 
@@ -308,28 +318,54 @@ class ResumeRouteTests(unittest.TestCase):
         self.run_resume()
         titles = [call.args[0] for call in self.queue.call_args_list]
         self.assertNotIn(server.steps_mod.DONG_BILI23_TITLE, titles)
-        self.assertEqual(len(titles), 3)        # đợt 2, 3, 4 (nguồn là file → không tải)
+        self.assertEqual(len(titles), 1)        # một tập = một việc (nguồn là file → không tải)
+        (built,) = self.queue.call_args_list[0].args[1]
+        self.assertEqual(built.argv[built.argv.index("--steps") + 1],
+                         "recognize,translate,input,seo,thumbnail,tts")
 
-    def test_front_steps_for_all_episodes_precede_builds(self):
-        self.rows.return_value = [row(ep, seo=False, video_doc=False) for ep in (127, 126)]
+    def test_built_episode_waiting_upload_is_queued_in_upload_queue_only(self):
+        """Tập đã dựng đủ (video DÙNG ĐƯỢC) mà chưa đăng → chỉ vào hàng đợi đăng, không
+        có việc dựng nào trong hàng đợi chính."""
+        self.rows.return_value = [row(126, upload=False, facebook=False)]
         self.run_resume()
-        # 17/10/2026: hai ĐỢT (SEO mọi tập → dựng mọi tập), mỗi đợt một việc, mỗi tập một
-        # bước, tập nhỏ trước; bước dựng phải --require bước dịch của đợt trước.
-        jobs = self.queue.call_args_list
-        self.assertEqual(len(jobs), 2)
-        (t_seo, seo_steps), (t_tts, tts_steps) = jobs[0].args, jobs[1].args
-        self.assertIn("đợt 3", t_seo)
-        self.assertIn("đợt 4", t_tts)
-        self.assertEqual(jobs[0].kwargs["episodes"], ["126", "127"])
-        self.assertEqual([len(seo_steps), len(tts_steps)], [2, 2])
-        for built in seo_steps:
-            argv = built.argv
-            self.assertEqual(argv[argv.index("--steps") + 1], "seo")
-            self.assertTrue(built.continue_on_fail)
-        for built in tts_steps:
-            argv = built.argv
-            self.assertEqual(argv[argv.index("--steps") + 1], "tts")
-            self.assertEqual(argv[argv.index("--require") + 1], "translate,input")
+        self.queue.assert_not_called()
+        self.upload.assert_called_once_with("126")
+        self.facebook.assert_called_once_with("126")
+
+
+class QueuePostDedupeTests(unittest.TestCase):
+    """09/11/2026: không xếp trùng việc đăng/lên lịch cho tập đã có việc trong hàng đợi đó
+    (06/11: bấm ⏩ lúc tập 164 đang đăng → xếp đăng lần hai, rớt mã 77)."""
+
+    def _runner(self, queued):
+        from unittest.mock import MagicMock
+        r = MagicMock()
+        r.queued_episodes.return_value = set(queued)
+        return r
+
+    def test_upload_khong_xep_trung(self):
+        steps_mod = server.steps_mod
+        with patch.object(steps_mod, "upload_runner", self._runner({"126"})) as up, \
+                patch.object(steps_mod, "log"):
+            steps_mod.queue_upload("126")
+            up.enqueue.assert_not_called()
+        with patch.object(steps_mod, "upload_runner", self._runner(set())) as up, \
+                patch.object(steps_mod, "upload_steps", return_value=["b"]):
+            steps_mod.queue_upload("126")
+            up.enqueue.assert_called_once()
+            self.assertEqual(up.enqueue.call_args.kwargs["episodes"], ["126"])
+
+    def test_facebook_khong_xep_trung(self):
+        steps_mod = server.steps_mod
+        with patch.object(steps_mod, "fb_runner", self._runner({"126"})) as fb, \
+                patch.object(steps_mod, "log"):
+            steps_mod.queue_facebook("126")
+            fb.enqueue.assert_not_called()
+        with patch.object(steps_mod, "fb_runner", self._runner(set())) as fb, \
+                patch.object(steps_mod, "facebook_steps", return_value=["b"]):
+            steps_mod.queue_facebook("126")
+            fb.enqueue.assert_called_once()
+            self.assertEqual(fb.enqueue.call_args.kwargs["episodes"], ["126"])
 
 
 if __name__ == "__main__":

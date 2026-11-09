@@ -57,7 +57,7 @@ for _p in (_SCRIPTS_DIR, BASE_DIR / "YOUTUBE"):
         sys.path.insert(0, str(_p))
 
 from video_khung import (get_duration, get_resolution, has_nvenc,   # noqa: E402
-                         run_ffmpeg_progress,
+                         run_ffmpeg_progress, video_hop_le, xoa_video_cut,
                          CAT_TREN_MIN, CAT_DUOI_MIN)
 
 THUMB_DIR = BASE_DIR / "YOUTUBE" / "thumbnail"
@@ -327,9 +327,11 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
     cover_png = thumbnail dọc đè lên frame đầu (ảnh bìa Facebook/TikTok) — như video_doc."""
     audio_file, source_video, output = Path(audio_file), Path(source_video), Path(output)
     overlay_png = Path(overlay_png)
-    if skip_existing and output.exists() and output.stat().st_size > 0:
+    if skip_existing and video_hop_le(output):
         log(f"♻ Video dọc đã có → bỏ qua dựng lại: {output.name}")
         return output
+    if skip_existing and output.exists():
+        log(f"⚠️ {output.name} có sẵn nhưng CỤT/không đọc được (ffmpeg lần trước bị ngắt) → dựng lại.")
     for p, ten in ((audio_file, "audio"), (source_video, "video gốc"), (overlay_png, "lớp phủ")):
         if not p.exists():
             raise RuntimeError(f"Không tìm thấy {ten}: {p}")
@@ -399,6 +401,7 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
         rc, err_tail = run_ffmpeg_progress(build_cmd(False), audio_dur, log,
                                            label="Dựng video dọc", progress=progress)
     if rc != 0:
+        xoa_video_cut(output, log=log)     # không để file cụt lại thành "đã có"
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
     final_dur = get_duration(output)
     size_mb = output.stat().st_size / 1024 / 1024
