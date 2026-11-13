@@ -110,7 +110,7 @@ class TestSteps(unittest.TestCase):
     def test_am_luong_truyen_cho_buoc_3(self):
         a = self._argv({"am_luong_db": "3"})
         self.assertEqual(a[a.index("--am-luong") + 1], "3")
-        self.assertNotIn("--engine", a)              # engine VieNeu đã gỡ 09/11/2026
+        self.assertNotIn("--engine", a)              # mặc định omni: lệnh không có --engine (chỉ thêm khi chọn VieNeu, 11/11/2026)
         a = self._argv({"voice": "mau.wav", "am_luong_db": "-2.5"})
         self.assertEqual(a[a.index("--am-luong") + 1], "-2.5")
         self.assertEqual(a[a.index("--voice") + 1], "mau.wav")

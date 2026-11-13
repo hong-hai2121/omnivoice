@@ -54,8 +54,9 @@ PIPE_DEFAULTS = gui.PIPE_DEFAULTS
 # khoá chỉ-web như tiktok_music_loop vẫn nằm chung taogiong_options.json được.)
 WEB_SETTINGS_FILE = WEB_DIR / "web_settings.json"
 # mode mặc định "clone" (OmniVoice nhái giọng mẫu) — cùng OPTS_DEFAULTS của GUI.
-# (Chế độ "vieneu" gỡ 09/11/2026; web_settings.json cũ ghi "vieneu" → coi như clone.)
-WEB_DEFAULTS = dict(mode="clone", voice="", instruct="", input="", output="",
+# 11/11/2026: "vieneu" = phương án tạo giọng thứ 2 (VieNeu-TTS giọng dựng sẵn, chạy CPU trong
+# phần mềm — scripts/taogiong_vieneu.py); vieneu_voice = 1 trong gui.vn.GIONG_DUNG_SAN.
+WEB_DEFAULTS = dict(mode="clone", vieneu_voice="Ngọc Huyền", voice="", instruct="", input="", output="",
                     # Tuỳ chọn khối Thumbnail: chế độ đánh số tập cho cả lần chạy
                     # (auto = tự lấy tập kênh còn thiếu | manual = theo số tự nhập),
                     # ảnh nền mặc định, và có làm thêm bản dọc không.
@@ -451,6 +452,11 @@ def list_voices() -> list[dict]:
 
 def list_voice_names() -> list[str]:
     return [r["name"] for r in list_voices()]
+
+
+def giong_vieneu_hop_le(ten) -> str:
+    """Tên giọng dựng sẵn VieNeu hợp lệ: không có / lạ → mặc định (Ngọc Huyền)."""
+    return gui.vn.giong_hop_le(ten)
 
 
 def toggle_voice_favorite(name: str) -> bool:
@@ -1438,9 +1444,16 @@ def tts_settings() -> tuple[dict | None, str]:
     web = load_web_settings()
 
     mode = web.get("mode", "clone")
-    if mode not in gui.MODES:          # "vieneu" của bản 04–09/11 đã gỡ, hay giá trị lạ → clone
+    if mode not in gui.MODES:          # giá trị lạ → clone
         mode = "clone"
-    if mode == "clone":
+    if mode == gui.MODE_VIENEU:
+        # 11/11/2026: giọng dựng sẵn VieNeu chạy CPU trong tiến trình (gui.nap_engine); tên
+        # giọng là voice_param. Thiếu kho / thiếu gói → báo rõ cần gì, không âm thầm đổi clone.
+        tt = gui.vn.trang_thai()
+        if not tt["san_sang"]:
+            return None, f"Chế độ 🗣 VieNeu chưa dùng được: {tt['mo_ta']} — hoặc chọn chế độ 🎙 Clone."
+        voice_param = giong_vieneu_hop_le(web.get("vieneu_voice"))
+    elif mode == "clone":
         voice = (web.get("voice") or "").strip()
         available = list_voice_names()
         if voice not in available:

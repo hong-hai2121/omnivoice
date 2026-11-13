@@ -71,19 +71,23 @@
     <summary class="phead"><span class="num">1</span><h2>Chế độ giọng</h2></summary>
     <div class="foldbody">
     <div class="modes">
-      {# Chế độ nhớ trong web_settings.json; "vieneu" của bản 04–09/11 đã gỡ → server coi là clone. #}
-      {% for value, label, desc in [("clone", "🎙 Clone", "OmniVoice nhái giọng mẫu"),
-                                    ("design", "🎨 Thiết kế", "Mô tả giọng"),
-                                    ("default", "🔊 Mặc định", "Model tự chọn")] %}
-        {% set mode_on = web.mode if web.mode in ('clone', 'design', 'default') else 'clone' %}
-        <label class="mode {{ 'on' if mode_on == value }}">
+      {# Chế độ nhớ trong web_settings.json. 11/11/2026: 🗣 VieNeu = phương án thứ 2 — giọng dựng
+         sẵn chạy CPU ngay trong phần mềm (scripts/taogiong_vieneu.py), chọn nó thì không nạp OmniVoice. #}
+      {% for value, label, desc, tip in [
+          ("clone", "🎙 Clone", "OmniVoice nhái giọng mẫu", ""),
+          ("vieneu", "🗣 VieNeu", "Giọng dựng sẵn · chạy CPU",
+           "VieNeu-TTS giọng dựng sẵn (mặc định Ngọc Huyền), 48 kHz. Chạy bằng CPU ngay trong phần mềm: không nạp OmniVoice, bước tạo giọng không dùng card màn hình. Tập 600 câu khoảng 17 phút."),
+          ("design", "🎨 Thiết kế", "Mô tả giọng", ""),
+          ("default", "🔊 Mặc định", "Model tự chọn", "")] %}
+        {% set mode_on = web.mode if web.mode in ('clone', 'vieneu', 'design', 'default') else 'clone' %}
+        <label class="mode {{ 'on' if mode_on == value }}" {% if tip %}title="{{ tip }}"{% endif %}>
           <input type="radio" name="mode" value="{{ value }}" {{ 'checked' if mode_on == value }}>
           <b>{{ label }}</b><span class="muted">{{ desc }}</span>
         </label>
       {% endfor %}
     </div>
 
-    {# Hai ô ứng với hai chế độ có tham số nằm cùng một hàng; nghe thử + ★ ngay dưới ô giọng mẫu. #}
+    {# Ba ô ứng với ba chế độ có tham số nằm cùng một hàng; nghe thử + ★ ngay dưới ô giọng mẫu. #}
     <div class="grid">
       <label class="field w2">
         <span>Giọng mẫu (Clone)</span>
@@ -92,6 +96,15 @@
             <option value="{{ v.name }}" {{ 'selected' if current_voice == v.name }}
                     {% if v.fav %}data-fav="1"{% endif %}>
               {{ '★ ' if v.fav }}{{ v.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="field w2" title="{{ vieneu_mo_ta }}">
+        <span>Giọng VieNeu
+          {% if not vieneu_san_sang %}<b class="muted">⚠ chưa dùng được</b>{% endif %}</span>
+        <select name="vieneu_voice">
+          {% for v in vieneu_voices %}
+            <option value="{{ v }}" {{ 'selected' if current_vieneu_voice == v }}>{{ v }}</option>
           {% endfor %}
         </select>
       </label>

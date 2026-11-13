@@ -62,6 +62,10 @@ import kieusub                       # noqa: E402
 # bảng — dich_gemini (bước ② + SEO) tự đọc từ đó, đổi ở web nào cũng là một.
 import gemini_backend                # noqa: E402
 import hieuung_giong as hu          # noqa: E402  (🔆 sáng giọng: bản nghe thử đã EQ)
+# 11/11/2026: engine 🗣 VieNeu ở khối ③ (phương án thứ 2, chạy CPU trong tiến trình bước ③) —
+# danh sách 25 giọng dựng sẵn + trạng thái "dùng được chưa" lấy từ module nhẹ của myvoice
+# (không nạp model ở server; model nạp lúc bước ③ chạy).
+import taogiong_vieneu as vn        # noqa: E402
 OUTPUT_DIR = st.OUTPUT_DIR
 TOKEN_FILE = WEB_DIR / "token.txt"
 SETTINGS_FILE = WEB_DIR / "web_settings.json"
@@ -94,8 +98,10 @@ DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="16",
                 maxchars_en="42", ngucanh=True, gopcau=True,
                 batchchars="1200", offline=False,
                 voice="", voice_stars=[], subchars="50",
-                # (Engine VieNeu của bản 04–09/11/2026 đã gỡ: bước ③ luôn là OmniVoice clone `voice`;
-                # khoá engine / giong_vieneu còn trong web_settings.json cũ thì bỏ qua.)
+                # 11/11/2026: ENGINE bước ③ — "omni" (OmniVoice nhái giọng mẫu `voice`, mặc định)
+                # | "vieneu" (phương án thứ 2: VieNeu-TTS giọng dựng sẵn chạy CPU, 48 kHz).
+                # giong_vieneu = 1 trong vn.GIONG_DUNG_SAN, mặc định Ngọc Huyền.
+                engine="omni", giong_vieneu=vn.GIONG_MAC_DINH,
                 kieusub="hopbo", subfont="",
                 # Đè lên kiểu đã chọn (rỗng = giữ của kiểu): màu chữ · màu viền
                 # · cỡ chữ (% cỡ gốc) · vị trí (% chiều cao từ đáy; rỗng = tự đặt).
@@ -611,6 +617,10 @@ async def index(request: Request):
         "voices": [{"ten": v, "i": tt[v], "sao": v in stars}
                    for v in stars + [v for v in vs if v not in stars]],
         "voice_stars": stars,
+        # 🗣 VieNeu (11/11/2026): 25 giọng dựng sẵn + dùng được chưa (thiếu gì thì mo_ta nói).
+        "vieneu_giong": list(vn.GIONG_DUNG_SAN),
+        "vieneu_san_sang": vn.trang_thai()["san_sang"],
+        "vieneu_mo_ta": vn.trang_thai()["mo_ta"],
         # 🎚 Mẫu giọng cài sẵn (09/11/2026, bảng hu.MAU_GIONG chung với myvoice): chọn một
         # mẫu là JS điền tông + 4 bộ lọc; server không đọc ô này. + dòng mẫu 🎧 đang lưu.
         "mau_giong": hu.MAU_GIONG,
@@ -934,6 +944,9 @@ def _settings_from_form(form) -> dict:
         gopcau=bool(g("gopcau")),
         offline=bool(g("offline")),
         voice=g("voice") or "",
+        # 🎙/🗣 engine bước ③ + giọng VieNeu (ô vắng ở trang cũ còn mở → omni / Ngọc Huyền).
+        engine="vieneu" if g("engine") == "vieneu" else "omni",
+        giong_vieneu=vn.giong_hop_le(g("giong_vieneu")),
         # 🔆 Sáng giọng (khối ③): 0–100, mặc định 80; ô vắng (trang cũ còn mở) → 80.
         sanggiong=_clamp(g("sanggiong"), 0, 100, 0),
         # 🎵🔔🧒 (khối ③, như myvoice): tông kẹp ±6 bán cung làm tròn 0,5; bộ lọc 0–100.
@@ -1434,7 +1447,7 @@ def _nghethu_nhan() -> str:
 @app.post("/nghethu")
 def nghethu(pitch: str = Form(""), vang_truong_do: str = Form(""), vang_cuong_do: str = Form(""),
             thieu_nien: str = Form(""), sanggiong: str = Form(""), am_luong_db: str = Form(""),
-            voice: str = Form("")):
+            engine: str = Form(""), giong_vieneu: str = Form(""), voice: str = Form("")):
     """Áp cài đặt đang hiện lên mẫu rồi trả đường phát (route này KHÔNG ghi web_settings.json).
     `def` thường (không async) để FastAPI chạy ở luồng phụ — ffmpeg mất 1–3 giây."""
     try:
@@ -1452,11 +1465,13 @@ def nghethu(pitch: str = Form(""), vang_truong_do: str = Form(""), vang_cuong_do
         return JSONResponse({"ok": False, "loi": f"Không dựng được bản nghe thử: {e}"}, status_code=500)
     mau = kq["mau"]
     ghi_chu = []
-    # Mẫu đọc bằng giọng khác giọng đang chọn trên form (chỉ biết với video tạo từ 04/11/2026).
+    # Mẫu đọc bằng engine/giọng khác giọng đang chọn trên form (chỉ biết với video tạo từ 04/11/2026).
     mode_mau, ten_mau = nt.che_do_giong(mau.get("giong"))
+    mode_chon = "vieneu" if engine == "vieneu" else "clone"
+    dang_chon = giong_vieneu if mode_chon == "vieneu" else voice
     if mode_mau:
-        khac_engine = mode_mau != "clone"      # mẫu sinh bằng engine VieNeu cũ (đã gỡ 09/11/2026)
-        if khac_engine or (voice and ten_mau and Path(ten_mau).name != Path(voice).name):
+        khac_engine = (mode_mau == "vieneu") != (mode_chon == "vieneu")
+        if khac_engine or (dang_chon and ten_mau and Path(ten_mau).name != Path(dang_chon).name):
             ghi_chu.append(f"Mẫu đọc bằng giọng “{nt.ten_giong(mau.get('giong')) or mode_mau}”, khác "
                            "giọng đang chọn — chạy bước ③ video đầu đợt bằng giọng mới thì mẫu đổi theo.")
     # OmniVoice: mức 🔆 còn EQ giọng mẫu lúc SINH câu — phần đó mẫu giữ ở mức cũ.

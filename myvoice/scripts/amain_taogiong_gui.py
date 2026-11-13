@@ -85,8 +85,12 @@ import dich_input_docx as inputdocx   # noqa: E402
 # Bộ lọc giọng kiểu CapCut (tiếng vang / thiếu niên) + lõi đổi tông/tốc độ bằng
 # ffmpeg — chung cho bài thật, web và voice/thu_giong.py (xem khối ĐỔI TÔNG GIỌNG).
 import hieuung_giong as hu            # noqa: E402
-# (09/11/2026: chế độ 🗣 VieNeu-TTS đã GỠ theo yêu cầu user — card RTX 4060 TDR khi chạy SDK
-# đó; code nằm ở nhánh luu-sau-02-11-vieneu. Chỉ còn OmniVoice: clone / design / default.)
+# 11/11/2026: chế độ 🗣 VieNeu trở lại làm PHƯƠNG ÁN TẠO GIỌNG THỨ 2 — giọng dựng sẵn (mặc
+# định Ngọc Huyền), chạy CPU ngay trong tiến trình này bằng nhánh ONNX torch-free của SDK
+# (scripts/taogiong_vieneu.py): không server, không tiến trình con, không chạm card màn hình.
+# (Bản GPU qua worker HTTP của 04–09/11 đã gỡ vì card RTX 4060 TDR — nhánh luu-sau-02-11-vieneu.)
+# Module này nhẹ: SDK chỉ nạp khi nap_engine("vieneu") chạy.
+import taogiong_vieneu as vn          # noqa: E402
 from hieuung_giong import (           # noqa: E402,F401  (tên cũ, chỗ khác còn gọi)
     PITCH_MIN, PITCH_MAX, parse_pitch, has_rubberband, pitch_factor, atempo_chain,
     build_audio_filter)
@@ -213,9 +217,10 @@ def video_gansub_max_chars_doc(default: int = 27) -> int:
 # ghi đè bằng giá trị của LẦN CHẠY TRƯỚC để mỗi lần mở giữ lại lựa chọn cũ.
 OPTS_DEFAULTS = dict(
     from_gemini=True, chunk=160,
-    # CHẾ ĐỘ GIỌNG — "clone" (OmniVoice nhái giọng mẫu, mặc định), "design", "default".
-    # Nhớ lần chạy trước. (Chế độ "vieneu" gỡ 09/11/2026; cài đặt cũ ghi "vieneu" → về clone.)
-    mode="clone",
+    # CHẾ ĐỘ GIỌNG — "clone" (OmniVoice nhái giọng mẫu, mặc định), "vieneu" (VieNeu-TTS giọng
+    # dựng sẵn chạy CPU — phương án thứ 2, 11/11/2026), "design", "default". Nhớ lần chạy trước.
+    # vieneu_voice: 1 trong 25 giọng dựng sẵn (taogiong_vieneu.GIONG_DUNG_SAN), mặc định Ngọc Huyền.
+    mode="clone", vieneu_voice="Ngọc Huyền",
     # (🔉 Chuẩn âm −14 LUFS: GỠ HẲN 10/11/2026 theo yêu cầu user — không còn chuẩn hoá độ to.)
     # 06/11/2026: 🔊 ÂM LƯỢNG CƠ BẢN (dB, + to / − nhỏ, 0 = giữ nguyên) — cộng thẳng một
     # mức gain lên output.wav ở bước CUỐI (sau tông, bộ lọc và chuẩn âm nếu bật), mức dương
@@ -1453,26 +1458,51 @@ def _voice_prompt(model, ref_audio, sang_giong: int = 0):
 
 
 # ── ENGINE THEO CHẾ ĐỘ ───────────────────────────────────────────────────────
-# (09/11/2026: gỡ chế độ "vieneu"; nap_engine / do_engine giữ tên để run_tts và
-# myvideo/taogiong_srt.py gọi chung một cửa — nay chỉ còn OmniVoice.)
-MODES = ("clone", "design", "default")   # thứ tự hàng radio trong GUI
+# nap_engine / do_engine là MỘT cửa nạp / dỡ model cho run_tts và myvideo/taogiong_srt.py.
+# 11/11/2026: thêm "vieneu" — VieNeu-TTS giọng dựng sẵn chạy CPU trong tiến trình
+# (taogiong_vieneu.MayDoc), đứng thứ 2 sau clone; ba chế độ còn lại là OmniVoice.
+MODE_VIENEU = vn.MODE
+MODES = ("clone", MODE_VIENEU, "design", "default")   # thứ tự hàng radio trong GUI
 
 
 def che_do_da_luu(opt: dict) -> str:
     """Chế độ từ cài đặt đã lưu (taogiong_options.json) — giá trị lạ hay thiếu (file của bản
-    cũ, hay "vieneu" của bản 04–09/11 đã gỡ) → mặc định OPTS_DEFAULTS, radio không bao giờ trống."""
+    cũ) → mặc định OPTS_DEFAULTS, radio không bao giờ trống."""
     mode = str(opt.get("mode") or OPTS_DEFAULTS["mode"])
     return mode if mode in MODES else OPTS_DEFAULTS["mode"]
 
 
+def giong_vieneu_da_luu(opt: dict) -> str:
+    """Giọng dựng sẵn VieNeu từ cài đặt đã lưu — thiếu / lạ → Ngọc Huyền."""
+    return vn.giong_hop_le(opt.get("vieneu_voice"))
+
+
 def nap_engine(mode, device=None):
     """(model, sr) cho chế độ `mode` — MỘT chỗ cho run_tts (kể cả lượt nạp lại sau ASR).
-    Mọi chế độ đều là OmniVoice qua load_omnivoice (24 kHz)."""
+
+    "vieneu" → máy đọc VieNeu trên CPU (taogiong_vieneu.MayDoc, 48 kHz; `device` bỏ qua,
+    không nạp OmniVoice, không chạm GPU). Thiếu kho / thiếu gói → RuntimeError nói rõ cần gì,
+    lượt dừng (tập coi như CHƯA xong) chứ không âm thầm đổi sang clone.
+    Còn lại → OmniVoice qua load_omnivoice (24 kHz)."""
+    if mode == MODE_VIENEU:
+        logging.info("⏳ Đang nạp VieNeu-TTS (CPU, ngay trong phần mềm — không dùng card màn hình)…")
+        may = vn.MayDoc()
+        logging.info(f"✅ VieNeu sẵn sàng sau {may.t_nap:.0f} s: {may.backend}/CPU, {may.sr} Hz, "
+                     f"{len(vn.GIONG_DUNG_SAN)} giọng dựng sẵn"
+                     + (" (model lấy từ cache, không hỏi mạng)." if getattr(may, "tu_cache", True)
+                        else " (vừa tải model về cache)."))
+        return may, may.sr
     return load_omnivoice(device)
 
 
 def do_engine(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ"):
-    """Dỡ engine, trả None để chỗ gọi gán lại `model` (y như _do_omnivoice)."""
+    """Dỡ engine, trả None để chỗ gọi gán lại `model` (y như _do_omnivoice).
+    Máy đọc VieNeu → bỏ model khỏi RAM (nạp lại ~7 s qua nap_engine); OmniVoice →
+    _do_omnivoice (rồi chỗ gọi _tra_vram như cũ)."""
+    if isinstance(model, vn.MayDoc):
+        model.tat()
+        logging.info(f"🧹 Đã dỡ VieNeu khỏi RAM ({ly_do}).")
+        return None
     return _do_omnivoice(model, ly_do)
 
 
@@ -1485,6 +1515,11 @@ def _generate_chunk(model, mode, voice_param, chunk, dur_scale=1.0, sang_giong=0
     # sang_giong: mức 🔆 Sáng giọng — chế độ clone EQ giọng mẫu lúc dựng prompt
     # (xem _voice_prompt); mức khác → prompt khác → giọng khác.
     chunk = " ".join(chunk.split())   # bỏ dấu "\n" hết đoạn văn (xem split_chunks)
+    if mode == MODE_VIENEU:
+        # VieNeu: máy đọc CPU đọc nguyên câu bằng giọng dựng sẵn `voice_param` (tên giọng).
+        # Model tự hồi quy, không có khung thời lượng / num_step → dur_scale, sang_giong không
+        # áp (render lại = re-roll). Trả list 1 audio float32 — cùng dạng result[0] của OmniVoice.
+        return [model.doc(chunk, voice_param)]
     dur = vn_duration(chunk)
     if dur is not None:
         dur *= dur_scale
@@ -2425,7 +2460,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             def _chu_ky(vp) -> str:
                 return hashlib.sha1("|".join([mode, str(vp), f"step{NUM_STEP}",
                                               f"fade{FADE_OUT_SEC}",
-                                              *([f"sang{sang_mau}"] if sang_mau else []),
+                                              # VieNeu không dựng prompt giọng mẫu: 🔆 chỉ là EQ hậu kỳ
+                                              # → không vào chữ ký (đổi mức không sinh lại câu).
+                                              *([f"sang{sang_mau}"] if sang_mau and mode != MODE_VIENEU else []),
                                               *chunks])
                                     .encode("utf-8")).hexdigest()
             # 10/11/2026: giọng mẫu vào chữ ký bằng TÊN FILE, không phải đường dẫn — dời kho
@@ -2535,7 +2572,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                 # Mỗi đoạn một độ dài chuỗi khác nhau → allocator giữ lại đủ kiểu
                 # khối rời. Dọn định kỳ để phần GIỮ LẠI không phình dần tới mức
                 # tràn sang RAM (xem chú thích PYTORCH_CUDA_ALLOC_CONF đầu file).
-                if (i + 1) % VRAM_CLEAN_EVERY == 0:
+                # (VieNeu chạy CPU: không có gì để dọn, và mem_get_info() sẽ đánh thức card.)
+                if (i + 1) % VRAM_CLEAN_EVERY == 0 and mode != MODE_VIENEU:
                     torch.cuda.empty_cache()
                     try:
                         free_b, total_b = torch.cuda.mem_get_info()
@@ -2612,8 +2650,9 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     # Trả VRAM của ASR rồi mới nạp OmniVoice — hai model không
                     # cùng lúc nằm trên card 8GB được.
                     _mc.giai_phong()
-                    status_var.set("Nạp lại OmniVoice để render lại...")
-                    logging.info("↩ Nạp lại OmniVoice để render các đoạn lỗi...")
+                    ten_may = "VieNeu" if mode == MODE_VIENEU else "OmniVoice"
+                    status_var.set(f"Nạp lại {ten_may} để render lại...")
+                    logging.info(f"↩ Nạp lại {ten_may} để render các đoạn lỗi...")
                     model, _ = nap_engine(mode, device)
                     for i in sorted(miss):
                         logging.info(f"  [{i:04d}] lỗi: {' | '.join(miss[i])}")
@@ -3448,6 +3487,8 @@ class App(tk.Tk):
         mode_row.grid(row=0, column=0, sticky="w")
         for label, val, desc in [
             ("🎙  Clone",   "clone",   "OmniVoice nhái giọng mẫu"),
+            # 11/11/2026: phương án thứ 2 — VieNeu giọng dựng sẵn, chạy CPU trong phần mềm.
+            ("🗣  VieNeu",  MODE_VIENEU, "Giọng dựng sẵn · chạy CPU"),
             ("🎨  Thiết kế", "design",  "Mô tả giọng"),
             ("🔊  Mặc định", "default", "Model tự chọn"),
         ]:
@@ -3499,6 +3540,19 @@ class App(tk.Tk):
         self._design_vars: list[tk.StringVar] = []
         self._design_sep = ", "
         self._build_design_dropdowns()
+
+        # VieNeu — 25 giọng dựng sẵn v3 Turbo, mặc định Ngọc Huyền (danh sách tĩnh trong
+        # taogiong_vieneu để hiện được mà không nạp model; model nạp lúc ▶ Chạy).
+        self.frm_vieneu = ttk.Frame(self.voice_frame)
+        ttk.Label(self.frm_vieneu, text="Giọng VieNeu:", width=11, anchor="w").pack(side="left", padx=(0, 6))
+        self.var_vieneu_voice = tk.StringVar(value=giong_vieneu_da_luu(self._opt_settings))
+        self.cb_vieneu = ttk.Combobox(self.frm_vieneu, textvariable=self.var_vieneu_voice,
+                                      values=list(vn.GIONG_DUNG_SAN), width=30, state="readonly")
+        self.cb_vieneu.pack(side="left")
+        _tt = vn.trang_thai()
+        ttk.Label(self.frm_vieneu, style="Hint.TLabel",
+                  text=(_tt["mo_ta"] if _tt["san_sang"] else "⚠ " + _tt["mo_ta"])
+                  ).pack(side="left", padx=(10, 0))
 
         # Default
         self.frm_default = ttk.Frame(self.voice_frame)
@@ -5768,15 +5822,27 @@ class App(tk.Tk):
         self.var_instruct.set(self._design_sep.join(parts))
 
     def _on_mode_change(self):
-        for frm in (self.frm_clone, self.frm_design, self.frm_default):
+        for frm in (self.frm_clone, self.frm_vieneu, self.frm_design, self.frm_default):
             frm.pack_forget()
         {"clone":   self.frm_clone,
+         MODE_VIENEU: self.frm_vieneu,
          "design":  self.frm_design,
          "default": self.frm_default}[self.var_mode.get()].pack(anchor="w")
 
     def _current_voice(self) -> str:
         """Tên file giọng mẫu thật đang chọn (đã bỏ tiền tố ★)."""
         return strip_star(self.var_ref.get())
+
+    def _vieneu_voice_param(self):
+        """Tên giọng dựng sẵn VieNeu đang chọn (voice_param của chế độ 🗣 VieNeu).
+        Thiếu kho / thiếu gói → hộp cảnh báo nói rõ cần gì, trả None (không chạy)."""
+        tt = vn.trang_thai()
+        if not tt["san_sang"]:
+            messagebox.showwarning(
+                "VieNeu chưa dùng được",
+                f"Chế độ 🗣 VieNeu: {tt['mo_ta']}\n\nHoặc chuyển sang chế độ 🎙 Clone.")
+            return None
+        return vn.giong_hop_le(self.var_vieneu_voice.get())
 
     def _reload_voice_combo(self, keep: str | None = None):
         """Dựng lại danh sách giọng: yêu thích (★) lên đầu, còn lại theo a-z.
@@ -5947,6 +6013,7 @@ class App(tk.Tk):
             save_opt_settings(dict(
                 from_gemini=self.var_from_gemini.get(),
                 mode=self.var_mode.get(),
+                vieneu_voice=vn.giong_hop_le(self.var_vieneu_voice.get()),
                 am_luong_db=self._am_luong_tu_o(),
                 chunk=int(self.var_chunk.get()),
                 pitch=parse_pitch(self.var_pitch.get(), OPTS_DEFAULTS["pitch"]),
@@ -7035,7 +7102,11 @@ class App(tk.Tk):
 
         Trả về dict cài đặt, hoặc None nếu cấu hình sai (đã hiện cảnh báo)."""
         mode = self.var_mode.get()
-        if mode == "clone":
+        if mode == MODE_VIENEU:
+            voice_param = self._vieneu_voice_param()
+            if not voice_param:
+                return None
+        elif mode == "clone":
             voice_name = self._current_voice()
             if not voice_name:
                 messagebox.showwarning("Thiếu giọng mẫu",
@@ -8528,7 +8599,11 @@ class App(tk.Tk):
         self._save_pipe_settings()   # ấn ▶ Chạy → nhớ cài đặt quy trình cho lần sau
         self._save_opt_settings()    # nhớ cả mục "Cài đặt" để lần sau làm mặc định
         mode = self.var_mode.get()
-        if mode == "clone":
+        if mode == MODE_VIENEU:
+            voice_param = self._vieneu_voice_param()
+            if not voice_param:
+                return
+        elif mode == "clone":
             voice_name = self._current_voice()
             if not voice_name:
                 messagebox.showwarning("Thiếu giọng mẫu",

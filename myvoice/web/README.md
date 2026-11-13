@@ -43,7 +43,7 @@ dùng GPU, mở Firefox và xoá file ngay trên máy bạn.
 | **🏠 Home** (trang chủ `/`) | 🏠 Home (đầy đủ) | **Mọi nút chức năng**: hàng đợi · ① kịch bản ①②③ · ② hàng loạt theo tập (bảng tập + ②③④⑤) · ③ giọng nói & video · ④ thumbnail |
 | **🛠 Tạo kịch bản** (`/kichban`) | Tạo kịch bản | Ba bước ①②③ với các ô ⛓ nối bước, hàng đợi, tập bỏ qua, câu mở đầu Gemini, reset quy trình |
 | **🎙 Nhận diện** | Nhận diện | ① nhận diện link → bảng tập tick chọn → các nút hàng loạt ②③④⑤ |
-| **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone/thiết kế/mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
+| **🎧 Giọng nói** | Giọng nói (TTS + video) | Chế độ clone / 🗣 VieNeu (giọng dựng sẵn chạy CPU, từ 11/11/2026) / thiết kế / mặc định, giọng mẫu + ★ + nghe thử, tệp vào/ra, cài đặt chung, video ngang · phụ đề · dọc · TikTok, ba nút “Dựng lại”, xoá output |
 | **🖼 Thumbnail** | Thumbnail | Tiêu đề (gợi ý sẵn từ SEO), ảnh nền, số tập, xem trước bản ngang + dọc |
 
 **✂ Che chữ Trung cháy sẵn trong clip** (khối ④ Video ngang, 08/11/2026; khoá

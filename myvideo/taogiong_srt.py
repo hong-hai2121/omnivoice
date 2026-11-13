@@ -30,6 +30,10 @@ Cách dùng:
     python taogiong_srt.py "….srt" --voice "hachi.mp3" --limit 10   (thử 10 câu)
     python taogiong_srt.py "….srt" --only-arrange     (đã có wav, chỉ xếp lại)
     python taogiong_srt.py "….srt" --sang 80          (bật 🔆 sáng giọng cho clone mẫu ồm; mặc định 0 từ 05/11/2026)
+    python taogiong_srt.py "….srt" --engine vieneu --giong-vieneu "Ngọc Huyền"
+        (11/11/2026: phương án thứ 2 — VieNeu-TTS giọng dựng sẵn, chạy CPU ngay trong tiến
+         trình này, 48 kHz, không dùng card màn hình; mặc định vẫn là --engine omni =
+         OmniVoice nhái giọng mẫu --voice)
     python taogiong_srt.py "….srt" --pitch 1 --vang 80 76 --thieunien 30
                                    (tông giọng + bộ lọc như myvoice; mặc định 0 = tắt)
     python taogiong_srt.py "….srt" --am-luong 3   (🔊 cộng 3 dB lên audio tổng ở bước cuối,
@@ -170,8 +174,10 @@ from amain_taogiong_gui import (  # noqa: E402
     load_omnivoice as _load_omnivoice, _tra_vram, _do_omnivoice, _voice_prompt,
     _generate_chunk,
     # 04/11/2026 — nap_engine / do_engine (cùng run_tts bên myvoice) thay cho load_omnivoice /
-    # _do_omnivoice ở mọi chỗ nạp / dỡ model. (Engine VieNeu gỡ 09/11/2026 — chỉ còn OmniVoice.)
-    nap_engine, do_engine,
+    # _do_omnivoice ở mọi chỗ nạp / dỡ model. 11/11/2026: ENGINE theo chế độ — "clone" =
+    # OmniVoice nhái giọng mẫu (mặc định), "vieneu" = VieNeu-TTS giọng dựng sẵn chạy CPU trong
+    # tiến trình (phương án thứ 2; vn = scripts/taogiong_vieneu.py).
+    nap_engine, do_engine, MODE_VIENEU, vn,
     # Mang từ myvoice sang (trước đây myvideo chưa có): cân mức giữa các câu, tông
     # giọng + bộ lọc giọng (mix_audio / main). (Chuẩn âm −14 LUFS gỡ hẳn 10/11/2026.)
     _balance_chunk_levels, parse_pitch)
@@ -188,9 +194,9 @@ SANG_MAC_DINH = 0      # 05/11/2026: về 0 (trước 80) — user "tắt hết 
 
 
 class Giong:
-    """Giọng đã chọn cho cả lượt: mode "clone" (voice_param = đường dẫn file mẫu). `id` ghi
-    vào sổ _vanban.json — đổi giọng là đọc lại toàn bộ câu (nửa bài giọng này nửa bài giọng
-    kia thì hỏng). (Mode "vieneu" của bản 04–09/11 đã gỡ; sổ cũ ghi "vieneu|…" → coi là đổi giọng.)"""
+    """Giọng đã chọn cho cả lượt: mode "clone" (voice_param = đường dẫn file mẫu) hay
+    "vieneu" (voice_param = tên giọng dựng sẵn, 11/11/2026). `id` ghi vào sổ _vanban.json —
+    đổi engine hay đổi giọng là đọc lại toàn bộ câu (nửa bài giọng này nửa bài giọng kia thì hỏng)."""
 
     def __init__(self, mode: str, voice_param: str, ten: str):
         self.mode, self.voice_param, self.ten = mode, voice_param, ten
@@ -204,10 +210,11 @@ class Giong:
         return self.mode == "clone"
 
     def mo_ta(self) -> str:
-        return f"giọng mẫu {self.ten}"
+        return (f"VieNeu giọng dựng sẵn '{self.ten}' (CPU)" if self.mode == MODE_VIENEU
+                else f"giọng mẫu {self.ten}")
 
     def prompt(self, model, sang) -> None:
-        """Clone: dựng/nạp prompt giọng mẫu 1 lần (xả Whisper ngay)."""
+        """Clone: dựng/nạp prompt giọng mẫu 1 lần (xả Whisper ngay). VieNeu: không có gì."""
         if self.clone:
             _voice_prompt(model, self.voice_param, sang)
 
@@ -215,6 +222,16 @@ class Giong:
         """Audio float32 của 1 câu — _generate_chunk của myvoice (cùng FADE_OUT 10 ms)."""
         return _generate_chunk(model, self.mode, self.voice_param, text,
                                dur_scale=dur_scale, sang_giong=sang)[0]
+
+
+def giong_vieneu(ten: str) -> Giong:
+    """Giọng dựng sẵn VieNeu theo tên; tên lạ → mặc định Ngọc Huyền (báo)."""
+    ten = (ten or "").strip()
+    if ten not in vn.GIONG_DUNG_SAN:
+        if ten:
+            print(f"⚠️ Không có giọng VieNeu '{ten}' — dùng {vn.GIONG_MAC_DINH}.")
+        ten = vn.GIONG_MAC_DINH
+    return Giong(MODE_VIENEU, ten, ten)
 
 
 def giong_clone(voice_path: Path) -> Giong:
@@ -236,9 +253,10 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
     Trả về (files, model, sr): files là list đường dẫn wav song song với cues
     (None nếu câu rỗng/lỗi); model/sr để bên gọi tự dỡ khỏi VRAM
     (model = None khi mọi câu đã có sẵn, chưa phải nạp).
-    giong: Giong — đổi giọng so với sổ là đọc lại toàn bộ.
-    sang: mức 🔆 Sáng giọng 0–100 — EQ giọng mẫu lúc dựng prompt; mức khác lần chạy
-    trước (ghi trong _vanban.json) thì đọc lại toàn bộ câu.
+    giong: Giong (engine + giọng) — đổi engine/giọng so với sổ là đọc lại toàn bộ.
+    sang: mức 🔆 Sáng giọng 0–100 — EQ giọng mẫu lúc dựng prompt (CHỈ clone; VieNeu không
+    có prompt nên ghi sổ mức 0); mức khác lần chạy trước (ghi trong _vanban.json) thì đọc
+    lại toàn bộ câu.
     """
     import soundfile as sf
 
@@ -270,13 +288,13 @@ def generate_all(cues, giong, tts_dir, redo=False, sang=0):
             print(f"⚠️ Thư mục có {len(co)} wav cũ mà bản dịch nay {len(cues)} câu "
                   "— cắt câu đã khác, đọc lại từ đầu cho khỏi lắp nhầm giọng.")
     # Sổ của bản cũ (trước 04/11/2026) không ghi giọng: toàn bộ là OmniVoice clone →
-    # coi như cùng giọng nếu nay vẫn clone.
+    # coi như cùng giọng nếu nay vẫn clone; nay là VieNeu thì chắc chắn khác → đọc lại.
     if giong_cu is None:
         giong_cu = giong.id if giong.clone else ""
     doi_giong = bool(cu) and giong_cu != giong.id
     doi_sang = bool(cu) and not doi_giong and sang_cu != sang_so
     if doi_giong and not redo:
-        print(f"🔁 Giọng đổi ({giong_cu or 'OmniVoice cũ'} → {giong.id}) → đọc lại "
+        print(f"🔁 Engine/giọng đổi ({giong_cu or 'OmniVoice cũ'} → {giong.id}) → đọc lại "
               f"toàn bộ {len(cues)} câu.")
         redo = True
     if doi_sang and not redo:
@@ -718,8 +736,16 @@ def mix_audio(segments, out_wav, timeline_end):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="TTS (OmniVoice clone giọng mẫu) theo SRT tiếng Việt + sắp xếp audio chống đè.")
+        description="TTS (OmniVoice clone giọng mẫu / VieNeu giọng dựng sẵn) theo SRT tiếng Việt "
+                    "+ sắp xếp audio chống đè.")
     parser.add_argument("srt", help="File .srt tiếng Việt (…_vi.srt).")
+    # 11/11/2026: engine — mặc định omni (OmniVoice clone); vieneu = phương án thứ 2, chạy CPU.
+    parser.add_argument("--engine", choices=("omni", "vieneu"), default="omni",
+                        help="omni = OmniVoice nhái giọng mẫu (--voice; mặc định) · "
+                             "vieneu = VieNeu-TTS giọng dựng sẵn chạy CPU (--giong-vieneu).")
+    parser.add_argument("--giong-vieneu", default=vn.GIONG_MAC_DINH,
+                        help=f"Tên giọng dựng sẵn VieNeu (1 trong {len(vn.GIONG_DUNG_SAN)} giọng; "
+                             f"mặc định {vn.GIONG_MAC_DINH}).")
     parser.add_argument("--voice", default="",
                         help="Giọng mẫu: tên file trong myvoice/voice/giong_mau (hoặc kho cũ "
                              "myvideo/voice) hoặc đường dẫn (mặc định: file audio đầu "
@@ -778,12 +804,19 @@ def main():
         files = [f if f.exists() else None for f in files]
         print(f"♻ --only-arrange: dùng {sum(1 for f in files if f)} wav có sẵn trong {tts_dir.name}/")
     else:
-        voice = resolve_voice(args.voice)
-        if voice is None:
-            print("❌ Không tìm thấy giọng mẫu nào trong "
-                  + " / ".join(str(d) for d in VOICE_DIRS))
-            sys.exit(1)
-        giong = giong_clone(voice)
+        if args.engine == "vieneu":
+            tt = vn.trang_thai()
+            if not tt["san_sang"]:
+                print(f"❌ VieNeu chưa dùng được: {tt['mo_ta']}")
+                sys.exit(1)
+            giong = giong_vieneu(args.giong_vieneu)
+        else:
+            voice = resolve_voice(args.voice)
+            if voice is None:
+                print("❌ Không tìm thấy giọng mẫu nào trong "
+                      + " / ".join(str(d) for d in VOICE_DIRS))
+                sys.exit(1)
+            giong = giong_clone(voice)
         files, model, _sr = generate_all(cues, giong, tts_dir, redo=args.redo_tts, sang=sang)
         # 1a. Kiểm SPIKE ngay khi model còn trên VRAM (lớp thô, re-roll tại chỗ).
         if not args.no_kiemtra:

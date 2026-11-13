@@ -45,7 +45,7 @@
   <h1><span class="ico">🎬</span> myvideo — quy trình 4 bước</h1>
   <p class="muted">Video tiếng <b class="l-zh">Trung</b><b class="l-en">Anh</b> →
      <b>①</b> làm chậm + SRT <span class="l-zh">Trung</span><span class="l-en">Anh</span> →
-     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice xếp timeline →
+     <b>②</b> dịch Việt (Gemini) → <b>③</b> giọng OmniVoice / VieNeu xếp timeline →
      <b>④</b> video sub cứng + tiếng Việt.</p>
 </div>
 
@@ -269,11 +269,38 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   <div class="panel">
     <div class="phead">
       <span class="num">3</span><h2>Tạo giọng + xếp timeline</h2>
-      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🎙 OmniVoice clone giọng mẫu),
-        xếp chống đè →
+      <p class="hint">Đọc từng câu <code>_vi.srt</code> → wav (🎙 OmniVoice clone giọng mẫu,
+        hoặc 🗣 VieNeu giọng dựng sẵn), xếp chống đè →
         <code>_vi_sapxep.srt</code> + <code>_vi_audio.wav</code>; rồi như myvoice:
         cân mức giữa các câu, tông giọng + bộ lọc (không chuẩn hoá độ to).
         Chạy lại tự bỏ qua câu đã có audio.</p>
+    </div>
+    {# 11/11/2026: ENGINE bước ③ — 🎙 OmniVoice (mặc định) | 🗣 VieNeu (phương án thứ 2: giọng
+       dựng sẵn, chạy CPU ngay trong tiến trình bước ③ — không server, không dùng card màn
+       hình; scripts/taogiong_vieneu.py). Lưu cùng form chính (khoá engine / giong_vieneu trong
+       web_settings.json); JS cuối trang (veEngine) ẩn/hiện hai khối. taogiong_srt.py nhận
+       --engine / --giong-vieneu. #}
+    <div class="inline" id="engineRow" style="gap:18px; margin-bottom:8px">
+      <label style="display:flex; gap:6px; align-items:center">
+        <input type="radio" name="engine" value="omni" {{ 'checked' if settings.engine != 'vieneu' }}>
+        <b>🎙 OmniVoice</b><span class="hint">clone giọng mẫu</span>
+      </label>
+      <label style="display:flex; gap:6px; align-items:center"
+             title="VieNeu-TTS giọng dựng sẵn (mặc định Ngọc Huyền), 48 kHz. Chạy bằng CPU ngay trong bước ③: không nạp OmniVoice, bước tạo giọng không dùng card màn hình. Tốc độ ngang OmniVoice (khoảng 36 câu/phút).">
+        <input type="radio" name="engine" value="vieneu" {{ 'checked' if settings.engine == 'vieneu' }}>
+        <b>🗣 VieNeu</b><span class="hint">giọng dựng sẵn · chạy CPU</span>
+      </label>
+    </div>
+    <div class="grid" id="khoiVieneu">
+      <label class="field" title="{{ vieneu_mo_ta }}">
+        <span>Giọng VieNeu — 25 giọng dựng sẵn
+          {% if not vieneu_san_sang %}<b>⚠ chưa dùng được: {{ vieneu_mo_ta }}</b>{% endif %}</span>
+        <select name="giong_vieneu" id="vieneuSel">
+          {% for v in vieneu_giong %}
+            <option value="{{ v }}" {{ 'selected' if settings.giong_vieneu == v }}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </label>
     </div>
     <div class="grid" id="khoiClone">
       <label class="field">
@@ -969,6 +996,16 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       }
     }
   };
+  // ── 🎙/🗣 Engine bước ③ (11/11/2026): ẩn/hiện khối giọng mẫu ↔ khối giọng VieNeu.
+  const engR = [...document.querySelectorAll("#engineRow input[name=engine]")];
+  const veEngine = () => {
+    const vieneu = engR.some(r => r.checked && r.value === "vieneu");
+    document.getElementById("khoiVieneu").style.display = vieneu ? "" : "none";
+    document.getElementById("khoiClone").style.display = vieneu ? "none" : "";
+  };
+  engR.forEach(r => r.addEventListener("change", () => { veEngine(); danhDauDoi(true); }));
+  document.getElementById("vieneuSel").addEventListener("change", () => danhDauDoi(true));
+  veEngine();
 
   // ── 🎚 Mẫu giọng cài sẵn (09/11/2026, bảng hu.MAU_GIONG chung với myvoice) ──
   // Chọn mẫu → điền tông + 4 bộ lọc (🔆 là thanh kéo sanggiong); sửa tay ô nào → nhãn về
@@ -1012,7 +1049,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
   const ntAu = document.getElementById("nghethuAudio");
   const ntNote = document.getElementById("nghethuNote");
   const NT_GUI = ["pitch", "vang_truong_do", "vang_cuong_do", "thieu_nien", "sanggiong",
-                  "am_luong_db", "voice"];
+                  "am_luong_db", "engine", "giong_vieneu", "voice"];
   const NT_LAI = new Set([...NT_GUI, "mau_giong"]);
   let ntLuot = 0, ntHen = null, ntDang = false;
   async function ngheThu() {

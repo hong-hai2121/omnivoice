@@ -8,7 +8,8 @@ xếp lệnh vào hàng đợi, không import logic nặng nào:
                           Firefox dự phòng — gemini_backend dùng chung myvoice);
                           ô 🤖 GPT CLI (gemini_backend = "cli", cùng ô chọn) →
                           --cli: codex exec, tài khoản ChatGPT, không cần trình duyệt
-  ③ taogiong_srt.py       giọng OmniVoice từng câu + xếp timeline chống đè; cài đặt giọng
+  ③ taogiong_srt.py       giọng OmniVoice (mặc định) hoặc VieNeu giọng dựng sẵn chạy CPU (khoá
+                          engine, 11/11/2026) từng câu + xếp timeline chống đè; cài đặt giọng
                           (🎚 mẫu, tông, vang, thiếu niên, 🔆 sáng, 🔊 âm lượng dB)
                           cùng khoá với myvoice
   ④ video_gansub_cung.py  vẽ sub cứng + (tuỳ chọn) thay tiếng bằng audio đã xếp
@@ -374,7 +375,13 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                 label = "② Dịch GPT CLI (Codex) → SRT tiếng Việt"
         elif k == "giong":
             argv = [_python(), "-u", str(BASE_DIR / "taogiong_srt.py"), f"{B}_vi.srt"]
-            # (Engine VieNeu gỡ 09/11/2026 — bước ③ luôn là OmniVoice clone giọng mẫu --voice.)
+            # 11/11/2026: engine — khoá engine ("omni" mặc định | "vieneu" = phương án thứ 2,
+            # VieNeu giọng dựng sẵn chạy CPU) + giong_vieneu. Chỉ thêm cờ khi chọn VieNeu để
+            # lệnh mặc định (OmniVoice) y như trước; --voice vẫn gửi để đổi về omni là có giọng mẫu.
+            if s.get("engine") == "vieneu":
+                argv += ["--engine", "vieneu", "--giong-vieneu",
+                         str(s.get("giong_vieneu") or "").strip() or "Ngọc Huyền"]
+                label = "③ Tạo giọng (VieNeu, CPU) + xếp timeline"
             if s.get("voice"):
                 argv += ["--voice", s["voice"]]
             # 🔆 Sáng giọng (khối ③ trang chính, khoá sanggiong, mặc định 0 từ 05/11/2026, "0" = tắt):

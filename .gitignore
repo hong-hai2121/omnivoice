@@ -120,6 +120,8 @@ mt_cache/
 /myvoice/TRINHDUYET/cau_hinh.json
 /myvoice/TRINHDUYET/*.png
 
-# Kho VieNeu-TTS từng clone về cho chế độ 🗣 VieNeu (04–09/11/2026, đã gỡ) — git repo RIÊNG
-# (nested) + .venv vài GB, còn nằm trên đĩa, KHÔNG đưa vào repo này.
+# Kho VieNeu-TTS clone về cho chế độ 🗣 VieNeu — git repo RIÊNG (nested) + .venv vài GB, KHÔNG
+# đưa vào repo này. Từ 11/11/2026 scripts/taogiong_vieneu.py import mã nguồn từ src/ của kho
+# (chạy CPU trong venv OmniVoice; .venv riêng của kho không còn dùng). Lấy lại:
+#   cd myvoice/voice && git clone https://github.com/pnnbao97/VieNeu-TTS.git
 /myvoice/voice/VieNeu-TTS/
