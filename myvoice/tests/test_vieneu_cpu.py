@@ -259,6 +259,22 @@ class TestCheDo(unittest.TestCase):
             gui.do_engine("omni", "thử")
         omni.assert_called_once_with("omni", "thử")
 
+    def test_mo_ta_giong_doc(self):
+        # 14/11/2026: dòng "🗣 Giọng đọc" trong nhật ký — engine + tên giọng + TÊN mẫu bộ lọc.
+        san_khau = dict(gui.hu.MAU_GIONG["Sân khấu"])
+        s = gui.mo_ta_giong_doc("vieneu", "Ngọc Huyền", san_khau["pitch"], san_khau, 5)
+        self.assertEqual(s, 'VieNeu-TTS (CPU) · giọng dựng sẵn "Ngọc Huyền" · mẫu bộ lọc "Sân khấu" '
+                            "(tông +0.0, tiếng vang trường độ 45 / cường độ 25, sáng giọng 70) · âm lượng +5.0 dB")
+        # Tên lạ → in đúng giọng máy đọc sẽ dùng; tắt hết = "Mặc định"; âm lượng 0 thì không in.
+        self.assertEqual(gui.mo_ta_giong_doc("vieneu", "không có"),
+                         'VieNeu-TTS (CPU) · giọng dựng sẵn "Ngọc Huyền" · mẫu bộ lọc "Mặc định" (không chỉnh gì)')
+        s = gui.mo_ta_giong_doc("clone", r"D:\kho\giong_mau\ngọc huyền 01 ngọt ngào.wav", 1.5, {"sang_giong": 60})
+        self.assertEqual(s, 'OmniVoice clone · giọng mẫu "ngọc huyền 01 ngọt ngào.wav" · '
+                            "bộ lọc tuỳ chỉnh (tông +1.5, sáng giọng 60)")
+        self.assertIn('OmniVoice thiết kế · mô tả "female, young adult"',
+                      gui.mo_ta_giong_doc("design", " female, young adult "))
+        self.assertIn("giọng mặc định của model", gui.mo_ta_giong_doc("default", None))
+
     def test_generate_chunk(self):
         may = _MayGia()
         kq = gui._generate_chunk(may, "vieneu", "Mai Anh", "câu  một.\n", dur_scale=1.06, sang_giong=80)
@@ -308,11 +324,15 @@ class TestRunTts(unittest.TestCase):
                                _apply_voice_fx_file=MagicMock(), load_omnivoice=MagicMock()), \
                 patch.object(torch.cuda, "empty_cache") as don_vram, \
                 patch.object(torch.cuda, "mem_get_info") as do_vram, \
-                patch.object(gui.logging, "info"), patch.object(gui.logging, "warning"):
+                patch.object(gui.logging, "info") as nhat_ky, patch.object(gui.logging, "warning"):
             ok = gui.run_tts("vieneu", "Ngọc Huyền", chunks, str(output), _V(0), _V(""),
                              stub, stub, stub, ev, fx={"sang_giong": 80})
             gui.load_omnivoice.assert_not_called()
         self.assertTrue(ok)
+        # Nhật ký nêu rõ engine + tên giọng + mẫu bộ lọc của lượt (sáng giọng 80 = mẫu "Sáng rõ").
+        self.assertIn('🗣 Giọng đọc: VieNeu-TTS (CPU) · giọng dựng sẵn "Ngọc Huyền" · '
+                      'mẫu bộ lọc "Sáng rõ" (tông +0.0, sáng giọng 80)',
+                      [c.args[0] for c in nhat_ky.call_args_list if c.args])
         self.assertEqual(len(cac_may), 1)                     # nạp đúng một lần
         may = cac_may[0]
         self.assertEqual(sf.info(str(output)).samplerate, SR)

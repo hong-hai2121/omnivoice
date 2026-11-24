@@ -1,24 +1,46 @@
-{# Bảng trạng thái từng video trong output + danh sách file mới — cần rows,
-   files, output_dir. Khối này được htmx làm mới 5 giây/lần.
+{# Bảng trạng thái từng video trong output — cần rows, cho. Khối này được htmx
+   làm mới 5 giây/lần. (Danh sách 📁 File mới đã tách sang _file.html.)
+
+   18/11/2026 — 🎛 CHỈNH TRƯỚC: mỗi hàng có Ô TICK ở đầu (giống bảng tập bên
+   myvoice); tick một video rồi bấm nút 🎛 Chỉnh trước ở đầu khối → khung xem
+   trước hiện ngay dưới bảng này (#chinhtruoc ở index.html). Bảng vẽ lại 5 giây
+   một lần nên dấu tick do JS ở index.html giữ và tô lại sau mỗi lượt vẽ. Hàng
+   "cho" = nguồn vừa nạp vào ô Nguồn nhưng chưa chạy bước nào (server nhớ trong
+   cho_chinh) — hiện lên để tick chỉnh trước được ngay.
 
    13/10/2026: khối đã DỜI LÊN trước "Các bước" (nằm TRONG #mainform) nên không
    được chứa <form> con nữa (form lồng form là HTML sai, trình duyệt tự bóc thẻ
    trong). Mọi nút là type="button" + hx-post/hx-vals (htmx gửi hx-vals như
-   form-urlencoded nên route Form(...) nhận y như cũ); trang xem (/timeline,
-   /vungsub) là GET nên dùng thẳng thẻ <a>. Server trả về khối hàng đợi (vào
-   #queue) kèm bảng này và lời nhắn — bấm nút nào trang cũng KHÔNG tải lại. #}
+   form-urlencoded nên route Form(...) nhận y như cũ); trang xem (/timeline)
+   là GET nên dùng thẳng thẻ <a>. Server trả về khối hàng đợi (vào
+   #queue) kèm bảng này và lời nhắn — bấm nút nào trang cũng KHÔNG tải lại.
+
+   20/11/2026 — user bảo GỠ hai cột "Làm tiếp" (⏩) và "Chạy lại" (②③④ 🎞 🫥)
+   khỏi bảng này vì không dùng ở đây. Chức năng còn ở chỗ khác thì giữ nguyên:
+   chạy lại từng bước = nút "Chạy bước ②/③/④" ở các khối bước; 🎞 timeline =
+   ⏱ So giờ → "🎞 Xem cả bài" (và ⚠️ ở cột 🚨 Soát); vùng che = 🎛 Chỉnh trước.
+   Đừng thêm lại hai cột này khi chưa được bảo.
+
+   24/11/2026 — user: "sao video thử lại có ở trong này". BẢN THỬ 3 phút của 🎛
+   Chỉnh trước KHÔNG còn là một hàng (server._bang_ctx lọc): nó thuộc về video của
+   nó — hàng nguồn chờ ghi thêm "đã có bản thử", video chỉ mới có bản thử thì hiện
+   MỘT hàng xám `chi_thu`. Bản nháp 60 giây vẫn là hàng nhưng mang nhãn 🧪. #}
 <div class="panel">
   <div class="phead">
     <b>📼 Video trong output — bước nào xong, bước nào thiếu</b>
     <span class="spacer"></span>
+    {# id cố định, bắt click ở cấp trang (index.html) vì khối này bị thay 5 giây/lần. #}
+    <button type="button" class="primary" id="nutChinhTruoc"
+      title="Tick ô vuông ở đầu hàng của MỘT video rồi bấm đây: mở khung xem trước ngay dưới bảng để chỉnh phóng to, dải che mờ, âm lượng, và chạy thử 3 phút đầu (dịch + lồng tiếng) trước khi chạy cả bài">🎛 Chỉnh trước</button>
     <button type="button" class="ghost"
       hx-post="/mo-thumuc" hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button>
   </div>
-  {% if rows %}
+  {% if rows or cho or chi_thu %}
   <div class="tablewrap">
     <table class="grid">
       <thead>
         <tr>
+          <th title="Tick video muốn 🎛 Chỉnh trước">☑</th>
           <th style="text-align:left">Video</th>
           <th>① Chậm + SRT</th>
           <th>② SRT Việt</th>
@@ -27,15 +49,79 @@
           <th title="Tiêu đề + mô tả + tag sinh bằng Gemini — nguồn caption khi đăng">📑 SEO</th>
           <th title="Ảnh bìa từ khung hình video + tiêu đề SEO">🖼 Thumb</th>
           <th title="Soát tự động: câu còn sót chữ Hán trong bản dịch · câu bị xếp lệch mốc quá 3 giây">🚨 Soát</th>
-          <th>Làm tiếp</th>
-          <th>Chạy lại</th>
           <th>Xoá</th>
         </tr>
       </thead>
       <tbody>
+        {% for c in cho %}
+        <tr class="hangcho">
+          <td><input type="checkbox" class="tickv" value="{{ c.id }}"
+                     title="Tick rồi bấm 🎛 Chỉnh trước"></td>
+          <td class="left clip tencell" title="{{ c.src }}">{{ c.ten }}</td>
+          <td class="no" colspan="7" style="text-align:left">{%
+            if c.co_thu %}⏳ chưa chạy cả bài · <span class="nhanthu">🧪 đã có bản thử 3 phút</span>{%
+            else %}⏳ mới nạp, chưa chạy bước nào{% endif %}{%
+            if c.link and not c.co_tep %} · link chưa tải về máy{%
+            elif not c.co_tep %} · ⚠️ không thấy file{% endif %}
+            — tick rồi bấm <b>🎛 Chỉnh trước</b>{% if c.co_thu %} để xem lại bản thử{% endif %}, hoặc để dòng này trong ô Nguồn và bấm ▶ Chạy tất cả</td>
+          <td>
+            <button type="button" class="ghost small"
+                    hx-post="/nguon/bo" hx-vals='{{ {"src": c.src} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML"
+                    title="Bỏ nguồn này khỏi danh sách (không xoá file, không đụng ô Nguồn)">✕</button>
+          </td>
+        </tr>
+        {% endfor %}
+        {# Video MỚI CHỈ CÓ bản thử 3 phút (chưa chạy cả bài, nguồn cũng không còn ở
+           danh sách chờ): một hàng xám ghi rõ là bản thử — tick để mở lại trong 🎛,
+           🗑 để dọn. Không vẽ các cột ①②③④ kẻo đọc nhầm là video thật còn thiếu bước. #}
+        {% for t in chi_thu %}
+        <tr class="hangcho">
+          <td><input type="checkbox" class="tickv" value="{{ t.id }}"
+                     title="Tick rồi bấm 🎛 Chỉnh trước"></td>
+          <td class="left clip tencell" title="{{ t.ten }}">{{ t.ten }}</td>
+          <td class="no" colspan="7" style="text-align:left"><span class="nhanthu">🧪 chỉ có bản thử 3 phút</span>
+            chưa chạy cả bài — tick rồi bấm <b>🎛 Chỉnh trước</b> để xem lại bản thử</td>
+          <td>
+            <button type="button" class="ghost small danger"
+                    hx-post="/xoa" hx-vals='{{ {"base": t.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML"
+                    hx-confirm="Đưa BẢN THỬ 3 phút của “{{ t.ten }}” (thư mục thử + clip đã cắt) vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+                    title="Xoá bản thử 3 phút của video này (chỉ đưa vào Thùng rác, khôi phục được)">🗑</button>
+          </td>
+        </tr>
+        {% endfor %}
         {% for r in rows %}
         <tr class="{{ 'done' if r.sub }}">
-          <td class="left clip" title="{{ r.base }}{% if r.doan %} — video dài đã chia {{ r.doan }} đoạn, các bước chạy từng đoạn rồi ghép; cờ bên phải tính theo bản ghép cả bài{% endif %}">{{ r.base }}{% if r.doan %} <span class="hint">✂{{ r.doan }}</span>{% endif %}</td>
+          <td><input type="checkbox" class="tickv" value="{{ r.id }}"
+                     title="Tick rồi bấm 🎛 Chỉnh trước"></td>
+          {# 15/11/2026: 📂 mở thư mục riêng của video này (bôi chọn sẵn video
+             thành phẩm để bấm đúp là xem); bấm TÊN video → bảng nhỏ so mốc giờ
+             5 câu đầu (sub gốc ↔ giọng đã tạo), nạp vào #socau ở index.html —
+             #socau nằm ngoài #bang nên bảng tự vẽ lại không làm mất nó. Tên là
+             thẻ <a> (inline) chứ không phải <button>: ô này cắt chữ bằng dấu …,
+             mà inline-block quá dài thì bị ẩn cả cục chứ không cắt. Nút 📂 đứng
+             TRƯỚC tên cũng vì thế — đứng sau thì tên dài đẩy nó ra khỏi ô. #}
+          {# Nút "⏱ So giờ" CÓ CHỮ (thêm cùng ngày): chỉ để tên bấm được thì user
+             không nhìn ra chức năng nằm ở đâu — phải có nút gọi đúng tên việc. #}
+          <td class="left clip tencell">
+            {# Bản nháp 60 giây: nhãn đứng ĐẦU ô (ô cắt chữ ở cuối — đuôi _thu60 của
+               tên không bao giờ lọt vào tầm nhìn) để khỏi lẫn với video cả bài. #}
+            {% if r.thu60 %}<span class="nhanthu"
+              title="Bản nháp 60 giây của nút 🧪 Thử 60 giây — không phải video cả bài">🧪 thử 60s</span>{% endif %}
+            <button type="button" class="ghost small" hx-post="/mo-thumuc"
+                    hx-vals='{{ {"base": r.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML"
+                    title="Mở thư mục của video này trong Explorer — video thành phẩm (_sub.mp4) được chọn sẵn, bấm đúp là xem">📂</button>
+            <button type="button" class="small sogio"
+                    hx-get="/partials/socau?base={{ r.base | urlencode }}"
+                    hx-target="#socau" hx-swap="innerHTML"
+                    title="So thời gian 5 câu đầu: mốc + độ dài của sub gốc (SRT) cạnh mốc + độ dài giọng đọc đã tạo">⏱ So giờ</button>
+            <a href="#" class="tenvideo"
+               hx-get="/partials/socau?base={{ r.base | urlencode }}"
+               hx-target="#socau" hx-swap="innerHTML"
+               title="{{ r.base }}{% if r.doan %} — video dài đã chia {{ r.doan }} đoạn, các bước chạy từng đoạn rồi ghép; cờ bên phải tính theo bản ghép cả bài{% endif %}
+Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ r.base }}</a>{% if r.doan %} <span class="hint">✂{{ r.doan }}</span>{% endif %}</td>
           <td class="{{ 'okc' if r.video and r.srt else 'no' }}">{{
             '✔' if r.video and r.srt else ('chỉ SRT' if r.srt else ('chỉ video' if r.video else '—')) }}</td>
           <td class="{{ 'okc' if r.vi else 'no' }}">{{ '✔' if r.vi else '—' }}</td>
@@ -63,33 +149,6 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            {% if r.missing %}
-              <button type="button" class="small" hx-post="/tiep"
-                      hx-vals='{{ {"base": r.base} | tojson }}'
-                      hx-target="#queue" hx-swap="innerHTML"
-                      hx-disabled-elt="this">⏩ {{ r.missing_label }}</button>
-            {% elif r.resume_err %}
-              <span title="{{ r.resume_err }}">⚠️</span>
-            {% else %}✅{% endif %}
-          </td>
-          <td>
-            {% for k in ['dich', 'giong', 'gan'] %}
-              <button type="button" class="ghost small" hx-post="/buoc"
-                      hx-vals='{{ {"base": r.base, "key": k} | tojson }}'
-                      hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
-                      title="Chạy lại bước {{ {'dich':'② dịch','giong':'③ giọng','gan':'④ gắn sub'}[k] }}">{{
-                {'dich':'②','giong':'③','gan':'④'}[k] }}</button>
-            {% endfor %}
-            {% if r.tl %}
-              <a class="ghost small" href="/timeline?base={{ r.base | urlencode }}"
-                 title="Xem timeline xếp audio kiểu CapCut (trước / sau khi xếp)">🎞</a>
-            {% endif %}
-            {% if r.video %}
-              <a class="ghost small" href="/vungsub?base={{ r.base | urlencode }}"
-                 title="Sửa VÙNG CHE sub gốc bằng mắt — kéo dải trên khung hình thật thay vì đoán số trong _vungsub.json">🫥</a>
-            {% endif %}
-          </td>
-          <td>
             <button type="button" class="ghost small danger"
                     hx-post="/xoa" hx-vals='{{ {"base": r.base} | tojson }}'
                     hx-target="#queue" hx-swap="innerHTML"
@@ -101,36 +160,13 @@
       </tbody>
     </table>
   </div>
-  <p class="hint">⚠️ = thiếu file mà không tự chạy tiếp được (di chuột lên xem lý do).
-     Nút ⏩ xếp MỌI bước còn thiếu vào hàng đợi — kể cả 📑 SEO và 🖼 thumbnail
-     (như ⏩ Chạy tiếp bên myvoice) — việc Gemini (②📑) chạy trước việc GPU (③④).
-     Nút 🗑 xoá mọi file của video đó trong output (vào Thùng rác Windows, khôi phục được).</p>
+  <p class="hint"><b>☑ + 🎛 Chỉnh trước</b> = tick một video rồi bấm nút 🎛 ở đầu khối:
+     xem trước, chỉnh phóng to / dải che mờ / âm lượng, chạy thử 3 phút đầu.
+     📂 = mở thư mục của video đó (video thành phẩm được chọn sẵn).
+     <b>⏱ So giờ</b> (hoặc bấm vào tên video) = xem thời gian 5 câu đầu: sub gốc so với giọng đã tạo.
+     Nút 🗑 xoá mọi file của video đó trong output (vào Thùng rác Windows, khôi phục được).
+     <b>🧪 Bản thử 3 phút</b> không hiện thành hàng riêng — tick video rồi bấm 🎛 Chỉnh trước để xem lại.</p>
   {% else %}
   <p class="empty">Chưa có video nào trong output — chạy bước ① với một video mới.</p>
-  {% endif %}
-</div>
-
-<div class="panel">
-  <div class="phead">
-    <b>📁 File mới trong output</b>
-  </div>
-  {# Nút 🗑 Xoá cả output nằm ở khối Nguồn (cạnh nút ▶ Chạy tất cả) — chỗ
-     bắt đầu một mẻ mới cũng là chỗ hay muốn dọn sạch mẻ cũ. #}
-  <p class="hint">{{ output_dir }} — dọn sạch bằng nút 🗑 ở khối Nguồn trên đầu
-     trang; xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
-  {% if files %}
-  <div class="tablewrap">
-    <table class="grid">
-      <tbody>
-        {% for f in files %}
-        <tr>
-          <td class="left clip" title="{{ f.name }}">{{ f.name }}</td>
-          <td>{{ f.size }}</td>
-          <td class="no">{{ f.when }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
   {% endif %}
 </div>

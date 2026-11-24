@@ -4,7 +4,9 @@ màn hình, chỉ dán thêm logo Mimi audio nhỏ ở góc trên phải.
 
 Quy trình:
   - Lấy thời lượng từ file audio (kịch_bản/*.wav) làm thời lượng đích.
-  - Ghép RANDOM các video trong videongang/ (lặp lại tới khi đủ thời lượng audio).
+  - Ghép RANDOM các video trong videongang/ (lặp lại tới khi đủ thời lượng audio). Clip đã
+    lên một video thì được đánh dấu "đã lấy" (clip_da_lay.py, 18/11/2026): video sau chỉ bốc
+    clip chưa lấy, hết nguồn đang chọn mới reset và lấy lại từ đầu.
   - Phóng to ZOOM rồi cắt về 1920×1080 (phần dư cắt ở mép trên/dưới theo CAT_TREN để bỏ
     phụ đề + watermark cháy sẵn trong clip kho), dán logo, mux audio (-t = độ dài audio).
 
@@ -34,6 +36,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 from scipy import ndimage
+
+import clip_da_lay   # sổ "clip đã lấy": lần dựng sau không bốc trùng clip các lần trước
 
 # Ép UTF-8 cho stdout/stderr (tránh lỗi gõ tiếng Việt). Dùng reconfigure() để đổi
 # encoding TẠI CHỖ — KHÔNG bọc TextIOWrapper mới. Nếu bọc wrapper mới, khi module
@@ -368,15 +372,11 @@ def build_playlist(videos, durations, target):
     """
     Trả về (danh sách video theo thứ tự ngẫu nhiên có lặp, tổng thời lượng).
     Xáo trộn rồi lấy lần lượt; hết thì xáo lại — đảm bảo tổng >= target.
+
+    Bản KHÔNG nhớ (mỗi lần gọi bốc lại từ cả kho). Dựng video thật đi qua
+    clip_da_lay.chon_co_nho (18/11/2026): bỏ qua clip đã lấy ở các lần dựng trước.
     """
-    seq, total, pool = [], 0.0, []
-    while total < target:
-        if not pool:
-            pool = videos[:]
-            random.shuffle(pool)
-        v = pool.pop()
-        seq.append(v)
-        total += durations[v]
+    seq, total, _moi, _so_reset = clip_da_lay.chon(videos, durations, target)
     return seq, total
 
 
@@ -618,18 +618,22 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
 
     concat_list = None
     keo = 1.0
+    ghi_da_lay, da_lay_mo_ta = None, ""
     if nguon:
         # Một video: kéo/nén thời lượng cho khớp audio (lời đọc là bản dịch của chính
         # video này nên hình đi cùng lời); lệch quá mức kẹp thì lặp/cắt phần còn lại.
         keo = ti_le_keo(nguon_dur, audio_dur)
         seq, total = [nguon], nguon_dur * keo
     else:
-        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
+        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations).
+        # 18/11/2026: chỉ bốc clip CHƯA lấy ở các lần dựng trước; hết thì reset nguồn đang
+        # chọn rồi lấy lại từ đầu. Dấu "đã lấy" chỉ ghi khi dựng XONG (ghi_da_lay ở cuối).
         durations = probe_durations(videos, log)
         videos = [v for v in videos if v in durations]
         if not videos:
             raise RuntimeError(f"Không đọc được clip nào trong: {ten_kho}")
-        seq, total = build_playlist(videos, durations, audio_dur)
+        seq, total, ghi_da_lay, da_lay_mo_ta = clip_da_lay.chon_co_nho(
+            videos, durations, audio_dur)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
                                          delete=False, encoding="utf-8") as f:
@@ -651,6 +655,7 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
             + ("" if total >= audio_dur - 0.05 else " (ngắn hơn audio → lặp lại từ đầu)"))
     else:
         log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+        log(f"Clip đã lấy: {da_lay_mo_ta}")
     log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
     log(f"Đầu ra     : {output}")
 
@@ -757,6 +762,9 @@ def build_video(audio_file: Path, *, mode: str = MODE, log=print, effect=None,
     if rc != 0:
         xoa_video_cut(output, goc_out, log=log)     # không để file cụt lại thành "đã có"
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
+
+    if ghi_da_lay:
+        ghi_da_lay(log)       # dựng xong mới đánh dấu clip "đã lấy" cho lần sau khỏi trùng
 
     if goc_out and goc_out.exists():
         # Ghi kèm bố cục + logo đã chọn: bản dọc dán logo cùng màu, và tập nào mất file gốc

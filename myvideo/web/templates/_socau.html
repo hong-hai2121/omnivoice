@@ -1,0 +1,148 @@
+{# ⏱ So mốc giờ MẤY CÂU ĐẦU của một video — bấm TÊN video ở bảng Kết quả thì
+   htmx nạp khối này vào #socau (nằm NGOÀI #bang, nên bảng tự vẽ lại 5 giây/lần
+   không làm mất nó). Cần base, rows (xem _so_cau() trong server.py), da_dich,
+   co_giong; `loi` nếu tên không hợp lệ. Đóng: ✕ / bấm ra nền / Esc (JS ở
+   index.html). #}
+<div class="modal">
+  <div class="modal-card socau-card">
+    <div class="modal-head">
+      <b>⏱ Mốc giờ {{ rows | length or '' }} câu đầu</b>
+      <span class="hint socau-ten" title="{{ base }}">{{ base.split('/')[-1] }}</span>
+      <span class="spacer"></span>
+      <button type="button" class="small modal-x">✕</button>
+    </div>
+    <div class="modal-body">
+      {% if loi %}
+        <p class="warn">⚠️ {{ loi }}</p>
+      {% elif not rows %}
+        <p class="empty">Video này chưa có SRT — chạy bước ① trước.</p>
+      {% else %}
+        <div class="tablewrap">
+          <table class="grid socau">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th title="Khe của câu trong SRT: lúc sub hiện → lúc sub tắt">Sub gốc (SRT)</th>
+                <th title="Chỗ giọng đọc thật sự nằm trong audio đã xếp và nó dài bao lâu">Giọng đã tạo</th>
+                <th title="Độ dài giọng trừ độ dài khe sub: dương = giọng đọc lâu hơn sub hiện, âm = đọc xong sớm">Giọng − sub</th>
+                <th style="text-align:left">Câu</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in rows %}
+              <tr>
+                <td class="no">{{ r.i }}</td>
+                <td>{% if url_goc %}<button type="button" class="ghost small sc-nghe" data-loai="goc"
+                          data-s="{{ r.s }}" data-e="{{ r.e }}"
+                          title="Nghe TIẾNG GỐC của video đúng trong khe sub của câu này">▶ Nghe gốc</button>
+                  {% endif %}{{ r.s | moc }} → {{ r.e | moc }}
+                  <small>dài {{ '%.2f' % (r.dai / 1000) }}s</small></td>
+                {% if r.v %}
+                  <td>{% if url_giong %}<button type="button" class="ghost small sc-nghe" data-loai="giong"
+                            data-s="{{ r.v.s }}" data-e="{{ r.v.e }}"
+                            title="Nghe GIỌNG ĐỌC phần mềm đã tạo cho câu này (đúng chỗ nó nằm trong audio đã xếp)">▶ Nghe giọng</button>
+                    {% endif %}{{ r.v.s | moc }} → {{ r.v.e | moc }}
+                    <small>dài {{ '%.2f' % (r.v.dai / 1000) }}s{%
+                      if r.v.doi %} · <span class="tran"
+                        title="Giọng không vào đúng mốc sub — bộ xếp dời đi để khỏi đè câu bên cạnh">dời {{
+                        '%+.2f' % (r.v.doi / 1000) }}s</span>{% endif %}</small></td>
+                  <td class="{{ 'tran' if r.v.chenh > 50 else 'okc' }}"
+                      title="{{ 'Giọng dài hơn khe sub — đọc lấn sang sau khi sub tắt' if r.v.chenh > 50
+                                else 'Giọng nằm gọn trong khe sub' }}">{{
+                    '%+.2f' % (r.v.chenh / 1000) }}s</td>
+                {% else %}
+                  <td class="no" colspan="2">{{ '— giọng đã tạo không có câu ở mốc này (dịch lại sau khi tạo giọng?) —'
+                    if co_giong else '— chưa có giọng —' }}</td>
+                {% endif %}
+                <td class="cau">{{ r.text }}{% if r.goc %}
+                  <small>{{ r.goc }}{% if r.gop > 1 %} · gộp {{ r.gop }} dòng sub gốc{% endif %}</small>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {# Mốc giờ thuộc bản nhận diện CŨ (19/11/2026): user nghe thử thấy câu 3 không có
+           tiếng người, câu 4 mở đầu bằng tiếng động — đúng lỗi chữ lạc quanh chỗ nghỉ
+           đã sửa ở bước ①, nhưng video này dựng trước khi sửa. Nói rõ + cho nút chạy lại. #}
+        {% if ban_cu %}
+          <p class="warn">⚠️ Mốc giờ của video này được nhận diện bằng <b>bản cũ</b> (trước 18/11/2026):
+            câu đứng ngay sau một quãng không ai nói có thể <b>vào sớm tới hàng chục giây</b> (bấm ▶ Nghe gốc
+            sẽ nghe thấy nhạc / tiếng động chứ chưa có lời), nên giọng đọc ghép vào không khớp lúc nhân vật nói.
+            Bước ① đã được sửa — nhận diện lại là mốc giờ bám đúng chỗ có tiếng người.
+            <button type="button" class="primary small" style="margin-left:6px"
+                    hx-post="/chaylai" hx-vals='{{ {"base": base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                    hx-confirm="Nhận diện lại và chạy lại CẢ BÀI ①②③④ cho video này? Bước dịch, tạo giọng và dựng video đều làm lại (bài dài mất cỡ một tiếng); video ① đã làm chậm thì giữ nguyên."
+                    title="Xếp vào hàng đợi: ① nhận diện lại (bỏ mốc giờ cũ) → ② dịch → ③ tạo giọng → ④ dựng video">🔁 Nhận diện lại + chạy lại cả bài ①②③④</button></p>
+        {% endif %}
+        {# ▶ NGHE từng câu (19/11/2026, user yêu cầu): hai thẻ audio dùng chung cho cả
+           bảng — tiếng gốc phát từ video ①, giọng đọc phát từ audio đã xếp của bước
+           ③; mỗi nút nhảy tới đúng mốc của câu rồi tự dừng ở cuối câu. preload=none:
+           chưa bấm thì chưa tải gì (video ① nặng cả GB). #}
+        {% if url_goc or url_giong %}
+          <p class="hint"><b>▶ Nghe gốc</b> = tiếng gốc của video đúng trong khe sub của câu ·
+            <b>▶ Nghe giọng</b> = đoạn giọng đọc phần mềm đã tạo cho câu đó. Bấm lại nút đang phát để dừng.
+            {% if not url_giong %}(Chưa có giọng đọc — chạy bước ③ thì mới có nút ▶ Nghe giọng.){% endif %}</p>
+          {% if url_goc %}<audio id="scGoc" src="{{ url_goc }}" preload="none"></audio>{% endif %}
+          {% if url_giong %}<audio id="scGiong" src="{{ url_giong }}" preload="none"></audio>{% endif %}
+          <script>
+          (() => {
+            const may = { goc: document.getElementById("scGoc"), giong: document.getElementById("scGiong") };
+            const khung = document.getElementById("socau");
+            let dang = null;                 // { el, nut, het, chu, hen }
+            const dung = () => {
+              if (!dang) return;
+              clearInterval(dang.hen);
+              dang.el.pause();
+              dang.nut.textContent = dang.chu;
+              dang = null;
+            };
+            const phat = (nut) => {
+              const el = may[nut.dataset.loai];
+              if (!el) return;
+              if (dang && dang.nut === nut) { dung(); return; }      // bấm lại nút đang phát = dừng
+              dung();
+              const s = +nut.dataset.s / 1000, het = +nut.dataset.e / 1000;
+              const chu = nut.textContent;
+              nut.textContent = "⏳ đang nạp…";
+              const hen = setInterval(() => {
+                // Bảng bị đóng (✕ / Esc / bấm ra nền) thì thẻ audio rời trang nhưng vẫn kêu → tự tắt.
+                if (!document.body.contains(el) || (dang && dang.batDau && el.currentTime >= het)) dung();
+              }, 40);
+              dang = { el, nut, het, chu, hen, batDau: false };
+              const chay = () => {
+                if (!dang || dang.nut !== nut) return;                // đã bấm nút khác trong lúc nạp
+                el.currentTime = s;
+                el.play().then(() => {
+                  if (dang && dang.nut === nut) { dang.batDau = true; nut.textContent = "⏸ Dừng"; }
+                }).catch(() => { dung(); nut.textContent = "⚠️ không phát được"; });
+              };
+              if (el.readyState >= 1) chay();
+              else { el.addEventListener("loadedmetadata", chay, { once: true }); el.load(); }
+            };
+            khung.querySelectorAll(".sc-nghe").forEach(n => n.addEventListener("click", () => phat(n)));
+          })();
+          </script>
+        {% endif %}
+        {% if not co_giong %}
+          <p class="hint">Chưa tạo giọng (bước ③) nên mới có mốc sub{{ '' if da_dich else ' tiếng gốc — cũng chưa dịch (bước ②)' }}.</p>
+        {% elif not da_dich %}
+          <p class="hint">Không thấy bản dịch <code>_vi.srt</code> — đang so theo SRT tiếng gốc.</p>
+        {% endif %}
+      {% endif %}
+    </div>
+    <div class="modal-foot">
+      <span class="hint">Chỉ {{ rows | length or 'mấy' }} câu đầu để liếc nhanh.</span>
+      <span class="spacer"></span>
+      {% if co_giong %}
+        <a class="ghost small" href="/timeline?base={{ base | urlencode }}">🎞 Xem cả bài</a>
+      {% endif %}
+      {% if not loi %}
+        <button type="button" class="ghost small" hx-post="/mo-thumuc"
+                hx-vals='{{ {"base": base} | tojson }}'
+                hx-target="#queue" hx-swap="innerHTML">📂 Mở thư mục</button>
+      {% endif %}
+      <button type="button" class="primary small modal-x">Xong</button>
+    </div>
+  </div>
+</div>

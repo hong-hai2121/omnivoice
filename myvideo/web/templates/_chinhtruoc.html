@@ -1,0 +1,646 @@
+{# 🎛 CHỈNH TRƯỚC (18/11/2026) — khung xem trước của video đã tick ở bảng Kết
+   quả; nạp vào #chinhtruoc (index.html) qua /partials/chinhtruoc. Cần: m (xem
+   server._ct_muc; None = không nhận ra video), mid, zoom, chesub, gocdb, ttsdb,
+   thu_phut.
+
+   Khung MÔ PHỎNG đúng thứ tự bước ④ dựng hình: che mờ dải sub gốc → phóng to
+   (cắt giữa) — dải mờ nằm TRONG lớp phóng nên phóng to là dải đi theo hình. Âm
+   thanh trộn bằng Web Audio: hai kênh độc lập (tiếng gốc của video · giọng đọc
+   bước ③) kéo là nghe ngay, đúng công thức của ④ (dB → hệ số 10^(dB/20)).
+
+   Khung nằm trong #mainform nên: ô nhập KHÔNG có name, nút đều type=button,
+   không có <form> con. Script bọc trong hàm chạy ngay — khung được nạp lại
+   nhiều lần, khai const ở cấp trang là lần hai báo trùng tên. #}
+{% if m is none %}
+<div class="panel">
+  <p class="warn">⚠️ Không nhận ra video vừa tick (có thể vừa bị xoá khỏi output) —
+     tick lại ở bảng rồi bấm 🎛 Chỉnh trước.</p>
+</div>
+{% else %}
+{# | default(…) ở mọi biến MỚI: server đang chạy bản code cũ (chưa trả toc / cac_toc /
+   ten_goc) thì khung vẫn dựng được, chỉ thiếu hàng nút tốc độ. #}
+{% set toc = m.toc | default('') %}
+{% set cac_toc = m.cac_toc | default([]) %}
+<div class="panel ct" id="ctPanel" data-mid="{{ mid }}" data-toc="{{ toc }}">
+  <div class="phead">
+    <b>🎛 Chỉnh trước — {{ m.ten_goc | default(m.ten) }}</b>
+    <span class="hint" id="ctLoai" style="flex-basis:auto; margin-left:8px">{%
+      if m.loai == 'that' %}đang xem: video ① cả bài (đã làm chậm){% if m.audio_url %} + giọng đọc đã tạo{% endif %}{%
+      elif m.loai == 'thu' %}đang xem: bản thử {{ thu_phut }} phút đầu{% if toc %} ở tốc độ {{ toc }}x{% endif %}{% if m.audio_url %} — đã lồng tiếng{% endif %}{%
+      elif m.loai == 'clip' %}đang xem: clip gốc {{ thu_phut }} phút đầu — cắt từ file nguồn, chưa nhận diện / lồng tiếng{% if toc and toc != '1.0' %}; đang phát chậm {{ toc }}x để xem thử nhịp{% endif %}{%
+      elif m.loai == 'nguon' %}đang xem: file nguồn gốc — video thật, đủ độ dài{% if toc and toc != '1.0' %}; đang phát chậm {{ toc }}x để xem thử nhịp{% endif %}{% endif %}</span>
+    <span class="spacer"></span>
+    <button type="button" class="ghost small" id="ctDong" title="Đóng khung xem trước">✕ Đóng</button>
+  </div>
+  {# 🐢 TỐC ĐỘ SAU KHI LÀM CHẬM (20/11/2026, user yêu cầu): cùng một cài đặt với ô ở khối
+     ①, đưa vào đây để thử trên 3 phút đầu. MỖI TỐC ĐỘ MỘT BẢN THỬ RIÊNG: thử 0.7 rồi
+     thử 0.8, bấm lại 0.7 là xem ngay bản đã làm — không tạo lại. #}
+  {% if cac_toc %}
+  <div class="actions ct-tocdo" style="margin: 0 0 10px">
+    <span class="hint" style="margin:0"><b>🐢 Tốc độ sau khi làm chậm:</b></span>
+    {% for t in cac_toc %}
+      <button type="button" class="small ct-toc {{ 'primary' if t.dang else 'ghost' }}" data-toc="{{ t.toc }}"
+              data-nhan="{{ t.nhan }}" {{ 'disabled' if t.dang }}
+              title="{% if t.dang %}Đang xem tốc độ này{% elif t.co_giong %}Đã có bản thử {{ thu_phut }} phút ở {{ t.nhan }} — bấm là xem ngay, KHÔNG tạo lại{% else %}Chưa có bản thử ở {{ t.nhan }} — bấm để chuyển sang tốc độ này (xem clip gốc phát chậm {{ t.nhan }}), rồi bấm 🧪 để tạo bản thử{% endif %}">{{ t.nhan }}{{ ' ✅ có sẵn' if t.co_giong }}</button>
+    {% endfor %}
+    <span class="hint" style="margin:0">✅ có sẵn = tốc độ đã có bản thử {{ thu_phut }} phút, bấm là xem ngay, không tạo lại.
+      Tốc độ chưa có: bấm chọn rồi bấm 🧪. Ô “Tốc độ sau khi làm chậm” ở khối ① đổi theo nút đang chọn.</span>
+  </div>
+  {% endif %}
+  {# Chọn BẢN muốn xem (19/11/2026): video thật (file nguồn / video ① cả bài) hay
+     bản thử 3 phút có lồng tiếng — có từ hai bản trở lên mới hiện hàng nút. #}
+  {% if m.cac_ban | length > 1 %}
+  <div class="actions" style="margin: 0 0 10px">
+    <span class="hint" style="margin:0">Xem bản:</span>
+    {% for b in m.cac_ban %}
+      <button type="button" class="small ct-ban {{ 'primary' if b.dang else 'ghost' }}" data-xem="{{ b.key }}"
+              {{ 'disabled' if b.dang }}
+              title="{{ 'Đang xem bản này' if b.dang else 'Chuyển sang xem bản này (các mức đang kéo dở mà chưa 💾 sẽ về lại số đã lưu)' }}">{{ b.nhan }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if not m.video_url %}
+    <p class="warn">⚠️ {{ m.ly_do or 'Chưa có video để xem trước.' }}</p>
+    {% if m.src %}
+    <div class="actions">
+      <button type="button" class="primary"
+              hx-post="/chinhtruoc/thu" hx-vals='{{ {"ct_id": mid, "ct_toc": toc} | tojson }}'
+              hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this">🧪 Chạy thử {{ thu_phut }} phút đầu{% if toc %} ở tốc độ {{ toc }}x{% endif %} (dịch + lồng tiếng)</button>
+    </div>
+    {% endif %}
+  {% else %}
+  <div class="ct-luoi">
+    <div class="ct-trai">
+      {# Giới hạn theo BỀ NGANG (không phải max-height): ép chiều cao thì khung
+         lệch tỉ lệ, hình bị bóp và dải che lệch khỏi chữ. #}
+      <div class="ct-man" id="ctMan"
+           style="aspect-ratio: {{ m.w }} / {{ m.h }}; max-width: calc(62vh * {{ m.w }} / {{ m.h }})">
+        <div class="ct-zoom" id="ctZoom">
+          <video id="ctVideo" src="{{ m.video_url }}" preload="metadata" playsinline></video>
+          <div class="ct-che" id="ctChe" title="Kéo thân dải để dời (lên/xuống; đã thu hẹp thì cả trái/phải) · kéo mép trên/dưới để đổi độ dày · kéo mép trái/phải để đổi chiều rộng">
+            <i class="ct-mep ct-tren" data-mep="tren"></i>
+            <i class="ct-mep ct-duoi" data-mep="duoi"></i>
+            <i class="ct-mep ct-mtrai" data-mep="trai"></i>
+            <i class="ct-mep ct-mphai" data-mep="phai"></i>
+          </div>
+        </div>
+        <div class="ct-cho" id="ctCho">⏳ Đang nạp video…</div>
+      </div>
+      <div class="ct-dk">
+        <button type="button" class="primary small" id="ctPlay">▶ Phát</button>
+        <input type="range" id="ctTua" min="0" max="1000" step="1" value="0" title="Tua">
+        <span class="hint" id="ctGio" style="margin:0; white-space:nowrap">0:00 / 0:00</span>
+      </div>
+      {% if m.audio_url %}<audio id="ctGiong" src="{{ m.audio_url }}" preload="auto"></audio>{% endif %}
+    </div>
+
+    <div class="ct-phai">
+      <div class="ct-o">
+        <div class="ct-nhan"><b>🔎 Phóng to hình</b><span id="ctZoomSo"></span></div>
+        <input type="range" id="ctZoomK" min="0" max="100" step="5" value="{{ zoom }}">
+        <p class="hint">0 = giữ nguyên. Phóng to rồi cắt về đúng khung cũ — mép hình mất bớt
+           (dùng để đẩy logo / viền của video gốc ra ngoài).</p>
+        {# ↕ VỊ TRÍ DỌC (19/11/2026, user yêu cầu): dời hình trong phần dôi ra do phóng
+           (bước ④: --zoom-y). 24/11/2026 (user yêu cầu): THANH KÉO NGANG như mọi thanh
+           khác của khung (trước là cột dựng đứng) — kéo PHẢI = số tăng = hình dịch LÊN,
+           kéo TRÁI = hình dịch XUỐNG; số lưu và công thức không đổi. #}
+        <div class="ct-nhan" style="margin-top:10px"><b>↕ Vị trí dọc của hình</b><span id="ctDocSo"></span></div>
+        <input type="range" id="ctDocK" min="-100" max="100" step="5" value="{{ zoom_y | default(0) }}"
+               title="Kéo sang PHẢI = hình dịch lên · kéo sang TRÁI = hình dịch xuống">
+        <div class="hint ct-dau"><span>⬇ hình xuống</span><span>giữa</span><span>hình lên ⬆</span></div>
+        <div class="actions" style="margin-top:4px">
+          <button type="button" class="ghost small" id="ctDocGiua"
+                  title="Đưa hình về chính giữa theo chiều dọc (cắt đều mép trên và mép dưới)">↺ Hình về giữa</button>
+        </div>
+        <p class="hint">Kéo sang <b>phải</b> = hình dịch <b>lên</b>, sang <b>trái</b> = hình dịch <b>xuống</b>
+           (vd đẩy dòng sub gốc sát đáy ra ngoài khung). Chỉ dời được trong phần hình dôi ra do
+           phóng to — phóng càng nhiều dời càng xa; chưa phóng thì thanh bị khoá.</p>
+      </div>
+
+      <div class="ct-o">
+        <div class="ct-nhan"><b>🫥 Lớp che mờ sub gốc</b><span id="ctCheSo"></span></div>
+        {# KHÔNG đặt padding-left:0 cho nhãn: ô tick của .chk nằm đè lên lề trái đó (app.css,
+           body.p-video .chk) — bỏ lề là ô tick che mất chữ "Che" đầu dòng. #}
+        <label class="chk"><input type="checkbox" id="ctCheBat" {{ 'checked' if chesub }}>
+          Che mờ dải sub gốc (dải viền vàng trên hình — viền chỉ để dễ kéo, video thật không có)</label>
+        <div class="actions" style="margin-top:4px">
+          {% if m.base_do %}
+          <button type="button" class="ghost small" id="ctDo"
+                  title="Chạy bộ dò tự động trên video ① (vài giây) rồi đặt dải theo kết quả — chưa lưu cho tới khi bấm 💾">↺ Dò tự động</button>
+          {% endif %}
+          <span class="hint" style="margin:0">{% if not m.co_vung %}Chưa có vùng nào được lưu — đang hiện dải gợi ý, kéo cho trùm kín chữ.{% else %}Kéo thân dải trên hình để dời lên/xuống.{% endif %}</span>
+        </div>
+        {# ĐỘ DÀY dải che (19/11/2026, user yêu cầu): kéo mép dải trên hình vẫn được
+           nhưng khó thấy — thêm thanh riêng. Dải nở/co quanh chính giữa của nó. #}
+        <div class="ct-nhan" style="margin-top:8px"><b>Độ dày lớp che mờ</b><span id="ctDaySo"></span></div>
+        <input type="range" id="ctDayK" min="8" max="{{ [m.h // 2, 16] | max }}" step="1" value="{{ m.y1 - m.y0 }}">
+        <p class="hint">Kéo phải = lớp che dày hơn (cao hơn, mờ đậm hơn), kéo trái = mỏng lại.
+           Lớp che nở/co quanh chính giữa của nó; vị trí thì kéo thẳng dải vàng trên hình.</p>
+        {# ↔ CHIỀU RỘNG lớp che (20/11/2026, user yêu cầu): không nhất thiết phủ hết bề
+           ngang — sub gốc chỉ nằm một khúc giữa thì che đúng khúc đó, hai bên giữ nét.
+           Bước ④ nhận qua --vung y0:y1:x0:x1. | default: server bản cũ chưa trả x0/x1. #}
+        {% set cx0 = m.x0 | default(0) %}{% set cx1 = m.x1 | default(m.w) %}
+        <div class="ct-nhan" style="margin-top:10px"><b>↔ Chiều rộng lớp che mờ</b><span id="ctRongSo"></span></div>
+        <input type="range" id="ctRongK" min="{{ [m.w // 20, 16] | max }}" max="{{ m.w }}" step="1" value="{{ cx1 - cx0 }}">
+        <div class="ct-nhan" style="margin-top:6px"><b>Vị trí ngang của lớp che (trái ↔ phải)</b><span id="ctNgangSo"></span></div>
+        <input type="range" id="ctNgangK" min="0" max="{{ [m.w - (cx1 - cx0), 0] | max }}" step="1" value="{{ cx0 }}">
+        <div class="actions" style="margin-top:4px">
+          <button type="button" class="ghost small" id="ctRongHet"
+                  title="Trả lớp che về phủ hết bề ngang như trước giờ">↔ Phủ hết bề ngang</button>
+          <button type="button" class="ghost small" id="ctNgangGiua"
+                  title="Giữ nguyên chiều rộng, đưa lớp che về chính giữa bề ngang">↺ Về giữa</button>
+        </div>
+        <p class="hint">Kéo thanh chiều rộng sang <b>trái</b> = lớp che hẹp lại (co quanh chính giữa của nó), kéo hết
+           <b>phải</b> = phủ hết bề ngang như cũ. Đã hẹp thì dời sang trái/phải bằng thanh “Vị trí ngang”, hoặc kéo
+           thẳng dải vàng trên hình; kéo mép trái/phải của dải cũng đổi được chiều rộng. Phần hình ngoài lớp che giữ nguyên nét.</p>
+      </div>
+
+      <div class="ct-o">
+        <div class="ct-nhan"><b>🔉 Âm lượng tiếng gốc của video</b><span id="ctGocSo"></span></div>
+        <input type="range" id="ctGocK" min="-21" max="20" step="1" value="{{ gocdb }}">
+        <p class="hint">Nấc tận trái = như cũ: lồng tiếng thì TẮT tiếng gốc, không lồng tiếng thì giữ nguyên mức.
+           Kéo sang phải để giữ tiếng gốc làm nền dưới giọng đọc (−20…+20 dB) — <b>kéo là nghe ngay</b>.</p>
+      </div>
+
+      <div class="ct-o">
+        <div class="ct-nhan"><b>🗣 Âm lượng giọng đọc (VieNeu / OmniVoice tạo)</b><span id="ctGiongSo"></span></div>
+        <input type="range" id="ctGiongK" min="-20" max="20" step="1" value="{{ ttsdb }}" {{ 'disabled' if not m.audio_url }}>
+        <p class="hint" id="ctGiongLoi">{% if m.audio_url %}Hai thanh độc lập — <b>kéo là nghe ngay</b> trên video đang xem
+          (đang dừng thì tự phát), không cần bấm 💾. 💾 chỉ để ghi mức này cho lượt dựng thật.{%
+          else %}Chưa có giọng đọc cho video này — bấm <b>🧪 Chạy thử {{ thu_phut }} phút</b> bên dưới; xong thì khung này tự báo.{% endif %}</p>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="primary" id="ctLuu"
+                title="Ghi các mức đang chỉnh: tốc độ đang chọn, phóng to, bật/tắt che mờ và hai mức âm lượng vào cài đặt chung; dải che ghi riêng cho video này">💾 Áp dụng cho lượt dựng</button>
+        {% if m.src %}
+        <button type="button" id="ctThu"
+                hx-post="/chinhtruoc/thu" hx-vals='{{ {"ct_id": mid, "ct_toc": toc} | tojson }}'
+                hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                title="{% if m.co_thu %}LÀM LẠI TỪ ĐẦU bản thử{% if toc %} {{ toc }}x{% endif %} theo cài đặt đang có trên trang{% else %}Chạy trên chính clip {{ thu_phut }} phút đang xem{% if toc %}, ở tốc độ {{ toc }}x{% endif %}{% endif %}: ① làm chậm + nhận diện → ② dịch → ③ tạo giọng đọc (không dựng ④). Xong thì khung này TỰ chuyển sang bản đã lồng tiếng để chỉnh hai mức âm lượng. Bản thử của các tốc độ khác vẫn được giữ nguyên">{%
+          if m.co_thu %}🔁 Làm lại bản thử {{ thu_phut }} phút{% if toc %} {{ toc }}x{% endif %} theo cài đặt mới{%
+          else %}🧪 Chạy thử {{ thu_phut }} phút{% if toc %} ở tốc độ {{ toc }}x{% endif %} (nhận diện + dịch + lồng tiếng){% endif %}</button>
+        {% endif %}
+      </div>
+      <p class="hint" id="ctTrangThai">{% if m.loai == 'thu' and m.audio_url %}✅ Bản thử{% if toc %} {{ toc }}x{% endif %} đã lồng tiếng — chỉnh hai thanh âm lượng rồi bấm 💾.{%
+        elif m.loai == 'that' and m.audio_url %}✅ Video này đã có giọng đọc — chỉnh xong bấm 💾, rồi chạy lại bước ④ ở bảng trên.{%
+        elif not m.src %}Không biết file nguồn của video này nên không chạy thử được — dán lại file gốc vào ô Nguồn rồi mở 🎛 từ hàng đó.{%
+        elif m.loai == 'clip' and not m.co_thu %}✂ {% if toc %}Tốc độ {{ toc }}x chưa có bản thử — đang xem{% else %}Đã cắt sẵn{% endif %} clip gốc {{ thu_phut }} phút đầu, chưa nhận diện hay lồng tiếng gì. Chỉnh hình + tiếng gốc trước, rồi bấm 🧪 để nhận diện và lồng tiếng cho chính clip này{% if toc %} ở {{ toc }}x{% endif %}.{%
+        else %}Chỉnh hình + tiếng gốc trước; muốn nghe cả giọng đọc thì bấm 🧪.{% endif %}</p>
+      <p class="hint">{% if m.co_thu %}🔁 mỗi lần bấm là <b>làm lại bản thử{% if toc %} {{ toc }}x{% endif %} từ đầu</b> theo cài đặt đang có (tiếng gốc, model, giọng đọc…),
+        xong thì khung tự chuyển sang bản mới.{% else %}🧪 chạy xong thì khung tự chuyển sang bản đã lồng tiếng.{% endif %}
+        {% if toc %}Mỗi tốc độ giữ một bản thử riêng — đổi tốc độ không xoá bản đã làm.{% endif %}
+        💾 lưu {% if toc %}tốc độ / {% endif %}phóng to / che mờ / âm lượng vào cài đặt chung (áp cho mọi lượt dựng sau đó), riêng dải che lưu theo từng video.</p>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .ct-luoi { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .ct-luoi { grid-template-columns: 1fr; } }
+  .ct-man { position: relative; width: 100%; margin: 0 auto; overflow: hidden;
+            background: #000; border-radius: var(--r-sm); }
+  .ct-zoom { position: absolute; inset: 0; transform-origin: 50% 50%; }
+  .ct-zoom video { width: 100%; height: 100%; display: block; object-fit: fill; }
+  .ct-che { position: absolute; left: 0; right: 0; cursor: grab; touch-action: none;
+            -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+            background: rgba(255, 255, 255, .05); outline: 2px dashed #ffd400; outline-offset: -2px; }
+  .ct-che.tat { display: none; }
+  .ct-mep { position: absolute; left: 0; right: 0; height: 12px; cursor: ns-resize; }
+  .ct-tren { top: -6px; } .ct-duoi { bottom: -6px; }
+  /* mép trái/phải: đổi CHIỀU RỘNG lớp che. Tên ct-mtrai/ct-mphai — KHÔNG dùng ct-trai/ct-phai:
+     hai tên đó là hai CỘT của khung (.ct-luoi), trùng là cột bị bóp còn 12px. */
+  .ct-mtrai, .ct-mphai { top: 0; bottom: 0; height: auto; width: 12px; cursor: ew-resize; }
+  .ct-mtrai { left: -6px; right: auto; } .ct-mphai { right: -6px; left: auto; }
+  .ct-cho { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            padding: 12px; text-align: center; color: #fff; background: rgba(0, 0, 0, .55); font-size: 13px; }
+  .ct-cho.an { display: none; }
+  .ct-dk { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .ct-dk input[type=range] { flex: 1; }
+  .ct-o { padding: 8px 10px; margin-bottom: 8px; background: var(--sunken); border: 1px solid var(--line);
+          border-radius: var(--r-sm); }
+  .ct-o input[type=range] { width: 100%; }
+  .ct-o .hint { margin-top: 4px; }
+  .ct-nhan { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 4px; }
+  .ct-nhan span { color: var(--accent); font-weight: 650; white-space: nowrap; }
+  /* ↕ Vị trí dọc: thanh kéo NGANG — hàng chữ nhỏ dưới thanh ghi hai đầu là chiều nào. */
+  .ct-dau { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+</style>
+
+{# 🐢 Hàng nút tốc độ — script RIÊNG, chạy cả khi chưa có video để xem (link chưa tải):
+   bấm nút = nạp lại khung ở tốc độ đó; ô "Tốc độ sau khi làm chậm" của khối ① đi theo
+   tốc độ khung đang xem (một cài đặt, hai chỗ bấm — lượt chạy thật dùng đúng số đang thấy). #}
+{% if toc %}
+<script>
+(() => {
+  const MID = {{ mid | tojson }}, TOC = {{ toc | tojson }};
+  const panel = document.getElementById("ctPanel");
+  if (!panel) return;
+  const o = document.querySelector("#mainform select[name=speed]");
+  if (o && o.value !== TOC && [...o.options].some(x => x.value === TOC)) {
+    o.value = TOC;
+    // change nổi bọt → form chính tự hiện dấu "chưa lưu"; khung KHÔNG nạp lại vì
+    // data-toc của khung đã bằng đúng giá trị này (xem index.html).
+    o.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  panel.querySelectorAll(".ct-toc").forEach(n => n.addEventListener("click", () => {
+    if (n.dataset.toc !== TOC) window.moChinhTruoc(MID, "", n.dataset.toc);
+  }));
+})();
+</script>
+{% endif %}
+
+{% if m.video_url %}
+<script>
+(() => {
+  const MID = {{ mid | tojson }}, TOC = {{ toc | tojson }};
+  const H = {{ m.h }}, CO_GIONG = {{ 'true' if m.audio_url else 'false' }};
+  const BASE_DO = {{ m.base_do | tojson }};
+  const panel = document.getElementById("ctPanel");
+  const $ = id => document.getElementById(id);
+  const video = $("ctVideo"), giong = $("ctGiong"), lopZoom = $("ctZoom"), che = $("ctChe");
+  const bao = (msg, ok) => (typeof nhan === "function" ? nhan(msg, ok) : alert(msg));
+  let y0 = {{ m.y0 }}, y1 = {{ m.y1 }};
+  // Mép trái/phải của lớp che theo pixel video; (0, W) = phủ hết bề ngang.
+  const W = {{ m.w }}, RONG_TOI = {{ [m.w // 20, 16] | max }};
+  let x0 = {{ m.x0 | default(0) }}, x1 = {{ m.x1 | default(m.w) }};
+  // Clip gốc / file nguồn CHƯA làm chậm → phát chậm đúng tốc độ đang chọn, thấy ngay nhịp
+  // hình + tiếng sẽ ra sao mà chưa phải chạy gì (trình duyệt giữ nguyên cao độ giọng, như
+  // atempo của bước ①). Bản thử / video ① đã chậm sẵn trong file thì phát nguyên tốc độ.
+  // defaultPlaybackRate: video.load() (lúc lùi về bản xem trước) không làm mất nhịp này.
+  const NHIP = ({{ 'true' if m.loai in ('clip', 'nguon') else 'false' }} && +TOC > 0) ? +TOC : 1;
+  video.defaultPlaybackRate = NHIP;
+  video.playbackRate = NHIP;
+
+  // ── Hình: phóng to + dải che ────────────────────────────────────────────
+  // Phóng k lần quanh tâm rồi dời dọc trong phần dôi ra: dôi mỗi phía = (k−1)/2
+  // chiều cao khung; thanh kéo p (−100…+100) lấy p% của phần dôi đó. Cùng công thức
+  // với bước ④ (crop y = (ih−oh)/2 · (1 + p/100)) — p dương là hình dịch LÊN.
+  const veZoom = () => {
+    const z = +$("ctZoomK").value, k = 1 + z / 100;
+    $("ctDocK").disabled = !z;
+    const p = z ? +$("ctDocK").value : 0;
+    lopZoom.style.transform = `translateY(${-p * (k - 1) / 2}%) scale(${k})`;
+    $("ctZoomSo").textContent = z ? `+${z}%` : "giữ nguyên";
+    $("ctDocSo").textContent = !z ? "phóng to trước đã" : !p ? "giữa" : p > 0 ? `lên ${p}%` : `xuống ${-p}%`;
+  };
+  const veChe = () => {
+    const day = y1 - y0, rong = x1 - x0, het = rong >= W;
+    che.style.top = (y0 / H * 100) + "%";
+    che.style.height = (day / H * 100) + "%";
+    che.style.left = (x0 / W * 100) + "%";
+    che.style.width = (rong / W * 100) + "%";
+    che.classList.toggle("tat", !$("ctCheBat").checked);
+    // Độ mờ như bước ④: sigma = dày/4, kẹp 10…30 (px video) → quy ra px màn hình.
+    const mo = Math.max(10, Math.min(30, Math.floor(day / 4))) * (lopZoom.offsetHeight || H) / H;
+    che.style.backdropFilter = che.style.webkitBackdropFilter = `blur(${Math.max(2, mo).toFixed(1)}px)`;
+    $("ctCheSo").textContent = $("ctCheBat").checked
+      ? `y ${y0}–${y1} / ${H}px` + (het ? "" : ` · ngang ${x0}–${x1} / ${W}px`) : "tắt";
+    $("ctDayK").value = day;
+    $("ctDaySo").textContent = `${day}px (${Math.round(day / H * 100)}% chiều cao hình)`;
+    $("ctRongK").value = rong;
+    $("ctRongSo").textContent = het ? "phủ hết bề ngang" : `${rong}px (${Math.round(rong / W * 100)}% bề ngang)`;
+    const kN = $("ctNgangK"), lech = Math.round((x0 + x1) / 2 - W / 2);
+    kN.max = Math.max(0, W - rong);
+    kN.value = x0;
+    kN.disabled = het;                              // phủ hết thì không còn chỗ nào để dời
+    $("ctNgangGiua").disabled = het;
+    $("ctNgangSo").textContent = het ? "thu hẹp trước đã" : Math.abs(lech) <= 1 ? "giữa"
+      : lech < 0 ? `lệch trái ${-lech}px` : `lệch phải ${lech}px`;
+  };
+  $("ctZoomK").addEventListener("input", veZoom);
+  $("ctDocK").addEventListener("input", veZoom);
+  $("ctDocGiua").addEventListener("click", () => { $("ctDocK").value = 0; veZoom(); });
+  $("ctCheBat").addEventListener("change", veChe);
+  // Thanh độ dày: nở/co quanh chính giữa dải, không tràn khỏi khung hình. Đang
+  // tắt che mờ mà kéo thanh này thì bật lên luôn (kéo là muốn thấy).
+  $("ctDayK").addEventListener("input", () => {
+    const day = Math.max(8, Math.min(H, +$("ctDayK").value));
+    y0 = Math.round((y0 + y1) / 2 - day / 2);
+    if (y0 < 0) y0 = 0;
+    if (y0 + day > H) y0 = H - day;
+    y1 = y0 + day;
+    $("ctCheBat").checked = true;
+    veChe();
+  });
+  // Thanh CHIỀU RỘNG: co/nở quanh chính giữa lớp che (sub thường nằm giữa), không tràn
+  // khỏi khung hình; kéo hết phải = phủ hết bề ngang. Thanh VỊ TRÍ NGANG dời lớp che đã
+  // thu hẹp sang trái/phải, giữ nguyên chiều rộng.
+  $("ctRongK").addEventListener("input", () => {
+    const rong = Math.max(RONG_TOI, Math.min(W, +$("ctRongK").value));
+    x0 = Math.round((x0 + x1) / 2 - rong / 2);
+    if (x0 < 0) x0 = 0;
+    if (x0 + rong > W) x0 = W - rong;
+    x1 = x0 + rong;
+    $("ctCheBat").checked = true;
+    veChe();
+  });
+  $("ctNgangK").addEventListener("input", () => {
+    const rong = x1 - x0;
+    x0 = Math.max(0, Math.min(W - rong, +$("ctNgangK").value));
+    x1 = x0 + rong;
+    veChe();
+  });
+  $("ctRongHet").addEventListener("click", () => { x0 = 0; x1 = W; veChe(); });
+  $("ctNgangGiua").addEventListener("click", () => {
+    const rong = x1 - x0;
+    x0 = Math.round((W - rong) / 2);
+    x1 = x0 + rong;
+    veChe();
+  });
+
+  // Kéo dải: thân = dời cả dải (dọc, và ngang khi dải hẹp hơn bề ngang), mép trên/dưới
+  // = đổi độ dày, mép trái/phải = đổi chiều rộng. Quy chuột ra pixel VIDEO theo cỡ đang
+  // hiển thị của lớp phóng (đã gồm hệ số phóng).
+  let keo = null;
+  che.addEventListener("pointerdown", e => {
+    keo = { mep: e.target.dataset.mep || "than", x: e.clientX, y: e.clientY, x0, x1, y0, y1 };
+    che.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  che.addEventListener("pointermove", e => {
+    if (!keo) return;
+    const khung = lopZoom.getBoundingClientRect();
+    const d = Math.round((e.clientY - keo.y) / khung.height * H);
+    const dx = Math.round((e.clientX - keo.x) / khung.width * W);
+    const TOI = 8;                                  // dải mỏng nhất (px video)
+    if (keo.mep === "tren") y0 = Math.max(0, Math.min(keo.y1 - TOI, keo.y0 + d));
+    else if (keo.mep === "duoi") y1 = Math.min(H, Math.max(keo.y0 + TOI, keo.y1 + d));
+    else if (keo.mep === "trai") x0 = Math.max(0, Math.min(keo.x1 - RONG_TOI, keo.x0 + dx));
+    else if (keo.mep === "phai") x1 = Math.min(W, Math.max(keo.x0 + RONG_TOI, keo.x1 + dx));
+    else {
+      const day = keo.y1 - keo.y0, rong = keo.x1 - keo.x0;
+      y0 = Math.max(0, Math.min(H - day, keo.y0 + d));
+      y1 = y0 + day;
+      x0 = Math.max(0, Math.min(W - rong, keo.x0 + dx));
+      x1 = x0 + rong;
+    }
+    veChe();
+  });
+  const thaKeo = () => { keo = null; };
+  che.addEventListener("pointerup", thaKeo);
+  che.addEventListener("pointercancel", thaKeo);
+
+  if ($("ctDo")) $("ctDo").addEventListener("click", async () => {
+    const nut = $("ctDo");
+    nut.disabled = true;
+    nut.textContent = "⏳ Đang dò…";
+    try {
+      const fd = new FormData();
+      fd.append("base", BASE_DO);
+      const d = await (await fetch("/vungsub/dola", { method: "POST", body: fd, credentials: "same-origin" })).json();
+      if (d.error) bao(d.error);
+      else if (d.none) bao("Bộ dò không thấy dải sub gốc nào ở nửa dưới khung hình — kéo dải bằng tay.");
+      else { y0 = d.y0; y1 = d.y1; $("ctCheBat").checked = true; veChe(); bao(`Đã đặt dải theo bộ dò: y ${y0}–${y1} (chưa lưu — bấm 💾)`, true); }
+    } catch (_) { bao("Không gọi được bộ dò — server còn chạy không?"); }
+    nut.disabled = false;
+    nut.textContent = "↺ Dò tự động";
+  });
+
+  // ── Tiếng: hai kênh độc lập qua Web Audio ───────────────────────────────
+  // <video>.volume chỉ tới 100% nên không tăng (+dB) được; nối qua GainNode thì
+  // kéo được cả hai chiều, đúng hệ số bước ④ dùng (volume=XdB).
+  let ac = null, gGoc = null, gGiong = null;
+  const heSo = db => Math.pow(10, db / 20);
+  const mucGoc = () => {
+    const v = +$("ctGocK").value;
+    if (v <= -21) return CO_GIONG ? 0 : 1;          // "như cũ": lồng tiếng → tắt gốc
+    return heSo(v);
+  };
+  const veTieng = () => {
+    const g = +$("ctGocK").value, t = +$("ctGiongK").value;
+    $("ctGocSo").textContent = g <= -21 ? (CO_GIONG ? "tắt (như cũ)" : "nguyên mức (như cũ)")
+                                        : (g > 0 ? "+" : "") + g + " dB";
+    $("ctGiongSo").textContent = CO_GIONG ? (t > 0 ? "+" : "") + t + " dB" : "chưa có";
+    if (gGoc) gGoc.gain.value = mucGoc();
+    if (gGiong) gGiong.gain.value = heSo(t);
+  };
+  const moTieng = () => {
+    if (ac) { if (ac.state === "suspended") ac.resume(); return; }
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      // Chặn đỉnh ở cuối như bước ④ (alimiter) — kéo +dB không bị vỡ tiếng lúc nghe thử.
+      const chan = ac.createDynamicsCompressor();
+      chan.threshold.value = -2; chan.knee.value = 0; chan.ratio.value = 20;
+      chan.attack.value = 0.002; chan.release.value = 0.1;
+      chan.connect(ac.destination);
+      gGoc = ac.createGain();
+      ac.createMediaElementSource(video).connect(gGoc).connect(chan);
+      if (giong) {
+        gGiong = ac.createGain();
+        ac.createMediaElementSource(giong).connect(gGiong).connect(chan);
+      }
+    } catch (_) { ac = null; }                     // không có Web Audio: nghe mức gốc
+    veTieng();
+  };
+  // Kéo thanh âm lượng = NGHE THỬ LUÔN (19/11/2026, user yêu cầu): mức mới áp ngay
+  // vào tiếng đang phát; video đang dừng thì tự phát để nghe được liền.
+  const ngheLuon = () => {
+    moTieng();
+    veTieng();
+    if (video.paused) video.play().catch(() => {});
+  };
+  $("ctGocK").addEventListener("input", ngheLuon);
+  $("ctGiongK").addEventListener("input", ngheLuon);
+
+  // ── Phát / tua; audio giọng đọc bám theo video ──────────────────────────
+  const mmss = t => { t = Math.max(0, Math.floor(t || 0)); return Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
+  const khop = () => {
+    if (giong && Math.abs(giong.currentTime - video.currentTime) > 0.2)
+      giong.currentTime = Math.min(video.currentTime, giong.duration || video.currentTime);
+  };
+  let dangTua = false;
+  $("ctPlay").addEventListener("click", () => {
+    moTieng();
+    if (video.paused) video.play().catch(() => bao("Trình duyệt không phát được video này."));
+    else { video.pause(); if (giong) giong.pause(); }   // dừng giọng NGAY, khỏi đợi sự kiện pause
+  });
+  video.addEventListener("play", () => {
+    $("ctPlay").textContent = "⏸ Dừng";
+    if (giong) { khop(); giong.play().catch(() => {}); }
+  });
+  video.addEventListener("pause", () => { $("ctPlay").textContent = "▶ Phát"; if (giong) giong.pause(); });
+  video.addEventListener("waiting", () => { if (giong) giong.pause(); });
+  video.addEventListener("playing", () => { if (giong && !video.paused) { khop(); giong.play().catch(() => {}); } });
+  video.addEventListener("seeked", khop);
+  video.addEventListener("ended", () => { if (giong) giong.pause(); });
+  video.addEventListener("timeupdate", () => {
+    if (!dangTua && video.duration) $("ctTua").value = Math.round(video.currentTime / video.duration * 1000);
+    $("ctGio").textContent = mmss(video.currentTime) + " / " + mmss(video.duration);
+  });
+  // File NGUỒN phát thẳng (video thật, đủ độ dài). Trình duyệt không đọc được
+  // (mkv/flv, codec lạ → lỗi, hoặc có tiếng mà không có hình) thì lùi MỘT lần về
+  // bản xem trước thu nhỏ 3 phút đầu do server dựng.
+  const DU_PHONG = {{ m.du_phong_url | default('') | tojson }};
+  let daLui = false;
+  const luiXemTruoc = () => {
+    if (!DU_PHONG || daLui) return false;
+    daLui = true;
+    $("ctCho").classList.remove("an");
+    $("ctCho").textContent = "⏳ Trình duyệt không phát được file gốc — đang dựng bản xem trước thu nhỏ "
+      + "({{ thu_phut }} phút đầu), mất 10–20 giây…";
+    $("ctLoai").textContent = "đang xem: bản xem trước thu nhỏ {{ thu_phut }} phút đầu (trình duyệt không đọc được file gốc)";
+    video.src = DU_PHONG;
+    video.load();
+    return true;
+  };
+  video.addEventListener("loadedmetadata", () => {
+    if (!video.videoWidth && luiXemTruoc()) return;
+    $("ctCho").classList.add("an");
+    $("ctGio").textContent = "0:00 / " + mmss(video.duration);
+  });
+  video.addEventListener("error", () => {
+    if (luiXemTruoc()) return;
+    $("ctCho").classList.remove("an");
+    $("ctCho").textContent = "⚠️ Không nạp được video để xem trước (file hỏng hoặc trình duyệt không đọc được định dạng).";
+  });
+  panel.querySelectorAll(".ct-ban").forEach(n => n.addEventListener("click", () => {
+    if (!n.disabled) window.moChinhTruoc(MID, n.dataset.xem, TOC);
+  }));
+  $("ctTua").addEventListener("input", () => {
+    dangTua = true;
+    if (video.duration) video.currentTime = video.duration * (+$("ctTua").value) / 1000;
+  });
+  $("ctTua").addEventListener("change", () => { dangTua = false; });
+
+  // ── 💾 Áp dụng ──────────────────────────────────────────────────────────
+  $("ctLuu").addEventListener("click", async () => {
+    const fd = new FormData();
+    fd.append("id", MID);
+    fd.append("zoom", $("ctZoomK").value);
+    fd.append("zoom_y", $("ctDocK").value);
+    fd.append("chesub", $("ctCheBat").checked ? "1" : "");
+    fd.append("y0", y0);
+    fd.append("y1", y1);
+    fd.append("x0", x0);
+    fd.append("x1", x1);
+    fd.append("gocdb", $("ctGocK").value);
+    fd.append("ttsdb", $("ctGiongK").value);
+    fd.append("toc", TOC);
+    $("ctLuu").disabled = true;
+    try {
+      const d = await (await fetch("/chinhtruoc/luu", { method: "POST", body: fd, credentials: "same-origin" })).json();
+      if (d.error) { bao(d.error); return; }
+      // Hai ô cùng khoá ở khối ④ của form chính phải theo số mới — không thì lần
+      // bấm ▶ Chạy / 💾 Lưu kế tiếp form chính ghi đè lại bằng số cũ đang hiện.
+      const oZoom = document.querySelector("#mainform input[name=zoom]");
+      const oChe = document.querySelector("#mainform input[name=chesub]");
+      const oToc = document.querySelector("#mainform select[name=speed]");
+      if (oZoom) oZoom.value = d.zoom;
+      if (oChe) oChe.checked = !!d.chesub;
+      if (oToc && d.speed) oToc.value = d.speed;
+      bao("Đã lưu chỉnh trước: " + (d.speed ? "tốc độ " + d.speed + "x · " : "") + "phóng " + (d.zoom || 0) + "%"
+          + (d.zoom_y && d.zoom_y !== "0" ? ` (hình ${+d.zoom_y > 0 ? "lên" : "xuống"} ${Math.abs(+d.zoom_y)}%)` : "")
+          + " · che mờ " + (d.chesub ? "bật" : "tắt")
+          + (d.vung ? ` (y ${d.vung.y0}–${d.vung.y1}`
+               + (d.vung.x0 !== undefined ? `, ngang ${d.vung.x0}–${d.vung.x1}px` : ", hết bề ngang") + ")" : "")
+          + " · tiếng gốc " + (d.gocdb === "" ? "như cũ" : d.gocdb + " dB")
+          + " · giọng đọc " + d.ttsdb + " dB — áp vào lượt dựng kế tiếp", true);
+    } catch (_) {
+      bao("Không lưu được — server còn chạy không?");
+    } finally {
+      $("ctLuu").disabled = false;
+    }
+  });
+
+  // ── ✕ Đóng + tự dọn khi khung bị thay ───────────────────────────────────
+  const don = () => {
+    clearInterval(henKhop);
+    clearInterval(henHoi);
+    try { video.pause(); if (giong) giong.pause(); if (ac) ac.close(); } catch (_) {}
+  };
+  $("ctDong").addEventListener("click", () => { don(); document.getElementById("chinhtruoc").replaceChildren(); });
+  const henKhop = setInterval(() => {
+    if (!document.body.contains(panel)) { don(); return; }
+    if (!video.paused) khop();
+  }, 1000);
+
+  // ── 🧪 Chạy thử: theo dõi hàng đợi; bản thử MỚI ra là khung tự chuyển sang nó ──
+  // (19/11/2026, user: bấm 🧪 thì video trong khung phải là bản 3 phút vừa làm lại
+  // theo cài đặt mới.) Hỏi server 5 giây/lần:
+  //  • việc chạy thử của video này đang chạy / đang đợi → báo đang ở bước nào;
+  //  • nó vừa xong và audio giọng đọc của bản thử ĐÃ ĐỔI (dấu ban_thu khác lúc dựng
+  //    khung) → nạp lại khung ở bản thử; lỗi / bị dừng thì nói rõ;
+  //  • không có lượt nào đang chạy mà đã có bản lồng tiếng (khung đang xem bản chưa
+  //    có giọng) hoặc có bản thử mới hơn bản đang xem → mời bấm nạp (không tự nạp:
+  //    đang kéo dở thanh nào thì mất).
+  // | default(…): server đang chạy bản code CŨ (chưa có các trường mới) thì khung vẫn
+  // phải chạy được phần cơ bản — thiếu default là vế phải của phép gán bị rỗng, hỏng
+  // cú pháp cả đoạn script, khung đứng im ở "⏳ Đang nạp video…" (đã gặp 20/11/2026).
+  const BAN_THU = {{ m.ban_thu | default(0) }};
+  const dongTT = $("ctTrangThai");
+  let dangCho = false, daMoi = false, daBam = false;
+  const napBanMoi = () => {
+    bao("Bản thử {{ thu_phut }} phút" + (TOC ? " " + TOC + "x" : "") + " mới đã xong — đã nạp vào khung 🎛 Chỉnh trước.", true);
+    window.moChinhTruoc(MID, "thu", TOC);
+  };
+  const moiNap = (loi, chuNut, xem) => {
+    if (daMoi) return;
+    daMoi = true;
+    dongTT.textContent = loi + " ";
+    const nut = document.createElement("button");
+    nut.type = "button";
+    nut.className = "primary small";
+    nut.textContent = chuNut;
+    nut.addEventListener("click", () => window.moChinhTruoc(MID, xem, TOC));
+    dongTT.appendChild(nut);
+  };
+  // Hàng nút tốc độ theo tin mới nhất: ⏳ = tốc độ đó đang có việc chạy thử trong hàng
+  // đợi, ✅ = đã có bản thử lồng tiếng (bấm là xem ngay).
+  const veNutToc = ds => (ds || []).forEach(t => {
+    const n = [...panel.querySelectorAll(".ct-toc")].find(x => x.dataset.toc === t.toc);
+    if (n) n.textContent = n.dataset.nhan + (t.dang ? " ⏳ đang chạy thử" : t.co_giong ? " ✅ có sẵn" : "");
+  });
+  const hoi = async () => {
+    if (!document.body.contains(panel)) { don(); return; }
+    let d;
+    try {
+      d = await (await fetch("/chinhtruoc/trangthai?id=" + encodeURIComponent(MID)
+                             + "&toc=" + encodeURIComponent(TOC), { credentials: "same-origin" })).json();
+    } catch (_) { return; }                         // bỏ lượt này
+    if (!d || d.error || !document.body.contains(panel)) return;
+    if (!d.thu) d.thu = { dang: false, buoc: "", cuoi: "" };     // server bản cũ chưa trả mục này
+    veNutToc(d.cac_toc);
+    if (d.thu.dang) {
+      dangCho = true;
+      dongTT.textContent = "⏳ Đang làm lại bản thử {{ thu_phut }} phút — " + d.thu.buoc
+        + ". Xong là khung tự chuyển sang bản mới; hình và tiếng đang phát lúc này vẫn là bản CŨ.";
+      return;
+    }
+    if (dangCho) {                                  // việc chạy thử vừa rời hàng đợi
+      dangCho = false;
+      if (d.ban_thu && d.ban_thu !== BAN_THU) { napBanMoi(); return; }
+      dongTT.textContent = d.thu.cuoi === "failed"
+        ? "⚠️ Lượt chạy thử vừa rồi bị LỖI — xem nhật ký ở khối hàng đợi rồi bấm 🧪 lại."
+        : d.thu.cuoi === "stopped" ? "⏹ Lượt chạy thử đã bị dừng giữa chừng — bấm 🧪 để chạy lại."
+        : "Lượt chạy thử đã kết thúc nhưng chưa thấy bản lồng tiếng mới — xem nhật ký ở khối hàng đợi.";
+      return;
+    }
+    if (d.ban_thu && d.ban_thu !== BAN_THU) {
+      // Chính khung này vừa bấm 🧪 thì nạp luôn (bản mới lộ ra chậm một nhịp hỏi);
+      // còn không thì chỉ mời — user có thể đang kéo dở thanh nào đó.
+      if (daBam) napBanMoi();
+      else moiNap("✅ Có bản thử {{ thu_phut }} phút mới hơn bản đang xem —", "▶ Nạp bản thử mới", "thu");
+    } else if (!CO_GIONG && d.long_tieng)
+      moiNap("✅ Đã có bản lồng tiếng —", "▶ Nạp bản đã lồng tiếng để chỉnh âm lượng", "");
+  };
+  const henHoi = setInterval(hoi, 5000);
+  hoi();                                            // mở khung lúc đang chạy thử dở → thấy ngay
+  // Bấm 🧪 xong (server đã xếp việc: có HX-Trigger mvid:xong) → vào trạng thái chờ ngay.
+  if ($("ctThu")) $("ctThu").addEventListener("htmx:afterRequest", e => {
+    const h = e.detail && e.detail.xhr ? (e.detail.xhr.getResponseHeader("HX-Trigger") || "") : "";
+    if (!h.includes("mvid:xong")) return;           // server từ chối (thiếu nguồn…) — lời nhắn đã hiện
+    dangCho = true;
+    daBam = true;
+    daMoi = false;
+    dongTT.textContent = "⏳ Đã xếp việc làm lại bản thử {{ thu_phut }} phút — đang đợi hàng đợi nhận…";
+    setTimeout(hoi, 1200);
+  });
+
+  veZoom(); veChe(); veTieng();
+})();
+</script>
+{% endif %}
+{% endif %}

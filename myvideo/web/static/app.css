@@ -647,6 +647,55 @@ body.p-video { --accent: #3730a3; --accent2: #4f46e5; --accent-soft: #eceafe; }
 table.grid td.okc { color: var(--ok); font-weight: 700; }
 table.grid td.left { text-align: left; }
 table.grid td.clip { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+/* Ô tên video của bảng Kết quả: rộng hơn ô .clip thường vì đứng trước tên còn
+   hai nút 📂 và ⏱ So giờ. Nút ⏱ tô nền nhạt + viền màu chủ đạo cho NỔI — lần đầu
+   chỉ để tên bấm được, user không tìm ra chức năng so giờ nằm ở đâu. */
+table.grid td.tencell { max-width: 340px; }
+button.sogio {
+  margin: 0 6px 0 2px; background: var(--accent-soft); color: var(--accent);
+  border-color: var(--accent2); font-weight: 650;
+}
+button.sogio:hover { background: var(--accent); color: var(--card); }
+/* Tên video cũng bấm được (mở cùng bảng so giờ): gạch chân chấm cho biết là link. */
+a.tenvideo { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+a.tenvideo:hover { color: var(--accent); text-decoration: underline; }
+
+/* ⚠️ Ô "Dòng lưu ý góc trái trên video" ở khối ④: khung riêng tô nền nhạt +
+   CÔNG TẮC gạt (ô tick vẽ lại thành thanh trượt, chữ ĐANG BẬT/ĐANG TẮT đổi
+   theo) — để nhìn là biết đang bật hay tắt, khỏi dò trong cụm checkbox. Tắt thì
+   hai ô chữ mờ đi (vẫn sửa được, chỉ là không ghi lên video). */
+.luuybox {
+  margin: 14px 0 4px; padding: 12px 14px; border: 1px solid var(--accent2);
+  border-radius: var(--r-sm); background: var(--accent-soft);
+}
+.luuybox-head { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+.luuybox .hint { margin: 6px 0 8px; }
+.luuybox-o { display: grid; gap: 6px; max-width: 560px; }
+.luuybox:has(.congtac input:not(:checked)) .luuybox-o { opacity: .45; }
+.congtac { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12.5px; font-weight: 700; }
+.congtac input {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative;
+  width: 44px; height: 24px; margin: 0; border-radius: 999px; cursor: pointer;
+  background: var(--muted); transition: background .15s;
+}
+.congtac input::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: #fff; transition: left .15s;
+}
+.congtac input:checked { background: var(--ok); }
+.congtac input:checked::after { left: 23px; }
+.congtac .bat { color: var(--ok); }
+.congtac .tat { color: var(--muted); }
+.congtac input:checked ~ .tat, .congtac input:not(:checked) ~ .bat { display: none; }
+
+/* ⏱ Bảng so mốc giờ 5 câu đầu (_socau.html): sub gốc ↔ giọng đã tạo. Số dùng
+   chữ số đều nét cho các mốc thẳng cột; dòng phụ (độ dài, chữ tiếng gốc) mờ. */
+.socau-card { width: min(900px, 100%); }
+.socau-ten { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.socau td { font-variant-numeric: tabular-nums; vertical-align: top; }
+table.socau td small { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+table.socau td.cau { text-align: left; white-space: normal; min-width: 240px; }
+table.socau .tran { color: var(--warn); font-weight: 700; }
 
 /* Mọi ô NHẬP/CHỌN được đều tô viền màu ngay từ đầu (bản gốc viền xám nhạt,
    nhìn lướt khó biết chỗ nào gõ được) — hover đậm thêm, focus vẫn có quầng. */
@@ -663,6 +712,14 @@ body.p-video textarea:hover {
 /* Nhãn tiêu đề nổi màu: nhãn trên từng ô nhập + tên khối bước. */
 body.p-video .field > span { color: var(--accent); font-weight: 600; }
 body.p-video .phead h2 { color: var(--accent); }
+
+/* Ô tick: chữ chảy LIỀN một khối cạnh ô vuông (18/11/2026). Bản gốc .chk là flex
+   nên mỗi mẩu <code>/<b>/<span> xen giữa câu thành một CỘT riêng — câu dài bị xé
+   thành 4–5 cột chữ đứng cạnh nhau (khối ②④, càng rõ khi các bước dàn nhiều cột
+   hẹp). Ô vuông đặt tuyệt đối ở lề trái, chữ thụt đúng chỗ cũ (38px); hàng một
+   dòng vẫn cao ~30px như trước. */
+body.p-video .chk { display: block; position: relative; padding: 6px 7px 6px 38px; }
+body.p-video .chk input[type=checkbox] { position: absolute; left: 7px; top: 4px; }
 
 /* ── Bước ④: chọn KIỂU PHỤ ĐỀ — lưới thẻ radio có ảnh xem trước ──────────────
    Ảnh do kieusub.py vẽ bằng đúng libass sẽ burn (kiểu động là webp chuyển
@@ -911,3 +968,122 @@ body.p-video .phead h2 { color: var(--accent); }
 .vrambar i { display: block; height: 100%; background: var(--accent); }
 .vramrow.vram-warn { color: var(--warn); font-weight: 600; }
 .vramrow.vram-warn .vrambar i { background: var(--warn); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MÀN HÌNH RỘNG / ULTRA-WIDE (18/11/2026)
+   User dùng màn 2560×1080 phóng 125% → trình duyệt thấy ~2048×860: RỘNG mà
+   THẤP. Bản cũ bó mọi thứ vào một cột 900px giữa màn hình: hai bên trống hơn
+   900px, bảng Kết quả bị cắt mất các cột Soát / Làm tiếp / Chạy lại / Xoá
+   (phải kéo ngang), còn 4 khối bước thì xếp chồng dài ~4 màn hình.
+
+   body.rong      → trang trải HẾT bề ngang (trang chính, 🎞 timeline)
+   body.rong-vua  → nới tới 1500px (⏱ hàng đợi, 📤 đăng bài — bảng/nhật ký dài)
+   Lớp đặt qua {% block bodyclass %} của từng template; trang không đặt (🔊 âm
+   thanh, 🫥 vùng che — ảnh khung hình to quá lại tràn chiều cao) giữ cột 900px.
+
+   Trang chính dàn theo BỀ RỘNG CỬA SỔ (menu trái cố định 236px nên bề rộng
+   phần nội dung = cửa sổ − ~290px):
+     < 1400    một cột, thứ tự như cũ — chỉ khác là rộng hết cỡ
+     ≥ 1400    các bước 2 cột:  [①②③] [④]
+     ≥ 1980    trên: [Nguồn | Kết quả]   ·   các bước 3 cột: [①②] [③] [④]
+     ≥ 2500    các bước 4 cột: ① ② ③ ④ ;  ≥ 2700 bảng Kết quả | File mới cạnh nhau
+   Mốc 1980 là chỗ bảng Kết quả vừa đủ nằm cạnh khối Nguồn mà không phải kéo
+   ngang: bảng cần ~1180px (đo 18/11, hàng có nút ⏩ dài thì thêm ~50px), ở 1980
+   nó được 1274px — hạ mốc này (hoặc nới cột Nguồn) thì bảng lại bị cắt cột.
+
+   KHÔNG dùng container query: container-type biến phần tử thành khung chứa của
+   position:fixed → mấy popup (.modal chọn kiểu/font/màu, bảng so giờ, lời nhắn
+   góc phải) nằm trong đó sẽ bám theo khung thay vì bám màn hình.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 901px) {
+  body.rong main, body.rong-vua main { padding: 18px 20px 48px; }
+  body.rong main { max-width: none; margin: 0; }
+  body.rong-vua main { max-width: 1500px; }
+  /* Quầng màu đầu trang: bản gốc thò ra ngoài main 40px mỗi bên (hợp với cột
+     căn giữa) — main sát mép phải thì thò ra là sinh thanh cuộn ngang. */
+  body.rong main::before, body.rong-vua main::before {
+    inset: 0 0 auto; height: 200px; border-radius: 0;
+  }
+  /* Màn thấp: tên trang + dòng mô tả nằm MỘT hàng, nhường chiều cao cho nội dung. */
+  body.rong .pagehead, body.rong-vua .pagehead {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; margin-bottom: 10px;
+  }
+  body.rong .pagehead h1, body.rong-vua .pagehead h1 { margin: 0; font-size: 21px; }
+  body.rong .pagehead .ico, body.rong-vua .pagehead .ico {
+    width: 36px; height: 36px; font-size: 17px; border-radius: 11px;
+  }
+  body.rong .pagehead p, body.rong-vua .pagehead p { flex: 1 1 420px; max-width: none; }
+  body.rong .colhead.later { margin-top: 12px; }
+  /* Hàng chọn kiểu/font/màu ở khối ④: cột hẹp thì nút "Chọn…" rớt xuống dòng
+     thay vì ép tên kiểu gãy từng chữ. */
+  body.rong .ksubhang { flex-wrap: wrap; }
+}
+
+@media (min-width: 1400px) {
+  /* Các bước 2 cột: ①②③ chồng bên trái, ④ (khối dài nhất, có ảnh xem thử) bên phải. */
+  body.rong .bc-buoc {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+    gap: 0 12px; align-items: start;
+  }
+  /* Danh sách "File mới trong output" (15 dòng) cao gấp đôi bảng Kết quả, đẩy 4
+     khối bước xuống tận màn hình thứ hai → cho cuộn trong khung. */
+  body.rong #bang > .panel:last-child .tablewrap { max-height: 236px; overflow-y: auto; }
+}
+/* 1400–1599: cột ④ mới rộng ~620–730px → thu cột ảnh xem thử lại (280px thay vì
+   320px) cho cột chọn kiểu/font/màu còn đủ chỗ. Không xếp dọc: ảnh rộng trọn cột
+   sẽ cao gần 1000px, khối ④ dài gấp đôi. */
+@media (min-width: 1400px) and (max-width: 1599px) {
+  body.rong .ksubbox { grid-template-columns: minmax(0, 1fr) minmax(230px, 280px); gap: 0 12px; }
+}
+
+@media (min-width: 1980px) {
+  /* Hàng trên: Nguồn (cột hẹp) | Kết quả (phần còn lại — bảng hiện ĐỦ cột). */
+  body.rong .bc-tren {
+    display: grid; grid-template-columns: clamp(360px, 23%, 470px) minmax(0, 1fr);
+    gap: 0 12px; align-items: start;
+  }
+  /* Khối Nguồn nằm cột hẹp: các nút tự giãn kín hàng, nút ▶ chính chiếm trọn một hàng. */
+  body.rong .bc-nguon .actions > button { flex: 1 1 auto; }
+  body.rong .bc-nguon .actions > button.primary { flex: 1 1 100%; min-height: 38px; }
+  body.rong .bc-nguon .actions > .spacer { display: none; }
+  /* Các bước 3 cột: [①②] [③] [④]. bc-b123 "tan" ra để bc-b12 và khối ③ thành
+     hai cột riêng của lưới. */
+  body.rong .bc-b123 { display: contents; }
+  body.rong .bc-buoc {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.9fr);
+  }
+}
+
+@media (min-width: 2500px) {
+  /* Đủ rộng cho 4 bước 4 cột ngang hàng, đúng thứ tự dây chuyền ① → ④. */
+  body.rong .bc-b12 { display: contents; }
+  body.rong .bc-buoc {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 2.1fr);
+  }
+}
+@media (min-width: 2700px) {
+  /* Bảng Kết quả | File mới trong output đứng cạnh nhau. */
+  body.rong #bang {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 26%);
+    gap: 0 12px; align-items: start;
+  }
+  body.rong #bang > .panel:last-child .tablewrap { max-height: 320px; }
+}
+
+/* 🎛 Chỉnh trước (18/11/2026): hàng NGUỒN CHỜ ở bảng Kết quả — file/link vừa nạp, chưa chạy bước nào. */
+tr.hangcho td { background: var(--sunken); }
+/* 🧪 Nhãn BẢN THỬ ở bảng Kết quả (24/11/2026): bản thử không được lẫn với video cả bài —
+   hàng "chỉ có bản thử", hàng nguồn chờ đã có bản thử, bản nháp 60 giây. */
+.nhanthu {
+  display: inline-block; padding: 0 7px; margin-right: 4px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent2);
+  font-size: .86em; font-weight: 650; white-space: nowrap;
+}
+
+/* 📁 File mới trong output — THU GỌN (19/11/2026): <details> đóng sẵn, chỉ còn dòng tiêu đề.
+   summary là flex (.phead) nên mất mũi tên mặc định → tự vẽ ▸ / ▾. */
+details.filemoi > summary { cursor: pointer; list-style: none; margin-bottom: 0; }
+details.filemoi > summary::-webkit-details-marker { display: none; }
+details.filemoi > summary::before { content: "▸"; color: var(--muted); margin-right: 6px; }
+details.filemoi[open] > summary::before { content: "▾"; }
+details.filemoi[open] > summary { margin-bottom: 10px; }

@@ -39,6 +39,7 @@ Dòng quá dài tự xuống dòng ở ranh giới từ (wrap_sentence của vid
 """
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -122,9 +123,158 @@ def chia_cue(start, end, text, max_chars=MAX_LINE_CHARS, dong=2):
     return out
 
 
+# ── ⚠️ DÒNG LƯU Ý góc trái trên (16/11/2026) ─────────────────────────────────
+# Kiểu "VIDEO AI · KHÔNG BẮT CHƯỚC / CHỈ DÀNH CHO 18+" (câu chữ do web gửi qua
+# --luuy): chữ trắng NÉT MẢNH, nhỏ vừa đọc, nằm suốt video.
+# Vẽ bằng một file .ass RIÊNG (không nhét vào .ass phụ đề của kieusub — kho kiểu
+# đó dùng chung với myvoice) nên bật được cả khi không vẽ sub.
+LUUY_FONT = "Segoe UI Light"     # font Windows nét mảnh, đủ dấu tiếng Việt
+LUUY_CO = 0.027                  # cỡ chữ = 2,7% cạnh ngắn khung (1080 → 29px)
+LUUY_LE = 0.03                   # lề trái/trên = 3% cạnh ngắn; có khung viền thì
+LUUY_LE_KHUNG = 0.06             # lùi vào 6% cho khỏi đè lên dải viền
+
+
+def write_ass_luuy(dong, ass_path, play_w, play_h, co_khung=False):
+    """Ghi file .ass chỉ chứa DÒNG LƯU Ý (list các dòng chữ) ở góc trái trên.
+
+    Chữ trắng, không đậm; viền đen mờ 1px + bóng nhẹ chỉ để còn đọc được trên
+    cảnh sáng (chữ trắng trần đặt lên trời/áo trắng là mất hút). \\an7 = neo góc
+    trái trên; hiện từ giây 0 tới hết (mốc cuối đặt thừa 10 giờ)."""
+    canh = min(play_w, play_h)
+    co = max(12, round(canh * LUUY_CO))
+    le = round(canh * (LUUY_LE_KHUNG if co_khung else LUUY_LE))
+    # { } mở thẻ ghi đè của ASS, \ là ký tự điều khiển — gỡ khỏi chữ người dùng gõ.
+    sach = [re.sub(r"[{}\\]", "", d).strip() for d in dong]
+    text = r"\N".join(d for d in sach if d)
+    Path(ass_path).write_text(f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {play_w}
+PlayResY: {play_h}
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, \
+BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, \
+BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: LuuY,{LUUY_FONT},{co},&H00FFFFFF,&H00FFFFFF,&H64000000,&H96000000,\
+0,0,0,0,100,100,0,0,1,1,1,7,{le},{le},{le},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 5,0:00:00.00,9:59:59.00,LuuY,,0,0,0,,{{\\an7\\pos({le},{le})}}{text}
+""", encoding="utf-8")
+    return ass_path
+
+
+def khung_goc(video):
+    """→ (rộng, cao, SAR "num/den" | "") của hình ĐI VÀO filter của ffmpeg.
+
+    SAR (tỉ lệ điểm ảnh) lấy để trả lại sau khi phóng — xem loc_zoom; "" = file
+    không ghi. Video quay điện thoại có cờ xoay 90°: ffmpeg tự xoay trước khi
+    vào filter nên rộng/cao (và SAR) đổi chỗ cho nhau.
+    """
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_streams",
+         "-of", "json", str(video)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+    st = json.loads(r.stdout)["streams"][0]
+    w, h = int(st["width"]), int(st["height"])
+    try:
+        sn, sd = (int(x) for x in str(st.get("sample_aspect_ratio") or "").split(":"))
+    except ValueError:
+        sn = sd = 0
+    xoay = (st.get("tags") or {}).get("rotate") or 0
+    for sdl in st.get("side_data_list") or []:
+        xoay = sdl.get("rotation", xoay)
+    try:
+        nam_doc = abs(int(float(xoay))) % 180 == 90
+    except (TypeError, ValueError):
+        nam_doc = False
+    if nam_doc:
+        w, h, sn, sd = h, w, sd, sn
+    return w, h, (f"{sn}/{sd}" if sn > 0 and sd > 0 else "")
+
+
+def loc_zoom(zoom, zoom_y=0, w=0, h=0, sar=""):
+    """Chuỗi filter PHÓNG TO: phóng (1 + zoom/100) lần rồi cắt về ĐÚNG khung cũ w×h.
+
+    w, h = cỡ khung của hình đi vào filter (burn() đo bằng khung_goc) — phải là
+    SỐ CỤ THỂ. Bản trước để ffmpeg tự tính bằng biểu thức trunc(iw/z/2)*2: số
+    thực làm hụt khung (528/1.1 = 479,99999… → 478), video 854×480 phóng 10%
+    ra 852×478 — không còn đúng cỡ lẫn tỉ lệ của video gốc (user báo
+    24/11/2026). Giờ cỡ phóng tính bằng SỐ NGUYÊN, làm tròn LÊN số chẵn (luôn
+    ≥ khung gốc) rồi crop đúng w:h; cạnh lẻ hạ xuống chẵn (yuv420p/libx264 từ
+    chối cạnh lẻ).
+
+    sar ("num/den", rỗng = file không ghi): hai cạnh làm tròn chẵn nên không
+    phóng đều tuyệt đối → filter scale tự sửa SAR để giữ tỉ lệ hiển thị, video
+    ra mang một SAR lạ (21142:21105). setsar trả lại đúng SAR gốc: khung ra
+    giống khung vào cả cỡ lẫn tỉ lệ, chỉ nội dung là to hơn.
+
+    zoom_y (−100…+100, 19/11/2026 — thanh "vị trí dọc" của khung 🎛 Chỉnh trước):
+    dời CỬA SỔ CẮT theo chiều dọc trong phần hình dôi ra do phóng. 0 = cắt giữa;
+    +100 = hình dịch LÊN hết cỡ (mép trên mất hết phần dôi, lộ trọn mép dưới);
+    −100 = hình dịch XUỐNG hết cỡ (đẩy mép dưới — chỗ sub gốc — ra ngoài
+    khung). Không phóng thì không có phần dôi nào để dời → zoom_y vô nghĩa.
+    """
+    w, h = int(w) // 2 * 2, int(h) // 2 * 2
+    if w < 2 or h < 2:
+        raise ValueError(f"loc_zoom cần cỡ khung của video (w, h) — nhận {w}×{h}")
+    pt = 100 + max(0, int(zoom))
+
+    def _phong(canh):                       # canh × pt/100, làm tròn LÊN số chẵn
+        n = -(-canh * pt // 100)
+        return n + n % 2
+
+    sw, sh = _phong(w), _phong(h)
+    k = max(-100, min(100, int(zoom_y or 0))) / 100
+    x, y = (sw - w) // 2, round((sh - h) / 2 * (1 + k))
+    loc = f"scale={sw}:{sh}:flags=lanczos,crop={w}:{h}:{x}:{y}"
+    if sar:
+        # max=: setsar mặc định rút gọn tử/mẫu về ≤ 100 — 3844/3843 thành 1/1, lại lệch gốc.
+        loc += f",setsar=sar={sar}:max={max(int(n) for n in str(sar).split('/'))}"
+    return loc
+
+
+def doc_vung(chuoi, w, h):
+    """Cờ --vung → dict vùng che. 'y0:y1' = dải phủ HẾT bề ngang (như trước giờ);
+    'y0:y1:x0:x1' = thêm mép trái/phải (20/11/2026 — lớp che hẹp hơn bề ngang, chỉnh ở
+    khung 🎛 Chỉnh trước). Mép ngang kẹp vào khung hình; phủ hết thì bỏ x0/x1 cho lệnh
+    ffmpeg y như cũ. Sai dạng → ValueError."""
+    so = [int(x) for x in str(chuoi).split(":")]
+    if len(so) not in (2, 4):
+        raise ValueError("cần 2 số (y0:y1) hoặc 4 số (y0:y1:x0:x1)")
+    vung = {"y0": so[0], "y1": so[1], "w": int(w), "h": int(h)}
+    if len(so) == 4:
+        x0, x1 = max(0, so[2]), min(int(w), so[3])
+        if x1 - x0 < 2:
+            raise ValueError(f"mép ngang x0:x1 = {so[2]}:{so[3]} không hợp lệ (khung rộng {w}px)")
+        if x0 > 0 or x1 < int(w):
+            vung["x0"], vung["x1"] = x0, x1
+    return vung
+
+
+def loc_che(vung, bat=""):
+    """Chuỗi filter LÀM MỜ vùng che: tách hình, cắt đúng vùng, gblur, dán lại chỗ cũ.
+    Không có x0/x1 → cắt cả bề ngang (crop=iw…, overlay=0:…) — đúng chuỗi cũ từng ký tự.
+    Có x0/x1 → chỉ mờ khoảng ngang đó; mép trái và bề rộng làm tròn xuống số CHẴN (hình
+    yuv420p lấy mẫu màu 2×2 — cạnh lẻ thì ffmpeg tự làm tròn, dải lệch 1px so với chỗ dán)."""
+    y0, day = int(vung["y0"]), int(vung["y1"]) - int(vung["y0"])
+    sigma = max(10, min(30, day // 4))       # blur đủ tan chữ, theo độ dày dải
+    x0, rong = 0, "iw"
+    if vung.get("x0") is not None and vung.get("x1") is not None:
+        x0 = max(0, int(vung["x0"])) // 2 * 2
+        rong = max(2, (int(vung["x1"]) - x0) // 2 * 2)
+    return (f"split[goc][mo];"
+            f"[mo]crop={rong}:{day}:{x0}:{y0},gblur=sigma={sigma}[dai];"
+            f"[goc][dai]overlay={x0}:{y0}{bat}")
+
+
 def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
          zoom=0, doc=False, nhac=None, nhac_db=-18.0, logo=None, khung_vien=None,
-         goc_db=None, goc_norm=False, tts_db=0.0, che_khoang=None):
+         goc_db=None, goc_norm=False, tts_db=0.0, che_khoang=None, luuy_ass=None,
+         zoom_y=0):
     """Dựng video kết quả. Các phần đều tuỳ chọn, bỏ hết cũng chạy:
 
     `ass_path` → vẽ cứng phụ đề (None = không vẽ chữ nào).
@@ -134,8 +284,9 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     tiếng gốc, xem timvungsub.khoang_co_tieng); ngoài khoảng hình giữ nguyên
     nét (None/[] = che suốt video).
     `audio` → THAY tiếng bằng file này (None = giữ tiếng gốc).
-    `zoom` → PHÓNG TO video nền bấy nhiêu % (20 = to gấp 1.2 lần) rồi cắt giữa
-    về đúng khung cũ — mép hình mất đều bốn phía, độ phân giải không đổi.
+    `zoom` → PHÓNG TO video nền bấy nhiêu % (20 = to gấp 1.2 lần) rồi cắt về
+    ĐÚNG khung cũ (cùng cỡ, cùng tỉ lệ — xem loc_zoom) — mép hình mất bớt, độ
+    phân giải không đổi; `zoom_y` dời hình lên/xuống trong phần dôi ra.
     `doc` → dựng KHUNG DỌC 9:16 (1080×1920): video nằm giữa, hai dải trên dưới
     là chính nó phóng to + làm mờ (nếp TikTok/Shorts quen mắt) — chữ vẽ SAU
     nên .ass phải soạn theo khung 1080×1920.
@@ -156,14 +307,18 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
     kenh_thietke.py) lên TOÀN khung hình suốt video: scale đúng cỡ khung thành
     phẩm rồi overlay 0:0 — nằm TRÊN hình nhưng DƯỚI chữ, nên viền không che mất
     phụ đề; có khung thì logo lùi vào trong thêm để không đè lên dải viền.
+    `luuy_ass` → file .ass DÒNG LƯU Ý góc trái trên (write_ass_luuy) — vẽ sau
+    phụ đề, trước logo; phải nằm CÙNG thư mục với video kết quả (cwd của ffmpeg)
+    và tên không dính ký tự đặc biệt của filtergraph.
 
-    Không vẽ sub, không che mờ, không zoom, không dọc, không logo/khung = hình
-    không đổi pixel nào → -c:v copy (ghép lại tiếng thôi): nhanh, không mất chất lượng.
+    Không vẽ sub, không che mờ, không zoom, không dọc, không logo/khung, không
+    dòng lưu ý = hình không đổi pixel nào → -c:v copy (ghép lại tiếng thôi):
+    nhanh, không mất chất lượng.
 
     Thứ tự filter CÓ CHỦ Ý: che mờ trước (toạ độ dải do timvungsub dò trên
-    hình GỐC) → zoom → đổi khung dọc → đè khung viền → vẽ chữ → đóng logo (khung,
-    chữ, logo vẽ SAU nên không bị phóng/cắt theo, nằm đúng vị trí đã ngắm ở ảnh
-    xem thử).
+    hình GỐC) → zoom → đổi khung dọc → đè khung viền → vẽ chữ → dòng lưu ý →
+    đóng logo (khung, chữ, logo vẽ SAU nên không bị phóng/cắt theo, nằm đúng vị
+    trí đã ngắm ở ảnh xem thử).
 
     Mô phỏng burn_subs của video_gansub (NVENC ưu tiên, lỗi tự lùi CPU) nhưng
     thêm được nhánh thay audio nên viết lại cmd ở đây.
@@ -182,23 +337,22 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
               if ass_path else "")
     parts = []
     if vung:
-        y0, day = int(vung["y0"]), int(vung["y1"]) - int(vung["y0"])
-        sigma = max(10, min(30, day // 4))       # blur đủ tan chữ, theo độ dày dải
         # enable= theo khoảng có tiếng: ngoài khoảng overlay tắt → khung đi
         # thẳng, không mờ. Biểu thức dài (nhiều khoảng) → build_cmd tự chuyển
         # filtergraph sang file script, khỏi vướng trần dòng lệnh Windows.
         bat = (f":enable='{timvungsub.bieu_thuc_enable(che_khoang)}'"
                if che_khoang else "")
-        parts.append(f"split[goc][mo];"
-                     f"[mo]crop=iw:{day}:0:{y0},gblur=sigma={sigma}[dai];"
-                     f"[goc][dai]overlay=0:{y0}{bat}")
+        parts.append(loc_che(vung, bat))
+    # Cỡ khung + SAR của hình gốc: phóng to cần số cụ thể để cắt về ĐÚNG khung
+    # cũ; logo / khung viền cần cỡ khung thành phẩm.
+    kw = kh = 0
+    sar_goc = ""
+    if zoom or logo or khung_vien:
+        kw, kh, sar_goc = khung_goc(video)
     if zoom:
-        # Phóng z lần rồi cắt GIỮA về khung cũ. trunc(…/2)*2: mọi cạnh chẵn —
-        # yuv420p/libx264 từ chối cạnh lẻ; khung 16:9 chuẩn ra lại đúng số cũ
-        # (1920×1.2=2304 → /1.2=1920), khung dị lắm mới hụt 2px.
-        z = 1 + max(0, int(zoom)) / 100
-        parts.append(f"scale=trunc(iw*{z:g}/2)*2:trunc(ih*{z:g}/2)*2:flags=lanczos,"
-                     f"crop=trunc(iw/{z:g}/2)*2:trunc(ih/{z:g}/2)*2")
+        # Phóng z lần rồi cắt về khung cũ — giữa, hoặc lệch dọc theo zoom_y.
+        kw, kh = kw // 2 * 2, kh // 2 * 2
+        parts.append(loc_zoom(zoom, zoom_y, kw, kh, sar_goc))
     if doc:
         # Khung DỌC 1080×1920: nền = chính video phóng phủ kín + gblur, video
         # thật scale ngang 1080 đặt GIỮA. Không cắt mất nội dung nào của hình.
@@ -209,21 +363,14 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             "[chinh]scale=1080:-2:flags=lanczos[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2")
     pre_vf = ",".join(parts)            # che mờ → zoom → dọc (TRƯỚC khung viền + chữ)
-    vf = ",".join(parts + ([sub_vf] if sub_vf else []))
+    luuy_vf = f"subtitles={Path(luuy_ass).name}" if luuy_ass else ""
+    vf = ",".join(parts + [f for f in (sub_vf, luuy_vf) if f])
 
     # Logo / khung viền cần cỡ khung THÀNH PHẨM: dọc = 1080×1920 cố định, còn
-    # lại là cỡ gốc; có zoom thì lặp ĐÚNG phép trunc(…/2)*2 của filter scale +
-    # crop để ra cùng số px chẵn (khung dị có thể hụt 2px so với gốc).
+    # lại là cỡ gốc (phóng to cắt về đúng khung gốc nên không đổi cỡ).
     logo_w = pad = cw = ch = 0
     if logo or khung_vien:
-        if doc:
-            cw, ch = 1080, 1920
-        else:
-            cw, ch, _ = timvungsub._probe(video)
-            if zoom:
-                z = 1 + max(0, int(zoom)) / 100
-                cw = int(int(cw * z / 2) * 2 / z / 2) * 2
-                ch = int(int(ch * z / 2) * 2 / z / 2) * 2
+        cw, ch = (1080, 1920) if doc else (kw, kh)
         logo_w = max(48, round(cw * 0.12 / 2) * 2)
         pad = max(12, cw // 100)
         if khung_vien:
@@ -319,7 +466,7 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
                 # tự động, phải map tiếng gốc vào tay kẻo video MẤT TIẾNG.
                 maps += ["-map", "0:a?"]
             out_a = ["-c:a", "copy"]
-        # ── Hình: che mờ → zoom → dọc → [khung viền] → chữ → [logo] ──────────
+        # ── Hình: che mờ → zoom → dọc → [khung viền] → chữ → [lưu ý] → [logo] ─
         # Ảnh PNG là input riêng nên phải đi filter_complex; khung đè TRƯỚC chữ
         # (chữ nằm trên viền), logo đè sau cùng. Nhãn trung gian v0..v3, cuối
         # cùng `null` chỉ để gắn tên [vout] cho -map.
@@ -335,6 +482,9 @@ def burn(video, out_path, ass_path=None, audio=None, force_cpu=False, vung=None,
             if sub_vf:
                 fc.append(f"{cur}{sub_vf}[v2]")
                 cur = "[v2]"
+            if luuy_vf:
+                fc.append(f"{cur}{luuy_vf}[v2b]")
+                cur = "[v2b]"
             if vi_logo is not None:
                 fc += [f"[{vi_logo}:v]scale={logo_w}:-1[lg]",
                        f"{cur}[lg]overlay=W-w-{pad}:{pad}[v3]"]
@@ -513,6 +663,11 @@ def main():
                              "mất đều bốn phía, độ phân giải giữ nguyên. "
                              "0 = không phóng. Chữ vẽ SAU zoom nên không bị phóng; "
                              "dải che mờ dò trên hình gốc nên vẫn che đúng chỗ.")
+    parser.add_argument("--zoom-y", type=int, default=0,
+                        help="Đi kèm --zoom: dời hình theo CHIỀU DỌC trong phần dôi ra "
+                             "do phóng, -100…+100 (viết liền --zoom-y=-40 cho số âm). "
+                             "0 = cắt giữa; số dương = hình dịch LÊN, số âm = hình dịch "
+                             "XUỐNG (đẩy mép dưới, chỗ sub gốc, ra ngoài khung).")
     parser.add_argument("--khung", default="ngang", choices=["ngang", "doc"],
                         help="doc = dựng bản DỌC 9:16 (1080×1920, video giữa + "
                              "nền chính nó làm mờ trên dưới — kiểu TikTok/Shorts); "
@@ -548,6 +703,10 @@ def main():
                              "toàn khung hình suốt video — trên hình, dưới chữ. "
                              "Dựng bản dọc (--khung doc) thì tự lấy <tên>_doc.png "
                              "cạnh file nếu có. Bỏ trống = không khung.")
+    parser.add_argument("--luuy", action="append", default=[], metavar="DÒNG",
+                        help="Ghi DÒNG LƯU Ý này ở góc trái trên suốt video (chữ "
+                             "trắng nét mảnh, nhỏ). Lặp cờ để thêm dòng thứ hai, "
+                             "tối đa 3 dòng. Không có cờ = không ghi gì.")
     parser.add_argument("--outro", default="",
                         help="Nối video này vào CUỐI video thành phẩm (outro kêu "
                              "gọi đăng ký) — outro được encode khớp chuẩn rồi nối "
@@ -559,7 +718,9 @@ def main():
                              "①, khung nào cũng kiểm có chữ (xem timvungsub.py).")
     parser.add_argument("--vung", default="",
                         help="Ghi đè vùng che bằng tay: 'y0:y1' theo pixel video "
-                             "(vd 920:1010) — dùng khi tự dò bị lệch.")
+                             "(vd 920:1010) — dùng khi tự dò bị lệch. Thêm mép "
+                             "trái:phải 'y0:y1:x0:x1' (vd 920:1010:300:1620) để lớp "
+                             "che KHÔNG phủ hết bề ngang.")
     parser.add_argument("--che-khe", type=float, default=timvungsub.KHE_KHONG_CHE,
                         help="Chỉ che mờ LÚC CÓ TIẾNG GỐC (theo <video>.srt của "
                              "bước ①): khe không thoại dài hơn bấy nhiêu giây thì "
@@ -617,12 +778,14 @@ def main():
     vung = None
     if args.vung:
         try:
-            y0, y1 = (int(x) for x in args.vung.split(":"))
             _w, _h, _d = timvungsub._probe(video)
-            vung = {"y0": y0, "y1": y1, "w": _w, "h": _h}
-            print(f"🫥 Che vùng chỉ định tay: y {y0}–{y1}")
+            vung = doc_vung(args.vung, _w, _h)
+            print(f"🫥 Che vùng chỉ định tay: y {vung['y0']}–{vung['y1']}"
+                  + (f", ngang x {vung['x0']}–{vung['x1']} / {_w}px" if "x0" in vung
+                     else " (hết bề ngang)"))
         except Exception as e:
-            print(f"❌ --vung phải dạng y0:y1 (vd 920:1010): {e}")
+            print(f"❌ --vung phải dạng y0:y1 (vd 920:1010) hoặc y0:y1:x0:x1 "
+                  f"(vd 920:1010:300:1620): {e}")
             sys.exit(1)
     elif args.che_sub_goc:
         try:
@@ -684,8 +847,12 @@ def main():
         print(f"🔊 Thay tiếng bằng: {Path(audio).name}")
 
     zoom = max(0, min(100, args.zoom or 0))
+    zoom_y = max(-100, min(100, args.zoom_y or 0)) if zoom else 0
     if zoom:
-        print(f"🔎 Phóng to video nền: +{zoom}% (cắt giữa, khung giữ nguyên)")
+        print(f"🔎 Phóng to video nền: +{zoom}% ("
+              + ("cắt giữa" if not zoom_y else
+                 f"hình dịch {'LÊN' if zoom_y > 0 else 'XUỐNG'} {abs(zoom_y)}% phần dôi")
+              + ", khung giữ nguyên)")
 
     # Nhạc nền / logo / outro: file chỉ định mà không có thật thì BÁO rồi bỏ
     # qua phần đó — đừng vì thiếu cái phụ mà hỏng cả video chính.
@@ -721,6 +888,10 @@ def main():
     if outro and not Path(outro).is_file():
         print(f"⚠️ Không thấy outro: {outro} — dựng không outro.")
         outro = None
+    # ⚠️ Dòng lưu ý góc trái trên: tối đa 3 dòng, dòng trống bỏ qua.
+    luuy = [d.strip() for d in args.luuy if d and d.strip()][:3]
+    if luuy:
+        print("⚠️ Dòng lưu ý góc trái trên: " + " / ".join(luuy))
 
     # 🔉 Tiếng gốc: trộn dưới giọng đọc (có --audio) hoặc chỉnh thẳng (không).
     goc_db, goc_norm = args.goc_db, bool(args.goc_norm)
@@ -739,17 +910,35 @@ def main():
     # Bỏ hết thì file ra y hệt file vào — chặn sớm cho đỡ tốn công.
     # (goc_db=0/goc_norm tắt mà không có gì khác cũng tính là "bỏ hết".)
     if not any((ve_sub, vung, audio, zoom, doc, nhac, logo, khung_vien, outro,
-                goc_norm, goc_db)):
+                goc_norm, goc_db, luuy)):
         print("❌ Không vẽ sub, không che mờ, không thay tiếng, không zoom, "
               "không khung dọc, không nhạc/logo/khung viền/outro, không chỉnh "
-              "tiếng gốc — chẳng có gì để làm.")
+              "tiếng gốc, không dòng lưu ý — chẳng có gì để làm.")
         sys.exit(1)
 
-    if not burn(video, out_path, ass_path=ass_path, audio=audio,
-                force_cpu=args.cpu, vung=vung, zoom=zoom, doc=doc,
-                nhac=nhac, nhac_db=args.nhac_db, logo=logo, khung_vien=khung_vien,
-                goc_db=goc_db, goc_norm=goc_norm,
-                tts_db=tts_db, che_khoang=che_khoang):
+    # File .ass của dòng lưu ý: tên tạm AN TOÀN cho filtergraph, nằm cạnh video
+    # kết quả (= cwd của ffmpeg trong burn), cùng khung toạ độ với .ass phụ đề
+    # (dọc 1080×1920, ngang theo kho kiểu). Dựng xong là xoá.
+    luuy_ass = None
+    if luuy:
+        lw, lh = (1080, 1920) if doc else (kieusub.ASS_PLAY_W, kieusub.ASS_PLAY_H)
+        luuy_ass = write_ass_luuy(
+            luuy, out_path.with_name(f"~luuy_{os.getpid()}.ass"), lw, lh,
+            co_khung=bool(khung_vien))
+    try:
+        ok = burn(video, out_path, ass_path=ass_path, audio=audio,
+                  force_cpu=args.cpu, vung=vung, zoom=zoom, doc=doc,
+                  nhac=nhac, nhac_db=args.nhac_db, logo=logo, khung_vien=khung_vien,
+                  goc_db=goc_db, goc_norm=goc_norm,
+                  tts_db=tts_db, che_khoang=che_khoang, luuy_ass=luuy_ass,
+                  zoom_y=zoom_y)
+    finally:
+        if luuy_ass is not None:
+            try:
+                luuy_ass.unlink()
+            except OSError:
+                pass
+    if not ok:
         print("❌ ffmpeg lỗi khi vẽ phụ đề.")
         sys.exit(1)
     if outro:

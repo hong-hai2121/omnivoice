@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {# Trang duy nhất của myvideo, bố cục theo THỨ TỰ LÀM VIỆC như Home của myvoice:
-   hàng đợi → nguồn (danh sách) → 📼 bảng Kết quả (bước nào xong/thiếu, ⏩/🗑)
+   hàng đợi → nguồn (danh sách) → 📼 bảng Kết quả (bước nào xong/thiếu, 🎛/🗑)
    → bốn khối bước ①②③④, MỖI KHỐI mang cài đặt riêng của bước đó. Bấm nút
    của bước nào thì chạy từ bước đó; ô ⛓ quyết định có nối tiếp bước sau không.
    Muốn chạy trọn gói thì bấm ▶ Chạy tất cả ở khối Nguồn — nút đó đi thẳng
@@ -10,7 +10,14 @@
    MỌI thao tác chọn/tick/ghim ⭐ chỉ đổi ngay trên trang (HTML/CSS), KHÔNG gọi
    server: tới lúc bấm nút chạy (hoặc 💾) mới lưu cài đặt rồi mới chạy. Các nút
    đều đi qua htmx và chỉ thay khối hàng đợi + bảng kết quả + lời nhắn góc phải
-   — trang không tải lại nên không mất chỗ đang cuộn hay ô đang gõ dở. #}
+   — trang không tải lại nên không mất chỗ đang cuộn hay ô đang gõ dở.
+
+   BỐ CỤC THEO BỀ NGANG (18/11/2026, user dùng màn ultra-wide 2560×1080): trang
+   trải hết màn hình thay vì một cột 900px. Các lớp bc-* chỉ là KHUNG XẾP CHỖ
+   (không mang logic, không id nào đổi) — luật nằm ở khúc "MÀN HÌNH RỘNG" cuối
+   app.css:  bc-tren = [bc-nguon | bc-ketqua]  ·  bc-buoc = [bc-b123(bc-b12(①②) ③) | ④].
+   Màn hẹp thì mọi khung về lại một cột theo đúng thứ tự cũ. #}
+{% block bodyclass %}rong{% endblock %}
 {% block content %}
 {# Bảng chọn MÀU dùng chung cho "màu chữ" và "màu viền" — y khuôn myvoice:
    dãy ô màu sẵn + ô "tự chọn" (input color gắn radio riêng). Bảng nằm trong POPUP
@@ -65,12 +72,15 @@
 <datalist id="amluongs">{% for p in ["0","2","3","4","5","6","8","10"] %}<option value="{{ p }}">{% endfor %}</datalist>
 <form method="post" action="/chay" id="mainform"
       hx-post="/chay" hx-target="#queue" hx-swap="innerHTML">
+  <div class="bc-tren">
+  <div class="bc-nguon">
   <p class="colhead later">🎞 Nguồn — danh sách, mỗi dòng một file</p>
   <div class="panel srcbox">
     <div class="phead">
       <h2>Nguồn</h2>
       <span class="phead-gap"></span>
-      <button type="button" class="small" id="srcAdd">📂 Thêm từ máy</button>
+      <button type="button" class="small" id="srcAdd"
+              title="Mở hộp chọn file của Windows ở thư mục Downloads — giữ Ctrl/Shift để chọn nhiều file. File đã có sẵn trong ô Nguồn sẽ không bị thêm trùng.">📂 Thêm từ máy</button>
       <button type="button" class="small danger" id="srcClear">✕ Xoá ô nhập</button>
     </div>
     {# Tiếng GỐC: đổi ô này là cả trang đổi theo ngay (chữ + ô số chữ/dòng),
@@ -94,9 +104,8 @@
       <textarea id="srcBox" name="sources" rows="4" spellcheck="false"
                 placeholder="C:\Users\PC\Downloads\video1.mp4&#10;https://www.bilibili.com/video/BV…"></textarea>
     </label>
-    {# File trong Downloads/Videos/output giờ nằm trong bảng 📂 Thêm từ máy (có
-       ô lọc tên, cỡ file, ngày sửa và dấu đã-làm) — hàng chip dưới đây dành cho
-       nguồn ĐÃ CHẠY, giống hệt bên myvoice. #}
+    {# Chọn file trong máy = nút 📂 Thêm từ máy (hộp Open của Windows, mở sẵn
+       Downloads) — hàng chip dưới đây dành cho nguồn ĐÃ CHẠY, giống bên myvoice. #}
     <div id="nguonchip">{% include "_nguon.html" %}</div>
     <div class="actions">
       {# MỘT nút cho cả quy trình: chạy thẳng ①→④ và KHÔNG nhìn tới các ô ⛓
@@ -141,18 +150,34 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
               title="Dọn sạch myvideo/output để làm mẻ mới — chỉ đưa vào Thùng rác Windows, khôi phục được">🗑 Xoá cả output</button>
     </div>
   </div>
+  </div>{# /bc-nguon #}
 
   {# 📼 Kết quả DỜI LÊN trước "Các bước" (13/10/2026, theo yêu cầu): nhìn bảng
-     xong là bấm ⏩/🗑 ngay, khỏi cuộn qua 4 khối cài đặt. Khối nằm TRONG
+     xong là bấm 🎛/🗑 ngay, khỏi cuộn qua 4 khối cài đặt. Khối nằm TRONG
      #mainform nên _bang.html chỉ dùng nút htmx type="button" + thẻ <a>,
      KHÔNG có <form> con (form lồng form là HTML sai). #}
+  <div class="bc-ketqua">
   <p class="colhead later">📼 Kết quả</p>
   <div id="bang" hx-get="/partials/bang" hx-trigger="every 5s" hx-swap="innerHTML">
     {% include "_bang.html" %}
   </div>
+  {# 🎛 CHỈNH TRƯỚC (18/11/2026): khung xem trước của video đã tick — nạp bằng
+     nút 🎛 ở đầu bảng (/partials/chinhtruoc). Nằm NGOÀI hai khối tự vẽ lại
+     (#bang phía trên, #bangfile phía dưới) vì trong nó có video đang phát. Vẫn
+     ở trong #mainform nên các ô của khung KHÔNG có name (khỏi lẫn vào form
+     chính) và mọi nút là type=button. #}
+  <div id="chinhtruoc"></div>
+  <div id="bangfile" hx-get="/partials/file" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_file.html" %}
+  </div>
+  </div>{# /bc-ketqua #}
+  </div>{# /bc-tren #}
 
   <p class="colhead later">Các bước — bấm nút bước nào thì chạy từ bước đó</p>
 
+  <div class="bc-buoc">
+  <div class="bc-b123">
+  <div class="bc-b12">
   <div class="panel">
     <div class="phead">
       <span class="num">1</span><h2>Làm chậm video + SRT tiếng
@@ -186,21 +211,24 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       <label class="field">
         <span>Model nhận diện</span>
         <select name="model">
-          {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+          {% for m in ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"] %}
             <option value="{{ m }}" {{ 'selected' if settings.model == m }}>{{ m }}</option>
           {% endfor %}
         </select>
       </label>
-      {# Hai ngưỡng RIÊNG: 16 chữ Hán vs 42 ký tự Anh. Cả hai ô đều gửi lên nên
-         đổi qua đổi lại không mất số của tiếng kia; chỉ ô của tiếng đang chọn
-         hiện ra (CSS theo body[data-lang]). #}
+      {# Hai ngưỡng RIÊNG theo tiếng. Cả hai ô đều gửi lên nên đổi qua đổi lại
+         không mất số của tiếng kia; chỉ ô của tiếng đang chọn hiện ra (CSS theo
+         body[data-lang]). 0 = KHÔNG giới hạn: mỗi dòng SRT một câu trọn, chỉ
+         ngắt ở dấu hết câu / chỗ nghỉ — mặc định của tiếng Trung từ 18/11/2026
+         (trần 16 chữ cũ bẻ câu thành mẩu, vế dài còn bị chia giữa từ). #}
       <label class="field l-zh">
-        <span>Số chữ tối đa/dòng SRT Trung</span>
-        <input name="maxchars" type="number" min="4" max="60" value="{{ settings.maxchars }}">
+        <span>Số chữ tối đa/dòng SRT Trung (0 = không giới hạn, mỗi dòng một câu)</span>
+        <input name="maxchars" type="number" min="0" max="60" value="{{ settings.maxchars }}"
+               title="0 = không giới hạn: mỗi dòng là một câu trọn, chỉ ngắt ở dấu hết câu hoặc chỗ người nói nghỉ. Gõ số từ 4 tới 60 nếu muốn ép dòng ngắn lại như trước (16)">
       </label>
       <label class="field l-en">
-        <span>Số ký tự tối đa/dòng SRT Anh (chuẩn phụ đề ~42)</span>
-        <input name="maxchars_en" type="number" min="10" max="120"
+        <span>Số ký tự tối đa/dòng SRT Anh (chuẩn phụ đề ~42 · 0 = không giới hạn)</span>
+        <input name="maxchars_en" type="number" min="0" max="120"
                value="{{ settings.maxchars_en | default('42') }}">
       </label>
     </div>
@@ -210,6 +238,15 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
               hx-disabled-elt="this">🐢 Chạy bước ①</button>
     </div>
     <div class="chks">
+      {# 18/11/2026: ô này (và ô gopcau ở bước ②) từng RƠI khỏi trang trong một lần
+         sửa giao diện, mà server đọc ô vắng = tắt → mọi lượt chạy đều kèm
+         --khong-ngu-canh, Whisper thôi chấm câu. Giữ ô ở đây. #}
+      <label class="chk"><input type="checkbox" name="ngucanh" {{ 'checked' if settings.ngucanh }}>
+        🧠 Nghe theo ngữ cảnh câu trước để Whisper CHẤM CÂU (nên bật): không có dấu
+        câu thì không biết đâu là hết câu, dịch và đọc đều cắt sai chỗ. Đo trên
+        audio thật — tiếng Trung 85 phút: 35 → 1.025 dấu hết câu, nhận diện chậm
+        hơn ~1,6× (5,5 → 9 phút); tiếng Anh 4 phút: 17 → 34, chậm hơn ~3×.
+        Bỏ tick khi cần bản nháp gấp</label>
       <label class="chk"><input type="checkbox" name="redoasr">
         Nhận diện lại từ đầu (bỏ mốc giờ đã lưu trong words.json — không lưu ô này)</label>
       <label class="chk"><input type="checkbox" name="auto2" {{ 'checked' if settings.auto2 }}>
@@ -237,6 +274,14 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
               hx-disabled-elt="this">🌐 Chạy bước ②</button>
     </div>
     <div class="chks">
+      {# 18/11/2026: ô này từng RƠI khỏi trang trong một lần sửa giao diện, mà
+         server đọc ô vắng = tắt → mọi lượt chạy đều kèm --giu-dong (dịch và đọc
+         từng mẩu dòng). test_cat_cau_srt.py giữ cho ô này và ô ngucanh luôn có. #}
+      <label class="chk"><input type="checkbox" name="gopcau" {{ 'checked' if settings.gopcau }}>
+        🧩 Gộp dòng thành CÂU trọn vẹn rồi mới dịch (nên bật): SRT bước ① cắt dòng
+        theo bề ngang màn hình nên một câu hay nằm trên nhiều dòng — dịch từng dòng
+        thì ý câu này trào sang dòng kia và bước ③ đọc ngắt giữa câu. Gộp lại:
+        mỗi câu dịch trọn nghĩa, đọc trọn hơi</label>
       {# Cách dịch Gemini DÙNG CHUNG với myvoice (gemini_backend — một lựa chọn
          cho cả hai bảng, đổi ở đâu cũng là đổi cả hai). JS cuối trang giữ cho
          hai ô loại trừ nhau như bên myvoice. #}
@@ -265,6 +310,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       một lần trong terminal; là lựa chọn thứ ba thay cho hai ô Gemini, áp dụng cho cả bước ②
       lẫn 📑 SEO. Chọn model / mức cố gắng, kiểm tra kết nối, nhắn thử ở tab 🤖 GPT CLI của bảng myvoice.</p>
   </div>
+  </div>{# /bc-b12 #}
 
   <div class="panel">
     <div class="phead">
@@ -421,8 +467,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
         ⛓ Xong thì tự chạy bước ④ gắn vào video</label>
     </div>
   </div>
+  </div>{# /bc-b123 #}
 
-  <div class="panel">
+  <div class="panel bc-b4">
     <div class="phead">
       <span class="num">4</span><h2>Vẽ sub cứng + thay tiếng</h2>
       <p class="hint">Burn phụ đề theo KIỂU chọn bên dưới vào
@@ -685,6 +732,29 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       <p class="hint">🔊 Chỉnh âm lượng <b>tiếng gốc video</b> và <b>giọng
         đọc</b> (hai kênh độc lập) ở tab <a href="/amthanh">🔊 Âm thanh</a>.</p>
     </div>
+    {# ⚠️ DÒNG LƯU Ý góc trái trên (16/11/2026) — Ô RIÊNG có CÔNG TẮC bật/tắt
+       nhìn thấy ngay (user hỏi "có thêm chức năng tắt bật": lúc đầu nó chỉ là
+       một dòng tick lẫn trong cụm checkbox bên dưới). Mặc định BẬT; hai dòng
+       chữ sửa tại chỗ, lưu cùng form (bấm chạy hoặc 💾). Vẽ ở bước ④ bằng font
+       Segoe UI Light trắng, cỡ ~2,7% cạnh ngắn khung (write_ass_luuy trong
+       video_gansub_cung.py). Chữ ĐANG BẬT/ĐANG TẮT đổi bằng CSS theo ô tick. #}
+    <div class="luuybox">
+      <div class="luuybox-head">
+        <b>⚠️ Dòng lưu ý góc trái trên video</b>
+        <label class="congtac" title="Bật = bước ④ ghi 2 dòng dưới đây lên góc trái trên suốt video; tắt = video không có dòng này">
+          <input type="checkbox" name="luuy" {{ 'checked' if settings.luuy }}>
+          <span class="bat">ĐANG BẬT</span><span class="tat">ĐANG TẮT</span>
+        </label>
+      </div>
+      <p class="hint">Chữ trắng nét mảnh, nhỏ vừa đọc. Gạt công tắc để bật/tắt;
+        sửa câu chữ ở hai ô dưới (mỗi ô một dòng, để trống ô nào thì bỏ dòng đó).</p>
+      <div class="luuybox-o">
+        <input name="luuy1" type="text" maxlength="90" value="{{ settings.luuy1 }}"
+               placeholder="Dòng 1 — vd: VIDEO AI · KHÔNG BẮT CHƯỚC">
+        <input name="luuy2" type="text" maxlength="90" value="{{ settings.luuy2 }}"
+               placeholder="Dòng 2 — vd: CHỈ DÀNH CHO 18+">
+      </div>
+    </div>
     <div class="actions">
       <button class="primary" name="start" value="gan"
               hx-post="/chay" hx-target="#queue" hx-swap="innerHTML"
@@ -734,6 +804,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
         🖥 Ép encode CPU (khi GPU đang bận nhận diện/TTS)</label>
     </div>
   </div>
+  </div>{# /bc-buoc #}
 
   <div class="savebar">
     <button formaction="/luu" hx-post="/luu" hx-target="#queue" hx-swap="innerHTML"
@@ -748,6 +819,23 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
 {# 📼 Kết quả đã dời LÊN TRÊN, ngay sau khối Nguồn (trước "Các bước").
    📤 Đăng bài đã ra TAB RIÊNG (/dangbai): khâu đó nằm NGOÀI vòng lặp 4 bước —
    dựng xong cả mẻ mới ngó tới, để chung chỉ làm trang chính dài ra. #}
+
+{# ⏱ Chỗ hiện bảng so mốc giờ 5 câu đầu (_socau.html) — bấm tên video ở bảng
+   Kết quả là htmx nạp vào đây. Để NGOÀI #bang (bảng tự vẽ lại 5 giây/lần) và
+   ngoài #mainform. #}
+<div id="socau"></div>
+
+<script>
+  // ── ⏱ Bảng so mốc giờ câu đầu: đóng bằng ✕ / Xong / bấm ra nền / Esc ─────
+  const socau = document.getElementById("socau");
+  socau.addEventListener("click", e => {
+    if (e.target.classList.contains("modal") || e.target.closest(".modal-x"))
+      socau.replaceChildren();
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") socau.replaceChildren();
+  });
+</script>
 
 <script>
   // ── Lời nhắn góc phải: bấm vào là tắt ────────────────────────────────────
@@ -768,11 +856,11 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     document.body.dataset.lang = langSel.value;
   });
 
-  // ── Khối Nguồn: chip "Gần đây" · 📂 bảng chọn file · ✕ xoá ô nhập ────────
-  // Giống hệt khối Nguồn bên myvoice. Trình duyệt KHÔNG cho biết đường dẫn thật
-  // của file khi dùng <input type=file> (chỉ trả "C:\fakepath\…") mà các script
-  // lại cần đường dẫn thật, nên danh sách file do server đọc từ đĩa rồi trả về
-  // (/api/tep-nguon) — server chạy ngay trên máy này nên đó đúng là đĩa đang ngồi.
+  // ── Khối Nguồn: chip "Gần đây" · 📂 Thêm từ máy · ✕ xoá ô nhập ───────────
+  // Trình duyệt KHÔNG cho biết đường dẫn thật của file khi dùng <input type=file>
+  // (chỉ trả "C:\fakepath\…") mà các script lại cần đường dẫn thật, nên hộp chọn
+  // file do SERVER mở (/api/chon-tep — hộp Open của Windows ở thư mục Downloads;
+  // server chạy ngay trên máy này) rồi trả đường dẫn đã chọn về đây.
   const srcBox = document.getElementById("srcBox");
   const layDs = () => srcBox.value.split("\n").map(l => l.trim()).filter(Boolean);
 
@@ -783,6 +871,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     if (i >= 0) ds.splice(i, 1); else ds.push(text);
     srcBox.value = ds.join("\n") + (ds.length ? "\n" : "");
     toChip();
+    napNguon();
     return i < 0;                       // true = vừa thêm vào
   };
   // Chip vẽ lại sau mỗi lượt htmx (hàng "Gần đây" là khối swap ngoài luồng) nên
@@ -791,14 +880,12 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     const ds = layDs();
     document.querySelectorAll(".chip[data-src]").forEach(
       c => c.classList.toggle("chip-hit", ds.includes(c.dataset.src)));
-    document.querySelectorAll(".filerow[data-path]").forEach(
-      r => danhDauThem(r, ds.includes(r.dataset.path)));
   };
   document.addEventListener("click", e => {
     const chip = e.target.closest(".chip[data-src]");
     if (chip) { doiNguon(chip.dataset.src); return; }
     if (e.target.closest("#srcForget")) { quenLichSu(); return; }
-    if (e.target.closest("#srcAdd")) moBangChon();
+    if (e.target.closest("#srcAdd")) chonTuMay();
   });
   srcBox.addEventListener("input", toChip);
   document.getElementById("srcClear").addEventListener("click", () => {
@@ -822,104 +909,151 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     }
   }
 
-  // ── Bảng chọn file ───────────────────────────────────────────────────────
-  let bang = null;
-  const dongBang = () => {
-    if (bang) { bang.remove(); bang = null; }
-    document.removeEventListener("keydown", thoat);
-  };
-  function thoat(e) { if (e.key === "Escape") dongBang(); }
+  // ── 📂 Thêm từ máy: hộp Open của Windows (server mở), mở sẵn Downloads ────
+  // 15/11/2026 (user yêu cầu): thay bảng chọn file tự vẽ trong trang. Chọn xong,
+  // file nào ĐÃ CÓ trong ô Nguồn thì KHÔNG thêm trùng mà báo tên ra (so không
+  // phân biệt hoa/thường và gạch chéo — đường dẫn Windows); file nào đã chạy
+  // rồi (dấu đã-làm server gửi kèm) cũng báo, nhưng vẫn thêm: chạy lại là chạy
+  // tiếp các bước còn thiếu của chính video đó.
+  const chuanDuongDan = p => p.trim().replace(/\//g, "\\").toLowerCase();
+  let dangChonTep = false;
 
-  async function moBangChon() {
-    dongBang();
-    bang = document.createElement("div");
-    bang.className = "modal";
-    bang.innerHTML = `
-      <div class="modal-card">
-        <div class="modal-head">
-          <b>Chọn file từ máy</b>
-          <input class="modal-find" type="text" placeholder="Lọc theo tên…" autofocus>
-          <button type="button" class="small modal-x">✕</button>
-        </div>
-        <div class="modal-body"><p class="hint">Đang đọc thư mục…</p></div>
-        <div class="modal-foot">
-          <span class="hint">Bấm vào file để thêm vào ô Nguồn, bấm lại thì bỏ ra
-            — chọn được nhiều file.</span>
-          <button type="button" class="primary small modal-x">Xong</button>
-        </div>
-      </div>`;
-    document.body.appendChild(bang);
-    document.addEventListener("keydown", thoat);
-    bang.addEventListener("click", e => {
-      if (e.target === bang || e.target.closest(".modal-x")) { dongBang(); return; }
-      const hang = e.target.closest(".filerow");
-      if (!hang) return;
-      danhDauThem(hang, doiNguon(hang.dataset.path));
-      hang.classList.add("filerow-hit");
-      setTimeout(() => hang.classList.remove("filerow-hit"), 700);
-    });
-    bang.querySelector(".modal-find").addEventListener("input", e => {
-      const q = e.target.value.trim().toLowerCase();
-      bang.querySelectorAll(".filerow").forEach(r => {
-        r.hidden = q && !r.dataset.name.toLowerCase().includes(q);
-      });
-    });
-
-    const than = bang.querySelector(".modal-body");
-    let nhom;
+  async function chonTuMay() {
+    if (dangChonTep) return;            // hộp chọn đang mở — không mở cái thứ hai
+    dangChonTep = true;
+    const nut = document.getElementById("srcAdd");
+    nut.disabled = true;
+    const cho = document.createElement("p");
+    cho.className = "okmsg";
+    cho.textContent = "📂 Đang mở hộp chọn file của Windows (thư mục Downloads) — "
+      + "giữ Ctrl/Shift để chọn nhiều file rồi bấm Open.";
+    tin.replaceChildren(cho);
     try {
-      const resp = await fetch("/api/tep-nguon", { credentials: "same-origin" });
-      nhom = (await resp.json()).groups || [];
+      const resp = await fetch("/api/chon-tep", { method: "POST", credentials: "same-origin" });
+      const d = await resp.json();
+      if (d.error) { nhan(d.error); return; }
+      const chon = d.files || [];
+      if (!chon.length) { tin.replaceChildren(); return; }     // bấm Cancel
+      const ds = layDs();
+      const co = new Set(ds.map(chuanDuongDan));
+      const moi = [], trung = [];
+      for (const f of chon) {
+        const k = chuanDuongDan(f.path);
+        if (co.has(k)) trung.push(f); else { co.add(k); moi.push(f); }
+      }
+      if (moi.length) {
+        srcBox.value = [...ds, ...moi.map(f => f.path)].join("\n") + "\n";
+        toChip();
+        napNguon();
+      }
+      const daLam = moi.filter(f => f.lam);
+      let msg = moi.length ? `Đã thêm ${moi.length} file vào ô Nguồn` : "Không thêm file nào";
+      if (trung.length)
+        msg += ` · ${trung.length} file ĐÃ CÓ SẴN trong ô Nguồn nên không thêm trùng: `
+          + trung.map(f => f.name).join(", ");
+      if (daLam.length)
+        msg += ` · lưu ý ${daLam.length} file đã chạy trước đây: `
+          + daLam.map(f => `${f.name} (${f.xong ? "✓ đã xong" : "◐ mới " + f.buoc + " bước"})`).join(", ");
+      nhan(msg, moi.length > 0);
     } catch (_) {
-      than.innerHTML = '<p class="warn">Không đọc được danh sách file — server còn chạy không?</p>';
+      nhan("Không mở được hộp chọn file — server còn chạy không?");
+    } finally {
+      dangChonTep = false;
+      nut.disabled = false;
+    }
+  }
+
+  // ── 🎛 CHỈNH TRƯỚC (18/11/2026): nguồn chờ · ô tick · mở khung xem trước ───
+  // (1) Ô Nguồn vừa nạp gì (gõ/dán, bấm chip, 📂 Thêm từ máy) thì báo server nhớ
+  //     thành "nguồn chờ" → hiện một hàng ở bảng Kết quả dù chưa chạy bước nào.
+  //     Server chỉ nhận dòng là FILE VIDEO có thật hoặc link, nên gõ dở đường dẫn
+  //     không sinh hàng rác. Gom 0,7 giây một lần cho khỏi bắn theo từng phím.
+  let henNap = 0;
+  const veLaiBang = () => htmx.ajax("GET", "/partials/bang", { target: "#bang", swap: "innerHTML" });
+  function napNguon() {
+    clearTimeout(henNap);
+    henNap = setTimeout(async () => {
+      const fd = new FormData();
+      fd.append("sources", srcBox.value);
+      try {
+        const r = await fetch("/nguon/nap", { method: "POST", body: fd, credentials: "same-origin" });
+        const d = await r.json();
+        if (d.them) veLaiBang();
+      } catch (_) { /* server tắt: lần bấm chạy sẽ báo */ }
+    }, 700);
+  }
+  srcBox.addEventListener("input", napNguon);
+
+  // (2) Ô tick ở đầu mỗi hàng. Bảng bị vẽ lại 5 giây/lần (và sau mỗi nút bấm)
+  //     nên dấu tick giữ ở đây rồi tô lại sau mỗi lượt vẽ; nhớ qua sessionStorage
+  //     để tải lại trang không mất.
+  const KHOA_TICK = "mvidTick";
+  let daTick;
+  try { daTick = new Set(JSON.parse(sessionStorage.getItem(KHOA_TICK) || "[]")); }
+  catch (_) { daTick = new Set(); }
+  const toTick = () => document.querySelectorAll("#bang input.tickv").forEach(
+    o => { o.checked = daTick.has(o.value); });
+  document.addEventListener("change", e => {
+    const o = e.target.closest ? e.target.closest("#bang input.tickv") : null;
+    if (!o) return;
+    if (o.checked) daTick.add(o.value); else daTick.delete(o.value);
+    sessionStorage.setItem(KHOA_TICK, JSON.stringify([...daTick]));
+  });
+  toTick();
+  document.body.addEventListener("htmx:afterSwap", toTick);
+  document.body.addEventListener("htmx:oobAfterSwap", toTick);
+
+  // 📁 File mới trong output: khối THU GỌN (<details> đóng sẵn, 19/11/2026). Nó bị
+  // vẽ lại 5 giây/lần nên user vừa bấm mở là lượt vẽ kế đóng lại — nhớ trạng thái
+  // ở đây rồi đặt lại sau mỗi lượt vẽ. Sự kiện toggle không nổi bọt → bắt ở pha
+  // capture; chỉ ghi nhận khi do người bấm (không phải do chính đoạn này đặt lại).
+  let fileMo = sessionStorage.getItem("mvidFileMo") === "1";
+  const datFileMo = () => { const d = document.getElementById("fileMoi"); if (d && d.open !== fileMo) d.open = fileMo; };
+  document.addEventListener("toggle", e => {
+    if (e.target.id !== "fileMoi" || e.target.open === fileMo) return;
+    fileMo = e.target.open;
+    sessionStorage.setItem("mvidFileMo", fileMo ? "1" : "0");
+  }, true);
+  datFileMo();
+  document.body.addEventListener("htmx:afterSwap", datFileMo);
+  document.body.addEventListener("htmx:oobAfterSwap", datFileMo);
+
+  // (3) Nút 🎛 Chỉnh trước (đầu bảng, cạnh 📂 Mở thư mục): mở khung xem trước
+  //     của video ĐANG TICK ngay dưới bảng. Tick nhiều thì lấy hàng trên cùng.
+  const khungCT = document.getElementById("chinhtruoc");
+  // xem (tuỳ chọn) = bản muốn xem: "nguon" file gốc · "that" video ① cả bài · "thu" bản thử.
+  // toc (tuỳ chọn) = TỐC ĐỘ sau khi làm chậm muốn xem ("0.7"…) — mỗi tốc độ một bản thử
+  // riêng; bỏ trống thì server lấy tốc độ ghi trong tên hàng vừa tick (_x0.8), không có
+  // thì tốc độ đã lưu ở khối ①. khongCuon = nạp lại tại chỗ, không kéo trang xuống khung.
+  const oTocDo = document.querySelector("#mainform select[name=speed]");
+  window.moChinhTruoc = (id, xem, toc, khongCuon) =>
+    htmx.ajax("GET", "/partials/chinhtruoc?id=" + encodeURIComponent(id)
+                     + (xem ? "&xem=" + encodeURIComponent(xem) : "")
+                     + (toc ? "&toc=" + encodeURIComponent(toc) : ""),
+              { target: "#chinhtruoc", swap: "innerHTML" })
+      .then(() => { if (!khongCuon) khungCT.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#nutChinhTruoc")) return;
+    const dangTick = [...document.querySelectorAll("#bang input.tickv")].filter(o => o.checked);
+    if (!dangTick.length) {
+      nhan("Tick ô vuông ở đầu hàng của video muốn chỉnh, rồi bấm lại 🎛 Chỉnh trước.");
       return;
     }
-    if (!nhom.some(g => g.files.length)) {
-      than.innerHTML = '<p class="empty">Không thấy file video/audio nào trong các thư mục nguồn.</p>';
-      return;
-    }
-    than.innerHTML = nhom.map(g => `
-      <div class="filegroup">
-        <div class="filegroup-head">${esc(g.label)}
-          <span class="hint">${esc(g.folder)}</span></div>
-        ${g.files.length ? g.files.map(f => `
-          <button type="button" class="filerow${f.lam ? (f.xong ? " filerow-xong" : " filerow-dang") : ""}"
-                  data-path="${esc(f.path)}" data-name="${esc(f.name)}">
-            <span class="filerow-name">${esc(f.name)}</span>
-            ${dauDaLam(f)}
-            <span class="filerow-meta">${esc(f.size)} · ${esc(f.when)}</span>
-          </button>`).join("")
-          : '<p class="empty">Thư mục trống.</p>'}
-        ${g.more ? `<p class="hint">…và ${g.more} file cũ hơn không hiện ở đây.</p>` : ""}
-      </div>`).join("");
-    toChip();          // file đã nằm sẵn trong ô Nguồn thì mang dấu ngay từ đầu
-    bang.querySelector(".modal-find").focus();
-  }
-
-  // Nhãn "đã làm" của một file: đã dựng đủ 4 bước hay còn dở mấy bước. Video
-  // chưa chạy bao giờ (không có gì trong output) thì không có nhãn nào.
-  function dauDaLam(f) {
-    if (!f.lam) return "";
-    return f.xong
-      ? '<span class="dalam xong" title="Đã dựng xong đủ các bước">✓ xong</span>'
-      : `<span class="dalam dang" title="Đang dở — mới ${esc(f.buoc)} bước">◐ ${esc(f.buoc)}</span>`;
-  }
-
-  // Dấu "✓ đã thêm" NẰM LẠI trên hàng (không nháy rồi mất): danh sách dài thì
-  // mới nhớ được đã bấm những file nào. co=false là vừa bấm bỏ ra → gỡ dấu.
-  function danhDauThem(hang, co) {
-    hang.classList.toggle("filerow-them", !!co);
-    const cu = hang.querySelector(".themroi");
-    if (co && !cu) {
-      hang.querySelector(".filerow-name")
-          .insertAdjacentHTML("afterend", '<span class="dalam themroi">✓ đã thêm</span>');
-    } else if (!co && cu) {
-      cu.remove();
-    }
-  }
-
-  const esc = s => String(s).replace(/[&<>"']/g, c =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    if (dangTick.length > 1)
+      nhan(`Đang tick ${dangTick.length} video — mở video trên cùng; muốn chỉnh video khác thì chỉ tick video đó.`, true);
+    // Hàng NGUỒN CHỜ (chưa có gì trong output) mở ở tốc độ đang hiện ở khối ① (kể cả
+    // khi vừa đổi mà chưa lưu); hàng đã có kết quả mở ở tốc độ của chính hàng đó.
+    const id = dangTick[0].value;
+    window.moChinhTruoc(id, "", id.startsWith("src:") && oTocDo ? oTocDo.value : "");
+  });
+  // Đổi ô "Tốc độ sau khi làm chậm" ở khối ① lúc khung 🎛 đang mở → khung chuyển theo
+  // sang bản thử của tốc độ đó (một cài đặt, hai chỗ bấm). Khung tự đặt ô này khi mở
+  // thì data-toc đã bằng giá trị mới → không nạp lại (không lặp vòng).
+  if (oTocDo) oTocDo.addEventListener("change", () => {
+    const p = document.getElementById("ctPanel");
+    if (p && p.dataset.mid && p.dataset.toc && p.dataset.toc !== oTocDo.value)
+      window.moChinhTruoc(p.dataset.mid, "", oTocDo.value, true);
+  });
 
   // ── 🔆 Sáng giọng: thanh kéo ↔ ô số đồng bộ, nút ↺ về 80, dòng nhãn; đổi mức
   // là ô 🔊 Nghe thử trỏ lại src (bản mẫu đã EQ theo mức mới — /nghe/giong?sang=)
@@ -1310,7 +1444,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
 
   const KHONG_LUU = ["sources", "redoasr", "redotts"];   // ba ô không nằm trong cài đặt
   const danhDauDoi = (co) => document.body.classList.toggle("doi", co);
-  const coDoi = e => { if (!KHONG_LUU.includes(e.target.name)) danhDauDoi(true); };
+  // Ô KHÔNG có name (ô tick ở bảng video, các thanh kéo của khung 🎛 Chỉnh trước)
+  // không thuộc cài đặt của form này → không tính là "chưa lưu".
+  const coDoi = e => { if (e.target.name && !KHONG_LUU.includes(e.target.name)) danhDauDoi(true); };
   form.addEventListener("input", coDoi);
   form.addEventListener("change", coDoi);
   document.body.addEventListener("mvid:xong", e => {

@@ -44,7 +44,9 @@ KICHBAN_DIR.mkdir(exist_ok=True)
 # Đây là kết quả tiếng Trung đã chỉnh tay; mở app lên là dùng được ngay/gửi Gemini.
 DEFAULT_RESULT_DOCX = KICHBAN_DIR / "tiengTrung.docx"
 
-MODELS = ["tiny", "base", "small", "medium", "large-v3"]
+# turbo = encoder của large-v3 + decoder rút còn 4 lớp: nặng ngang medium (1.5GB)
+# nhưng nhanh hơn hẳn và nghe chuẩn hơn medium.
+MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]
 DEFAULT_MODEL = "medium"
 # Tốc độ phát audio khi nhận diện (0.7 = chậm lại cho dễ bắt chữ với giọng đọc nhanh)
 SPEEDS = ["0.6", "0.7", "0.8", "0.9", "1.0"]
@@ -453,9 +455,9 @@ class App:
         ttk.Label(row, text="Model:").pack(side="left")
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
         self.model_cb = ttk.Combobox(row, textvariable=self.model_var, values=MODELS,
-                                     state="readonly", width=12)
+                                     state="readonly", width=14)
         self.model_cb.pack(side="left", padx=(8, 4))
-        ttk.Label(row, text="(small = nhanh, large-v3 = chính xác nhất)",
+        ttk.Label(row, text="(small = nhanh, turbo = nhanh mà chuẩn, large-v3 = chính xác nhất)",
                   style="Muted.TLabel").pack(side="left")
 
         ttk.Label(row, text="Tốc độ:").pack(side="left", padx=(12, 0))

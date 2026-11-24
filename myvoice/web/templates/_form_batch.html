@@ -29,7 +29,7 @@
         <label class="field">
           <span>Model nhận diện</span>
           <select name="model">
-            {% for m in ["tiny", "base", "small", "medium", "large-v3"] %}
+            {% for m in ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"] %}
               <option value="{{ m }}" {{ 'selected' if pipe.model == m }}>{{ m }}</option>
             {% endfor %}
           </select>

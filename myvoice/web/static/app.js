@@ -1108,7 +1108,11 @@ window.mvNguon = (function () {
                                     : `⛔ Server báo lỗi ${r.status}.`);
       }
       window.mvToast(notes.length ? notes : ['✓ Đã gửi']);
-      if (r.ok && form.dataset.ajax === 'tailai') { location.reload(); return; }
+      // data-ajax="tailai" đặt ở form, hoặc ở riêng MỘT nút của form nhiều nút (↺ Lấy lại
+      // từ đầu trong #voiceform: xong phải tải lại để số "còn x/y" cạnh thư mục đổi theo).
+      if (r.ok && (form.dataset.ajax === 'tailai' || (nut && nut.dataset.ajax === 'tailai'))) {
+        location.reload(); return;
+      }
       lamMoi();
     } catch (_) {
       window.mvToast(['⛔ Không gửi được — server còn chạy không?']);

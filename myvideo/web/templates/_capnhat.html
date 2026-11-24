@@ -18,6 +18,8 @@
   <div hx-swap-oob="innerHTML:#dangkhoi">{% include "_dang.html" %}</div>
 {% elif not tren_hangdoi and not tren_amthanh %}
   <div hx-swap-oob="innerHTML:#bang">{% include "_bang.html" %}</div>
+  {# 📁 File mới: tách khỏi #bang ngày 18/11/2026 (khung 🎛 Chỉnh trước nằm giữa). #}
+  <div hx-swap-oob="innerHTML:#bangfile">{% include "_file.html" %}</div>
 
   {# Hàng chip "Gần đây": nguồn vừa chạy hiện ra ngay và dấu ✓/◐ chạy theo tiến
      độ — trang không tải lại nên phải tự thay khối này. Ô nhập KHÔNG bị đụng. #}

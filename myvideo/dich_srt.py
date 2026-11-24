@@ -114,8 +114,21 @@ _PHAY = ",;:，、；："              # ngắt phụ → chỗ chốt dự phò
 _DONG_CUOI = "\"'”’」』）)"       # dấu đóng đi sau dấu kết câu
 # Trần an toàn khi ASR quên chấm câu cả đoạn dài (đơn vị: ký tự của dòng gộp).
 TRAN = {"zh": 70, "en": 200}
+# Trần cho cụm KHÔNG có dấu câu nào (xem gop_cau) — tiếng Trung ~2–3 dòng 16 chữ.
+TRAN_KHONG_DAU = {"zh": 36}
 # Khe lặng giữa hai dòng ≥ ngần này giây thì coi như hết câu, dù không có dấu.
-KHE_LANG = 0.7
+# = ngưỡng chốt dòng của bước ① (video_chamlai_srt.KHE_CHOT = 0,7 s giữa hai chữ)
+# trừ 0,2 s bước ① nới đuôi mỗi dòng (pad_ends): chỗ nghỉ đã khiến bước ① chốt
+# dòng thì ở đây cũng phải là ranh giới câu. Để 0,7 thì các chỗ nghỉ 0,7–0,9 s
+# bị bỏ sót, hai lời thoại cách nhau một nhịp nghỉ vẫn bị gộp làm một.
+KHE_LANG = 0.5
+
+# SRT tiếng Trung của bước ① (từ 18/11/2026) cách hai vế không có dấu câu bằng
+# MỘT khoảng trắng ("错在你 月祖代袍"). Thấy kiểu đó trong file thì lúc gộp dòng
+# cũng nối bằng khoảng trắng — không thì ranh giới vế ở chỗ nối dòng biến mất
+# ("…何错之有错在你 月祖代袍…") trong khi giữa dòng vẫn còn.
+_HAN_CACH_RE = re.compile(r"[一-鿿㐀-䶿] [一-鿿㐀-䶿]")
+_DAU_CAU = set(_KET_CAU + _PHAY + _DONG_CUOI + "“‘「『（(《〈》〉·—－-")
 
 
 def _het_cau(text):
@@ -123,12 +136,19 @@ def _het_cau(text):
     return bool(t) and t[-1] in _KET_CAU
 
 
-def _noi(a, b, lang):
+def _noi(a, b, lang, cach=False):
     """Nối hai mẩu: tiếng Trung viết liền, tiếng Anh chèn khoảng trắng — trừ khi
-    mẩu sau mở đầu bằng dấu (vd "-driven" nối vào "data" thành "data-driven")."""
+    mẩu sau mở đầu bằng dấu (vd "-driven" nối vào "data" thành "data-driven").
+
+    cach=True (SRT Trung kiểu cách-vế-bằng-khoảng-trắng): chỗ nối không có dấu
+    câu ở cả hai phía thì cũng cách một khoảng trắng."""
     if not a:
         return b
-    if lang == "zh" or not b or not (b[0].isalnum() or b[0] in '"“([{$&@#*'):
+    if lang == "zh":
+        if cach and b and a[-1] not in _DAU_CAU and b[0] not in _DAU_CAU:
+            return a + " " + b
+        return a + b
+    if not b or not (b[0].isalnum() or b[0] in '"“([{$&@#*'):
         return a + b
     return a + " " + b
 
@@ -152,11 +172,19 @@ def gop_cau(cues, lang):
     dòng gần nhất kết thúc bằng dấu phẩy để khỏi cắt giữa cụm từ."""
     tran = TRAN.get(lang, TRAN["en"])
     cau, cum = [], []          # cum: các dòng của câu đang gom
+    cach = lang == "zh" and any(_HAN_CACH_RE.search(t) for _tl, t in cues)
 
     def _gop(phan):
-        txt = ""
+        # Khoảng trắng ở chỗ nối chỉ khi CẢ hai dòng đều không có dấu câu nào —
+        # tức đang ở khúc Whisper không chấm câu, dòng kết ở ranh giới vế. Dòng
+        # có dấu câu mà kết không dấu là bị cắt giữa vế cho vừa bề ngang ("如今我
+        # 勾魂十九司司" + "君之位空缺三个月了,"): nối liền, chèn khoảng trắng là sai.
+        txt, truoc = "", ""
         for _tl, t in phan:
-            txt = _noi(txt, t.strip(), lang)
+            t = t.strip()
+            ro = cach and not (set(truoc) & _DAU_CAU) and not (set(t) & _DAU_CAU)
+            txt = _noi(txt, t, lang, ro)
+            truoc = t
         return txt
 
     def chot(den=None):
@@ -181,14 +209,20 @@ def gop_cau(cues, lang):
         cum.append((tl, text))
         if _het_cau(text):
             chot()
-        elif len(_gop(cum)) >= tran:
+            continue
+        gom = _gop(cum)
+        # Cụm chưa có lấy một dấu câu = khúc Whisper không chấm câu: không biết
+        # câu hết ở đâu, gom tới trần thường thì thành khối 15–20 giây trộn lời
+        # của mấy nhân vật. Dùng trần thấp hơn (2–3 dòng) cho các cụm như vậy.
+        gioi = tran if set(gom) & _DAU_CAU else TRAN_KHONG_DAU.get(lang, tran)
+        if len(gom) >= gioi:
             # Quá dài mà chưa thấy dấu kết câu (ASR quên chấm cả đoạn): lùi về
             # dòng gần nhất kết thúc bằng dấu phẩy. CHỈ lùi khi phần chốt lại còn
             # đủ dài (≥60% trần) — lùi về dấu phẩy ngay đầu cụm thì để lại một
             # mẩu cụt ("So in this video,") mà phần đuôi vẫn dài y như cũ.
             lui = next((i + 1 for i in range(len(cum) - 2, -1, -1)
                         if cum[i][1].rstrip()[-1:] in _PHAY
-                        and len(_gop(cum[:i + 1])) >= tran * 0.6), None)
+                        and len(_gop(cum[:i + 1])) >= gioi * 0.6), None)
             chot(lui)
     chot()
     return cau
@@ -241,6 +275,13 @@ _RIENG = {
             "- Mỗi câu chỉ nên có tối đa 1-2 từ Hán-Việt \"nặng\", còn lại ưu tiên tiếng "
             "Việt phổ thông để người xem dễ hiểu.\n",
         "khongchua": "không chừa chữ Hán",
+        # Bước ① cách hai vế không dấu câu bằng khoảng trắng — nói cho mô hình
+        # biết khoảng trắng đó là gì, kẻo nó tưởng là lỗi gõ rồi đọc dính lại.
+        "nguon":
+            "- Bản gốc do máy nhận diện từ giọng nói nên thường KHÔNG có dấu câu: "
+            "khoảng trắng trong dòng là chỗ ngắt giữa hai vế hoặc hai lời thoại, "
+            "hãy tự hiểu ranh giới câu theo đó. Có thể có chữ nghe nhầm (đồng âm "
+            "khác chữ): dịch theo nghĩa hợp ngữ cảnh, đừng dịch máy móc chữ sai.\n",
     },
     "en": {
         "theloai": "phim truyện, phỏng vấn, tài liệu, hướng dẫn, tin tức, vlog đời thường",
@@ -278,6 +319,7 @@ def gemini_prefix(lang="zh"):
         "- Nhiều dòng liên tiếp có thể là MỘT câu dài bị cắt theo mốc thời gian: "
         "dịch sao cho các dòng đọc nối nhau vẫn mượt, nhưng ý của dòng nào phải "
         "nằm đúng dòng đó, không dồn ý sang dòng khác.\n"
+        + r.get("nguon", "") +
         f"- Dịch sát nghĩa, không thêm bớt nội dung, {r['khongchua']}, giữ "
         "nguyên thứ tự các dòng.\n"
         "- Trả lại ĐÚNG số dòng như đầu vào: mỗi dòng bắt đầu bằng đúng mã B[x] "

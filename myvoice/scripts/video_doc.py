@@ -37,8 +37,9 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 # Tái dùng các tiện ích đã có của bản ngang (đọc thời lượng, dò NVENC, ghép playlist, tìm audio).
-from video_khung import (get_duration, has_nvenc, build_playlist, find_audio,
+from video_khung import (get_duration, has_nvenc, find_audio,
                          run_ffmpeg_progress, probe_durations, video_hop_le, xoa_video_cut)
+import clip_da_lay   # sổ "clip đã lấy": lần dựng sau không bốc trùng clip các lần trước
 
 BASE_DIR   = Path(__file__).resolve().parent.parent   # myvoice/
 VIDEO_DIR  = BASE_DIR / "videodoc"     # kho video DỌC để ghép random
@@ -124,6 +125,7 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
 
     vend = "[vid]" if (has_caption or has_cover) else "[out]"
 
+    ghi_da_lay = None
     reuse_ngang = source_video is not None
     if reuse_ngang:
         # ── DÙNG LẠI VIDEO NGANG: phóng to khớp chiều cao dọc + cắt giữa ──────
@@ -153,12 +155,15 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
             log(f"[Cảnh báo] Không tìm thấy file hiệu ứng, bỏ qua: {effect}")
             effect = None
 
-        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations)
+        # Ghép random tới khi đủ thời lượng audio (clip lỗi đã bị loại khỏi durations).
+        # 18/11/2026: chỉ bốc clip CHƯA lấy ở các lần dựng trước; hết thì reset thư mục đang
+        # dùng rồi lấy lại từ đầu. Dấu "đã lấy" chỉ ghi khi dựng XONG (ghi_da_lay ở cuối).
         durations = probe_durations(videos, log)
         videos = [v for v in videos if v in durations]
         if not videos:
             raise RuntimeError(f"Không đọc được clip nào trong: {video_dir}")
-        seq, total = build_playlist(videos, durations, audio_dur)
+        seq, total, ghi_da_lay, da_lay_mo_ta = clip_da_lay.chon_co_nho(
+            videos, durations, audio_dur)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt",
                                          delete=False, encoding="utf-8") as f:
@@ -170,6 +175,7 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
         log(f"Nguồn clip : {video_dir}")
         log(f"Audio      : {audio_file.name}  ({audio_dur:.2f}s)")
         log(f"Kho video  : {len(videos)} clip -> ghép {len(seq)} đoạn ({total:.2f}s)")
+        log(f"Clip đã lấy: {da_lay_mo_ta}")
         log(f"Hiệu ứng   : {effect.name if effect else '(không)'}")
         log(f"Đầu ra     : {output}")
 
@@ -276,6 +282,9 @@ def build_video_doc(audio_file: Path, *, log=print, effect=None, progress=None,
     if rc != 0:
         xoa_video_cut(output, log=log)     # không để file cụt lại thành "đã có"
         raise RuntimeError(f"ffmpeg lỗi:\n{err_tail}")
+
+    if ghi_da_lay:
+        ghi_da_lay(log)       # dựng xong mới đánh dấu clip "đã lấy" cho lần sau khỏi trùng
 
     final_dur = get_duration(output)
     size_mb   = output.stat().st_size / 1024 / 1024

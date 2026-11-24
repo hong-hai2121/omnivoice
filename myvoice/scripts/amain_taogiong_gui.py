@@ -348,6 +348,27 @@ def list_ngang_sources() -> list[str]:
         return []
 
 
+def dem_ngang_sources() -> dict[str, tuple[int, int]]:
+    """{tên thư mục con videongang/: (số clip CHƯA lấy, tổng số clip)} — ô "Nguồn ngang" hiện
+    "còn x/y" cạnh tên. 18/11/2026: ghép random nhớ clip đã lấy qua các lần dựng, lấy hết nguồn
+    đang chọn thì tự reset (scripts/clip_da_lay.py). Quét lại đĩa mỗi lần gọi nên thư mục /
+    video mới thêm vào kho hiện ngay, tính là "chưa lấy"."""
+    import clip_da_lay
+    so = clip_da_lay.doc_so()
+    return {name: clip_da_lay.dem(VIDEONGANG_DIR / name, so) for name in list_ngang_sources()}
+
+
+def dat_lai_ngang_da_lay(value) -> int:
+    """↺ "Lấy lại từ đầu": xoá dấu "đã lấy" của các thư mục con đã chọn ở ô "Nguồn ngang"
+    (không chọn thư mục nào = cả kho videongang/, kể cả clip nằm ở gốc) → số dấu đã xoá.
+    Chỉ sửa sổ clip_da_lay.json, không đụng file video."""
+    import clip_da_lay
+    names = ngang_source_list(value)
+    if names:
+        return clip_da_lay.dat_lai(VIDEONGANG_DIR / n for n in names)
+    return clip_da_lay.dat_lai([VIDEONGANG_DIR], de_quy=True)
+
+
 def ngang_source_list(value) -> list[str]:
     """Ô "Nguồn ngang" (taogiong_options.json / form web / tham số) → danh sách TÊN
     thư mục con videongang/ đã chọn; [] = cả kho (tất cả).
@@ -420,6 +441,10 @@ class NguonNgangChon(ttk.Menubutton):
     thư mục con → tạo thư mục mới không cần mở lại app. Tick "(tất cả)" là bỏ tick
     các thư mục; bỏ tick hết cũng = "(tất cả)". Thư mục đã tick nhưng không còn trên
     đĩa vẫn hiện "(không thấy)" để bỏ tick được.
+
+    18/11/2026: cạnh tên mỗi thư mục hiện "còn x/y clip chưa lấy" (ghép random không lấy
+    trùng clip các lần dựng trước, hết thì tự reset — scripts/clip_da_lay.py); cuối menu
+    có ↺ "Lấy lại từ đầu" (xoá dấu của nguồn đang tick) và 📂 mở kho để thêm thư mục/video.
     """
 
     def __init__(self, master, value=None, width=16, **kw):
@@ -454,12 +479,48 @@ class NguonNgangChon(ttk.Menubutton):
         self._menu.add_checkbutton(label=NGANG_SOURCE_ALL, variable=self._tat_ca,
                                    command=self._chon_tat_ca)
         self._menu.add_separator()
-        tren_dia = list_ngang_sources()
+        tren_dia = dem_ngang_sources()      # {tên: (clip chưa lấy, tổng clip)} — quét lại đĩa
         for name in sorted(set(tren_dia) | set(self.get())):
             v = self._vars.setdefault(name, tk.BooleanVar())
-            self._menu.add_checkbutton(
-                label=name if name in tren_dia else f"{name} (không thấy)",
-                variable=v, command=self._cap_nhat)
+            if name in tren_dia:
+                con, tong = tren_dia[name]
+                nhan = f"{name}   —  còn {con}/{tong} clip chưa lấy"
+            else:
+                nhan = f"{name} (không thấy)"
+            self._menu.add_checkbutton(label=nhan, variable=v, command=self._cap_nhat)
+        self._menu.add_separator()
+        self._menu.add_command(label="↺  Lấy lại từ đầu (xoá dấu «đã lấy» của nguồn đang chọn)",
+                               command=self._dat_lai)
+        self._menu.add_command(label="📂  Mở kho videongang (thêm thư mục / thêm video)",
+                               command=self._mo_kho)
+
+    def _dat_lai(self):
+        """↺: xoá dấu "đã lấy" của nguồn đang tick (không tick = cả kho) sau khi hỏi lại."""
+        ten = ten_ngang_source(self.get(), toi_da=4)
+        if not messagebox.askyesno(
+                "Lấy lại từ đầu",
+                f"Xoá dấu «đã lấy» của nguồn ngang: {ten}?\n\n"
+                "Lần dựng sau sẽ chọn ngẫu nhiên lại từ TẤT CẢ clip của nguồn này "
+                "(có thể trùng clip của các video trước).\n"
+                "Chỉ xoá dấu trong sổ, KHÔNG xoá file video nào.",
+                parent=self.winfo_toplevel()):
+            return
+        try:
+            n = dat_lai_ngang_da_lay(self.get())
+        except OSError as e:
+            messagebox.showerror("Lấy lại từ đầu", f"Không ghi được sổ clip đã lấy:\n{e}",
+                                 parent=self.winfo_toplevel())
+            return
+        logging.info(f"↺ Nguồn ngang {ten}: đã xoá {n} dấu «đã lấy» → lần dựng sau lấy lại từ đầu.")
+
+    def _mo_kho(self):
+        """📂: mở videongang/ trong Explorer để thêm thư mục con / chép video vào. Lần mở menu
+        sau tự quét lại; clip mới là "chưa lấy" nên được ghép trước."""
+        try:
+            VIDEONGANG_DIR.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(VIDEONGANG_DIR))  # type: ignore[attr-defined]
+        except OSError as e:
+            messagebox.showerror("Mở kho videongang", str(e), parent=self.winfo_toplevel())
 
     def _chon_tat_ca(self):
         for v in self._vars.values():
@@ -903,17 +964,45 @@ MANIFEST_FILE = SCRIPT_DIR / "batch_manifest.json"
 SKIP_TRANSLATE_DETAIL_CHECK = True
 
 
+# Dòng nguồn người dùng DÁN có thể mang số thứ tự / gạch đầu dòng / chữ thừa quanh link:
+# "1. https://…", "- https://…", "【tên truyện】 https://… 复制". 20/11/2026: 10 link dán kiểu
+# "1. https://www.bilibili.com/video/BV1XrWR6KEgJ/" bị norm_source coi là FILE LOCAL → hạ chữ
+# thường + gắn ổ đĩa thành "d:\…\1. https:\www.bilibili.com\video\bv1xrwr6kegj" (mã BV phân
+# biệt hoa/thường nên hỏng luôn) → tập 194–203 "Nguồn không hợp lệ".
+_URL_TRONG_DONG = re.compile(r'https?://\S+', re.IGNORECASE)
+_DUOI_THUA_SAU_LINK = '，。、；,;）】》>"\''
+
+
+def lam_sach_nguon(src: str) -> str:
+    """Dòng nguồn người dùng gõ/dán → nguồn dùng được. Bỏ khoảng trắng + nháy bao quanh; dòng
+    CÓ LINK thì lấy đúng cái link (bỏ số thứ tự, gạch đầu dòng, chữ thừa trước/sau). Link
+    trần và đường dẫn file giữ nguyên. Mọi chỗ nhận nguồn từ người dùng đi qua hàm này."""
+    s = (src or "").strip().strip('"').strip("'").strip()
+    if not s:
+        return ""
+    if s.lower().startswith(("http://", "https://")):
+        return s.split()[0]                   # chữ thừa sau link (cách bằng khoảng trắng) thì bỏ
+    try:
+        if os.path.exists(s):                 # file/thư mục có thật → không đụng
+            return s
+    except (OSError, ValueError):
+        pass
+    m = _URL_TRONG_DONG.search(s)
+    return m.group(0).rstrip(_DUOI_THUA_SAU_LINK) if m else s
+
+
 def norm_source(src: str) -> str:
     """Chuẩn hoá chuỗi nguồn để làm khoá manifest ổn định.
 
-    - Bỏ khoảng trắng + nháy bao quanh.
+    - Bỏ khoảng trắng + nháy bao quanh; dòng có link lẫn số thứ tự/chữ thừa → lấy đúng link
+      (lam_sach_nguon).
     - FILE LOCAL: đưa về đường dẫn TUYỆT ĐỐI + normcase (trên Windows: hạ hoa/thường,
       đổi '/'→'\\'). Nhờ vậy cùng một file gõ khác kiểu — hoa/thường ổ đĩa (D:\\ vs d:\\),
       gạch chéo (\\ vs /), tương đối vs tuyệt đối — vẫn ra CÙNG khoá → không nhận diện lại.
     - URL (http/https): giữ NGUYÊN (đường dẫn mạng phân biệt hoa/thường).
     Chỉ ảnh hưởng KHOÁ manifest; thao tác đọc file vẫn dùng chuỗi gốc.
     """
-    s = (src or "").strip().strip('"').strip("'").strip()
+    s = lam_sach_nguon(src)
     if not s:
         return ""
     if s.lower().startswith(("http://", "https://")):
@@ -1504,6 +1593,32 @@ def do_engine(model, ly_do="nhường chỗ cho ASR kiểm tra mất chữ"):
         logging.info(f"🧹 Đã dỡ VieNeu khỏi RAM ({ly_do}).")
         return None
     return _do_omnivoice(model, ly_do)
+
+
+def mo_ta_giong_doc(mode, voice_param, pitch=0.0, fx=None, am_luong=0.0) -> str:
+    """Một dòng cho nhật ký lúc BẮT ĐẦU tạo giọng: engine + TÊN giọng + mẫu bộ lọc (kèm bộ số)
+    + âm lượng. 14/11/2026: user hỏi "tập 183 đọc bằng giọng nào" mà nhật ký chỉ có dòng nạp
+    model, không có tên giọng lẫn tên mẫu — phải đoán từ file cài đặt (đã bị lưu đè sau đó).
+    Tên giọng VieNeu qua vn.giong_hop_le: in đúng giọng máy đọc sẽ dùng (tên lạ → Ngọc Huyền)."""
+    if mode == MODE_VIENEU:
+        giong = f'VieNeu-TTS (CPU) · giọng dựng sẵn "{vn.giong_hop_le(voice_param)}"'
+    elif mode == "clone":
+        giong = f'OmniVoice clone · giọng mẫu "{Path(str(voice_param or "")).name}"'
+    elif mode == "design":
+        giong = f'OmniVoice thiết kế · mô tả "{str(voice_param or "").strip()}"'
+    else:
+        giong = "OmniVoice · giọng mặc định của model"
+    pitch, fx = parse_pitch(pitch, 0.0), hu.fx_from(fx)
+    ten_mau = hu.mau_khop(pitch, fx)
+    so = f"tông {pitch:+.1f}" + (f", {hu.fx_describe(**fx)}" if hu.fx_active(**fx) else "")
+    if ten_mau == hu.MAU_MAC_DINH:
+        bo_loc = f'mẫu bộ lọc "{ten_mau}" (không chỉnh gì)'
+    elif ten_mau == hu.MAU_TUY_CHINH:
+        bo_loc = f"bộ lọc tuỳ chỉnh ({so})"
+    else:
+        bo_loc = f'mẫu bộ lọc "{ten_mau}" ({so})'
+    am_luong = hu.parse_amluong(am_luong)
+    return f"{giong} · {bo_loc}" + (f" · âm lượng {am_luong:+.1f} dB" if abs(am_luong) > 1e-9 else "")
 
 
 # ── TÁCH LOGIC GENERATE 1 CHUNK ───────────────────────────────────────────────
@@ -2535,6 +2650,8 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
             except Exception:
                 pass
 
+            # 🗣 Ghi rõ engine + tên giọng + mẫu bộ lọc của lượt này (tra lại được trong web/nhatky).
+            logging.info(f"🗣 Giọng đọc: {mo_ta_giong_doc(mode, voice_param, pitch, fx, am_luong)}")
             logging.info(f"Tổng {total} đoạn — tải model...")
             if sang_mau and mode == "clone":
                 logging.info(f"🔆 Sáng giọng {sang_mau}: giọng mẫu được EQ trong bộ nhớ khi dựng "
@@ -3097,19 +3214,28 @@ def run_tts(mode, voice_param, chunks, output, progress_var, status_var, btn_run
                     except OSError:
                         pass
 
-            # ── (TÙY CHỌN) YOUTUBE SHORT — cắt ≤2:50 từ CHÍNH video TikTok ────
-            # Hình `-c:v copy` nên gần như tức thì và giữ nguyên chất lượng; short
-            # thừa hưởng luôn khung dọc, khung tiêu đề, chữ 'Mimi audio Số N', ảnh
-            # bìa frame đầu. Riêng TIẾNG thay bằng tk_voice (giọng trần) để không
-            # đẩy nhạc nền TikTok lên YouTube — xem video_short.
+            # ── (TÙY CHỌN) YOUTUBE SHORT — ≤2:50 đầu của video TikTok ─────────
+            # Bố cục khung dọc (doc_khung): dựng lại HÌNH từ video gốc để DÒNG DƯỚI
+            # là 'Tập Số N' thay cho "Nghe trọn tập tại kênh Mimi audio" (20/11/2026)
+            # — cùng logo, tiêu đề, ảnh bìa frame đầu; encode ≤2:50 nên chừng một phút.
+            # Không dùng khung dọc / dựng lại lỗi → cắt thẳng từ tiktok.mp4 (`-c:v
+            # copy`). TIẾNG luôn là tk_voice (giọng trần) để không đẩy nhạc nền
+            # TikTok lên YouTube — xem video_short.
             # Bước ⑥ đăng YouTube sẽ tự đăng file này sau bản chính 1 giờ.
             if make_short and tk_video_out.exists():
                 from video_short import build_short, SHORT_NAME
                 sh_out = Path(short_out) if short_out else tk_video_out.with_name(SHORT_NAME)
-                status_var.set("Đang cắt video YouTube Short...")
+                status_var.set("Đang dựng video YouTube Short...")
                 try:
+                    progress_var.set(0)
                     build_short(tk_video_out, sh_out, voice_audio=tk_voice,
-                                skip_existing=skip_video, log=logging.info)
+                                skip_existing=skip_video, log=logging.info,
+                                khung=bool(doc_khung), caption=tiktok_caption,
+                                che_chu=bool(che_chu_trung),
+                                cover_png=find_cover_doc(output_path.parent,
+                                                         log=logging.info),
+                                progress=_video_progress("📱 Dựng video Short..."))
+                    progress_var.set(100)
                     status_var.set(f"Xong! YouTube Short → {sh_out.name}")
                 except Exception as e:
                     # Short là video PHỤ — hỏng thì bỏ, không kéo đổ cả mẻ video.
@@ -4584,8 +4710,8 @@ class App(tk.Tk):
         orow = ttk.Frame(s1)
         orow.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 4))
         ttk.Label(orow, text="Mỗi dòng 1 link/file   •   Model:").pack(side="left")
-        ttk.Combobox(orow, textvariable=self.pipe_var_model, width=9, state="readonly",
-                     values=["tiny", "base", "small", "medium", "large-v3"]).pack(side="left", padx=(4, 12))
+        ttk.Combobox(orow, textvariable=self.pipe_var_model, width=14, state="readonly",
+                     values=["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]).pack(side="left", padx=(4, 12))
         ttk.Label(orow, text="Tốc độ:").pack(side="left")
         ttk.Combobox(orow, textvariable=self.pipe_var_speed, width=5, state="readonly",
                      values=["0.6", "0.7", "0.8", "0.9", "1.0"]).pack(side="left", padx=(4, 0))
@@ -6527,8 +6653,8 @@ class App(tk.Tk):
         orow.grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Label(orow, text="Model:").pack(side="left")
         self.pipe_var_model = tk.StringVar(value=self._pipe_settings["model"])
-        ttk.Combobox(orow, textvariable=self.pipe_var_model, width=9, state="readonly",
-                     values=["tiny", "base", "small", "medium", "large-v3"]).pack(side="left", padx=(4, 12))
+        ttk.Combobox(orow, textvariable=self.pipe_var_model, width=14, state="readonly",
+                     values=["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"]).pack(side="left", padx=(4, 12))
         ttk.Label(orow, text="Tốc độ:").pack(side="left")
         self.pipe_var_speed = tk.StringVar(value=self._pipe_settings["speed"])
         ttk.Combobox(orow, textvariable=self.pipe_var_speed, width=5, state="readonly",
@@ -7424,7 +7550,7 @@ class App(tk.Tk):
         # Tới bước clone giọng cho link này → (tùy chọn) bật cửa sổ GUI lên trên cùng.
         if ts.get("bring_front"):
             self._bring_to_front()
-        logging.info(f"🎧 Tạo giọng OmniVoice cho tập {folder.name} ({len(chunks)} đoạn)...")
+        logging.info(f"🎧 Tạo giọng cho tập {folder.name} ({len(chunks)} đoạn)...")
         # Tiến trình chi tiết (tạo giọng + dựng video) hiện ở THANH TTS (self.progress/
         # self.status); thanh "Tạo kịch bản" để hiển thị tiến độ tổng theo số tập.
         ok_tts = run_tts(

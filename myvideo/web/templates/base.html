@@ -11,7 +11,10 @@
 </head>
 {# data-lang = tiếng GỐC đang chọn: CSS dùng nó để hiện đúng chữ/ô của tiếng đó
    (.l-zh / .l-en) — đổi ô ngôn ngữ là đổi ngay tại chỗ, không tải lại trang. #}
-<body class="p-video" data-lang="{{ settings.lang | default('zh') }}">
+{# bodyclass: trang nào muốn TRẢI RỘNG theo màn hình thì đặt "rong" (hết bề ngang,
+   trang chính dàn nhiều cột) hoặc "rong-vua" (nới tới 1500px) — xem khúc
+   "MÀN HÌNH RỘNG" cuối app.css. Không đặt = một cột 900px căn giữa như cũ. #}
+<body class="p-video {% block bodyclass %}{% endblock %}" data-lang="{{ settings.lang | default('zh') }}">
 <aside class="side">
   <div class="brand">
     <span class="logo">🎬</span>
@@ -35,6 +38,17 @@
 </aside>
 
 <main>
+{# ⚠️ SERVER CHẠY BẢN CODE CŨ (20/11/2026 — xem _ma_code trong server.py): trang
+   .html luôn là bản mới nhất còn code .py chỉ nạp lúc server khởi động, lệch
+   nhau là chức năng mới đứng hình (khung 🎛 Chỉnh trước kẹt "Đang nạp video…").
+   `code_cu` là hàm server mới đăng ký; server quá cũ chưa có hàm → cũng báo. #}
+{% set _cu = 'server này khởi động trước bản cập nhật 20/11' if code_cu is not defined else code_cu() %}
+{% if _cu %}
+<p class="warn" style="font-size:14px; border-width:2px">⚠️ <b>Bảng web đang chạy BẢN CODE CŨ</b>
+  ({{ _cu }}) — chức năng mới có thể không chạy hoặc đứng hình, ví dụ khung 🎛 Chỉnh trước kẹt ở
+  “⏳ Đang nạp video…”. <b>Cách sửa: đóng cửa sổ OmniVideo (launcher) rồi mở lại</b> — launcher sẽ tự tắt
+  server cũ và bật bản mới (nếu hàng đợi đang chạy việc thì đợi xong đã), sau đó tải lại trang này.</p>
+{% endif %}
 {% block content %}{% endblock %}
 </main>
 </body>

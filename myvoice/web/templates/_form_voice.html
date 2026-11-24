@@ -297,16 +297,27 @@
        cùng tên để server biết form CÓ ô này dù bỏ tick hết; thư mục đã lưu nhưng
        không còn trên đĩa vẫn hiện "(không thấy)" để bỏ tick được.
        06/11/2026: dời từ khối 3 "Cài đặt tạo giọng" sang đây — nó là nguồn hình của
-       video ngang (cùng form nên server đọc y như cũ). #}
+       video ngang (cùng form nên server đọc y như cũ).
+       18/11/2026: ghép ngẫu nhiên NHỚ clip đã lấy (scripts/clip_da_lay.py) — cạnh tên thư
+       mục hiện "còn x/y" = clip chưa lấy / tổng clip (ngang_dem); nút ↺ xoá dấu của các
+       thư mục đang tick. #}
     <div class="field">
       <input type="hidden" name="ngang_source" value="">
-      <div class="chks" title="Thư mục con của videongang/ — tick nhiều được, clip gom chung rồi xáo ngẫu nhiên; không tick ô nào = cả kho.">
+      <div class="chks" title="Thư mục con của videongang/ — tick nhiều được, clip gom chung rồi xáo ngẫu nhiên; không tick ô nào = cả kho. «còn x/y» = số clip chưa lấy / tổng số clip của thư mục.">
         <span class="lbl">Nguồn clip ngang:</span>
         {% for s in (ngang_sources + ngang_chon)|unique %}
+          {% set dem = (ngang_dem or {}).get(s) %}
           <label class="chk"><input type="checkbox" name="ngang_source" value="{{ s }}"
-                 {{ 'checked' if s in ngang_chon }}> {{ s }}{{ '' if s in ngang_sources else ' (không thấy)' }}</label>
+                 {{ 'checked' if s in ngang_chon }}> {{ s }}{% if s not in ngang_sources %} (không thấy){% elif dem %} <span class="muted small">· còn {{ dem[0] }}/{{ dem[1] }}</span>{% endif %}</label>
         {% endfor %}
+        <button class="small ghost" formaction="/giongnoi/dalay-reset" data-ajax="tailai"
+                onclick="return confirm('Xoá dấu «đã lấy» của các thư mục đang tick (không tick = cả kho)?\n\nLần dựng sau sẽ chọn ngẫu nhiên lại từ TẤT CẢ clip, có thể trùng clip của các video trước.\nChỉ xoá dấu trong sổ, KHÔNG xoá file video nào.')"
+                title="Xoá dấu «đã lấy» của các thư mục đang tick để lần dựng sau bốc lại từ tất cả clip. Bình thường không cần bấm: lấy hết clip của nguồn đang tick thì tự reset.">↺ Lấy lại từ đầu</button>
       </div>
+      <p class="hint">Clip nào đã ghép vào video thì được đánh dấu <b>đã lấy</b>; lần dựng sau chỉ lấy
+        clip <b>chưa lấy</b> nên không trùng các video trước. Lấy hết clip của các thư mục đang tick thì
+        tự reset, lấy lại từ đầu. Thêm thư mục / chép thêm video vào <code>videongang/</code> rồi tải
+        lại trang là thấy — clip mới tính là chưa lấy.</p>
     </div>
     <div class="actions"><button name="action" value="ngang">▶ Dựng lại video ngang</button></div>
     </div>
@@ -817,7 +828,7 @@
       {# Short cắt TỪ video TikTok nên chỉ có tác dụng khi ô trên bật. Đăng tự động
          cùng lượt đăng YouTube, hẹn sau bản chính 1 giờ — xem upload_short. #}
       {{ chk('make_short', '📱 Tạo + đăng YouTube Short', opts,
-             'Short ≤2:50 cắt từ chính video TikTok (cần bật “Tạo video TikTok”), đăng tự động sau bản chính 1 giờ.') }}
+             'Short = ≤2:50 đầu của video TikTok (cần bật “Tạo video TikTok”), không nhạc nền; dòng “Tập Số N” ghi ở trên tiêu đề và ở dưới video (thay cho “Nghe trọn tập tại kênh Mimi audio”). Đăng tự động sau bản chính 1 giờ.') }}
       {{ chk('tiktok_no_effect', '🚫 Không áp hiệu ứng', opts) }}
     </div>
     <div class="grid">

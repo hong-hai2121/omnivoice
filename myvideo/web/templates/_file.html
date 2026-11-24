@@ -1,0 +1,49 @@
+{# 📁 File mới trong output — cần files, output_dir. Tách khỏi _bang.html ngày
+   18/11/2026: khung 🎛 Chỉnh trước (#chinhtruoc) nằm GIỮA bảng video và khối
+   này, mà nó có video đang phát nên không được nằm trong khối tự vẽ lại 5
+   giây/lần. Khối này tự làm mới qua /partials/file (xem #bangfile ở index.html).
+
+   19/11/2026 — THU GỌN (user: "rút gọn lại, không quan tâm bên trong, không cần
+   show ra như vậy"): cả khối là <details> ĐÓNG sẵn, chỉ còn một dòng tiêu đề;
+   bấm vào dòng đó mới xổ danh sách file. Khối bị vẽ lại 5 giây/lần nên trạng
+   thái mở/đóng do JS ở index.html nhớ và đặt lại sau mỗi lượt vẽ.
+
+   🗑 Clear (15/11/2026, user chốt: clear = XOÁ file thật): cùng route /xoa-het
+   với nút 🗑 Xoá cả output ở khối Nguồn — đưa MỌI thứ trong output vào Thùng
+   rác, có hỏi lại, hàng đợi đang chạy thì server từ chối. Nút nằm ngay trên
+   dòng tiêu đề (bấm nút không làm xổ/gập khối). type=button + hx-post (khối
+   nằm trong #mainform, không lồng <form>). #}
+<details class="panel filemoi" id="fileMoi">
+  <summary class="phead" title="Bấm để xem / ẩn danh sách file mới nhất trong thư mục output">
+    <b>📁 File mới trong output</b>
+    <span class="hint" style="flex-basis:auto; margin:0 0 0 8px">{{ files | length }} file — bấm để xem</span>
+    <span class="spacer"></span>
+    {% if files %}
+      <button type="button" class="ghost small danger"
+              hx-post="/xoa-het" hx-target="#queue" hx-swap="innerHTML"
+              hx-disabled-elt="this"
+              hx-confirm="Đưa TẤT CẢ file trong thư mục output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+              title="Xoá MỌI file trong myvideo/output (của tất cả video) — chỉ đưa vào Thùng rác Windows, khôi phục được">🗑 Clear — xoá hết file trong output</button>
+    {% endif %}
+  </summary>
+  <p class="hint">{{ output_dir }} — 🗑 Clear xoá MỌI file trong output (giống nút
+     🗑 Xoá cả output ở khối Nguồn); muốn xoá riêng một video thì dùng 🗑 ở hàng
+     của video đó. Xoá chỉ đưa vào Thùng rác, khôi phục được.</p>
+  {% if files %}
+  <div class="tablewrap">
+    <table class="grid">
+      <tbody>
+        {% for f in files %}
+        <tr>
+          <td class="left clip" title="{{ f.name }}">{{ f.name }}</td>
+          <td>{{ f.size }}</td>
+          <td class="no">{{ f.when }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">Thư mục output đang trống.</p>
+  {% endif %}
+</details>

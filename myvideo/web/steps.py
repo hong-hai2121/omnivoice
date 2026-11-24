@@ -83,7 +83,7 @@ _XTAG = re.compile(r"_x\d+(?:\.\d+)?")
 # đúng đường dẫn như file local, xếp cả chuỗi vào hàng đợi một lần vẫn ổn.
 _BILI_LINK_RE = re.compile(r"https?://(?:www\.)?(?:bilibili\.com|b23\.tv)/", re.I)
 _BILI_ID_RE = re.compile(r"\b(BV[0-9A-Za-z]{10}|av\d+)\b")
-TAIVE_DIR = Path.home() / "Downloads"      # đã nằm trong DOWNLOAD_DIRS của web
+TAIVE_DIR = Path.home() / "Downloads"      # cũng là thư mục nút 📂 Thêm từ máy mở sẵn
 
 
 def la_link_bilibili(src: str) -> bool:
@@ -343,8 +343,9 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             lang = s.get("lang") or "zh"
             ten = TEN_LANG.get(lang, "Trung")
             label = f"① Chậm video + SRT tiếng {ten}"
-            # Mỗi tiếng một ngưỡng dài dòng riêng (16 chữ Hán · 42 ký tự Anh) nên
-            # trang lưu hai số khác nhau, đổi ô ngôn ngữ không làm mất số của tiếng kia.
+            # Mỗi tiếng một ngưỡng dài dòng riêng nên trang lưu hai số khác nhau, đổi
+            # ô ngôn ngữ không làm mất số của tiếng kia. "0" = không giới hạn (mặc
+            # định tiếng Trung): gửi nguyên số 0, script hiểu là mỗi dòng một câu.
             n = str(s.get("maxchars_en") or "42") if lang == "en" else str(s["maxchars"])
             # --out-dir là THƯ MỤC RIÊNG của video (base.parent) — script tự tạo.
             argv = [_python(), "-u", str(BASE_DIR / "video_chamlai_srt.py"), src,
@@ -427,6 +428,10 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             # Phóng to video nền: 0/rỗng = giữ nguyên, khỏi gửi cờ.
             if str(s.get("zoom") or "").strip() not in ("", "0"):
                 argv += ["--zoom", str(s["zoom"])]
+                # ↕ Vị trí dọc (thanh kéo ở khung 🎛 Chỉnh trước): chỉ có nghĩa khi có
+                # phóng. Viết liền "--zoom-y=-40" — số âm đứng riêng dễ bị đọc thành cờ.
+                if str(s.get("zoom_y") or "").strip() not in ("", "0"):
+                    argv.append(f"--zoom-y={str(s['zoom_y']).strip()}")
             # 🎵 Nhạc nền nhỏ dưới tiếng chính — chọn ở khối ④, mặc định tắt.
             if s.get("nhacnen"):
                 nf = NHAC_DIR / s["nhacnen"]
@@ -464,8 +469,25 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
                         argv += ["--khung-vien", str(kv)]
                     if s.get("outro_kenh") and ot.is_file():
                         argv += ["--outro", str(ot)]
+            # ⚠️ Dòng lưu ý góc trái trên (chữ trắng nét mảnh): mỗi dòng có chữ
+            # là một cờ --luuy; ô tick tắt hoặc cả hai dòng trống thì không gửi.
+            if s.get("luuy"):
+                for dong in (s.get("luuy1"), s.get("luuy2")):
+                    if str(dong or "").strip():
+                        argv += ["--luuy", str(dong).strip()]
             if s.get("chesub", True):
-                argv.append("--che-sub-goc")
+                # 🎛 Chỉnh trước / trang 🫥 đã kéo tay dải che cho video này → gửi
+                # thẳng --vung (theo pixel; chay_doan chuyển nguyên cờ xuống từng
+                # đoạn của video dài). Chưa chỉnh thì để script tự dò như cũ.
+                from . import chinhtruoc as ct
+                vt = ct.vung(tenchinh(base.name).replace(ct.THU_DUOI, ""))
+                if vt:
+                    # Lớp che hẹp hơn bề ngang → thêm mép trái:phải (y0:y1:x0:x1).
+                    ng = ct.ngang(vt)
+                    argv += ["--vung", f"{vt['y0']}:{vt['y1']}"
+                                       + (f":{ng[0]}:{ng[1]}" if ng else "")]
+                else:
+                    argv.append("--che-sub-goc")
             if thay:
                 argv += ["--audio", f"{B}_vi_audio.wav"]
             if ve_sub:
@@ -545,7 +567,7 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
     # qua vì file CHỈ có sau khi bước ⬇ chạy xong.
     buoc_tai: list[Step] = []
     if la_link_bilibili(src):
-        if start not in ("cham", "tatca", "thu60", "tai"):
+        if start not in ("cham", "tatca", "thu60", "thu3p", "tai"):
             return "", [], ("Link Bilibili chỉ chạy được từ bước ① (nút ▶/🧪/①/⬇) — "
                             "các bước sau cần file đã tải sẵn.")
         ten = ten_tai_bilibili(src)
@@ -568,6 +590,28 @@ def build(start: str, src: str, s: dict) -> tuple[str, list[Step], str]:
     elif start == "tai":
         return "", [], ("⬇ Chỉ tải về chỉ nhận LINK Bilibili — dòng này không phải "
                         f"link: {src or '(trống)'}")
+    if start == "thu3p":
+        # 🎛 CHỈNH TRƯỚC — chạy thử 3 PHÚT ĐẦU: cắt rồi chạy ① chậm + SRT → ② dịch
+        # → ③ giọng, KHÔNG dựng ④: khung chỉnh trước phát video ① kèm audio giọng
+        # đọc ngay trên trang (hai kênh âm lượng kéo độc lập, nghe tức thì) nên
+        # khỏi tốn một lượt dựng hình chỉ để nghe thử. Tên clip <tên>_thu3p.mp4
+        # do chinhtruoc.py định — server tìm lại kết quả theo đúng tên đó.
+        if not src or (not buoc_tai and not os.path.isfile(src)):
+            return "", [], f"Không thấy file nguồn: {src or '(trống)'}"
+        from . import chinhtruoc as ct
+        clip = OUTPUT_DIR / f"{Path(src).stem}{ct.THU_DUOI}.mp4"
+        base = base_for(str(clip), s["speed"])
+        # Khung 🎛 Chỉnh trước đã cắt sẵn clip gốc 3 phút lúc user chọn video (và có
+        # thể đang phát nó) → dùng lại, KHÔNG cắt đè lần hai. Chỉ cắt khi chưa có
+        # clip (link vừa tải về, file nguồn đã đổi…).
+        cut = ([] if (not buoc_tai and ct.clip_con_dung(Path(src), clip)) else
+               [Step(label=f"✂ Cắt {ct.THU_GIAY // 60} phút đầu", argv=ct.lenh_cat(src, clip),
+                     cwd=str(REPO_ROOT), env=_env())])
+        steps = buoc_tai + cut + _steps_for(ORDER[:3], str(clip), base, s)
+        # Tiêu đề ghi cả TỐC ĐỘ (×0.7): mỗi tốc độ một bản thử riêng, khung chỉnh trước
+        # dò việc đang chạy theo đúng tốc độ nó đang xem (server._ct_muc: viec_thu).
+        return (f"{Path(src).name} — 🧪 thử {ct.THU_GIAY // 60} phút "
+                f"×{float(s['speed']):g} ①②③"), steps, ""
     if start == "thu60":
         # 🧪 BẢN NHÁP: cắt 60 giây rồi chạy TRỌN 4 bước (bỏ qua các ô ⛓) —
         # duyệt giọng/kiểu sub/vùng che trước khi tốn nửa tiếng cho cả bài.

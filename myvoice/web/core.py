@@ -223,8 +223,9 @@ def remember_sources(lines: list[str]) -> None:
     """Đẩy các nguồn vừa chạy lên đầu lịch sử (bỏ trùng, cắt bớt phần cũ)."""
     old = [s for s in (load_web_settings().get("src_history") or []) if isinstance(s, str)]
     merged: list[str] = []
-    for s in [*reversed([l.strip() for l in lines if l.strip()]), *old]:
-        if s not in merged:
+    # lam_sach_nguon: "1. https://…" nhớ thành link trần — bấm lại từ "Gần đây" ra đúng link.
+    for s in [*reversed([gui.lam_sach_nguon(l) for l in lines if l.strip()]), *old]:
+        if s and s not in merged:
             merged.append(s)
     save_web_settings({"src_history": merged[:SRC_HISTORY_MAX]})
 
@@ -359,7 +360,11 @@ def register_sources(lines: list[str], plan: list[str] | None = None
             continue
         moi.append((i, src, key))
     # LƯỢT 2 — nguồn mới: số theo plan nếu chưa ai giữ, không thì cấp số kế tiếp.
+    da_cap: dict[str, str] = {}
     for i, src, key in moi:
+        if key in da_cap:          # cùng một link dán hai kiểu ("1. link" và "link") → một tập
+            out[i] = (src, da_cap[key], True)
+            continue
         ep = str(plan[i]).strip().zfill(2) if i < len(plan) and str(plan[i]).strip() else ""
         if ep in taken:
             ep = ""
@@ -369,6 +374,7 @@ def register_sources(lines: list[str], plan: list[str] | None = None
             if cand not in taken:
                 ep = cand
         taken.add(ep)
+        da_cap[key] = ep
         m[key] = {"source": key, "episode": ep, "folder": "", "steps": {},
                   "pending": True, "updated": now}
         changed = True
@@ -535,6 +541,17 @@ def list_photos() -> list[str]:
 
 def list_ngang_sources() -> list[str]:
     return gui.list_ngang_sources()
+
+
+def dem_ngang_sources() -> dict:
+    """{tên thư mục con videongang/: (số clip CHƯA lấy, tổng số clip)} — ghép random nhớ
+    clip đã lấy qua các lần dựng (18/11/2026, xem gui.dem_ngang_sources)."""
+    return gui.dem_ngang_sources()
+
+
+def dat_lai_ngang_da_lay(value) -> int:
+    """↺ Xoá dấu "đã lấy" của nguồn ngang đã chọn ([] = cả kho) → số dấu đã xoá."""
+    return gui.dat_lai_ngang_da_lay(value)
 
 
 def ngang_source_list(value) -> list[str]:

@@ -364,6 +364,9 @@ def _voice_ctx() -> dict:
         # ngang_chon = tên đã lưu (thư mục đã xoá vẫn hiện "(không thấy)" để bỏ tick).
         "ngang_sources": core.list_ngang_sources(),
         "ngang_chon": core.ngang_source_list(opts.get("ngang_source")),
+        # 18/11/2026: ghép random không lấy trùng clip các lần dựng trước — hiện cạnh tên
+        # thư mục "còn x/y" = số clip CHƯA lấy / tổng số clip.
+        "ngang_dem": core.dem_ngang_sources(),
         "effect_none": core.EFFECT_NONE,
         "sub_modes": [core.SUB_MODE_SRT, core.SUB_MODE_BURN],
         # Kho kiểu phụ đề (scripts/kieusub_mau, dùng chung myvideo) — thẻ ảnh
@@ -822,6 +825,23 @@ async def run_voice(request: Request):
         log(f"⛔ {err}")
     else:
         runner.enqueue(built[0].label, built)
+    return _back(request, "/giongnoi")
+
+
+@app.post("/giongnoi/dalay-reset")
+async def reset_clip_da_lay(request: Request):
+    """Nút ↺ "Lấy lại từ đầu" cạnh ô Nguồn clip ngang (18/11/2026): lưu form rồi xoá dấu
+    "đã lấy" của các thư mục đang tick (không tick = cả kho). Chỉ sửa sổ clip_da_lay.json,
+    không xoá file video; lần dựng sau bốc ngẫu nhiên lại từ tất cả clip của nguồn đó."""
+    form = await request.form()
+    _save_voice_from_form(form)
+    chon = core.ngang_source_list(form.getlist("ngang_source"))
+    ten = " + ".join(chon) or "cả kho videongang"
+    try:
+        n = core.dat_lai_ngang_da_lay(chon)
+        log(f"↺ Nguồn clip ngang {ten}: đã xoá {n} dấu «đã lấy» → lần dựng sau lấy lại từ đầu.")
+    except OSError as e:
+        log(f"⛔ Không ghi được sổ clip đã lấy: {e}")
     return _back(request, "/giongnoi")
 
 

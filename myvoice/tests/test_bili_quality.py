@@ -142,6 +142,21 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(media, "x.mp4")
         tai.assert_called_once_with(LINK, "360P")
 
+    def test_video_nguon_bi_an_noi_ro_bang_tieng_viet(self):
+        """Bilibili báo "稿件不可见" (tập 185, 20/11/2026): lý do phải nói rõ là VIDEO NGUỒN bị
+        ẩn, chạy lại vô ích, app không hỏng — và sổ link lỗi vẫn giữ nguyên văn Bilibili."""
+        goc = "[parse_url] Parsing failed: 稿件不可见"
+        with patch.object(core, "load_options", return_value={}), \
+                patch.object(run_episode, "_tai_video_bilibili", return_value=("", goc)), \
+                patch.object(run_episode, "note_link_loi") as note:
+            media, why = run_episode._fetch_media(LINK, "185")
+        self.assertEqual(media, "")
+        for cum in ("VIDEO NGUỒN", "ẩn", "chạy lại cũng vậy", "app không hỏng", "Đổi link", goc):
+            self.assertIn(cum, why)
+        note.assert_called_once_with(LINK, goc, "185")
+        # Lỗi khác (mạng, phiên đăng nhập…) giữ nguyên, không gán nhầm là video bị ẩn.
+        self.assertEqual(run_episode.giai_thich_loi_bili("App báo TẢI HỎNG"), "App báo TẢI HỎNG")
+
 
 class WebFlowTests(unittest.TestCase):
     def test_runner_argv_carries_saved_quality(self):

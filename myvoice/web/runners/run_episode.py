@@ -97,6 +97,25 @@ def note_link_loi(src: str, ly_do: str, episode: str = "") -> None:
         logging.warning(f"⚠️ Không ghi được sổ link lỗi: {e}")
 
 
+# Lý do Bilibili trả về bằng tiếng Trung → nói rõ bằng tiếng Việt chuyện gì và làm gì tiếp.
+# (20/11/2026: tập 185 báo "稿件不可见" 5 lượt liền; trên web chỉ thấy app Bili23 mở lên rồi
+# bị dọn ngay nên tưởng app hỏng — thật ra video nguồn đã bị ẩn, chạy lại bao nhiêu cũng vậy.)
+_BILI_LY_DO_VIET = (
+    ("稿件不可见", "VIDEO NGUỒN đã bị ẩn/gỡ trên Bilibili (chủ kênh ẩn hoặc Bilibili khoá)"),
+    ("啥都木有", "VIDEO NGUỒN không còn tồn tại trên Bilibili (đã xoá hoặc sai mã BV)"),
+)
+
+
+def giai_thich_loi_bili(ly_do: str) -> str:
+    """Lý do tải hỏng, thêm lời giải thích tiếng Việt khi là lỗi do chính video nguồn."""
+    for khoa, viet in _BILI_LY_DO_VIET:
+        if khoa in (ly_do or ""):
+            return (f"{viet} — link này KHÔNG tải được nữa, chạy lại cũng vậy (app Bili23 "
+                    f"mở lên rồi đóng là bộ tải tự dọn, app không hỏng). Đổi link khác cho "
+                    f"tập này hoặc xoá dòng tập ở bảng. [Bilibili báo: {ly_do}]")
+    return ly_do
+
+
 def _ten_tai_bilibili(src: str) -> str:
     """Link → tên file sẽ tải về (mã BV/av; link rút gọn b23.tv lấy mã rút gọn).
     Cùng quy ước với myvideo/web/steps.py để hai bên dùng chung một file."""
@@ -233,7 +252,7 @@ def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple
     khác: yt-dlp lấy mp3). Đã có file đích thì cả hai bộ tải đều bỏ qua ngay — nên bước
     "tai" chạy trước, bước "recognize" chạy sau không tải lại. Link tải lỗi được note
     vào sổ link lỗi."""
-    src = (source or "").strip().strip('"').strip("'")
+    src = gui.lam_sach_nguon(source)
     if not src:
         return "", "Không có nguồn (link/file) để nhận diện."
     if os.path.isfile(src):
@@ -247,7 +266,7 @@ def _fetch_media(source: str, episode: str, bili_quality: str = "auto") -> tuple
         media, ly_do = _tai_video_bilibili(src, muc)
         if not media:
             note_link_loi(src, ly_do, episode)
-            return "", f"Không tải được video Bilibili: {ly_do}"
+            return "", f"Không tải được video Bilibili: {giai_thich_loi_bili(ly_do)}"
         logging.info(f"✅ Video đã về: {media}")
         return media, ""
     if src.lower().startswith(("http://", "https://")):
@@ -537,6 +556,10 @@ def main(argv=None) -> int:
     if unknown:
         logging.error(f"❌ Bước không hợp lệ: {', '.join(unknown)}")
         return ERROR
+
+    # Nguồn có thể còn số thứ tự/chữ thừa quanh link ("1. https://…") — lấy đúng link trước
+    # khi dùng làm khoá manifest, tên thư mục tập và địa chỉ tải.
+    args.source = gui.lam_sach_nguon(args.source)
 
     app = HeadlessApp()
     try:

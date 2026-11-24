@@ -83,7 +83,13 @@ TIEU_DE_CO = (64, 40)                                # cỡ chữ thử từ l�
 VIEN_CHU = 5                                         # viền đen quanh chữ
 # Khối dưới: một dòng kêu gọi, cách đáy dải CTA_CACH.
 CTA_TEXT = "Nghe trọn tập tại kênh Mimi audio"
+# Riêng YOUTUBE SHORT (20/11/2026): dòng dưới là số tập — người xem Short đang ở ngay trên
+# kênh, cái họ cần là biết tìm tập nào để nghe trọn. {so} = số tập (xem cta_short).
+CTA_SHORT = "Tập Số {so}"
 CTA_CACH, CTA_CO = 134, 42
+# Short còn ghi dòng số tập đó thêm một lần PHÍA TRÊN tiêu đề: ngang hàng logo, canh giữa màn
+# hình, cỡ gần bằng tiêu đề để đọc liền thành "Tập Số N" + tên truyện (ve_lop_tap(dong_tren=)).
+DONG_TREN_CO = 60
 FONT_CHU = "BeVietnamPro-Black.ttf"
 # Vùng trong khung1 trên canvas 1920×1080 của BỘ KHUNG CŨ (các màu cùng hình) — dùng khi
 # phải CẮT YOUTUBE.mp4 tập cũ thay cho video gốc.
@@ -178,10 +184,20 @@ def _ve_tieu_de(d: ImageDraw.ImageDraw, box, title: str) -> None:
         y += lh
 
 
+def cta_short(episode) -> str | None:
+    """Dòng dưới của YouTube Short: 'Tập Số 188' (CTA_SHORT). Không rõ số tập → None."""
+    so = re.sub(r"\D", "", str(episode or ""))
+    return CTA_SHORT.format(so=int(so)) if so else None
+
+
 def ve_lop_tap(mau: str, episode: str, title: str, out_png: Path, log=print,
-               che: bool = False) -> Path:
+               che: bool = False, cta: str | None = None,
+               dong_tren: str | None = None) -> Path:
     """Vẽ lớp phủ TRONG SUỐT 1080×1920 cho MỘT tập theo bo_cuc(che): logo màu `mau` góc trái +
-    tiêu đề + dòng "Nghe trọn tập…" → out_png. Phần dải video và nền để trống (ffmpeg lót video)."""
+    tiêu đề + dòng dưới → out_png. Phần dải video và nền để trống (ffmpeg lót video).
+    cta = chữ của dòng dưới; None → CTA_TEXT ("Nghe trọn tập…"). Short truyền cta_short().
+    dong_tren = dòng chữ thêm PHÍA TRÊN tiêu đề, ngang hàng logo (Short: cũng là cta_short());
+    None → không vẽ, hàng logo để trống như bản dọc/TikTok."""
     th = _th()
     bc = bo_cuc(che)
     base = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -193,7 +209,19 @@ def ve_lop_tap(mau: str, episode: str, title: str, out_png: Path, log=print,
     so = re.sub(r"\D", "", str(episode or ""))
     tieu_de = (title or "").strip() or (f"Mimi audio Số {int(so)}" if so else "Mimi audio")
     _ve_tieu_de(d, bc["tieu_de"], tieu_de)
-    d.text((W // 2, bc["cta_y"]), CTA_TEXT, font=_font(FONT_CHU, CTA_CO), anchor="mm",
+    if dong_tren:
+        trai, phai = bc["logo"][0] + logo.width + 30, W - 40     # khoảng trống bên phải logo
+        for co in range(DONG_TREN_CO, 23, -2):                   # chữ quá dài → co cho vừa khoảng trống
+            font = _font(FONT_CHU, co)
+            rong = d.textlength(dong_tren, font=font) + 2 * VIEN_CHU
+            if rong <= phai - trai:
+                break
+        cx = W / 2
+        if cx - rong / 2 < trai:                         # canh giữa màn hình mà chạm logo → canh giữa khoảng trống
+            cx = (trai + phai) / 2
+        d.text((cx, bc["logo"][1] + LOGO_H // 2), dong_tren, font=font, anchor="mm",
+               fill=(255, 255, 255, 255), stroke_width=VIEN_CHU, stroke_fill=(0, 0, 0, 235))
+    d.text((W // 2, bc["cta_y"]), cta or CTA_TEXT, font=_font(FONT_CHU, CTA_CO), anchor="mm",
            fill=(255, 255, 255, 255), stroke_width=4, stroke_fill=(0, 0, 0, 235))
     out_png = Path(out_png)
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -319,12 +347,14 @@ def nguon_goc(folder: Path, ngang: Path | None = None, che: bool | None = None):
 def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
                           overlay_png: Path, *, crop=None, cover_png: Path | None = None,
                           log=print, progress=None, skip_existing: bool = False,
-                          che: bool = False) -> Path:
+                          che: bool = False, thoi_luong: float | None = None) -> Path:
     """Video gốc → nền mờ tối phủ kín 1080×1920 + chính nó trong dải video (bo_cuc(che)) → đè lớp
     PNG (logo + tiêu đề + dòng kêu gọi) → ghép audio.
     crop = (w, h, x, y) cắt trước khi dùng (vùng giữa của video gốc nguyên cỡ, hoặc vùng trong
     khung1 khi nguồn là YOUTUBE.mp4 bộ khung cũ). Nguồn đã cắt đúng cỡ dải thì KHÔNG phóng (1:1).
-    cover_png = thumbnail dọc đè lên frame đầu (ảnh bìa Facebook/TikTok) — như video_doc."""
+    cover_png = thumbnail dọc đè lên frame đầu (ảnh bìa Facebook/TikTok) — như video_doc.
+    thoi_luong = chỉ dựng ngần ấy giây ĐẦU của audio (Short ≤ 2:50); None → trọn audio.
+    audio_file có thể là file video (lấy luồng tiếng của nó)."""
     audio_file, source_video, output = Path(audio_file), Path(source_video), Path(output)
     overlay_png = Path(overlay_png)
     if skip_existing and video_hop_le(output):
@@ -340,6 +370,8 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
         log(f"[Cảnh báo] Không tìm thấy ảnh bìa, bỏ qua: {cover_png}")
         cover_png = None
     audio_dur = get_duration(audio_file)
+    if thoi_luong and 0 < thoi_luong < audio_dur:
+        audio_dur = float(thoi_luong)
     band = bo_cuc(che)["band"]
     bw, bh = band[2] - band[0], band[3] - band[1]
 
@@ -380,12 +412,15 @@ def build_video_doc_khung(audio_file: Path, source_video: Path, output: Path,
         codec = (["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr",
                   "-cq", str(NVENC_CQ), "-b:v", "0", "-profile:v", "high"] if gpu
                  else ["-c:v", "libx264", "-preset", "slow", "-crf", str(X264_CRF), "-profile:v", "high"])
+        # Hai ảnh tĩnh nạp MỘT khung hình, không `-loop 1`: overlay tự giữ khung cuối của
+        # lớp phụ tới hết video (eof_action=repeat) nên hình ra y hệt, mà PNG chỉ giải mã +
+        # đổi hệ màu một lần thay vì mỗi khung hình (đo 20/11/2026: nhanh gấp ~2).
         cmd = ["ffmpeg", "-y",
                "-stream_loop", "-1", "-i", str(source_video),      # 0: video gốc (lặp nếu ngắn)
-               "-loop", "1", "-i", str(overlay_png),               # 1: lớp phủ
+               "-i", str(overlay_png),                             # 1: lớp phủ
                "-i", str(audio_file)]                              # 2: audio
         if cover_png:
-            cmd += ["-loop", "1", "-i", str(cover_png)]            # 3: ảnh bìa
+            cmd += ["-i", str(cover_png)]                          # 3: ảnh bìa
         cmd += ["-filter_complex", filt, "-map", "[out]", "-map", "2:a",
                 "-t", f"{audio_dur:.6f}", *codec, "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k", str(output)]

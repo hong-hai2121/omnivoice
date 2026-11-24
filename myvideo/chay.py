@@ -139,6 +139,75 @@ def _is_myvideo(port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+# ── Bảng web đang chạy sẵn là BẢN CODE CŨ → tắt, bật lại (20/11/2026) ────────
+# Launcher thấy đã có myvideo nghe ở cổng là "dùng luôn bản đó". Nhưng code .py
+# chỉ nạp lúc server khởi động, còn trang .html thì luôn là bản mới nhất: sửa code
+# xong mà vẫn dùng server cũ thì chức năng mới đứng hình (user gặp: khung 🎛 Chỉnh
+# trước kẹt ở "⏳ Đang nạp video…", vì một server mồ côi bật từ trước cứ được dùng
+# lại mãi — đóng/mở launcher không hề nạp code mới). Server trả con dấu code lúc
+# nó khởi động ở /api/ping ("ma"); so với dấu trên đĩa, lệch là server cũ.
+def _ma_code() -> int:
+    """Dấu code bảng web trên đĩa — BẢN SAO của _ma_code trong web/server.py; hai
+    bên phải liệt kê CÙNG bộ file (các .py mà tiến trình server nạp vào)."""
+    goc = Path(__file__).resolve().parent
+    tep = [*(goc / "web").glob("*.py"),
+           *(goc / n for n in ("doan.py", "kenh_hoso.py", "timvungsub.py"))]
+    return max((int(p.stat().st_mtime) for p in tep if p.is_file()), default=0)
+
+
+def _server_cu(port: int, timeout: float = 2.0) -> bool:
+    """Bảng web đang nghe ở cổng có chạy code CŨ hơn code trên đĩa không. Server
+    chưa biết trả "ma" (bản trước 20/11/2026) cũng là cũ. Không hỏi được thì coi
+    như không cũ — đừng đụng vào thứ mình không chắc."""
+    import json
+    from urllib.request import urlopen
+    try:
+        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=timeout) as r:
+            d = json.load(r)
+    except Exception:
+        return False
+    if d.get("app") != "myvideo":
+        return False
+    ma = d.get("ma")
+    return not isinstance(ma, int) or ma < _ma_code()
+
+
+def _pid_nghe_cong(port: int) -> int | None:
+    """PID của tiến trình đang LẮNG NGHE ở cổng (đọc netstat -ano). Nhận dòng nghe
+    bằng địa chỉ xa 0.0.0.0:0 / [::]:0 chứ không bằng chữ LISTENING (Windows bản
+    tiếng khác dịch chữ đó)."""
+    try:
+        r = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                           check=False, errors="replace", creationflags=CREATE_NO_WINDOW, timeout=10)
+    except Exception:
+        return None
+    for dong in r.stdout.splitlines():
+        p = dong.split()
+        if (len(p) >= 5 and p[0].upper() == "TCP" and p[1].endswith(f":{port}")
+                and p[2] in ("0.0.0.0:0", "[::]:0", "*:*") and p[-1].isdigit()):
+            return int(p[-1])
+    return None
+
+
+def _tat_server_o_cong(port: int, cho: float = 10.0) -> bool:
+    """Tắt (cả cây) tiến trình đang nghe ở cổng rồi đợi cổng trống. True = cổng đã trống."""
+    import time
+    pid = _pid_nghe_cong(port)
+    if not pid or pid == os.getpid():
+        return False
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False,
+                       capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=cho)
+    except Exception:
+        return False
+    het = time.time() + cho
+    while time.time() < het:
+        if _cong_trong(port):
+            return True
+        time.sleep(0.2)
+    return _cong_trong(port)
+
+
 # Cổng mặc định bận → dò tiếp 8767, 8768, … Khớp SO_CONG_THU + _chon_cong trong
 # myvideo/web/server.py.
 SO_CONG_THU = 20
@@ -248,6 +317,7 @@ def _run_launcher(port: int) -> int:
 
     proc: subprocess.Popen | None = None
     owner = False
+    che_do_cu = ""      # ⏻/🌙 đang hẹn ở server CŨ vừa bị thay → đặt lại cho server mới (xem _start)
     lines: "queue.Queue[str]" = queue.Queue()
 
     root = tk.Tk()
@@ -419,7 +489,14 @@ def _run_launcher(port: int) -> int:
         root.after(200, _drain)
 
     def _ready() -> None:
-        nonlocal owner
+        nonlocal owner, che_do_cu
+        if che_do_cu:
+            # Server cũ đang hẹn ⏻/🌙 thì server mới thay nó phải giữ nguyên lời hẹn
+            # (server mới chỉ tính "rảnh" sau khi TỪNG THẤY hàng đợi bận — không tự
+            # ngủ/tắt ngay). _apply_mode tick ô + POST lên server như user vừa bấm.
+            mode, che_do_cu = che_do_cu, ""
+            log(f"↪ Giữ lại chế độ {'🌙 ngủ' if mode == 'ngu' else '⏻ tắt máy'} khi xong đang hẹn ở server cũ.")
+            root.after(1500, lambda: _apply_mode(mode))
         url_var.set(_web_url(port))
         status.set(f"Đang chạy — cổng {port}"
                    + ("" if owner else "  (tiến trình khác bật sẵn)"))
@@ -452,7 +529,7 @@ def _run_launcher(port: int) -> int:
         root.after(400, _poll, n + 1)
 
     def _start() -> None:
-        nonlocal proc, owner, port
+        nonlocal proc, owner, port, che_do_cu
         uu_tien = port
         # Cổng ưu tiên bị chương trình KHÁC chiếm (myvoice chẳng hạn) → tự chọn cổng
         # trống kế tiếp; đã có myvideo chạy sẵn đâu đó trong dải → dùng luôn bản đó.
@@ -463,6 +540,34 @@ def _run_launcher(port: int) -> int:
             _dot("#fb7185")
             log(f"⛔ {e}")
             return
+        if dang_chay and _server_cu(port):
+            # Bản đang chạy sẵn là code CŨ → tắt và bật lại bản mới, NHƯNG chỉ khi hàng
+            # đợi của nó đang rảnh: đang chạy / đang chờ việc thì để yên, kẻo mất việc.
+            # Lời hẹn ⏻/🌙 đang có thì mang sang server mới (xem _ready).
+            hen = ""
+            try:
+                tt = _http("/api/trangthai")
+                ban = not isinstance(tt, dict) or bool(tt.get("busy") or tt.get("pending"))
+                if isinstance(tt, dict):
+                    hen = str((tt.get("power") or {}).get("mode") or "")
+            except Exception:
+                ban = True                       # không hỏi được thì coi như đang bận
+            if ban:
+                log(f"⚠️ Bảng web đang chạy sẵn ở cổng {port} là BẢN CODE CŨ nhưng đang có việc "
+                    "trong hàng đợi nên chưa khởi động lại — chức năng mới có thể chưa chạy. "
+                    "Việc xong thì đóng cửa sổ này rồi mở lại.")
+                _ready()
+                return
+            log(f"♻ Bảng web đang chạy sẵn ở cổng {port} là BẢN CODE CŨ (hàng đợi đang rảnh) "
+                "→ tắt nó và bật lại bản mới…")
+            if _tat_server_o_cong(port):
+                dang_chay = False                # rơi xuống dưới: bật server mới ở chính cổng này
+                che_do_cu = hen if hen in ("tat", "ngu") else ""
+            else:
+                log("⚠️ Không tắt được server cũ — vẫn dùng bản đó. Tắt tay tiến trình "
+                    "python đang chạy myvideo.web.server (Task Manager) rồi mở lại cửa sổ này.")
+                _ready()
+                return
         if dang_chay:
             log(f"🌐 Bảng web đang chạy sẵn ở cổng {port} — dùng luôn bản đó.")
             _ready()

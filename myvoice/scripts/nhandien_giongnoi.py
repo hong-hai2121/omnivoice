@@ -534,7 +534,7 @@ def main():
     parser.add_argument("media", help="Đường dẫn file audio hoặc video cần nhận diện.")
     parser.add_argument(
         "--model", default="medium",
-        help="Tên model whisper: tiny/base/small/medium/large-v3 (mặc định: medium).",
+        help="Tên model whisper: tiny/base/small/medium/large-v3-turbo/large-v3 (mặc định: medium).",
     )
     parser.add_argument(
         "--out", default=None,
