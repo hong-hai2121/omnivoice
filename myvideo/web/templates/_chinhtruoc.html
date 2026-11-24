@@ -21,7 +21,9 @@
    ten_goc) thì khung vẫn dựng được, chỉ thiếu hàng nút tốc độ. #}
 {% set toc = m.toc | default('') %}
 {% set cac_toc = m.cac_toc | default([]) %}
-<div class="panel ct" id="ctPanel" data-mid="{{ mid }}" data-toc="{{ toc }}">
+{# data-khoa: khoá video (tên gốc viết thường) — 🗑 ở bảng Kết quả báo mvid:daxoa kèm
+   khoá, trang (index.html) thấy khung đang mở đúng video đó thì đóng khung. #}
+<div class="panel ct" data-khoa="{{ m.khoa | default('') }}" id="ctPanel" data-mid="{{ mid }}" data-toc="{{ toc }}">
   <div class="phead">
     <b>🎛 Chỉnh trước — {{ m.ten_goc | default(m.ten) }}</b>
     <span class="hint" id="ctLoai" style="flex-basis:auto; margin-left:8px">{%

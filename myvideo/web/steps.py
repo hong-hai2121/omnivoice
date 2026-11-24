@@ -76,6 +76,7 @@ LABELS = {
 }
 
 _XTAG = re.compile(r"_x\d+(?:\.\d+)?")
+_DOAN_SO = re.compile(r"_d\d{2}(?=_x\d)")      # số đoạn "_d01" chen trước tag tốc độ (doan.py)
 
 # ⬇ LINK BILIBILI dán thẳng vào ô Nguồn: xếp bước tải (video_taibilibili.py —
 # nhờ app Bili23 Downloader tải bản chất lượng cao nhất qua MCP) TRƯỚC bước ①.
@@ -272,40 +273,49 @@ def scan_rows(thaytieng: bool = True, limit: int = 25,
     ("<tên>/<tên>_x0.7"), kết quả cũ dạng phẳng vẫn ra hàng ("<tên>_x0.7").
     """
     seen: dict[str, float] = {}
+    co_goc: set[str] = set()        # gốc có ít nhất MỘT file không phải file đoạn
 
-    def note(b: str, mt: float) -> None:
+    def note(ten: str, thu_muc: str, mt: float) -> None:
+        # File/thư mục của MỘT ĐOẠN ("<tên>_d01_x0.7…") không thành hàng riêng — nó
+        # tính vào gốc CẢ BÀI ("<tên>_x0.7"). 24/11/2026: trước đây bỏ qua hẳn, nên
+        # video dài chỉ còn sót file đoạn (bản ghép đã xoá) nằm vài GB trong output
+        # mà bảng báo "chưa có video nào" — không có hàng nào để bấm 🗑.
+        la_doan = bool(doan.DOAN_RE.search(ten))
+        if la_doan:
+            ten = _DOAN_SO.sub("", ten)
+        # Lấy gốc từ tên đầy đủ chứ KHÔNG phải stem: thư mục "…_x0.7_vi_tts" bị
+        # stem coi ".7_vi_tts" là đuôi file → cụt còn "…_x0", sinh gốc ma.
+        # Cắt theo vị trí tag _x… thì có đuôi hay không cũng ra đúng gốc.
+        tags = list(_XTAG.finditer(ten))
+        if not tags:
+            return
+        b = thu_muc + ten[:tags[-1].end()]
         seen[b] = max(seen.get(b, 0.0), mt)
+        if not la_doan:
+            co_goc.add(b)
 
     try:
         entries = list(OUTPUT_DIR.iterdir())
     except OSError:
         return []
     for p in entries:
-        # Lấy gốc từ p.name chứ KHÔNG phải p.stem: thư mục "…_x0.7_vi_tts" bị
-        # stem coi ".7_vi_tts" là đuôi file → cụt còn "…_x0", sinh gốc ma.
-        # Cắt theo vị trí tag _x… thì có đuôi hay không cũng ra đúng gốc.
-        if doan.DOAN_RE.search(p.name):            # file/thư mục của MỘT ĐOẠN
-            continue                               # — ẩn, chỉ hiện gốc cả bài
-        tags = list(_XTAG.finditer(p.name))
-        if tags:                                   # kết quả cũ dạng phẳng
-            note(p.name[:tags[-1].end()], _mtime(p))
+        if _XTAG.search(p.name):                   # kết quả cũ dạng phẳng
+            note(p.name, "", _mtime(p))
         elif p.is_dir():                           # thư mục riêng của một video
             try:
                 subs = list(p.iterdir())
             except OSError:
                 continue
             for c in subs:
-                if doan.DOAN_RE.search(c.name):    # đoạn của video dài → ẩn
-                    continue
-                t2 = list(_XTAG.finditer(c.name))
-                if t2:
-                    note(f"{p.name}/{c.name[:t2[-1].end()]}", _mtime(c))
+                note(c.name, f"{p.name}/", _mtime(c))
 
     rows = []
     for b, _mt in sorted(seen.items(), key=lambda kv: kv[1], reverse=True)[:limit]:
         r = _flags(b)
         r["missing"], r["resume_err"] = missing_steps(r, thaytieng, vesub)
         r["missing_label"] = "".join(NUM[k] for k in r["missing"])
+        # Chỉ còn file từng đoạn, không còn file nào của bản cả bài (kể cả sổ đoạn).
+        r["chi_doan"] = b not in co_goc
         rows.append(r)
     return rows
 
@@ -778,17 +788,26 @@ def files_of(base: str) -> list[Path]:
     "abc_x0.7" không vơ nhầm file của gốc khác trùng tiền tố kiểu "abc_x0.75".
     Nếu gốc có thư mục riêng và trong đó KHÔNG còn gì khác → trả về nguyên
     thư mục (vào Thùng rác một cục, gọn hơn từng file).
+
+    24/11/2026: vơ cả file TỪNG ĐOẠN của video dài ("abc_d01_x0.7…" — số đoạn chen
+    TRƯỚC tag tốc độ nên không trùng tiền tố "abc_x0.7"). Trước đó 🗑 chỉ lấy bản
+    ghép, để sót mọi đoạn trong output (vài GB) mà bảng không còn hàng nào để xoá.
     """
     target = OUTPUT_DIR / base
     parent, prefix = target.parent, target.name
+    tags = list(_XTAG.finditer(prefix))
+    doan_re = (re.compile(re.escape(prefix[:tags[-1].start()]) + r"_d\d{2}"
+                          + re.escape(prefix[tags[-1].start():])) if tags else None)
     try:
         entries = list(parent.iterdir())
     except OSError:
         return []
     matched = []
     for p in entries:
-        if p.name.startswith(prefix):
-            rest = p.name[len(prefix):]
+        m = doan_re.match(p.name) if doan_re else None
+        dau = m.end() if m else (len(prefix) if p.name.startswith(prefix) else -1)
+        if dau >= 0:
+            rest = p.name[dau:]
             if rest == "" or rest[0] in "._":
                 matched.append(p)
     if matched and parent != OUTPUT_DIR and len(matched) == len(entries):

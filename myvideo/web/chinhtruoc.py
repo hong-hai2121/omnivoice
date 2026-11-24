@@ -263,6 +263,16 @@ def xem_truoc(src: Path) -> Path:
     return out
 
 
+def bo_xem_truoc(src) -> bool:
+    """Xoá bản xem trước thu nhỏ của `src` (nếu đã dựng) — gọi TRƯỚC khi xoá chính `src`
+    (mã bản xem trước tính từ cỡ + giờ sửa của file). Dùng khi 🗑 một video ở bảng Kết quả."""
+    try:
+        (XEM_DIR / f"{_ma(Path(src))}.mp4").unlink()
+        return True
+    except OSError:
+        return False
+
+
 def _don_xem(giu: Path | None = None) -> None:
     """Chỉ giữ XEM_GIU bản xem trước mới nhất (mỗi bản ~15–25 MB)."""
     try:

@@ -556,14 +556,58 @@ def _la_thu(base: str) -> str:
     return next((d for d in (ct.THU_DUOI, _THU60) if ten.endswith(d)), "")
 
 
-def _tep_thu(base: str) -> list[Path]:
-    """Mọi thứ của bản thử 3 phút thuộc video có gốc `base` (gốc thật hay gốc thử đều
-    được): clip đã cắt output/<tên>_thu3p.mp4 + thư mục kết quả output/<tên>_thu3p/."""
-    ten = Path(base).name[:len(_ct_khoa(base))]      # tên gốc, giữ nguyên hoa/thường
-    if not ten:
+def _tep_thu_ten(ten: str) -> list[Path]:
+    """Mọi thứ của bản thử 3 phút thuộc video tên `ten` (tên gốc, không tag): clip đã
+    cắt output/<tên>_thu3p.mp4 + thư mục kết quả output/<tên>_thu3p/ (mọi tốc độ)."""
+    if not ten or ten != Path(ten).name:             # chỉ nhận tên trần (chặn ../)
         return []
     return [p for p in (OUTPUT_DIR / f"{ten}{ct.THU_DUOI}.mp4",
                         OUTPUT_DIR / f"{ten}{ct.THU_DUOI}") if p.exists()]
+
+
+def _tep_thu(base: str) -> list[Path]:
+    """Như _tep_thu_ten, cho một GỐC trong output (gốc thật hay gốc thử đều được)."""
+    return _tep_thu_ten(Path(base).name[:len(_ct_khoa(base))])   # giữ nguyên hoa/thường
+
+
+# ── 🗑 XOÁ Ở BẢNG = DỌN SẠCH video đó khỏi output (24/11/2026) ────────────────
+# User: "khi xoá ở đây là xoá tệp khỏi output luôn và cái chỉnh trước cũng mất video
+# liên quan đi hết". Bấm xoá một hàng thì KHÔNG còn gì của video đó trong output, và
+# hàng không quay lại dưới dạng khác (nguồn chờ / chỉ có bản thử):
+#   • file của gốc + file từng đoạn của video dài (st.files_of);
+#   • video không còn gốc thật nào khác (tốc độ khác) → bản thử 3 phút + clip đã cắt
+#     của 🎛 Chỉnh trước, bản xem trước thu nhỏ, và dòng nguồn chờ của nó;
+#   • khung 🎛 đang mở đúng video đó tự đóng (trang nghe sự kiện mvid:daxoa).
+# Vẫn chỉ đưa vào Thùng rác; FILE NGUỒN (Downloads, ổ khác) không bao giờ bị đụng;
+# dải che đã chỉnh tay (chinh_truoc.json) là cài đặt, giữ lại cho lượt chạy sau.
+def _tep_xoa(base: str) -> tuple[list[Path], bool]:
+    """→ (mọi thứ nút 🗑 của hàng `base` phải dọn, video có HẾT HẲN khỏi output không)."""
+    loai = _la_thu(base)
+    if loai == ct.THU_DUOI:                          # hàng "chỉ có bản thử"
+        return _tep_thu(base), True
+    files = st.files_of(base)
+    khoa = st.tenchinh(Path(base).name)
+    con = any(r["base"] != base and st.tenchinh(Path(r["base"]).name) == khoa
+              for r in st.scan_rows(limit=500))      # còn gốc khác của CHÍNH video này
+    if con:
+        return files, False
+    them = _tep_thu(base)
+    if loai == _THU60:                               # clip 60 giây đã cắt, nằm ngoài thư mục
+        them.append(OUTPUT_DIR / f"{Path(base).name[:len(khoa)]}.mp4")
+    return files + [p for p in them if p.exists() and p not in files], True
+
+
+def _quen_video(khoa: str) -> None:
+    """Video `khoa` vừa bị dọn khỏi output → 🎛 Chỉnh trước quên theo: bỏ dòng nguồn chờ
+    của nó (kẻo hàng vừa xoá hiện lại thành "⏳ mới nạp") và bản xem trước thu nhỏ của
+    file nguồn. (Bản xem trước của clip thử phải bỏ TRƯỚC khi clip vào Thùng rác — nơi
+    gọi tự làm, xem ct.bo_xem_truoc.)"""
+    cu = [x for x in (load_settings().get("cho_chinh") or []) if isinstance(x, str)]
+    cua_no = [x for x in cu if _ten_nguon(x) == khoa]
+    for x in cua_no:
+        ct.bo_xem_truoc(_tep_nguon(x))
+    if cua_no:
+        save_settings({"cho_chinh": [x for x in cu if x not in cua_no]})
 
 
 def _bang_ctx() -> dict:
@@ -582,11 +626,23 @@ def _bang_ctx() -> dict:
     cho = _hang_cho(rows, s)
     for c in cho:
         c["co_thu"] = c["khoa"] in thu
+        # ✕ của hàng chờ sẽ đưa những thứ này vào Thùng rác (clip đã cắt / thư mục thử)
+        # → nút phải hỏi lại; chưa có gì trong output thì ✕ chỉ bỏ dòng, khỏi hỏi.
+        c["tep_thu"] = bool(_tep_thu_ten(_tep_nguon(c["src"]).stem))
     da_co = ({st.tenchinh(Path(r["base"]).name) for r in rows}
              | {c["khoa"] for c in cho})
-    chi_thu = [{"id": "base:" + r["base"], "base": r["base"],
-                "ten": Path(r["base"]).name[:len(k)]}
+    chi_thu = [{"id": "base:" + r["base"], "ten": Path(r["base"]).name[:len(k)], "clip": False}
                for k, r in thu.items() if k not in da_co]
+    # Clip 3 phút đã cắt (output/<tên>_thu3p.mp4 — cắt ngay lúc mở khung 🎛) mà video
+    # không còn hàng nào: cũng phải hiện, kẻo nằm lại output mà không có chỗ bấm xoá.
+    duoi = f"{ct.THU_DUOI}.mp4"
+    try:
+        clip_le = sorted(p.name[:-len(duoi)] for p in OUTPUT_DIR.iterdir()
+                         if p.is_file() and p.name.lower().endswith(duoi))
+    except OSError:
+        clip_le = []
+    chi_thu += [{"id": "", "ten": ten, "clip": True} for ten in clip_le
+                if ten and ten.lower() not in da_co and ten.lower() not in thu]
     return {"rows": rows, "cho": cho, "chi_thu": chi_thu,
             "files": _list_output(), "output_dir": str(OUTPUT_DIR)}
 
@@ -624,7 +680,7 @@ def _home(loi: str = "") -> RedirectResponse:
 
 
 def _tra(request: Request, loi: str = "", ok: str = "",
-         luu: bool = False, chay: bool = False):
+         luu: bool = False, chay: bool = False, bao: dict | None = None):
     """Trả lời cho MỌI nút bấm: qua htmx thì cập nhật TẠI CHỖ (khối hàng đợi +
     bảng kết quả + lời nhắn góc phải), KHÔNG tải lại trang — khỏi mất chỗ đang
     cuộn, ô Nguồn đang gõ dở và các tuỳ chọn vừa chỉnh. Không có JS thì rơi về
@@ -634,11 +690,16 @@ def _tra(request: Request, loi: str = "", ok: str = "",
     lỗi thì kèm HX-Trigger "mvid:xong" để trang tự dọn: bỏ dấu “chưa lưu”, và
     sau lượt CHẠY thì bỏ tick hai ô “làm lại” (hai ô đó chỉ có giá trị cho đúng
     lượt vừa bấm — trước đây trang tải lại nên tự sạch, nay phải tự bỏ).
+
+    bao = sự kiện riêng gửi kèm cho trang ({"mvid:daxoa": {"khoa": …}} sau một lượt 🗑
+    — khung 🎛 đang mở đúng video đó tự đóng). json.dumps mặc định chỉ ra ASCII nên
+    tên video chữ Hán vẫn nằm gọn trong header.
     """
     if not request.headers.get("hx-request"):
         return _home(loi)
-    headers = ({"HX-Trigger": json.dumps({"mvid:xong": {"chay": chay}})}
-               if luu and not loi else {})
+    su_kien = {**({"mvid:xong": {"chay": chay}} if luu and not loi else {}),
+               **(bao or {})}
+    headers = {"HX-Trigger": json.dumps(su_kien)} if su_kien else {}
     # 📤 Đăng bài và ⏱ Hàng đợi giờ là TAB RIÊNG: chỉ vẽ lại các khối CÓ MẶT
     # trên trang vừa bấm nút (htmx gửi HX-Current-URL) — swap vào id không tồn
     # tại là htmx la lỗi ở console, mà dựng context thừa cũng phí (quét sổ
@@ -1374,10 +1435,33 @@ async def nguon_nap(request: Request):
 
 @app.post("/nguon/bo")
 async def nguon_bo(request: Request, src: str = Form(...)):
-    """Bỏ một nguồn chờ khỏi bảng (không đụng file, không đụng ô Nguồn)."""
+    """Bỏ một nguồn chờ khỏi bảng — không đụng FILE NGUỒN, không đụng ô Nguồn.
+
+    24/11/2026 (xoá ở bảng = dọn sạch, xem _tep_xoa): nguồn đã có bản thử 3 phút /
+    clip đã cắt trong output thì đưa luôn vào Thùng rác — kẻo ✕ xong chúng nằm lại
+    mà không còn hàng nào để xoá."""
+    khoa = _ten_nguon(src)
+    files = _tep_thu_ten(_tep_nguon(src).stem) if khoa else []
+    if files and q.busy():
+        return _tra(request, "Hàng đợi đang chạy — dừng hết trước rồi hãy xoá "
+                             "(file có thể đang được ghi).")
+    fail = 0
+    if files:
+        for p in files:
+            if p.is_file():
+                ct.bo_xem_truoc(p)
+        ok_n, fail = st.recycle(files, on_log=q.note)
+        q.note(f"🗑 {_src_label(src)}: đã đưa {ok_n} mục bản thử vào Thùng rác"
+               + (f", {fail} mục KHÔNG xoá được" if fail else "")
+               + " — khôi phục: mở Thùng rác Windows.")
+    ct.bo_xem_truoc(_tep_nguon(src))
     cu = [x for x in (load_settings().get("cho_chinh") or []) if isinstance(x, str)]
     save_settings({"cho_chinh": [x for x in cu if x != src]})
-    return _tra(request, ok=f"Đã bỏ khỏi danh sách: {_src_label(src)}")
+    return _tra(request, f"{_src_label(src)}: {fail} mục không đưa vào Thùng rác được — "
+                         "xem nhật ký." if fail else "",
+                ok=f"Đã bỏ khỏi danh sách: {_src_label(src)}"
+                   + (" (bản thử 3 phút đã vào Thùng rác)" if files else ""),
+                bao={"mvid:daxoa": {"khoa": khoa}} if khoa else None)
 
 
 @app.get("/partials/chinhtruoc", response_class=HTMLResponse)
@@ -2190,19 +2274,50 @@ async def xoa(request: Request, base: str = Form(...)):
     if q.busy():
         return _tra(request, "Hàng đợi đang chạy — dừng hết trước rồi hãy xoá "
                              "(file có thể đang được ghi).")
-    # Hàng "🧪 chỉ có bản thử": dọn TRỌN bản thử 3 phút của video đó (thư mục thử —
-    # mọi tốc độ — lẫn clip đã cắt nằm ngoài thư mục), kẻo clip sót lại không có hàng
-    # nào để xoá. Video thật thì như cũ: chỉ file của đúng gốc đó.
-    files = _tep_thu(base) if _la_thu(base) == ct.THU_DUOI else st.files_of(base)
+    # Xoá ở bảng = dọn SẠCH video đó khỏi output (xem _tep_xoa): cả file từng đoạn của
+    # video dài, và — khi video không còn gốc nào khác — bản thử + clip của 🎛 Chỉnh trước.
+    files, het = _tep_xoa(base)
     if not files:
         return _tra(request, f"{base}: không thấy file nào trong output.")
+    khoa = _ct_khoa(base)
+    for p in files:                     # bản xem trước thu nhỏ của clip thử: bỏ khi clip còn đó
+        if p.is_file() and p.suffix.lower() == ".mp4":
+            ct.bo_xem_truoc(p)
     ok, fail = st.recycle(files, on_log=q.note)
+    if het:
+        _quen_video(khoa)
     q.note(f"🗑 {base}: đã đưa {ok} mục vào Thùng rác"
            + (f", {fail} mục KHÔNG xoá được" if fail else "")
            + " — khôi phục: mở Thùng rác Windows.")
     return _tra(request, f"{base}: {fail} mục không đưa vào Thùng rác được — "
                          "xem nhật ký." if fail else "",
-                ok=f"🗑 {base}: đã đưa {ok} mục vào Thùng rác")
+                ok=f"🗑 {base}: đã đưa {ok} mục vào Thùng rác",
+                bao={"mvid:daxoa": {"khoa": khoa}} if het else None)
+
+
+@app.post("/xoa-thu")
+async def xoa_thu(request: Request, ten: str = Form(...)):
+    """🗑 của hàng "🧪 chỉ có bản thử / chỉ còn clip": dọn TRỌN đồ 🎛 Chỉnh trước của video
+    tên `ten` trong output — thư mục thử (mọi tốc độ) + clip 3 phút đã cắt."""
+    files = _tep_thu_ten(ten)
+    if not files:
+        return _tra(request, f"{ten}: không thấy bản thử nào trong output.")
+    if q.busy():
+        return _tra(request, "Hàng đợi đang chạy — dừng hết trước rồi hãy xoá "
+                             "(file có thể đang được ghi).")
+    for p in files:
+        if p.is_file():
+            ct.bo_xem_truoc(p)          # bản xem trước thu nhỏ của clip: bỏ khi clip còn đó
+    ok, fail = st.recycle(files, on_log=q.note)
+    khoa = st.tenchinh(ten)
+    _quen_video(khoa)
+    q.note(f"🗑 {ten}: đã đưa {ok} mục bản thử vào Thùng rác"
+           + (f", {fail} mục KHÔNG xoá được" if fail else "")
+           + " — khôi phục: mở Thùng rác Windows.")
+    return _tra(request, f"{ten}: {fail} mục không đưa vào Thùng rác được — "
+                         "xem nhật ký." if fail else "",
+                ok=f"🗑 {ten}: đã đưa {ok} mục bản thử vào Thùng rác",
+                bao={"mvid:daxoa": {"khoa": khoa}})
 
 
 @app.post("/xoa-het")

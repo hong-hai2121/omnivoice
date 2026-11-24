@@ -65,26 +65,36 @@
             elif not c.co_tep %} · ⚠️ không thấy file{% endif %}
             — tick rồi bấm <b>🎛 Chỉnh trước</b>{% if c.co_thu %} để xem lại bản thử{% endif %}, hoặc để dòng này trong ô Nguồn và bấm ▶ Chạy tất cả</td>
           <td>
-            <button type="button" class="ghost small"
+            {# 24/11/2026 — xoá ở bảng = dọn sạch: nguồn đã có clip cắt sẵn / bản thử
+               trong output thì ✕ đưa luôn chúng vào Thùng rác (có hỏi lại). File nguồn
+               gốc và ô Nguồn không bao giờ bị đụng. #}
+            <button type="button" class="ghost small{{ ' danger' if c.tep_thu }}"
                     hx-post="/nguon/bo" hx-vals='{{ {"src": c.src} | tojson }}'
                     hx-target="#queue" hx-swap="innerHTML"
-                    title="Bỏ nguồn này khỏi danh sách (không xoá file, không đụng ô Nguồn)">✕</button>
+                    {% if c.tep_thu %}hx-confirm="Bỏ “{{ c.ten }}” khỏi danh sách và đưa bản thử 3 phút + clip đã cắt của nó trong output vào Thùng rác? (file nguồn gốc không bị đụng; khôi phục được từ Thùng rác Windows)"
+                    title="Bỏ nguồn này khỏi danh sách và xoá bản thử 3 phút + clip đã cắt của nó trong output (vào Thùng rác). Không đụng file nguồn gốc, không đụng ô Nguồn"{%
+                    else %}title="Bỏ nguồn này khỏi danh sách (không đụng file nguồn, không đụng ô Nguồn)"{% endif %}>{{ '🗑' if c.tep_thu else '✕' }}</button>
           </td>
         </tr>
         {% endfor %}
         {# Video MỚI CHỈ CÓ bản thử 3 phút (chưa chạy cả bài, nguồn cũng không còn ở
            danh sách chờ): một hàng xám ghi rõ là bản thử — tick để mở lại trong 🎛,
            🗑 để dọn. Không vẽ các cột ①②③④ kẻo đọc nhầm là video thật còn thiếu bước. #}
+        {# t.clip = chỉ còn mỗi clip 3 phút đã cắt (chưa chạy thử gì) — không có gì để
+           mở trong 🎛 nên không có ô tick, chỉ để bấm 🗑 dọn. #}
         {% for t in chi_thu %}
         <tr class="hangcho">
-          <td><input type="checkbox" class="tickv" value="{{ t.id }}"
-                     title="Tick rồi bấm 🎛 Chỉnh trước"></td>
+          <td>{% if t.id %}<input type="checkbox" class="tickv" value="{{ t.id }}"
+                     title="Tick rồi bấm 🎛 Chỉnh trước">{% endif %}</td>
           <td class="left clip tencell" title="{{ t.ten }}">{{ t.ten }}</td>
-          <td class="no" colspan="7" style="text-align:left"><span class="nhanthu">🧪 chỉ có bản thử 3 phút</span>
-            chưa chạy cả bài — tick rồi bấm <b>🎛 Chỉnh trước</b> để xem lại bản thử</td>
+          <td class="no" colspan="7" style="text-align:left">{% if t.clip
+            %}<span class="nhanthu">✂ chỉ còn clip 3 phút đã cắt</span>
+            của 🎛 Chỉnh trước, video này không còn gì khác trong output — bấm 🗑 để dọn{% else
+            %}<span class="nhanthu">🧪 chỉ có bản thử 3 phút</span>
+            chưa chạy cả bài — tick rồi bấm <b>🎛 Chỉnh trước</b> để xem lại bản thử{% endif %}</td>
           <td>
             <button type="button" class="ghost small danger"
-                    hx-post="/xoa" hx-vals='{{ {"base": t.base} | tojson }}'
+                    hx-post="/xoa-thu" hx-vals='{{ {"ten": t.ten} | tojson }}'
                     hx-target="#queue" hx-swap="innerHTML"
                     hx-confirm="Đưa BẢN THỬ 3 phút của “{{ t.ten }}” (thư mục thử + clip đã cắt) vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
                     title="Xoá bản thử 3 phút của video này (chỉ đưa vào Thùng rác, khôi phục được)">🗑</button>
@@ -122,6 +132,12 @@
                hx-target="#socau" hx-swap="innerHTML"
                title="{{ r.base }}{% if r.doan %} — video dài đã chia {{ r.doan }} đoạn, các bước chạy từng đoạn rồi ghép; cờ bên phải tính theo bản ghép cả bài{% endif %}
 Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ r.base }}</a>{% if r.doan %} <span class="hint">✂{{ r.doan }}</span>{% endif %}</td>
+          {# Video dài chỉ còn sót file TỪNG ĐOẠN (bản ghép cả bài đã bị xoá): một ô nói
+             rõ thay cho sáu dấu "—" — nhìn là biết đây là đồ sót, bấm 🗑 để dọn. #}
+          {% if r.chi_doan %}
+          <td class="no" colspan="7" style="text-align:left"><span class="nhanthu">✂ chỉ còn file từng đoạn</span>
+            bản ghép cả bài không còn — bấm 🗑 để dọn hết khỏi output, hoặc chạy lại bước ① từ file nguồn</td>
+          {% else %}
           <td class="{{ 'okc' if r.video and r.srt else 'no' }}">{{
             '✔' if r.video and r.srt else ('chỉ SRT' if r.srt else ('chỉ video' if r.video else '—')) }}</td>
           <td class="{{ 'okc' if r.vi else 'no' }}">{{ '✔' if r.vi else '—' }}</td>
@@ -148,12 +164,13 @@ Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ 
             {% elif r.vi %}<span class="okc" title="Bản dịch không sót chữ Hán, timeline không câu nào lệch quá 3s">✓</span>
             {% else %}—{% endif %}
           </td>
+          {% endif %}{# /chi_doan #}
           <td>
             <button type="button" class="ghost small danger"
                     hx-post="/xoa" hx-vals='{{ {"base": r.base} | tojson }}'
                     hx-target="#queue" hx-swap="innerHTML"
-                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
-                    title="Xoá video này = xoá MỌI file của nó trong output (chỉ đưa vào Thùng rác, khôi phục được)">🗑</button>
+                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác — kể cả các đoạn của video dài và bản thử 3 phút + clip của 🎛 Chỉnh trước? (khôi phục được từ Thùng rác Windows)"
+                    title="Xoá video này = dọn sạch MỌI file của nó trong output: bản ghép, từng đoạn của video dài, bản thử 3 phút + clip của 🎛 Chỉnh trước (chỉ đưa vào Thùng rác, khôi phục được). File nguồn gốc không bị đụng">🗑</button>
           </td>
         </tr>
         {% endfor %}
@@ -164,7 +181,8 @@ Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ 
      xem trước, chỉnh phóng to / dải che mờ / âm lượng, chạy thử 3 phút đầu.
      📂 = mở thư mục của video đó (video thành phẩm được chọn sẵn).
      <b>⏱ So giờ</b> (hoặc bấm vào tên video) = xem thời gian 5 câu đầu: sub gốc so với giọng đã tạo.
-     Nút 🗑 xoá mọi file của video đó trong output (vào Thùng rác Windows, khôi phục được).
+     Nút 🗑 dọn sạch video đó khỏi output — cả các đoạn của video dài lẫn bản thử 3 phút + clip của 🎛 Chỉnh trước
+     (vào Thùng rác Windows, khôi phục được; file nguồn gốc không bị đụng).
      <b>🧪 Bản thử 3 phút</b> không hiện thành hàng riêng — tick video rồi bấm 🎛 Chỉnh trước để xem lại.</p>
   {% else %}
   <p class="empty">Chưa có video nào trong output — chạy bước ① với một video mới.</p>

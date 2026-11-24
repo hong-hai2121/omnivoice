@@ -72,7 +72,7 @@
             <td><button type="button" class="ghost small danger"
                     hx-post="/xoa" hx-vals='{{ {"base": r.base} | tojson }}'
                     hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
-                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác? (khôi phục được từ Thùng rác Windows)"
+                    hx-confirm="Đưa TOÀN BỘ file của “{{ r.base }}” trong output vào Thùng rác — kể cả các đoạn của video dài và bản thử 3 phút + clip của 🎛 Chỉnh trước? (khôi phục được từ Thùng rác Windows)"
                     title="Xoá video này khỏi output (vào Thùng rác Windows, khôi phục được)">🗑</button></td>
           </tr>
         {% endfor %}

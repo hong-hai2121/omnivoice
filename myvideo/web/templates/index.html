@@ -1046,6 +1046,16 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
     const id = dangTick[0].value;
     window.moChinhTruoc(id, "", id.startsWith("src:") && oTocDo ? oTocDo.value : "");
   });
+  // 🗑 xoá một video ở bảng (24/11/2026): server dọn sạch video đó khỏi output rồi báo
+  // "mvid:daxoa" kèm khoá video → khung 🎛 đang mở ĐÚNG video đó thì đóng lại (bấm hộ
+  // nút ✕ Đóng của khung để nó tự dừng tiếng + hẹn giờ).
+  document.body.addEventListener("mvid:daxoa", e => {
+    const p = document.getElementById("ctPanel");
+    if (p && e.detail && e.detail.khoa && p.dataset.khoa === e.detail.khoa) {
+      const dong = document.getElementById("ctDong");
+      if (dong) dong.click(); else khungCT.replaceChildren();
+    }
+  });
   // Đổi ô "Tốc độ sau khi làm chậm" ở khối ① lúc khung 🎛 đang mở → khung chuyển theo
   // sang bản thử của tốc độ đó (một cài đặt, hai chỗ bấm). Khung tự đặt ô này khi mở
   // thì data-toc đã bằng giá trị mới → không nạp lại (không lặp vòng).
