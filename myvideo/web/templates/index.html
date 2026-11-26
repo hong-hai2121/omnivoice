@@ -209,8 +209,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
         </span>
       </label>
       <label class="field">
-        <span>Model nhận diện</span>
-        <select name="model">
+        <span>Model nhận diện (large-v3: đủ câu nhất · large-v3-turbo: nhanh ~2,5 lần)</span>
+        <select name="model"
+                title="Đo 25/11/2026 trên phim Trung có nhạc nền, đối chiếu 43 câu phụ đề đốt sẵn: large-v3 nhận đủ 43 câu, large-v3-turbo đủ 41 câu nhưng nhanh hơn khoảng 2,5 lần">
           {% for m in ["tiny", "base", "small", "medium", "large-v3-turbo", "large-v3"] %}
             <option value="{{ m }}" {{ 'selected' if settings.model == m }}>{{ m }}</option>
           {% endfor %}
@@ -286,7 +287,7 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
          cho cả hai bảng, đổi ở đâu cũng là đổi cả hai). JS cuối trang giữ cho
          hai ô loại trừ nhau như bên myvoice. #}
       <label class="chk"><input type="checkbox" name="gemini_backend" value="extension"
-        {{ 'checked' if gemini_backend not in ('firefox', 'cli') }}> 🧩 Dịch bằng Chrome Extension (mặc định)</label>
+        {{ 'checked' if gemini_backend not in ('firefox', 'cli', 'gemini_cli') }}> 🧩 Dịch bằng Chrome Extension (mặc định)</label>
       <label class="chk"><input type="checkbox" name="gemini_backend" value="firefox"
         {{ 'checked' if gemini_backend == 'firefox' }}> 🦊 Dịch bằng Firefox / Selenium (dự phòng)</label>
       {# 🤖 GPT CLI = lựa chọn thứ ba của CÙNG ô gemini_backend (dùng chung myvoice):
@@ -295,6 +296,11 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       <label class="chk"><input type="checkbox" name="gemini_backend" value="cli"
         {{ 'checked' if gemini_backend == 'cli' }}> 🤖 Dịch bằng GPT CLI (Codex, tài khoản ChatGPT)
         — không cần trình duyệt, không cần giữ màn hình; chất lượng ngang Gemini</label>
+      {# ✨ Gemini CLI (26/11/2026) = lựa chọn thứ tư của CÙNG ô: dich_srt.py --gemini-cli —
+         y đường GPT CLI nhưng lệnh gọi là `agy -p` (Antigravity, tài khoản Google). #}
+      <label class="chk"><input type="checkbox" name="gemini_backend" value="gemini_cli"
+        {{ 'checked' if gemini_backend == 'gemini_cli' }}> ✨ Dịch bằng Gemini CLI (Antigravity, tài khoản Google)
+        — không cần trình duyệt, không cần giữ màn hình</label>
       <label class="chk"><input type="checkbox" name="offline" {{ 'checked' if settings.offline }}>
         📴 Dịch offline bằng opus-mt
         <span class="l-zh">zh-vi</span><span class="l-en">en-vi (lần đầu tự tải model ~300MB)</span>
@@ -308,7 +314,9 @@ cao nhất qua app Bili23), lần lượt từng link, KHÔNG chạy ①→④">
       Cài/thử extension ở tab 🧩 của bảng myvoice.
       GPT CLI: cài <code>npm i -g @openai/codex</code> rồi <code>codex login</code> (ChatGPT)
       một lần trong terminal; là lựa chọn thứ ba thay cho hai ô Gemini, áp dụng cho cả bước ②
-      lẫn 📑 SEO. Chọn model / mức cố gắng, kiểm tra kết nối, nhắn thử ở tab 🤖 GPT CLI của bảng myvoice.</p>
+      lẫn 📑 SEO. Gemini CLI: đăng nhập Google một lần bằng lệnh <code>agy</code> (dùng chung với tool
+      Ghép video Flow). Chọn model, kiểm tra kết nối, nhắn thử cả hai CLI — và đặt cách dịch mặc định —
+      ở tab <a href="/cli">🤖 CLI dịch</a>.</p>
   </div>
   </div>{# /bc-b12 #}
 

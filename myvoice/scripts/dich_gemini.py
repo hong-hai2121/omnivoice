@@ -799,6 +799,12 @@ def _is_cli(driver):
     return getattr(driver, "is_gpt_cli", False) is True
 
 
+def _ten_cli(driver):
+    """Tên CLI của driver cho nhật ký: "GPT CLI" (codex) hay "Gemini CLI" (agy)."""
+    ten = getattr(driver, "ten", None)
+    return ten if isinstance(ten, str) else "GPT CLI"
+
+
 def _ensure_selenium():
     """Import selenium, báo lỗi rõ ràng nếu chưa cài."""
     try:
@@ -826,11 +832,12 @@ def init_firefox(profile=None, url=GEMINI_URL, wait=8, backend=None, on_log=None
     logging.warning — GUI/web đều bắt được).
     """
     _log = on_log or logging.getLogger(__name__).warning
-    if (backend or get_backend()) == "cli":
+    if (backend or get_backend()) in ("cli", "gemini_cli"):
         # 🤖 GPT CLI (27/10/2026): không trình duyệt nào cả — "driver" giả gọi `codex exec`
         # mỗi lần gửi; các hàm bên dưới tự rẽ nhánh theo cờ is_gpt_cli của nó.
         from dich_gptcli import GptCliDriver
-        return GptCliDriver(url, on_log=on_log or logging.getLogger(__name__).info)
+        return GptCliDriver(url, on_log=on_log or logging.getLogger(__name__).info,
+                            nha="gemini" if (backend or get_backend()) == "gemini_cli" else "gpt")
     if (backend or get_backend()) == "extension":
         from gemini_extension import ChromeExtensionDriver
         try:
@@ -887,7 +894,7 @@ def restart_firefox(driver=None, profile=None, url=GEMINI_URL, wait=8, on_log=pr
     điều hành nhả khóa profile trước khi mở lại.
     """
     if _is_cli(driver):
-        on_log("🤖 GPT CLI: bắt đầu lại bằng lệnh mới (quên hướng dẫn + ngữ cảnh cũ — bên gọi "
+        on_log(f"🤖 {_ten_cli(driver)}: bắt đầu lại bằng lệnh mới (quên hướng dẫn + ngữ cảnh cũ — bên gọi "
                "gửi lại câu hướng dẫn như với chat mới).")
         driver.get(url)
         return driver
@@ -1191,7 +1198,7 @@ def nudge_after_refusal(driver, chunk, on_log=print):
         return None
     cli = _is_cli(driver)
     if cli:
-        on_log(f"💬 GPT CLI từ chối → gửi lại đoạn trong lệnh mới kèm câu nhắc: "
+        on_log(f"💬 {_ten_cli(driver)} từ chối → gửi lại đoạn trong lệnh mới kèm câu nhắc: "
                f"\"{REFUSAL_NUDGE_CLI}\"")
     else:
         on_log(f"💬 Gemini từ chối → gửi thêm một câu nhắc trong cùng chat: \"{REFUSAL_NUDGE}\"")
@@ -1332,7 +1339,7 @@ def send_prefix_to_gemini(driver, prefix, on_log=print, timeout=None):
         # GPT CLI không có tin nhắn riêng và không nhớ: ĐĂNG KÝ câu hướng dẫn (bản CLI —
         # cli_instruction) để driver gửi lại KÈM MỖI đoạn; không tốn một lệnh "sẵn sàng chưa".
         driver.set_instruction(cli_instruction(prefix))
-        on_log("📨 GPT CLI: câu hướng dẫn dịch sẽ được gửi KÈM TỪNG đoạn (mỗi đoạn một lệnh "
+        on_log(f"📨 {_ten_cli(driver)}: câu hướng dẫn dịch sẽ được gửi KÈM TỪNG đoạn (mỗi đoạn một lệnh "
                "riêng, CLI không nhớ giữa hai lệnh).")
         return
     on_log("📨 Gửi câu hướng dẫn dịch (tin nhắn riêng — không dùng nội dung trả về)...")

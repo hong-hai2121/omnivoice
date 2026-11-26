@@ -81,7 +81,66 @@ class KhongDauCauTests(unittest.TestCase):
     def test_nghi_dai_thi_chot_dong(self):
         subs = v.build_subs(chu("既然轮迴已开", "那我便", khe={1: 1.0}), lang="zh")
         self.assertEqual(dong(subs), ["既然轮迴已开", "那我便"])
-        self.assertAlmostEqual(subs[1][0] - subs[0][1], 1.0, places=2)
+        # chỗ nghỉ 1,0 s, cộng thêm phần mốc đầu dòng lùi về sát cuối chữ đầu (DAU_SOM)
+        self.assertAlmostEqual(subs[1][0] - subs[0][1], 1.0 + CHU - v.DAU_SOM, places=2)
+
+
+class MocDauDongTests(unittest.TestCase):
+    """25/11/2026: user báo giọng lồng vào SỚM hơn tiếng gốc. Bước ③ đặt giọng đúng mốc
+    bắt đầu của dòng SRT, mà mốc đó lấy theo ĐẦU chữ đầu dòng — Whisper dồn quãng im /
+    nhạc trước một chữ vào chính chữ đó nên tiếng thật bật lên ở sát mốc CUỐI chữ
+    (đo: phim sớm 0,35–0,7 s; truyện đọc 148 chỗ nghỉ, trung vị sớm 0,45 s)."""
+
+    def test_dong_bat_dau_o_cuoi_chu_dau_dong(self):
+        # "你" đầu đoạn bị faster-whisper chặn ở 2 lần trung vị: ghi 10,16–10,84 s,
+        # tiếng thật bật lên ở 10,86 s (đo trên tập 错绑良配).
+        w = [[9.0, 9.3, "了", 2], [10.16, 10.84, "你", 0], [10.84, 11.02, "得", 0],
+             [11.02, 11.30, "好好", 0], [11.30, 11.58, "学", 0], [11.58, 11.78, "说", 0],
+             [11.78, 12.08, "话", 2]]
+        subs = v.build_subs([[8.0, 8.5, "我们", 0], [8.5, 9.0, "都快五岁", 0]] + w, lang="zh")
+        self.assertEqual(dong(subs)[-1], "你得好好学说话")
+        self.assertAlmostEqual(subs[-1][0], 10.84 - v.DAU_SOM, places=3)
+        self.assertAlmostEqual(subs[-1][1], 12.08, places=3)          # mốc cuối dòng không đổi
+
+    def test_dong_dau_bai_va_dong_noi_lien_sau_dau_cham_cung_vay(self):
+        # 91 dòng truyện đọc mở đầu ngay sau dấu hết câu (cách chữ trước 0,1–0,28 s):
+        # tiếng thật vẫn bật ở mốc cuối chữ đầu dòng (trung vị lệch 0,00 s).
+        subs = v.build_subs(chu("阎王都憋屈。", "想当年巫妖大战。", khe={1: 0.16}), lang="zh")
+        self.assertEqual(dong(subs), ["阎王都憋屈。", "想当年巫妖大战。"])
+        self.assertAlmostEqual(subs[0][0], CHU - v.DAU_SOM, places=3)
+        self.assertAlmostEqual(subs[1][0], 5 * CHU + 0.16 + CHU - v.DAU_SOM, places=3)
+
+    def test_khong_doi_cach_cat_dong_va_moc_cuoi(self):
+        ve = ("为我祭炼轮回", "是为众生何错之有", "错在你", "月祖代袍", "交出生死簿", "否则", "休怪我等不客气")
+        w = chu(*ve, khe={2: 0.5, 4: 0.9})
+        sau = v.build_subs(w, lang="zh")
+        with patch.dict(v.NGON_NGU["zh"], {"dau_dong_cuoi_chu": False}):
+            truoc = v.build_subs(w, lang="zh")
+        self.assertEqual(dong(sau), dong(truoc))
+        self.assertEqual([s[1] for s in sau], [s[1] for s in truoc])
+        for a, b in zip(truoc, sau):
+            self.assertAlmostEqual(b[0] - a[0], CHU - v.DAU_SOM, places=3)
+            self.assertLess(b[0], b[1])
+
+    def test_chu_lac_da_keo_ve_sau_cho_nghi_thi_giu_moc_do(self):
+        """Chữ đầu vế bị dán trước chỗ nghỉ (sua_chu_lac đặt nó tại mốc chữ kế, dài 0):
+        mốc đó đã là lúc tiếng thật bật lên, không lùi thêm."""
+        w = chu("那我便", "你们四人", "速来紫霄宫见我")
+        for x in w[5:]:
+            x[0] += 17.0
+            x[1] += 17.0
+        subs = v.build_subs(w, lang="zh")
+        self.assertAlmostEqual(subs[1][0], w[5][0], places=3)
+
+    def test_token_ca_cau_mang_moc_cua_doan_thi_giu_nguyen(self):
+        # Whisper không trả mốc từng chữ → cả câu là một token mang mốc của đoạn.
+        subs = v.build_subs([[1.0, 2.4, "这是第一段的最后一句话。", 1], [5.0, 6.4, "这是第二段的话。", 1]], lang="zh")
+        self.assertEqual([s[0] for s in subs], [1.0, 5.0])
+
+    def test_tieng_anh_chua_do_nen_giu_moc_dau_chu(self):
+        w = chu("So this is the first thing.", "And here comes the second one.", khe={1: 1.0}, lang="en")
+        subs = v.build_subs(w, max_chars=42, hard_max=42, min_chars=10, lang="en")
+        self.assertEqual([s[0] for s in subs], [w[0][0], w[6][0]])
 
     def test_co_dau_cau_thi_nhu_cu(self):
         d = dong(v.build_subs(chu("轮迴乃天道致命,非你可擅自祭炼。", "巫妖大战,生灵涂炭,亿万冤魂无归。"), lang="zh"))
@@ -282,15 +341,18 @@ def _seg(s, e, text, words=None):
 
 
 class NhanDienTests(unittest.TestCase):
-    def _chay(self, transcribe, audio=None, **kw):
-        """transcribe_words với model giả; audio = mảng mẫu giả cho đường theo khúc."""
+    def _chay(self, transcribe, audio=None, noi=None, lang="zh", **kw):
+        """transcribe_words với model giả; audio = mảng mẫu giả cho đường theo khúc;
+        noi = các quãng có tiếng nói (tính bằng mẫu) mà VAD giả trả về — tiếng
+        Trung không cho Whisper lọc im lặng nên code tự chạy VAD để soát đoạn bịa."""
         import numpy as np
         model = SimpleNamespace(transcribe=transcribe)
         with patch.object(v, "get_model", return_value=(model, None, "cpu")), \
                 patch.object(v, "get_audio_duration", return_value=3.0), \
+                patch("faster_whisper.vad.get_speech_timestamps", return_value=noi or []), \
                 patch("faster_whisper.decode_audio",
                       return_value=np.zeros(48000, dtype="float32") if audio is None else audio):
-            return v.transcribe_words("x.wav", lang="zh", **kw)
+            return v.transcribe_words("x.wav", lang=lang, **kw)
 
     def test_transcribe_words_ghi_co_het_ve(self):
         segs = [_seg(0, 1, "错在你", [_W(0, .3, "错"), _W(.3, .6, "在"), _W(.6, 1, "你")]),
@@ -334,8 +396,11 @@ class NhanDienTests(unittest.TestCase):
             if k == 2:      # Whisper đọc lại câu cuối của lời mồi rồi mới vào lời thật
                 segs.insert(0, _seg(0, 1, "这是第1段的最后一句话。", [_W(0, 1, "这是第1段的最后一句话。")]))
             return iter(segs), None
-        with patch("faster_whisper.vad.get_speech_timestamps", return_value=noi):
-            words = self._chay(transcribe, audio=audio)
+        # Bài này soát việc cắt khúc + mồi; mỗi khúc giả chỉ có một câu nên tắt phép
+        # soát "quá ít chữ so với số giây có tiếng nói" (có bài riêng bên dưới).
+        # … và phép vá lỗ hổng (VAD nghe ra tiếng nói mà không có chữ — cũng có bài riêng).
+        with patch.dict(v.NGON_NGU["zh"], {"chu_moi_giay": 0}), patch.object(v, "LO_HONG", 1e9):
+            words = self._chay(transcribe, audio=audio, noi=noi)
         self.assertEqual([round(x[0]) for x in goi], [315, 325, 140])   # cắt giữa hai quãng im
         self.assertIn("标点符号", goi[0][1])                           # khúc đầu: câu mẫu
         self.assertEqual(goi[1][1], "这是第1段的最后一句话。")            # khúc sau: đuôi khúc trước
@@ -357,16 +422,173 @@ class NhanDienTests(unittest.TestCase):
         self.assertEqual([w[3] for w in words], [2, 2])
 
     def test_khuc_nuot_loi_thi_chay_lai(self):
-        """193 giây có tiếng nói mà chỉ ra vài chữ = Whisper nuốt lời (đo thật: 632 → 17 chữ)."""
+        """193 giây có tiếng nói mà chỉ ra vài chữ = Whisper nuốt lời (đo thật: 632 → 17 chữ).
+        Tiếng Trung không cho Whisper lọc im lặng nên số giây có tiếng nói lấy từ VAD
+        của mình — duration_after_vad lúc đó là cả khúc, kể cả nhạc."""
+        import numpy as np
         day_du = "这年头我地府算是废了。" * 30
 
         def transcribe(a, **opts):
-            info = SimpleNamespace(duration_after_vad=193.0)
+            info = SimpleNamespace(duration_after_vad=200.0)
             if opts["condition_on_previous_text"]:
                 return iter([_seg(0, 1, "不知好歹。", [_W(0, 1, "不知好歹。")])]), info
             return iter([_seg(0, 190, day_du, [_W(0, 190, day_du)])]), info
-        words = self._chay(transcribe)
+        audio = np.zeros(200 * v._SR, dtype="float32")
+        words = self._chay(transcribe, audio=audio, noi=[{"start": 0, "end": 193 * v._SR}])
         self.assertEqual(words[0][2], day_du)
+
+    def test_khuc_nhieu_nhac_it_loi_khong_bi_coi_la_nuot_loi(self):
+        """200 giây mà chỉ 12 giây có tiếng nói (phim nhiều nhạc): ít chữ là đúng,
+        không được chạy lại — chạy lại kiểu không ngữ cảnh là mất dấu câu oan."""
+        import numpy as np
+        goi = []
+
+        def transcribe(a, **opts):
+            goi.append(opts["condition_on_previous_text"])
+            return iter([_seg(0, 2, "爹爹你醒了。", [_W(0, 2, "爹爹你醒了。")])]), \
+                SimpleNamespace(duration_after_vad=200.0)
+        audio = np.zeros(200 * v._SR, dtype="float32")
+        with patch.object(v, "LO_HONG", 1e9):       # không xét vá lỗ hổng ở bài này
+            words = self._chay(transcribe, audio=audio, noi=[{"start": 0, "end": 12 * v._SR}])
+        self.assertEqual(goi, [True])
+        self.assertEqual([w[2] for w in words], ["爹爹你醒了。"])
+
+    def test_lo_hong_la_cho_vad_nghe_ra_tieng_noi_ma_khong_co_chu(self):
+        words = [[0, 1, "甲。", 1], [10, 11, "丙。", 1], [11, 14, "丁丁丁。", 1]]
+        # tiếng nói 4–8 s không có chữ nào → lỗ, nới ra trọn khe giữa hai chữ kề (1–10 s)
+        self.assertEqual(v._lo_hong(words, [(0, 1), (4, 8), (10, 14)], 0, 20), [(1, 10)])
+        # chỗ hở ngắn hơn LO_HONG, hoặc chữ đã phủ kín tiếng nói → không phải lỗ
+        self.assertEqual(v._lo_hong(words, [(0, 2.5), (9, 14)], 0, 20), [])
+        # tiếng nói kéo tới hết khúc mà không có chữ → lỗ tới mép khúc
+        self.assertEqual(v._lo_hong(words, [(15, 19)], 0, 20), [(14, 20)])
+
+    def test_va_lo_hong_nghe_lai_dung_khe_va_chen_chu_vao(self):
+        """Nghe trọn audio thì Whisper có lúc nhảy qua lời thật (đo: truyện đọc nhanh,
+        4 chỗ / 25 phút). Chỗ VAD nghe ra tiếng nói mà không có chữ phải được cắt riêng ra
+        nghe lại theo cách cũ (Whisper tự lọc im lặng) — không lời mồi (kẻo chép câu mẫu),
+        không ngữ cảnh, không chống-bịa-theo-quãng-lặng — rồi chèn đúng thứ tự."""
+        import numpy as np
+        goi = []
+
+        def W(s, e, t, p=.95):
+            return SimpleNamespace(start=s, end=e, word=t, probability=p)
+
+        def sg(s, e, t, p=.95):
+            return SimpleNamespace(start=s, end=e, text=t, avg_logprob=-0.2, words=[W(s, e, t, p)])
+
+        def transcribe(a, **opts):
+            goi.append((len(a) / v._SR, opts))
+            if len(goi) == 1:
+                return iter([sg(0, 1, "接下来又该去勾魂了。"), sg(10, 11, "给他普及规矩。")]), None
+            # lượt nghe lại: audio là riêng khe 1–10 s, mốc giờ tính từ đầu khe
+            return iter([sg(3, 7, "是时候教训他一下了。"),
+                         sg(7.2, 8, "嗯嗯嗯。", .2)]), None      # Whisper không chắc → không chèn
+        audio = np.zeros(40 * v._SR, dtype="float32")
+        noi = [{"start": 0, "end": 1 * v._SR}, {"start": 4 * v._SR, "end": 8 * v._SR},
+               {"start": 10 * v._SR, "end": 11 * v._SR}]
+        words = self._chay(transcribe, audio=audio, noi=noi)
+        self.assertEqual([w[2] for w in words], ["接下来又该去勾魂了。", "是时候教训他一下了。", "给他普及规矩。"])
+        self.assertEqual([w[0] for w in words], [0, 4.0, 10])         # mốc giờ theo cả bài
+        self.assertEqual([round(x[0]) for x in goi], [40, 9])         # lượt 2 chỉ nghe khe 1–10 s
+        lai = goi[1][1]
+        self.assertIs(lai["vad_filter"], True)
+        self.assertIsNone(lai["initial_prompt"])
+        self.assertFalse(lai["condition_on_previous_text"])
+        self.assertNotIn("hallucination_silence_threshold", lai)
+        self.assertIs(goi[0][1]["vad_filter"], False)
+
+    def test_tieng_trung_khong_loc_im_lang_tieng_anh_van_loc(self):
+        """Tiếng Trung: Whisper nghe trọn audio (VAD cắt mất giọng nhỏ trên nền nhạc);
+        tiếng Anh chưa đo nên giữ nguyên bộ lọc im lặng."""
+        thay = {}
+        for lang in ("zh", "en"):
+            def transcribe(a, _lang=lang, **opts):
+                thay[_lang] = opts
+                return iter([_seg(0, 1, "好。", [_W(0, 1, "好。")])]), None
+            self._chay(transcribe, lang=lang)
+        self.assertIs(thay["zh"]["vad_filter"], False)
+        self.assertEqual(thay["zh"]["hallucination_silence_threshold"], 2.0)
+        self.assertIs(thay["en"]["vad_filter"], True)
+        self.assertNotIn("hallucination_silence_threshold", thay["en"])
+
+    def test_bo_doan_bia_o_cho_khong_co_tieng_noi(self):
+        """Tiếng nói (theo VAD) ở 0–2 s. Đoạn sau đó rơi vào nhạc: Whisper tự chấm
+        thấp, hoặc là câu bịa quen mặt → bỏ; lời thật VAD bỏ sót (chấm cao) → giữ."""
+        def sg(s, e, text, lp):
+            return SimpleNamespace(start=s, end=e, text=text, words=[_W(s, e, text)], avg_logprob=lp)
+        segs = [sg(0, 2, "原来娘子并非狐妖。", -0.3),
+                sg(10, 11, "果果,快上来!", -0.5),          # VAD không nghe ra nhưng là lời thật
+                sg(20, 21, "我找到一个个地方。", -2.78),     # bịa trên nền nhạc
+                sg(30, 31, "感谢观看", -0.4),               # câu bịa quen mặt
+                sg(40, 41, "那 przem中的物性。", -2.78)]
+        words = self._chay(lambda *a, **k: (iter(segs), None), noi=[{"start": 0, "end": 2 * v._SR}])
+        self.assertEqual([w[2] for w in words], ["原来娘子并非狐妖。", "果果,快上来!"])
+
+    def test_bo_cau_bia_theo_xac_suat_chu_o_cho_khong_co_tieng_noi(self):
+        """Hết lời mà nhạc còn chạy, large-v3 đọc lại méo đi câu vừa chép — nằm CHUNG đoạn
+        với câu thật, điểm cả đoạn vẫn cao; chỉ xác suất từng chữ là thấp (đo thật: 0,34–0,40,
+        câu thật ở chỗ VAD không nghe ra ≥ 0,66). Bỏ đúng câu đó, giữ câu thật cùng đoạn."""
+        def W(s, e, t, p):
+            return SimpleNamespace(start=s, end=e, word=t, probability=p)
+        seg = SimpleNamespace(
+            start=0, end=7, text="大脑壶,你帮我把爹爹放下来。大脓壶你带我把爸爸放下。", avg_logprob=-0.49,
+            words=[W(0, 2, "大脑壶,", .9), W(2, 4, "你帮我把爹爹放下来。", .92),
+                   W(4.5, 5.5, "大脓壶", .4), W(5.5, 7, "你带我把爸爸放下。", .34)])
+        that = SimpleNamespace(                       # VAD không nghe ra nhưng Whisper chắc chữ → giữ
+            start=20, end=21.5, text="爹爹,你醒了。", avg_logprob=-0.26,
+            words=[W(20, 20.6, "爹爹,", .93), W(20.6, 21.5, "你醒了。", .97)])
+        words = self._chay(lambda *a, **k: (iter([seg, that]), None),
+                           noi=[{"start": 0, "end": 4 * v._SR}],
+                           audio=__import__("numpy").zeros(30 * v._SR, dtype="float32"))
+        self.assertEqual([w[2] for w in words], ["大脑壶,", "你帮我把爹爹放下来。", "爹爹,", "你醒了。"])
+
+    def test_chu_xac_suat_thap_trong_luc_co_tieng_noi_thi_giu(self):
+        """Giọng khó nghe nhưng VAD nghe ra tiếng nói: không bỏ dù Whisper không chắc."""
+        seg = SimpleNamespace(start=0, end=2, text="爹,我是昭昭呀。", avg_logprob=-0.49,
+                              words=[SimpleNamespace(start=0, end=2, word="爹,我是昭昭呀。", probability=.3)])
+        words = self._chay(lambda *a, **k: (iter([seg]), None), noi=[{"start": 0, "end": 3 * v._SR}])
+        self.assertEqual([w[2] for w in words], ["爹,我是昭昭呀。"])
+
+    def test_cau_bia_quen_mat_trong_luc_co_tieng_noi_thi_giu(self):
+        """Người dẫn nói "记得点赞订阅" thật — VAD nghe ra tiếng nói — không được bỏ."""
+        seg = SimpleNamespace(start=0, end=2, text="记得点赞订阅。", avg_logprob=-0.3,
+                              words=[_W(0, 2, "记得点赞订阅。")])
+        words = self._chay(lambda *a, **k: (iter([seg]), None), noi=[{"start": 0, "end": 3 * v._SR}])
+        self.assertEqual([w[2] for w in words], ["记得点赞订阅。"])
+
+    def test_cau_bia_don_sat_mep_audio_bi_cat_ngang_thi_bo_du_dang_co_tieng_noi(self):
+        """Bản 🧪 thử 3 phút cắt ngang giữa câu "把这个杯子收入空间": Whisper chêm "感谢观看"
+        vào sát mép cuối, 4 chữ dồn trong 0,04 s (đo 25/11/2026). VAD vẫn đang nghe ra
+        tiếng nói nên phép soát theo chỗ-không-có-tiếng-nói bỏ qua → giọng đọc thêm
+        "Cảm ơn đã xem". Câu quen mặt mà dồn kiểu đó thì bỏ; lời thật đứng trước giữ."""
+        def W(s, e, t):
+            return SimpleNamespace(start=s, end=e, word=t, probability=.9)
+        that = [W(1.0, 1.52, "把"), W(1.52, 1.78, "这个"), W(1.78, 2.0, "杯"), W(2.0, 2.04, "子")]
+        bia = [W(2.04, 2.06, "感"), W(2.06, 2.08, "谢"), W(2.08, 2.08, "观"), W(2.08, 2.08, "看")]
+        noi = [{"start": 0, "end": 3 * v._SR}]
+        # câu bịa là một đoạn riêng
+        segs = [SimpleNamespace(start=1.0, end=2.04, text="把这个杯子", avg_logprob=-0.3, words=that),
+                SimpleNamespace(start=2.04, end=2.08, text="感谢观看", avg_logprob=-0.4, words=bia)]
+        words = self._chay(lambda *a, **k: (iter(segs), None), noi=noi)
+        self.assertEqual("".join(w[2] for w in words), "把这个杯子")
+        # câu bịa dính chung đoạn với lời thật
+        seg = SimpleNamespace(start=1.0, end=2.08, text="把这个杯子感谢观看", avg_logprob=-0.3, words=that + bia)
+        words = self._chay(lambda *a, **k: (iter([seg]), None), noi=noi)
+        self.assertEqual("".join(w[2] for w in words), "把这个杯子")
+        self.assertEqual(words[-1][3], 1)          # chữ cuối còn lại vẫn mang cờ hết đoạn
+
+    def test_don_dau_cau_dung_rieng_va_ky_tu_rac(self):
+        """Tắt lọc im lặng thì Whisper rải "。" suốt quãng nhạc và turbo nhả chữ Latin
+        tròn ngang sau tiếng bập bẹ — để nguyên thì dòng phụ đề kéo đuôi cả chục giây."""
+        segs = [_seg(0, 3, "果果Ａ,我脚脚痛痛�,",
+                     [_W(0, .5, "果"), _W(.5, 1, "果"), _W(1, 1.2, "Ａ,"),
+                      _W(1.2, 2, "我脚脚痛痛�"), _W(2, 3, ",")]),
+                _seg(3, 4, "娘子,你先乖乖睡。。。。", [_W(3, 4, "娘子,你先乖乖睡。。。。")]),
+                _seg(10, 11, "。", [_W(10, 11, "。")]),
+                _seg(20, 21, "。", [_W(20, 21, "。")])]
+        words = self._chay(lambda *a, **k: (iter(segs), None), noi=[{"start": 0, "end": 3 * v._SR}])
+        self.assertEqual([w[2] for w in words], ["果", "果,", "我脚脚痛痛,", "娘子,你先乖乖睡。"])
+        self.assertEqual(words[-1][1], 4.0)        # dấu chấm rời ở 10 s / 20 s không kéo đuôi dòng
 
 
 class GopCauTests(unittest.TestCase):

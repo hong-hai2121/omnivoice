@@ -31,6 +31,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
+import jinja2
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -62,6 +63,7 @@ import kieusub                       # noqa: E402
 # với myvoice: một lựa chọn trong myvoice/taogiong_pipeline.json cho cả hai
 # bảng — dich_gemini (bước ② + SEO) tự đọc từ đó, đổi ở web nào cũng là một.
 import gemini_backend                # noqa: E402
+import cli_tab                       # noqa: E402  (tab 🤖 CLI dịch: phần xử lý chung với myvoice)
 import hieuung_giong as hu          # noqa: E402  (🔆 sáng giọng: bản nghe thử đã EQ)
 # 11/11/2026: engine 🗣 VieNeu ở khối ③ (phương án thứ 2, chạy CPU trong tiến trình bước ③) —
 # danh sách 25 giọng dựng sẵn + trạng thái "dùng được chưa" lấy từ module nhẹ của myvoice
@@ -87,7 +89,10 @@ SRC_HISTORY_MAX = 15        # nhớ bấy nhiêu nguồn gần nhất
 # nhau, dùng chung một ô thì đổi ngôn ngữ lần nào cũng phải gõ lại. "0" = KHÔNG
 # giới hạn, mỗi dòng SRT một câu trọn — mặc định của tiếng Trung từ 18/11/2026
 # (trần 16 chữ cũ bẻ câu thành mẩu; user bảo bỏ).
-DEFAULTS = dict(lang="zh", speed="0.7", model="medium", maxchars="0",
+# model: large-v3 từ 25/11/2026 (trước là medium) — đo trên phim Trung có nhạc nền,
+# đối chiếu 43 câu phụ đề đốt sẵn: large-v3 đủ 43 câu, large-v3-turbo đủ 41 nhưng
+# nhanh hơn ~2,5 lần; xem ghi chú vad_filter trong video_chamlai_srt.NGON_NGU.
+DEFAULTS = dict(lang="zh", speed="0.7", model="large-v3", maxchars="0",
                 maxchars_en="42", ngucanh=True, gopcau=True,
                 batchchars="1200", offline=False,
                 voice="", voice_stars=[], subchars="50",
@@ -273,6 +278,13 @@ app.mount("/static/kieusub", StaticFiles(directory=str(kieusub.ANH_DIR)),
           name="kieusub")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+# Tab 🤖 CLI dịch dùng LẠI template của myvoice (gpt_cli.html): tìm ở thư mục myvideo
+# trước, không có mới sang myvoice — nên "base.html" mà template ấy kế thừa vẫn là khung
+# trang của myvideo. cli.html bên này chỉ bọc thêm phần tự lưu.
+_MYVOICE_WEB = REPO_ROOT / "myvoice" / "web"
+templates.env.loader = jinja2.ChoiceLoader([
+    jinja2.FileSystemLoader(str(WEB_DIR / "templates")),
+    jinja2.FileSystemLoader(str(_MYVOICE_WEB / "templates"))])
 
 
 def _asset_v() -> str:
@@ -610,8 +622,41 @@ def _quen_video(khoa: str) -> None:
         save_settings({"cho_chinh": [x for x in cu if x not in cua_no]})
 
 
+# ── ▶ XEM VIDEO / 🔁 RENDER LẠI ở cột ④ của bảng (25/11/2026) ─────────────────
+# User: "có thêm 1 nút mở video hoàn thành lên xem và có 1 nút render lại theo cài đặt
+# mới". Bước ④ ghi THẲNG vào <gốc>_sub.mp4 (ffmpeg -y, không qua file tạm) nên lúc nó
+# đang chạy thì video hoàn thành cũ đang bị ghi đè dở — mở ra là file hỏng, bấm render
+# lần nữa là xếp trùng một lượt dựng nửa tiếng. Bảng vì thế phải biết bước ④ của từng
+# hàng đang ở đâu trong hàng đợi.
+def _viec_cua(j: dict, base: str) -> bool:
+    """Việc `j` của hàng đợi (as_dict) có phải của gốc `base` không — theo phần đầu tiêu
+    đề: nút của bảng ghi cả gốc ("<thư mục>/<tên>_x0.8 — …"), ▶ Chạy tất cả / nút từng
+    bước ghi tên trần ("<tên>_x0.8 — …"), 🧪 thử 60s ghi tên FILE NGUỒN."""
+    dau = j["title"].split(" — ", 1)[0]
+    ten = Path(base).name
+    if dau in (base, ten):
+        return True
+    return ("🧪 thử 60s" in j["title"]
+            and st.tenchinh(ten) == (Path(dau).stem + _THU60).lower())
+
+
+def _dang_dung(base: str, tt: dict) -> str:
+    """Bước ④ của `base` trong hàng đợi `tt` (q.state()): "chay" = đang dựng, file thành
+    phẩm đang bị ghi đè · "cho" = đã xếp nhưng chưa tới bước ④ · "" = không có."""
+    def buoc4(j: dict) -> int:
+        return next((i for i, nhan in enumerate(j["steps"]) if nhan.startswith("④")), -1)
+
+    cur = tt.get("current")
+    if cur and _viec_cua(cur, base) and buoc4(cur) >= 0:
+        return "chay" if cur["step_index"] >= buoc4(cur) else "cho"
+    if any(_viec_cua(j, base) and buoc4(j) >= 0 for j in tt.get("pending") or []):
+        return "cho"
+    return ""
+
+
 def _bang_ctx() -> dict:
     s = load_settings()
+    tt = q.state()
     rows, thu = [], {}
     for r in st.scan_rows(bool(s.get("thaytieng", True)),
                           vesub=bool(s.get("vesub", True))):
@@ -622,6 +667,7 @@ def _bang_ctx() -> dict:
         r["soat"] = _soat(r["base"])
         r["id"] = "base:" + r["base"]          # giá trị ô tick ở đầu hàng
         r["thu60"] = loai == _THU60
+        r["dung"] = _dang_dung(r["base"], tt)  # "chay" | "cho" | "" — cột ④ (xem trên)
         rows.append(r)
     cho = _hang_cho(rows, s)
     for c in cho:
@@ -798,6 +844,76 @@ async def amthanh_view(request: Request):
         "trang": "amthanh",
         "loi": request.query_params.get("loi", ""),
     })
+
+
+# ── TAB 🤖 CLI dịch (26/11/2026) — GPT CLI + Gemini CLI trong MỘT tab, y tab bên myvoice ──
+# Cùng template (myvoice/web/templates/gpt_cli.html), cùng JS (cli_tab.js), cùng phần xử
+# lý (scripts/cli_tab.py), cùng bộ nhắn thử (myvoice/web/gptcli_test.py) và CÙNG tên route
+# nên không viết lại gì: ô ⭐ Dịch mặc định · thẻ trạng thái · model · nhắn thử.
+def _nap_cli_thu():
+    """Bộ nhắn thử của myvoice, nạp theo đường dẫn file (myvoice.web không phải gói
+    import được từ server này; file ấy tự đứng một mình)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "omni_cli_thu", str(_MYVOICE_WEB / "gptcli_test.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+cli_thu = _nap_cli_thu()
+
+
+@app.get("/cli", response_class=HTMLResponse)
+@app.get("/gpt-cli", response_class=HTMLResponse)
+@app.get("/gemini-cli", response_class=HTMLResponse)
+def cli_view(request: Request):
+    """/cli mở CLI đang là cách dịch mặc định; /gpt-cli, /gemini-cli mở đúng CLI đó."""
+    nha = {"/gpt-cli": "gpt", "/gemini-cli": "gemini"}.get(
+        request.url.path, cli_tab.nha_mac_dinh())
+    return templates.TemplateResponse(request, "cli.html", {
+        "settings": load_settings(), "trang": "cli", "cli_js": "/cli-tab.js",
+        "sample_text": cli_thu.SAMPLE_TEXT, **cli_tab.ngu_canh(nha)})
+
+
+@app.get("/cli-tab.js")
+def cli_tab_js():
+    return FileResponse(str(cli_tab.JS_FILE), media_type="text/javascript")
+
+
+@app.get("/api/gptcli-info")
+def api_cli_info(nha: str = "gpt"):
+    return cli_tab.thong_tin(nha)
+
+
+@app.post("/gpt-cli/luu")
+async def cli_luu(request: Request):
+    """Tự lưu của tab: model / mức cố gắng của CLI đang xem + ô ⭐ Dịch mặc định."""
+    nha, tom_tat = cli_tab.luu(await request.form())
+    print(f"💾 Tab CLI: {tom_tat}.", flush=True)
+    if request.headers.get("hx-request"):
+        return HTMLResponse(f'<span class="savenote">✓ Đã lưu — {tom_tat}</span>')
+    return RedirectResponse("/gemini-cli" if nha == "gemini" else "/gpt-cli", status_code=303)
+
+
+@app.get("/api/gptcli-test")
+def api_cli_test(nha: str = "gpt"):
+    return cli_thu.testers[cli_tab.chuan_nha(nha)].state()
+
+
+@app.post("/api/gptcli-test/chay")
+async def api_cli_test_chay(request: Request):
+    """Một lượt thử: mode=check (tìm binary + đăng nhập + lệnh ngắn) hoặc send (gửi `text`)."""
+    form = await request.form()
+    try:
+        cli_thu.testers[cli_tab.chuan_nha(form.get("nha"))].start(
+            str(form.get("mode") or ""), str(form.get("text") or ""),
+            full_prefix=bool(form.get("full_prefix")))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+    return {"ok": True}
 
 
 @app.post("/amthanh/luu")
@@ -1650,7 +1766,7 @@ def _settings_from_form(form) -> dict:
     s = dict(
         lang=g("lang") if g("lang") in ("zh", "en") else "zh",
         speed=g("speed") or "0.7",
-        model=g("model") or "medium",
+        model=g("model") or DEFAULTS["model"],
         maxchars=_tran_dong(g("maxchars"), 4, 60, 0),
         maxchars_en=_tran_dong(g("maxchars_en"), 10, 120, 42),
         ngucanh=bool(g("ngucanh")),
@@ -1716,7 +1832,7 @@ def _settings_from_form(form) -> dict:
     # Cách dịch Gemini KHÔNG nằm trong web_settings.json của myvideo: nó là lựa
     # chọn dùng chung hai bảng, ghi thẳng vào myvoice/taogiong_pipeline.json
     # (set_backend chỉ đụng đúng khoá này, giữ nguyên cài đặt khác của myvoice).
-    if g("gemini_backend") in ("extension", "firefox", "cli"):
+    if g("gemini_backend") in gemini_backend.BACKENDS:
         gemini_backend.set_backend(g("gemini_backend"))
     return s
 
@@ -1800,6 +1916,36 @@ async def buoc(request: Request, base: str = Form(...), key: str = Form(...)):
         return _tra(request, err)
     q.enqueue(title, job_steps)
     return _tra(request, ok=f"Đã xếp: {title}")
+
+
+@app.post("/render-lai")
+async def render_lai(request: Request):
+    """🔁 Render lại (cột ④ của bảng, 25/11/2026): dựng lại ĐÚNG bước ④ cho một video đã
+    có trong output, theo cài đặt ĐANG CÓ trên trang.
+
+    Nút nằm trong form chính nên htmx gửi kèm mọi ô của form → lưu trước rồi mới dựng
+    lệnh, y như nút 🎬 Chạy bước ④: "theo cài đặt mới" là cái user vừa chỉnh trên trang,
+    kể cả khi chưa bấm 💾. Lượt gửi không mang form (trang cũ, công cụ ngoài) thì dùng
+    cài đặt đang lưu — tuyệt đối không ghi đè bằng một form rỗng (mọi ô tick thành tắt).
+    Video hoàn thành cũ bị GHI ĐÈ (bước ④ ghi thẳng vào _sub.mp4) — nút có hỏi lại."""
+    form = await request.form()
+    base = str(form.get("base") or "").strip()
+    if not st.is_base(base):
+        return _tra(request, f"Tên không hợp lệ: {base}")
+    ten = Path(base).name
+    if _dang_dung(base, q.state()):
+        return _tra(request, f"{ten}: bước ④ của video này ĐÃ nằm trong hàng đợi — chờ lượt đó "
+                             "xong (xem tab ⏱ Hàng đợi) rồi hãy render lại.")
+    co_form = "sources" in form and "speed" in form
+    if co_form:
+        save_settings(_settings_from_form(form))
+    _title, job_steps, err = st.single(base, "gan", load_settings())
+    if err:
+        return _tra(request, err)
+    q.enqueue(f"{base} — 🔁 render lại ④", job_steps)
+    return _tra(request, ok=f"🔁 Đã xếp render lại {ten} theo cài đặt hiện tại"
+                            + (" (đã lưu cài đặt)" if co_form else "")
+                            + " — tiến độ ở tab ⏱ Hàng đợi", luu=co_form)
 
 
 # ── Điều khiển hàng đợi ──────────────────────────────────────────────────────
@@ -2339,12 +2485,40 @@ async def xoa_het(request: Request):
                 if fail else "", ok=f"🗑 Đã đưa {ok} mục của output vào Thùng rác")
 
 
+def _video_xong(base: str) -> Path | None:
+    """Video HOÀN THÀNH của bước ④: _sub.mp4, không có thì bản dọc _doc.mp4. Không bao
+    giờ trả video ① (chưa có sub/giọng — mở ra user tưởng là thành phẩm)."""
+    B = OUTPUT_DIR / base
+    return next((p for p in (Path(f"{B}_sub.mp4"), Path(f"{B}_doc.mp4")) if p.is_file()), None)
+
+
 def _video_de_xem(base: str) -> Path | None:
     """File nên bôi chọn khi mở thư mục của một video: thành phẩm bước ④ trước
     (_sub.mp4, rồi bản dọc _doc.mp4), chưa dựng thì video đã làm chậm của bước ①."""
-    B = OUTPUT_DIR / base
-    return next((p for p in (Path(f"{B}_sub.mp4"), Path(f"{B}_doc.mp4"),
-                             Path(f"{B}.mp4")) if p.is_file()), None)
+    v1 = Path(f"{OUTPUT_DIR / base}.mp4")
+    return _video_xong(base) or (v1 if v1.is_file() else None)
+
+
+@app.post("/mo-video")
+async def mo_video(request: Request, base: str = Form("")):
+    """▶ Xem video (cột ④ của bảng, 25/11/2026): mở video HOÀN THÀNH của một hàng bằng
+    trình phát mặc định của Windows — khỏi 📂 mở thư mục rồi bấm đúp. Phát trong trình
+    phát của máy chứ không trong trang: thành phẩm là file vài GB, trình phát của máy
+    tua/đọc codec nào cũng được. Đang dựng lại thì từ chối (file đang bị ghi đè dở)."""
+    if not st.is_base(base):
+        return _tra(request, f"Tên không hợp lệ: {base}")
+    ten = Path(base).name
+    f = _video_xong(base)
+    if f is None:
+        return _tra(request, f"{ten}: chưa có video hoàn thành ({ten}_sub.mp4) — chạy bước ④ trước.")
+    if _dang_dung(base, q.state()) == "chay":
+        return _tra(request, f"{ten}: bước ④ đang dựng lại và ghi đè {f.name} — chờ dựng xong "
+                             "(xem tab ⏱ Hàng đợi) rồi hãy mở.")
+    try:
+        os.startfile(str(f))                   # noqa: S606 — máy cục bộ, cố ý
+    except Exception as e:
+        return _tra(request, f"Không mở được {f.name}: {e}")
+    return _tra(request, ok=f"▶ Đã mở {f.name} bằng trình phát video của Windows")
 
 
 @app.post("/mo-thumuc")

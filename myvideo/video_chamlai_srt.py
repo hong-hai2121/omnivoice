@@ -16,6 +16,9 @@ Cách làm (tương tự myvoice/scripts/nhandien_giongnoi.py, dùng chung model
      của Whisper hay bị sớm/muộn cả giây). Nhận diện theo từng KHÚC ~3 phút,
      khúc sau được mồi bằng lời thoại có dấu câu của khúc trước — nhờ vậy
      Whisper chấm câu suốt bài chứ không bỏ dấu giữa chừng (transcribe_words).
+     Tiếng Trung: Whisper nghe TRỌN audio, không qua bộ lọc im lặng (VAD) — phim
+     có nhạc nền thì VAD hay coi giọng nhỏ / giọng trẻ con là "im lặng" làm sót
+     nguyên câu; đổi lại phải soát và bỏ chữ Whisper bịa ở quãng chỉ có nhạc.
   4. Ghép chữ thành câu phụ đề theo DẤU CÂU CỦA CHÍNH TIẾNG ĐÓ:
        - Ngắt CHÍNH tại 。！？… (Trung) / . ! ? (Anh) — hết câu là chốt, dù ngắn;
          chỗ người nói nghỉ ≥ 0,7 s cũng chốt như vậy.
@@ -36,6 +39,10 @@ Cách làm (tương tự myvoice/scripts/nhandien_giongnoi.py, dùng chung model
          (tránh phụ đề nháy qua quá nhanh không kịp đọc).
      Trước khi ghép: sửa mốc giờ các chữ bị Whisper dán nhầm sang bên kia chỗ
      nghỉ (sua_chu_lac) — không thì câu sau chỗ nghỉ vào sớm đúng bằng quãng nghỉ.
+     Mốc BẮT ĐẦU của mỗi dòng (tiếng Trung) lấy theo mốc CUỐI của chữ đầu dòng
+     (dau_dong / DAU_SOM): Whisper dồn quãng im trước một chữ vào chính chữ đó,
+     lấy mốc đầu chữ thì dòng — và giọng đọc bước ③ đặt theo dòng — vào sớm hơn
+     tiếng gốc chừng nửa giây.
 
   5. TỰ DỊCH sang tiếng Việt: gọi dich_srt.py gửi SRT lên Gemini (Chrome
      Extension như myvoice, Firefox/Selenium là dự phòng) → lưu thêm
@@ -127,7 +134,33 @@ NGON_NGU = {
         # "Nhận diện theo KHÚC"). Đo 7 phút đầu bài thật: 6 → 79 dấu hết câu, chữ
         # nhận đúng hơn (越俎代庖, 生死簿, 阴司); cả bài 85 phút chậm hơn ~1,6 lần
         # (5,5 → 9 phút). Chống kẹt lặp vẫn nguyên như _TRANSCRIBE_OPTS.
-        "opts": {"condition_on_previous_text": True},
+        #
+        # vad_filter=False (25/11/2026) — KHÔNG cho bộ lọc im lặng (Silero VAD) cắt
+        # audio trước khi Whisper nghe. Phim có nhạc nền: giọng trẻ con / giọng nhỏ
+        # bị VAD xếp vào "im lặng" nên Whisper không hề được nghe — sót nguyên câu.
+        # Đo tập 错绑良配 4 phút, đối chiếu 43 câu phụ đề đốt sẵn: VAD chỉ giữ 28%
+        # thời lượng; large-v3 có VAD: 29 câu đủ · 6 cụt · 8 mất; VAD nhạy hơn (ngưỡng
+        # 0,15): 35 · 4 · 4; đổi model mà giữ VAD thì không ăn thua (turbo: 28 · 6 ·
+        # 9) — lỗi ở VAD chứ không ở model. TẮT VAD (bản này, chạy đúng lệnh bước ①):
+        # large-v3 43 · 0 · 0, turbo 41 · 1 · 1 (nhanh hơn ~2,5 lần); mỗi model 2–3
+        # lượt ra y nhau, không còn chữ thừa.
+        # Cái giá: Whisper nghe cả quãng chỉ có nhạc nên dễ BỊA chữ ở đó. Ba lớp chặn:
+        #   • hallucination_silence_threshold=2 — faster-whisper tự bỏ đoạn "khả
+        #     nghi" (chữ xác suất thấp, dài/ngắn bất thường) nằm cạnh quãng lặng ≥ 2 s.
+        #     Thiếu nó thì large-v3 chép lặp câu mẫu ngay từ đầu (6 câu đủ · 25 mất);
+        #   • _nhan_dien bỏ đoạn / câu rơi vào chỗ VAD không nghe ra tiếng nói MÀ chính
+        #     Whisper cũng không chắc (LOGPROB_BIA cả đoạn, XS_BIA từng câu) hoặc khớp
+        #     một câu bịa quen mặt (cau_bia);
+        #   • dọn dấu câu đứng riêng ("。。。。" rải suốt quãng nhạc) và ký tự rác.
+        # VAD vẫn chạy, nhưng chỉ để CHỌN CHỖ CẮT KHÚC và soát đoạn bịa.
+        "opts": {"condition_on_previous_text": True, "vad_filter": False,
+                 "hallucination_silence_threshold": 2.0},
+        # Câu Whisper hay tự thêm ở chỗ nhạc / im lặng (học từ phụ đề video trên
+        # mạng). Chỉ bỏ khi đoạn đó nằm ở chỗ VAD không nghe ra tiếng nói — người
+        # dẫn nói "记得点赞订阅" thật thì VAD nghe thấy, câu được giữ.
+        "cau_bia": ("感谢观看", "谢谢观看", "感谢收看", "谢谢收看", "感謝觀看", "謝謝觀看",
+                    "字幕", "订阅", "訂閱", "点赞", "點贊", "打赏", "打賞", "明镜", "明鏡",
+                    "点点栏目", "Amara", "独播剧场"),
         # Ba phép soát từng khúc nhận diện (xem khối "Nhận diện theo KHÚC"):
         # kho_dau — có dãy > ngần này chữ liền không dấu câu = Whisper đã bỏ chấm câu.
         "kho_dau": 80,
@@ -137,6 +170,9 @@ NGON_NGU = {
         # chu_moi_giay — ít hơn ngần này chữ cho mỗi giây có tiếng nói là Whisper
         # đang nuốt lời (bài thật ở tốc độ 0,7: ~3,3 chữ/giây; khúc hỏng: 0,4).
         "chu_moi_giay": 1.0,
+        # Mốc bắt đầu dòng phụ đề lấy theo CUỐI chữ đầu dòng chứ không theo đầu chữ
+        # (xem DAU_SOM / dau_dong) — đã đo cho tiếng Trung; tiếng Anh chưa đo nên chưa bật.
+        "dau_dong_cuoi_chu": True,
     },
     "en": {
         "ten": "Anh",
@@ -364,18 +400,196 @@ KHUC_TRE = 45.0     # được cắt muộn tới ngần này giây để rơi �
 DUOI_MOI = 120      # số ký tự đuôi lời thoại dùng mồi cho khúc sau
 _SR = 16000
 
+# Soát đoạn bịa khi nhận diện KHÔNG lọc im lặng (vad_filter=False, xem mục zh):
+# đoạn có dưới PHU_NOI phần thời lượng trùng tiếng nói theo VAD là đoạn "ở chỗ
+# không có tiếng nói" — chỉ những đoạn đó mới bị xét bỏ. Lời thật VAD bỏ sót
+# Whisper vẫn chấm cao (đo: −0,2 … −0,5) nên được giữ; chữ bịa trên nền nhạc
+# cuối tập là −2,78. −1,0 cũng chính là ngưỡng log_prob Whisper tự dùng: thấp
+# hơn tức là nó đã giải mã lại ở mọi nhiệt độ mà vẫn không ra gì tin được.
+PHU_NOI = 0.5
+LOGPROB_BIA = -1.0
+# Cùng phép soát, mịn hơn — theo từng CÂU trong đoạn, bằng xác suất Whisper gán
+# cho từng chữ: hết lời mà nhạc còn chạy, large-v3 hay đọc lại méo đi câu nó vừa
+# chép ("大脑壶,你帮我把爹爹放下来。" → 0,5 s sau "大脓壶 你带我把爸爸放下。", cả
+# 3 lượt đo đều dính). Điểm cả đoạn vẫn cao (−0,49) nên LOGPROB_BIA không bắt
+# được, nhưng xác suất chữ thì tách hẳn: câu bịa đó trung bình 0,34–0,40, còn câu
+# THẬT nằm ở chỗ VAD không nghe ra (8 câu trong tập đo) thấp nhất 0,66, đa số
+# trên 0,84. Câu ở chỗ không có tiếng nói mà trung bình dưới XS_BIA thì bỏ.
+XS_BIA = 0.5
+# Câu bịa quen mặt (cfg["cau_bia"]) nằm NGAY TRONG lúc có tiếng nói: audio bị cắt
+# ngang giữa câu (bản 🧪 thử 3 phút, hay video gốc hết đột ngột) thì Whisper chêm
+# "感谢观看" vào sát mép cuối, cả câu dồn trong vài phần trăm giây (đo: 4 chữ / 0,04 s)
+# — VAD vẫn đang nghe ra tiếng nói nên phép soát ở trên bỏ qua, giọng đọc thành ra
+# thêm "Cảm ơn đã xem" vào cuối. Không ai nói nhanh tới BIA_NHANH giây mỗi chữ
+# (lời thật ở tốc độ đã chậm: 0,2–0,3 s/chữ; giọng đọc nhanh nhất đo được 0,08) nên
+# câu quen mặt mà dồn như vậy thì bỏ đúng mấy chữ đó, bất kể VAD.
+BIA_NHANH = 0.04
 
-def _moc_khuc(audio):
+# Ký tự rác trong chữ nhận diện: ký tự hỏng (U+FFFD) và chữ Latin TRÒN NGANG
+# (Ａ, Ｂ…) — turbo nhả ra sau tiếng bập bẹ: "果果Ａ,", "哥哥Ｃ,".
+_RAC = {0xFFFD: None, **{c: None for c in range(0xFF21, 0xFF3B)},
+        **{c: None for c in range(0xFF41, 0xFF5B)}}
+_DAU_LAP = "。！？!?，,、；;：:"     # dấu lặp liền nhau ("。。。。") → giữ một
+
+
+def _sach(token):
+    """Chữ nhận diện đã bỏ ký tự rác và dấu câu lặp ("睡。。。。" → "睡。")."""
+    out = []
+    for c in token.strip().translate(_RAC):
+        if not (out and c == out[-1] and c in _DAU_LAP):
+            out.append(c)
+    return "".join(out).strip()
+
+
+def _vad_noi(audio):
+    """Các quãng CÓ TIẾNG NÓI theo VAD, tính bằng MẪU (cùng tham số với lúc
+    Whisper tự lọc im lặng)."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    return get_speech_timestamps(audio, VadOptions(**(_TRANSCRIBE_OPTS.get("vad_parameters") or {})),
+                                 sampling_rate=_SR)
+
+
+def _noi_trong(noi, a, b):
+    """Quãng có tiếng nói nằm trong khúc mẫu [a, b) → [(đầu, cuối)] giây tính
+    từ đầu khúc."""
+    return [((max(x["start"], a) - a) / _SR, (min(x["end"], b) - a) / _SR)
+            for x in noi if x["end"] > a and x["start"] < b]
+
+
+def _phu_noi(noi, s, e):
+    """Phần thời lượng [s, e] (giây) trùng với tiếng nói — 0…1."""
+    return sum(max(0.0, min(e, y) - max(s, x)) for x, y in noi) / max(e - s, 1e-6)
+
+
+def _tach_cau(seg_words):
+    """Chữ của một đoạn (segment) → từng CÂU: chốt sau chữ mang dấu hết câu."""
+    cau, cur = [], []
+    for w in seg_words:
+        cur.append(w)
+        t = w.word.strip()
+        if t and t[-1] in _DAU_HET_CAU:
+            cau.append(cur)
+            cur = []
+    if cur:
+        cau.append(cur)
+    return cau
+
+
+def _bo_bia_don(seg_words, bia):
+    """Chữ của một đoạn, đã bỏ những chữ làm thành một câu bịa quen mặt bị dồn
+    dưới BIA_NHANH giây mỗi chữ (xem BIA_NHANH). Câu bịa có thể là cả đoạn hoặc
+    chỉ là cái đuôi dính sau lời thật ("把这个杯子" + "感谢观看")."""
+    chuoi, cua = "", []            # cua[i] = chỉ số chữ (token) chứa ký tự thứ i
+    for k, w in enumerate(seg_words):
+        t = _sach(w.word)
+        chuoi += t
+        cua += [k] * len(t)
+    bo = set()
+    for b in bia:
+        i = chuoi.find(b)
+        while i >= 0:
+            dau, cuoi = cua[i], cua[i + len(b) - 1]
+            if (seg_words[cuoi].end - seg_words[dau].start) / len(b) < BIA_NHANH:
+                bo.update(range(dau, cuoi + 1))
+            i = chuoi.find(b, i + 1)
+    return [w for k, w in enumerate(seg_words) if k not in bo] if bo else seg_words
+
+
+def _cau_bia(cau, noi):
+    """Câu (list chữ của Whisper) nằm ở chỗ không có tiếng nói mà chính Whisper
+    cũng không chắc chữ nào — xem XS_BIA. Thiếu xác suất thì coi là thật."""
+    xs = [getattr(w, "probability", None) for w in cau]
+    if not xs or any(x is None for x in xs):
+        return False
+    return (_phu_noi(noi, cau[0].start, cau[-1].end) < PHU_NOI
+            and sum(xs) / len(xs) < XS_BIA)
+
+
+# LỖ HỔNG: quãng VAD nghe ra tiếng nói liền ≥ LO_HONG giây mà không ra chữ nào.
+# Nghe trọn audio thì phải bật hallucination_silence_threshold để Whisper khỏi bịa
+# trên nền nhạc, nhưng chính nó lại coi giọng đọc NHANH là "khả nghi" (mốc giờ chữ
+# bị dồn sát nhau) rồi nhảy qua cả câu thật. Đo 25 phút truyện đọc 后土 (giọng rõ,
+# VAD nghe ra 70%): nghe trọn cứu thêm 10 chỗ lời nhân vật mà VAD bỏ sót nhưng lại
+# nhảy qua 4 chỗ khác (105 chữ; một chỗ 22 giây) — cả 4 đều nằm đúng nơi VAD nghe
+# ra tiếng nói. Hai cách hỏng ở hai nơi KHÁC nhau nên vá được: chỗ nào VAD nghe ra
+# tiếng nói mà không có chữ thì nghe lại riêng chỗ đó (_va_lo_hong). Sau khi vá:
+# cả 4 chỗ quay lại (+94 chữ), bản mới 4.083 chữ so với 4.002 của cách cũ, không
+# còn đoạn lời nào bản cũ có mà bản mới thiếu; dấu hết câu 243 → 302. Cái giá là
+# thời gian: 25 phút audio 184 s → 324 s (large-v3).
+LO_HONG = 2.0
+DEM_CHU = 0.3       # mỗi chữ coi như phủ thêm ngần này giây hai bên
+
+
+def _lo_hong(words, noi, a, b):
+    """Các lỗ hổng trong khoảng [a, b] giây → [(đầu, cuối)], mỗi lỗ nới ra TRỌN khe
+    giữa hai chữ kề hai bên (lời bị nhảy qua thường dài hơn phần VAD nghe ra).
+
+    words: [[start, end, chữ, …]] theo giờ cả bài; noi: [(đầu, cuối)] giây cả bài."""
+    ws = sorted((w[0], w[1]) for w in words if a <= w[1] and w[0] <= b)
+    lo = []
+    for x, y in noi:
+        x, y = max(x, a), min(y, b)
+        cur = x
+        for s, e in ws:
+            s, e = s - DEM_CHU, e + DEM_CHU
+            if e <= cur:
+                continue
+            if s >= y:
+                break
+            if s - cur >= LO_HONG:
+                lo.append((cur, s))
+            cur = max(cur, e)
+        if y - cur >= LO_HONG:
+            lo.append((cur, y))
+    khe = []
+    for x, y in lo:
+        trai = max([e for _s, e in ws if e <= x + DEM_CHU], default=a)
+        phai = min([s for s, _e in ws if s >= y - DEM_CHU], default=b)
+        if khe and trai <= khe[-1][1]:
+            khe[-1] = (khe[-1][0], max(khe[-1][1], phai))
+        else:
+            khe.append((trai, phai))
+    return khe
+
+
+def _va_lo_hong(model, audio, opts, words, noi, a, b, total, cfg):
+    """Nghe lại các lỗ hổng của khúc mẫu audio[a:b] rồi chèn chữ tìm được vào `words`
+    (chữ của khúc, giờ cả bài). Trả về (chữ đã vá, số lỗ đã nghe lại, số chữ thêm).
+
+    Mỗi khe cắt riêng ra rồi nghe theo cách CŨ — Whisper tự lọc im lặng — vì lỗ nằm
+    đúng nơi VAD nghe ra tiếng nói, là nơi cách cũ vẫn chạy tốt. KHÔNG lời mồi, KHÔNG
+    ngữ cảnh, KHÔNG chống-bịa-theo-quãng-lặng (thứ đã làm nhảy lời). Đã thử nghe
+    trọn khe kèm câu mẫu (clip_timestamps): khe mở đầu bằng 14 giây nhạc thì Whisper
+    chép luôn câu mẫu ra, mất nguyên 44 chữ lời thật. Bù lại soát chặt: câu nào
+    chính Whisper không chắc (LOGPROB_BIA / XS_BIA) là bỏ, dù VAD có nghe ra tiếng
+    nói — tiếng khóc, tiếng gầm cũng được VAD tính là "tiếng nói"."""
+    khe = _lo_hong(words, [(x["start"] / _SR, x["end"] / _SR) for x in noi], a / _SR, b / _SR)
+    if not khe:
+        return words, 0, 0
+    o = dict(opts, condition_on_previous_text=False, initial_prompt=None, vad_filter=True)
+    o.pop("hallucination_silence_threshold", None)
+    them = []
+    for x, y in khe:
+        i, j = max(int(x * _SR), a), min(int(y * _SR), b)
+        if j - i < _SR // 2:
+            continue
+        ws, _giay, _chep, _bo = _nhan_dien(model, audio[i:j], o, i / _SR, total, cfg, noi=[])
+        them += [w for w in ws if x <= (w[0] + w[1]) / 2 <= y]
+    if not them:
+        return words, len(khe), 0
+    return sorted(words + them, key=lambda w: (w[0], w[1])), len(khe), _so_chu(them)
+
+
+def _moc_khuc(audio, noi=None):
     """Mốc cắt khúc, tính bằng MẪU: [0, ..., len(audio)]. Mỗi mốc nằm GIỮA một
     quãng im (theo VAD, cùng tham số với lúc nhận diện) nên không bổ đôi chữ nào:
     quãng im dài nhất trong KHUC_TRE giây sau mốc tròn; không có thì quãng im
-    đầu tiên sau đó."""
+    đầu tiên sau đó. noi = kết quả _vad_noi đã tính sẵn (khỏi chạy VAD hai lần)."""
     tong = len(audio)
     if tong <= (KHUC_GIAY + KHUC_TRE) * _SR:
         return [0, tong]
-    from faster_whisper.vad import VadOptions, get_speech_timestamps
-    noi = get_speech_timestamps(audio, VadOptions(**(_TRANSCRIBE_OPTS.get("vad_parameters") or {})),
-                                sampling_rate=_SR)
+    if noi is None:
+        noi = _vad_noi(audio)
     giua = [((b["start"] - a["end"]), (a["end"] + b["start"]) // 2)
             for a, b in zip(noi, noi[1:]) if b["start"] > a["end"]]
     moc = [0]
@@ -421,32 +635,71 @@ def _duoi_moi(words, lang):
     return text
 
 
-def _nhan_dien(model, audio, opts, lech, total, cfg, nhac=""):
+def _nhan_dien(model, audio, opts, lech, total, cfg, nhac="", noi=None):
     """Một lượt transcribe (cả file hoặc một khúc).
 
-    Trả về (chữ, giây_có_tiếng_nói, chép_câu_mẫu): chữ = [[start, end, chữ,
-    hết_vế]] với mốc giờ đã cộng `lech` giây (đầu khúc trong cả bài).
+    Trả về (chữ, giây_có_tiếng_nói, chép_câu_mẫu, số_đoạn_bịa_đã_bỏ): chữ =
+    [[start, end, chữ, hết_vế]] với mốc giờ đã cộng `lech` giây (đầu khúc trong
+    cả bài).
 
     nhac: lời mồi lấy từ đuôi khúc trước (đã _chuan). Hai segment đầu mà chỉ là
     nhắc lại một mẩu của lời mồi thì bỏ — Whisper thỉnh thoảng đọc lại câu cuối
-    nó vừa được cho xem."""
+    nó vừa được cho xem.
+
+    noi: [(đầu, cuối)] giây — các quãng có tiếng nói theo VAD trong `audio`,
+    truyền vào khi nhận diện KHÔNG lọc im lặng (vad_filter=False). Lúc đó Whisper
+    nghe cả quãng nhạc nên phải soát đoạn bịa: đoạn nằm ở chỗ VAD không nghe ra
+    tiếng nói mà Whisper tự chấm dưới LOGPROB_BIA, hoặc khớp một câu bịa quen
+    mặt (cfg["cau_bia"]), thì bỏ. None = Whisper tự lọc im lặng, không soát."""
     segments, info = model.transcribe(audio, **opts)
     vong = cfg.get("vong_cau_mau", ())
-    words, chep, so = [], False, 0
+    bia = cfg.get("cau_bia", ())
+    words, chep, so, bo = [], False, 0, 0
     for seg in segments:
-        text = seg.text.strip()
+        text = _sach(seg.text)
         if any(v in text for v in vong):
             chep = True     # Whisper chép lại câu mẫu (gặp nhạc/tiếng ồn) — bỏ
+            continue
+        if not any(c.isalnum() for c in text):
+            continue        # đoạn chỉ có dấu câu ("。" giữa quãng nhạc) — không phải lời
+        if (noi is not None and _phu_noi(noi, seg.start, seg.end) < PHU_NOI
+                and ((getattr(seg, "avg_logprob", None) or 0.0) < LOGPROB_BIA
+                     or any(b in text for b in bia))):
+            bo += 1         # chữ bịa ở chỗ không có tiếng nói
             continue
         so += 1
         if nhac and so <= 2 and len(_chuan(text)) >= 4 and _chuan(text) in nhac:
             continue
         n0 = len(words)
-        if seg.words:
-            for w in seg.words:
-                token = w.word.strip()
-                if token:
-                    words.append([round(w.start + lech, 3), round(w.end + lech, 3), token, 0])
+        seg_words = seg.words or []
+        if bia and seg_words:
+            con = _bo_bia_don(seg_words, bia)
+            if len(con) < len(seg_words):
+                bo += 1     # câu bịa quen mặt dồn sát mép audio bị cắt ngang
+                seg_words = con
+                if not seg_words:
+                    continue
+        if noi is not None and seg_words:
+            cau = _tach_cau(seg_words)
+            giu = [c for c in cau if not _cau_bia(c, noi)]
+            bo += len(cau) - len(giu)
+            seg_words = [w for c in giu for w in c]
+            if not seg_words:
+                continue    # cả đoạn là chữ bịa
+        if seg_words:
+            for w in seg_words:
+                token = _sach(w.word)
+                if not token:
+                    continue
+                if not any(c.isalnum() for c in token):
+                    # Dấu câu đứng riêng (còn lại sau khi bỏ ký tự rác, hoặc Whisper
+                    # nhả rời): dán vào chữ trước nó trong đoạn nếu chữ ấy chưa có
+                    # dấu, không thì bỏ — để rời thì mốc giờ của nó (rơi giữa quãng
+                    # nhạc) kéo đuôi dòng phụ đề ra cả chục giây.
+                    if len(words) > n0 and words[-1][2][-1] not in _PUNCT:
+                        words[-1][2] += token
+                    continue
+                words.append([round(w.start + lech, 3), round(w.end + lech, 3), token, 0])
         elif text:
             # hiếm khi thiếu word-level → dùng mốc cả câu còn hơn bỏ chữ
             words.append([round(seg.start + lech, 3), round(seg.end + lech, 3), text, 0])
@@ -461,10 +714,14 @@ def _nhan_dien(model, audio, opts, lech, total, cfg, nhac=""):
         mm, ss = divmod(int(den), 60)
         print(f"\r⏳ {frac * 100:5.1f}%  [{mm:02d}:{ss:02d}] {text[:40]:<40}",
               end="", flush=True)
-    return words, float(getattr(info, "duration_after_vad", 0) or 0), chep
+    # Giây có tiếng nói: Whisper tự lọc im lặng thì nó báo (duration_after_vad);
+    # không lọc thì con số ấy là cả khúc kể cả nhạc → lấy theo VAD của mình.
+    giay = (sum(y - x for x, y in noi) if noi is not None
+            else float(getattr(info, "duration_after_vad", 0) or 0))
+    return words, giay, chep, bo
 
 
-def transcribe_words(audio_path, model_name="medium", lang=MAC_DINH,
+def transcribe_words(audio_path, model_name="large-v3", lang=MAC_DINH,
                      khong_ngu_canh=False):
     """Nhận diện và trả về danh sách chữ [[start, end, chữ, hết_vế], ...].
 
@@ -483,6 +740,10 @@ def transcribe_words(audio_path, model_name="medium", lang=MAC_DINH,
     Dùng model THƯỜNG (không batched): có đủ vòng temperature-fallback chống
     kẹt lặp, và word_timestamps hoạt động ổn định nhất — ưu tiên đúng mốc giờ
     hơn là nhanh.
+
+    Tiếng nào đặt vad_filter=False trong NGON_NGU (tiếng Trung) thì Whisper nghe
+    TRỌN audio, không qua bộ lọc im lặng — khỏi sót câu nói nhỏ trên nền nhạc;
+    VAD lúc đó chỉ dùng để chọn chỗ cắt khúc và soát đoạn bịa (xem _nhan_dien).
     """
     model, _batched, _device = get_model(model_name, use_batched=False)
 
@@ -502,26 +763,54 @@ def transcribe_words(audio_path, model_name="medium", lang=MAC_DINH,
         print(f"⏳ Thời lượng audio (đã chậm): {total / 60:.1f} phút")
     print(f"📝 Đang nhận diện tiếng {cfg['ten']} (kèm mốc giờ từng chữ)...")
 
-    if not opts.get("condition_on_previous_text"):
-        words, _noi, _chep = _nhan_dien(model, audio_path, opts, 0.0, total, cfg)
+    # Whisper nghe trọn audio (không lọc im lặng): tự chạy VAD một lần cho cả bài
+    # — để soát đoạn bịa, đếm giây có tiếng nói và chọn chỗ cắt khúc.
+    tat_vad = opts.get("vad_filter") is False
+    theo_khuc = bool(opts.get("condition_on_previous_text"))
+    audio = vad = None
+    if tat_vad or theo_khuc:
+        from faster_whisper import decode_audio
+        audio = decode_audio(audio_path, sampling_rate=_SR)
+        total = total or len(audio) / _SR
+        if tat_vad:
+            vad = _vad_noi(audio)
+            print("🔈 Whisper nghe TRỌN audio, không qua bộ lọc im lặng — khỏi sót câu nói nhỏ "
+                  f"trên nền nhạc (bộ lọc chỉ nghe ra tiếng nói ở "
+                  f"{sum(x['end'] - x['start'] for x in vad) / max(len(audio), 1) * 100:.0f}% bài).")
+
+    def _noi(a, b):
+        return _noi_trong(vad, a, b) if tat_vad else None
+
+    def _bao(bo, va, chu):
+        if bo:
+            print(f"🧹 Bỏ {bo} đoạn Whisper bịa ở chỗ không có tiếng nói (nhạc / im lặng).")
+        if va:
+            print(f"🩹 Nghe lại {va} quãng có tiếng nói mà Whisper nhảy qua → thêm {chu} chữ.")
+
+    if not theo_khuc:
+        words, _giay, _chep, bo = _nhan_dien(
+            model, audio if tat_vad else audio_path, opts, 0.0, total, cfg,
+            noi=_noi(0, len(audio)) if tat_vad else None)
+        va = chu = 0
+        if tat_vad:
+            words, va, chu = _va_lo_hong(model, audio, opts, words, vad, 0, len(audio), total, cfg)
         print()
+        _bao(bo, va, chu)
         return words
 
-    from faster_whisper import decode_audio
-    audio = decode_audio(audio_path, sampling_rate=_SR)
-    total = total or len(audio) / _SR
-    moc = _moc_khuc(audio)
+    moc = _moc_khuc(audio, vad)
     if len(moc) > 2:
         print(f"✂ Nhận diện theo {len(moc) - 1} khúc ~{KHUC_GIAY / 60:g} phút, cắt ở chỗ im — "
               "mỗi khúc được mồi bằng lời thoại có dấu câu ngay trước nó để Whisper "
               "chấm câu suốt bài.")
     tran = dict(opts, condition_on_previous_text=False, initial_prompt=None)
     nguong, toc = cfg.get("kho_dau"), cfg.get("chu_moi_giay", 0)
-    words, duoi, lui = [], "", 0
+    words, duoi, lui, bo, va, chu = [], "", 0, 0, 0, 0
     for a, b in zip(moc, moc[1:]):
         lech = a / _SR
-        khuc, noi, chep = _nhan_dien(model, audio[a:b], dict(opts, initial_prompt=duoi or cfg["prompt"]),
-                                     lech, total, cfg, nhac=_chuan(duoi))
+        khuc, noi, chep, bo_k = _nhan_dien(
+            model, audio[a:b], dict(opts, initial_prompt=duoi or cfg["prompt"]),
+            lech, total, cfg, nhac=_chuan(duoi), noi=_noi(a, b))
         hong = ("chép lại câu mẫu thay vì lời thoại" if chep
                 else "ra quá ít chữ so với thời lượng có tiếng nói"
                 if noi >= 20 and _so_chu(khuc) < toc * noi
@@ -530,14 +819,20 @@ def transcribe_words(audio_path, model_name="medium", lang=MAC_DINH,
             lui += 1
             print(f"\n   ↻ khúc {lech / 60:.0f}–{b / _SR / 60:.0f} phút: Whisper {hong} → nhận "
                   "diện lại khúc này không lời mồi, không ngữ cảnh.")
-            khuc, _noi, _chep = _nhan_dien(model, audio[a:b], tran, lech, total, cfg)
-        elif khuc:
+            khuc, _giay, _chep, bo_k = _nhan_dien(model, audio[a:b], tran, lech, total, cfg,
+                                                  noi=_noi(a, b))
+        if tat_vad:
+            khuc, va_k, chu_k = _va_lo_hong(model, audio, opts, khuc, vad, a, b, total, cfg)
+            va, chu = va + va_k, chu + chu_k
+        if khuc and not hong:
             duoi = _duoi_moi(khuc, lang)
+        bo += bo_k
         words.extend(khuc)
     print()
     if lui:
         print(f"ℹ {lui}/{len(moc) - 1} khúc phải nhận diện lại kiểu không ngữ cảnh — các khúc đó "
               "không có dấu câu, cắt dòng theo ranh giới vế của Whisper.")
+    _bao(bo, va, chu)
     return words
 
 
@@ -553,6 +848,38 @@ VE_CUT = 2         # (tiếng viết liền) vế ≤ ngần này chữ ở cu�
 NHAP_SAU = 1.5     # mảnh ngắn chưa hết câu cách dòng kế dưới ngần này giây → nhập vào dòng kế
 _DAU_HET_VE = set("。！？!?…，、；：,;:.—–")
 _DAU_HET_CAU = set("。！？!?….")
+
+# MỐC BẮT ĐẦU của một dòng phụ đề — cũng là chỗ bước ③ đặt giọng đọc (đặt đúng mốc
+# SRT, file giọng chỉ im 0,06 s ở đầu) nên sai ở đây là giọng lồng vào lệch tiếng gốc.
+# Whisper dồn quãng im / quãng nhạc TRƯỚC một chữ vào chính chữ đó: mốc ĐẦU của chữ
+# đứng sau chỗ nghỉ nằm giữa quãng nghỉ, còn tiếng thật của nó bật lên ở sát mốc CUỐI.
+# faster-whisper chỉ chặn chữ đầu đoạn ở 2 lần độ dài chữ trung vị (0,52–0,72 s cho
+# một chữ thật dài ~0,25 s), chữ giữa đoạn thì không chặn ("来" ghi dài 1,28 s).
+# Đo 25/11/2026 (user báo giọng lồng vào sớm hơn tiếng gốc), mốc tiếng thật = chỗ năng
+# lượng dải giọng 300–3400 Hz nhảy ~20 dB, đối chiếu thêm mốc Silero VAD bật lên:
+#   • phim 错绑良配, 40 chữ sau chỗ nghỉ: tiếng thật − mốc CUỐI chữ = −0,16 … +0,22 s,
+#     trung vị −0,02; tiếng thật − mốc ĐẦU chữ = +0,35 … +0,7 s (dòng vào SỚM chừng ấy);
+#   • truyện đọc 后土 25 phút, 148 chữ sau chỗ nghỉ: VAD bật − mốc cuối chữ trung vị
+#     +0,04 s (74% trong ±0,15); VAD bật − mốc đầu chữ trung vị +0,45 s (7% trong ±0,15).
+# Nghe có lọc im lặng (cách cũ) cũng sớm, do 0,4 s đệm của VAD: 0 … 0,45 s.
+# Không riêng chỗ nghỉ dài: 91 dòng truyện đọc mở đầu ngay sau dấu hết câu, chỉ cách
+# chữ trước 0,1–0,28 s, vẫn y quy luật ấy (VAD bật − mốc cuối chữ đầu dòng trung vị
+# 0,00, 80% trong ±0,1; − mốc đầu chữ +0,32). Cuối câu cũng lệch cùng chiều: tiếng
+# thật tắt sau mốc cuối chữ cuối ~0,17 s (pad_ends nới 0,2 s là vừa).
+# Vậy mốc bắt đầu của DÒNG = mốc CUỐI chữ đầu dòng lùi DAU_SOM giây. Chỉ đổi mốc
+# bắt đầu của dòng; mốc từng chữ, chỗ cắt dòng, chỗ gộp để nguyên.
+DAU_SOM = 0.05
+DAU_SOM_CHU = 3     # chỉ áp cho token tới ngần này chữ (token Whisper tiếng Trung: 1–3 chữ)
+
+
+def dau_dong(words):
+    """Mốc bắt đầu THẬT của từng chữ, dùng khi chữ đó mở đầu một dòng — xem DAU_SOM.
+
+    Token dài hơn DAU_SOM_CHU chữ không phải một chữ có mốc riêng mà là cả câu mang
+    mốc của đoạn (đường dự phòng khi Whisper không trả mốc từng chữ) — mốc đoạn không
+    lệch kiểu này nên giữ nguyên."""
+    return [max(w[0], w[1] - DAU_SOM) if _so_chu([w]) <= DAU_SOM_CHU else w[0]
+            for w in words]
 
 
 def _bon(words):
@@ -694,6 +1021,10 @@ def build_subs(words, max_chars=16, hard_max=16, min_chars=4, min_dur=0.6,
     n = len(words)
     dai = sorted(w[1] - w[0] for w in words) or [0.0]
     trung_vi = dai[len(dai) // 2]
+    # Mốc bắt đầu của DÒNG nếu dòng mở đầu bằng chữ này (xem DAU_SOM). Mọi phép cắt,
+    # gộp bên dưới vẫn tính trên mốc chữ gốc; mốc này chỉ thay vào lúc trả kết quả.
+    moc_dau = (dau_dong(words) if cfg.get("dau_dong_cuoi_chu")
+               else [w[0] for w in words])
 
     def _cho_cat(t):
         """Sau chữ t (của dòng đang gom) được phép cắt dòng."""
@@ -760,7 +1091,7 @@ def build_subs(words, max_chars=16, hard_max=16, min_chars=4, min_dur=0.6,
         for k in range(i, n):
             w = words[k]
             khe_k = words[k + 1][0] - w[1] if k + 1 < n else KHE_CHOT
-            sau.append((w[0], w[1], w[2], False, False))
+            sau.append((w[0], w[1], w[2], False, False, moc_dau[k]))
             if (_het_ve(w) or khe_k >= KHE_NHO
                     or _nchars(_text(cur + sau), lang) > 2 * hard_max):
                 break
@@ -797,13 +1128,13 @@ def build_subs(words, max_chars=16, hard_max=16, min_chars=4, min_dur=0.6,
         part, rest = (cur, []) if upto is None else (cur[:upto], cur[upto:])
         text = _text(part)
         if text.strip():
-            subs.append([part[0][0], max(w[1] for w in part), text, part[-1][4]])
+            subs.append([part[0][0], max(w[1] for w in part), text, part[-1][4], part[0][5]])
         cur = rest
 
     for i, (ws, we, token, het) in enumerate(words):
         khe = words[i + 1][0] - we if i + 1 < n else 0.0
         mem = bool(het) or khe >= KHE_NHO
-        tok = (ws, we, token, mem, het == 2)
+        tok = (ws, we, token, mem, het == 2, moc_dau[i])
         # Token CHỈ có dấu câu (dấu ” sau 。, hay dấu : ， đứng riêng): dán vào
         # dòng đang gom — chưa gom gì thì dán vào dòng vừa chốt. Không bao giờ
         # vì một cái dấu mà cắt dòng hay mở dòng mới chỉ chứa dấu.
@@ -899,10 +1230,11 @@ def build_subs(words, max_chars=16, hard_max=16, min_chars=4, min_dur=0.6,
                 and (_nchars(p[2], lang) < min_chars or (p[1] - p[0]) < min_dur)):
             gop = _noi_dong(p[2], s[2], p[3])
             if _nchars(gop, lang) <= hard_max:
-                out[-1] = [p[0], s[1], gop, s[3]]
+                out[-1] = [p[0], s[1], gop, s[3], p[4]]
                 continue
         out.append(s)
-    return [s[:3] for s in out]
+    # Tới đây mới thay mốc bắt đầu của dòng bằng mốc tiếng thật của chữ đầu dòng.
+    return [[min(s[4], s[1]), s[1], s[2]] for s in out]
 
 
 def pad_ends(subs, pad=0.2):
@@ -939,8 +1271,10 @@ def main():
                         help="Tiếng GỐC của video: zh = Trung (mặc định), en = Anh.")
     parser.add_argument("--speed", type=float, default=0.7,
                         help="Tốc độ sau khi làm chậm (mặc định 0.7).")
-    parser.add_argument("--model", default="medium",
-                        help="Model whisper: tiny/base/small/medium/large-v3-turbo/large-v3 (mặc định medium).")
+    parser.add_argument("--model", default="large-v3",
+                        help="Model whisper: tiny/base/small/medium/large-v3-turbo/large-v3 "
+                             "(mặc định large-v3 — đo 25/11/2026 trên phim Trung có nhạc nền, "
+                             "43 câu: large-v3 đủ 43, large-v3-turbo đủ 41 nhưng nhanh hơn ~2,5 lần).")
     parser.add_argument("--max-chars", type=int, default=None,
                         help="Số chữ tối đa mỗi dòng SRT: đủ mức này thì ngắt tại dấu phụ. "
                              "0 = KHÔNG giới hạn, mỗi dòng một câu trọn (mặc định: Trung 0 · "

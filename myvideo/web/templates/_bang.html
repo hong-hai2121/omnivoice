@@ -21,6 +21,18 @@
    ⏱ So giờ → "🎞 Xem cả bài" (và ⚠️ ở cột 🚨 Soát); vùng che = 🎛 Chỉnh trước.
    Đừng thêm lại hai cột này khi chưa được bảo.
 
+   25/11/2026 — user: "có thêm 1 nút mở video hoàn thành lên xem và có 1 nút render
+   lại theo cài đặt mới". Hai nút CÓ CHỮ nằm ngay trong cột ④ (không thêm cột), chỉ
+   hiện ở hàng ĐÃ có video hoàn thành:
+     ▶ Xem video   → /mo-video: mở _sub.mp4 bằng trình phát của Windows.
+     🔁 Render lại → /render-lai: lưu các ô đang có trên trang (nút nằm trong form
+                     chính nên htmx gửi kèm cả form) rồi xếp lại ĐÚNG bước ④ cho hàng
+                     đó. Ghi đè video cũ nên có hỏi lại.
+   r.dung (server._dang_dung) = bước ④ của hàng đang ở đâu trong hàng đợi: "chay" →
+   file đang bị ghi đè dở, thay cả hai nút bằng nhãn ⏳ (mở ra là file hỏng); "cho" →
+   video cũ còn nguyên nên vẫn xem được, nút render thay bằng nhãn "đã xếp" (khỏi xếp
+   trùng). Lý do khoá viết thành CHỮ trong ô, không giấu trong tooltip của nút mờ.
+
    24/11/2026 — user: "sao video thử lại có ở trong này". BẢN THỬ 3 phút của 🎛
    Chỉnh trước KHÔNG còn là một hàng (server._bang_ctx lọc): nó thuộc về video của
    nó — hàng nguồn chờ ghi thêm "đã có bản thử", video chỉ mới có bản thử thì hiện
@@ -145,7 +157,31 @@ Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ 
             if r.audio %} <a class="ghost small" target="_blank"
                href="/nghe/ketqua?base={{ r.base | urlencode }}"
                title="Nghe audio tiếng Việt đã xếp — duyệt giọng TRƯỚC khi dựng bước ④">🔊</a>{% endif %}</td>
-          <td class="{{ 'okc' if r.sub else 'no' }}">{{ '✔' if r.sub else '—' }}</td>
+          {# ④ + ▶ Xem video / 🔁 Render lại (25/11/2026 — xem chú thích đầu file). #}
+          {% if r.dung == 'chay' %}
+          <td class="no o4"><span class="nhanthu dangdung"
+            title="Bước ④ đang dựng video này và ghi đè file _sub.mp4 — mở lúc này là file dở. Tiến độ: tab ⏱ Hàng đợi">⏳ đang render — xong mới xem được</span></td>
+          {% elif r.sub %}
+          <td class="okc o4">✔
+            <button type="button" class="small xemvideo" hx-post="/mo-video"
+                    hx-vals='{{ {"base": r.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                    title="Mở video hoàn thành ({{ r.base.split('/')[-1] }}_sub.mp4) bằng trình phát video của Windows{% if r.dung == 'cho' %} — đây vẫn là bản CŨ, lượt render lại chưa tới{% endif %}">▶ Xem video</button>
+            {% if r.dung == 'cho' %}
+            <span class="nhanthu dangdung"
+              title="Bước ④ của video này đã nằm trong hàng đợi, chưa tới lượt — video đang có vẫn là bản cũ. Tiến độ: tab ⏱ Hàng đợi">⏳ đã xếp render lại</span>
+            {% else %}
+            <button type="button" class="small renderlai" hx-post="/render-lai"
+                    hx-vals='{{ {"base": r.base} | tojson }}'
+                    hx-target="#queue" hx-swap="innerHTML" hx-disabled-elt="this"
+                    hx-confirm="Render lại “{{ r.base.split('/')[-1] }}” theo cài đặt ĐANG CÓ trên trang (các ô vừa chỉnh sẽ được lưu luôn)?&#10;&#10;Chỉ dựng lại bước ④. Video hoàn thành cũ sẽ bị GHI ĐÈ, không vào Thùng rác."
+                    title="Dựng lại bước ④ cho video này theo cài đặt ĐANG CÓ trên trang — kiểu sub, cỡ/vị trí chữ, phóng to, che mờ, logo, khung viền, dòng lưu ý, nhạc nền, âm lượng… Các ô vừa chỉnh được lưu luôn (như nút 🎬 Chạy bước ④).
+Chỉ làm lại bước ④: muốn đổi GIỌNG ĐỌC thì chạy bước ③ trước. Video hoàn thành cũ bị ghi đè.">🔁 Render lại</button>
+            {% endif %}
+          </td>
+          {% else %}
+          <td class="no o4">—</td>
+          {% endif %}
           <td class="{{ 'okc' if r.seo else 'no' }}">{{ '✔' if r.seo else '—' }}</td>
           <td class="{{ 'okc' if r.thumb else 'no' }}">{{ '✔' if r.thumb else '—' }}</td>
           {# 🚨 Soát HAI BẬC: sót Hán / lệch >10s → ⚠️ đỏ; lệch 3-10s → ghi chú
@@ -181,6 +217,8 @@ Bấm để xem mốc giờ 5 câu đầu: sub gốc ↔ giọng đã tạo">{{ 
      xem trước, chỉnh phóng to / dải che mờ / âm lượng, chạy thử 3 phút đầu.
      📂 = mở thư mục của video đó (video thành phẩm được chọn sẵn).
      <b>⏱ So giờ</b> (hoặc bấm vào tên video) = xem thời gian 5 câu đầu: sub gốc so với giọng đã tạo.
+     <b>▶ Xem video</b> (cột ④) = mở video hoàn thành bằng trình phát của Windows.
+     <b>🔁 Render lại</b> = dựng lại bước ④ của video đó theo cài đặt đang có trên trang (kiểu sub, phóng to, che mờ, logo, âm lượng…), ghi đè video cũ.
      Nút 🗑 dọn sạch video đó khỏi output — cả các đoạn của video dài lẫn bản thử 3 phút + clip của 🎛 Chỉnh trước
      (vào Thùng rác Windows, khôi phục được; file nguồn gốc không bị đụng).
      <b>🧪 Bản thử 3 phút</b> không hiện thành hàng riêng — tick video rồi bấm 🎛 Chỉnh trước để xem lại.</p>

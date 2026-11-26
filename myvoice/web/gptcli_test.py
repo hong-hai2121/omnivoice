@@ -18,7 +18,8 @@ MAX_LINES = 400
 
 
 class GptCliTester:
-    def __init__(self):
+    def __init__(self, nha: str = "gpt"):
+        self.nha = nha            # "gpt" (codex) | "gemini" (agy) — mỗi tab một bộ thử riêng
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._reset("")
@@ -68,31 +69,33 @@ class GptCliTester:
             self.text = text if mode == "send" else PING_TEXT
             self.full = mode == "send" and bool(full_prefix)
             self._thread = threading.Thread(target=self._run, args=(mode, text, bool(full_prefix)),
-                                            daemon=True, name="gptcli-test")
+                                            daemon=True, name=f"{self.nha}cli-test")
             self._thread.start()
 
     def _run(self, mode: str, text: str, full_prefix: bool) -> None:
         import dich_gptcli as gc
         try:
-            self.log("🔎 Tìm codex trên PATH (lấy bản mới nhất) và hỏi trạng thái đăng nhập…")
-            info = gc.kiem_tra()                      # không có codex → GptCliError
+            nha, ten, lenh = self.nha, gc.TEN_NHA[self.nha], gc.LENH_NHA[self.nha]
+            self.log(f"🔎 Tìm {'agy' if nha == 'gemini' else 'codex'} (lấy bản mới nhất) "
+                     "và hỏi trạng thái đăng nhập…")
+            info = gc.kiem_tra(nha)                   # không có binary → GptCliError
             with self._lock:
                 self.info = info
-            self.log(f"✅ {info['path']} — codex-cli {info['version']}")
+            self.log(f"✅ {info['path']} — {info['lenh']} {info['version']}")
             self.log(("✅ " if info["logged_in"] else "⚠️ ") + info["login"])
             if not info["logged_in"]:
-                self.log("   Mở terminal, chạy `codex login` (tài khoản ChatGPT) rồi thử lại.")
-            hl = gc.hieu_luc()                        # cùng model/mức mà lệnh dịch thật sẽ dùng
+                self.log(f"   Chưa đăng nhập: {gc.CACH_DANG_NHAP[nha]} rồi thử lại.")
+            hl = gc.hieu_luc(nha)                     # cùng model/mức mà lệnh dịch thật sẽ dùng
             with self._lock:
                 self.info.update(model=hl["model"], effort=hl["effort"])
-            self.log(f"🎛 {gc.mo_ta_hieu_luc(hl)}")
+            self.log(f"🎛 {gc.mo_ta_hieu_luc(hl, nha=nha)}")
 
             import dich_gemini as g
-            drv = gc.GptCliDriver(on_log=None)
+            drv = gc.GptCliDriver(on_log=None, nha=nha)
             if mode == "check":
                 msg = PING_TEXT
-                self.log(f"🏓 Gửi một lệnh thử ngắn (\"{PING_TEXT}\") — kiểm cả model trong "
-                         "~/.codex/config.toml có chạy được với tài khoản này không…")
+                self.log(f"🏓 Gửi một lệnh thử ngắn (\"{PING_TEXT}\") — kiểm cả model đang "
+                         "chọn có chạy được với tài khoản này không…")
             elif full_prefix:
                 # Như lúc dịch thật: đăng ký câu hướng dẫn (bản CLI) + thẻ hư cấu; driver
                 # ghép tất cả vào CÙNG một lệnh vì CLI không nhớ gì giữa hai lệnh.
@@ -106,21 +109,21 @@ class GptCliTester:
                 self.prompt = prompt
             if mode == "send":
                 self.log(f"📤 Gửi tin {len(text)} ký tự (đề bài ghép {len(prompt)} ký tự) — "
-                         "một lệnh codex exec, đợi trả lời…")
+                         f"một lệnh {lenh}, đợi trả lời…")
             t0 = time.time()
             ans = (g.send_to_gemini(drv, msg, on_log=self.log) or "").strip()
             elapsed = time.time() - t0
             with self._lock:
                 self.elapsed = elapsed
             if not ans:
-                raise RuntimeError("GPT CLI không trả về nội dung — xem nhật ký.")
+                raise RuntimeError(f"{ten} không trả về nội dung — xem nhật ký.")
             with self._lock:
                 self.result = ans
             if mode == "check":
                 self.log(f"🎉 Kết nối tốt: CLI trả lời \"{ans[:60]}\" sau {elapsed:.0f} s. "
                          "Bấm 🧪 Gửi thử để nhắn một tin.")
             else:
-                self.log(f"🎉 Nhận được {len(ans)} ký tự sau {elapsed:.0f} s. GPT CLI hoạt động tốt.")
+                self.log(f"🎉 Nhận được {len(ans)} ký tự sau {elapsed:.0f} s. {ten} hoạt động tốt.")
         except Exception as e:
             with self._lock:
                 self.error = str(e)
@@ -130,4 +133,5 @@ class GptCliTester:
                 self.finished = time.time()
 
 
-tester = GptCliTester()
+testers = {"gpt": GptCliTester("gpt"), "gemini": GptCliTester("gemini")}
+tester = testers["gpt"]

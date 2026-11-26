@@ -13,6 +13,10 @@ Cách dịch qua Gemini (01/10/2026):
     về dich_gptcli.GptCliDriver, mỗi đoạn/SEO là MỘT lệnh riêng, không có hội thoại nên
     câu hướng dẫn dịch được gửi lại KÈM TỪNG đoạn. Chọn ở cùng ô với hai cách trên
     (web myvoice, web myvideo, GUI) — một lựa chọn cho tất cả.
+  • "gemini_cli" (26/11/2026) — Gemini CLI: Antigravity CLI của Google (`agy -p`, đăng
+    nhập tài khoản Google). Đi CHUNG đường với "cli" (GptCliDriver, dich_srt --cli…),
+    chỉ khác lệnh được gọi: dich_gptcli.goi rẽ sang dich_geminicli. Hỏi "có phải cách
+    dịch CLI không" thì dùng la_cli(); hỏi "CLI nào" thì dùng cli_nha().
 """
 import json
 import os
@@ -28,10 +32,24 @@ BRIDGE_PORT = 17863
 # không phải dán gì. Muốn mã riêng: ghi vào TOKEN_FILE hoặc đặt OMNI_GEMINI_EXTENSION_TOKEN
 # rồi dán cùng mã vào popup extension.
 DEFAULT_TOKEN = "omnivoice-gemini-local"
-BACKENDS = ("extension", "firefox", "cli")
+BACKENDS = ("extension", "firefox", "cli", "gemini_cli")
 DEFAULT_BACKEND = "extension"
 # Giá trị chọn được ngoài mặc định; giá trị lạ trong file/biến môi trường → mặc định.
-_CHON_DUOC = ("firefox", "cli")
+_CHON_DUOC = ("firefox", "cli", "gemini_cli")
+CLI_BACKENDS = ("cli", "gemini_cli")          # hai cách dịch qua dòng lệnh, không trình duyệt
+NHAN = {"extension": "Chrome Extension", "firefox": "Firefox", "cli": "GPT CLI (Codex)",
+        "gemini_cli": "Gemini CLI (Antigravity)"}
+
+
+def la_cli(value=None):
+    """Cách dịch (mặc định: đang chọn) có phải một trong hai CLI không."""
+    return (get_backend() if value is None else value) in CLI_BACKENDS
+
+
+def cli_nha(value=None):
+    """"gemini" nếu cách dịch là Gemini CLI, còn lại "gpt" (kể cả khi không phải CLI —
+    `dich_srt.py --cli` gõ tay vẫn là GPT như trước)."""
+    return "gemini" if (get_backend() if value is None else value) == "gemini_cli" else "gpt"
 # Số giây chờ Chrome (extension) hỏi lệnh lần đầu trước khi coi là chưa kết nối.
 # Service worker ngủ thì alarm 30 s đánh thức, nên phải hơn 30 s một chút.
 EXTENSION_CONNECT_TIMEOUT = 40
@@ -79,10 +97,14 @@ def fallback_enabled():
 
 
 def browser_label():
-    return {"extension": "Chrome Extension", "cli": "GPT CLI (Codex)"}.get(get_backend(), "Firefox")
+    return NHAN.get(get_backend(), "Firefox")
 
 
 def browser_hint():
+    if get_backend() == "gemini_cli":
+        return ("Dịch bằng Gemini CLI (Antigravity, lệnh `agy`): cần đăng nhập Google một "
+                "lần (chạy `agy` trong terminal), không cần trình duyệt. Mỗi đoạn là một "
+                "lệnh riêng — câu hướng dẫn dịch gửi kèm từng đoạn.")
     if get_backend() == "cli":
         return ("Dịch bằng GPT CLI (Codex): cần `codex login` (tài khoản ChatGPT) một lần, "
                 "không cần trình duyệt. Mỗi đoạn là một lệnh riêng — câu hướng dẫn dịch gửi "
@@ -104,7 +126,8 @@ def backend_picker(parent, variable, on_change, horizontal=False):
     buttons = []
     for value, title in (("extension", "Dịch bằng Chrome Extension (mặc định)"),
                          ("firefox", "Dịch bằng Firefox / Selenium (dự phòng)"),
-                         ("cli", "Dịch bằng GPT CLI (Codex, tài khoản ChatGPT)")):
+                         ("cli", "Dịch bằng GPT CLI (Codex, tài khoản ChatGPT)"),
+                         ("gemini_cli", "Dịch bằng Gemini CLI (Antigravity, tài khoản Google)")):
         button = ttk.Checkbutton(frame, text=title, variable=variable,
                                  onvalue=value, offvalue=value, command=on_change)
         button.pack(**place)

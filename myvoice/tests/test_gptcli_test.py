@@ -143,6 +143,23 @@ class GptCliRoutesTests(_StubBase):
         self.assertEqual(gemini_backend.saved_backend(), "extension")
         self.assertEqual(json.loads(self.pipe.read_text(encoding="utf-8"))["model"], "large-v3")
 
+    def test_tab_gop_va_dich_mac_dinh(self):
+        """Một tab cho cả GPT lẫn Gemini: ô ⭐ Dịch mặc định (mac_dinh) + nút chuyển CLI."""
+        for url in ("/cli", "/gpt-cli", "/gemini-cli"):
+            r = self.client.get(url, params=self.tok)
+            self.assertEqual(r.status_code, 200)
+            for dau in ('name="mac_dinh"', 'value="gemini_cli"', 'href="/gemini-cli"', 'href="/gpt-cli"'):
+                self.assertIn(dau, r.text)
+        self.assertIn('value="firefox" checked', self.client.get("/cli", params=self.tok).text)
+        d = self.luu(mac_dinh="gemini_cli", nha="gpt")
+        self.assertEqual((d["gemini_backend"], d["model"]), ("gemini_cli", "large-v3"))
+        self.assertIn('data-nha="gemini"', self.client.get("/cli", params=self.tok).text)  # mở CLI mặc định
+        self.luu(mac_dinh="bogus")                                   # giá trị lạ → không đổi
+        self.assertEqual(gemini_backend.saved_backend(), "gemini_cli")
+        self.luu(mac_dinh="extension")
+        self.assertEqual(gemini_backend.saved_backend(), "extension")
+        self.assertIn('data-nha="gpt"', self.client.get("/cli", params=self.tok).text)
+
 
 if __name__ == "__main__":
     unittest.main()

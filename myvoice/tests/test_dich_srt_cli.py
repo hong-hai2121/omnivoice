@@ -105,8 +105,10 @@ class _StubBase(unittest.TestCase):
         self.stub = os.path.join(self.tmp.name, "codex_stub.py")
         Path(self.stub).write_text(STUB, encoding="utf-8")
         self.log = os.path.join(self.tmp.name, "prompts.log")
+        # OMNI_GEMINI_BACKEND="cli": ghim nhà CLI = GPT. Không ghim thì khi ô cách dịch THẬT
+        # đang là "gemini_cli", các lệnh goi() ở đây sẽ gọi agy thật qua mạng (26/11/2026).
         self.env = patch.dict(os.environ, {"OMNI_GPT_CLI": self.stub, "STUB_LOG": self.log,
-                                           "STUB_FAIL": ""})
+                                           "STUB_FAIL": "", "OMNI_GEMINI_BACKEND": "cli"})
         self.env.start()
         self.addCleanup(self.env.stop)
         dich_gptcli._cache.clear()

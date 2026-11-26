@@ -29,6 +29,12 @@ này dùng được đọc từ ~/.codex/models_cache.json mà codex tự tải 
 OMNI_GPT_CLI_TIMEOUT: giây chờ tối đa mỗi lệnh (mặc định 600 — lô 10 câu Trung đo
 được ~36 s).
 
+HAI NHÀ CLI (26/11/2026): ngoài codex còn Gemini CLI (Antigravity `agy`, tài khoản
+Google) — nhánh ấy nằm ở dich_geminicli.py. Mọi hàm công khai ở đây (kiem_tra, cai_dat,
+luu_cai_dat, danh_sach_model, hieu_luc, mo_ta_hieu_luc, goi, GptCliDriver) nhận thêm
+nha="gpt" | "gemini"; để trống = theo ô cách dịch (gemini_backend "gemini_cli" → gemini,
+còn lại → gpt). Bên gọi (dich_srt, dich_gemini, SEO) vì thế không phải biết CLI nào.
+
 An toàn: mỗi lệnh chạy trong một thư mục tạm RỖNG (-C) với sandbox read-only, nên
 mô hình không đọc được repo và không ghi được gì; thư mục tạm xoá ngay sau lệnh.
 
@@ -141,6 +147,33 @@ def tim_codex():
     return best
 
 
+NHA = ("gpt", "gemini")
+TEN_NHA = {"gpt": "GPT CLI", "gemini": "Gemini CLI"}
+LENH_NHA = {"gpt": "codex exec", "gemini": "agy -p"}
+CACH_DANG_NHAP = {"gpt": "mở terminal chạy `codex login` (tài khoản ChatGPT)",
+                  "gemini": "mở terminal chạy `agy` rồi đăng nhập Google theo màn hình"}
+
+
+def nha_hien_tai(nha=None):
+    """"gpt" | "gemini": tham số nếu có, không thì theo ô cách dịch đang chọn."""
+    if nha in NHA:
+        return nha
+    try:
+        import gemini_backend
+        return gemini_backend.cli_nha()
+    except Exception:
+        return "gpt"
+
+
+def ten_cli(nha=None):
+    return TEN_NHA[nha_hien_tai(nha)]
+
+
+def _gemini():
+    import dich_geminicli            # nạp trễ: module ấy import ngược lại file này
+    return dich_geminicli
+
+
 def dang_nhap(binary):
     """(đã đăng nhập?, dòng trạng thái) theo `codex login status`."""
     try:
@@ -151,12 +184,25 @@ def dang_nhap(binary):
     return rc == 0, line[:120]
 
 
-def kiem_tra():
-    """Thông tin để in đầu lượt dịch: path, version, logged_in, login (dòng trạng thái).
-    Không tìm thấy binary → GptCliError."""
-    path, ver = tim_codex()
-    ok, line = dang_nhap(path)
-    return {"path": path, "version": ".".join(map(str, ver)), "logged_in": ok, "login": line}
+def kiem_tra(nha=None):
+    """Thông tin để in đầu lượt dịch: path, version, logged_in, login (dòng trạng thái),
+    nha, ten ("GPT CLI" / "Gemini CLI"), lenh (tên chương trình). Không tìm thấy binary →
+    GptCliError."""
+    nha = nha_hien_tai(nha)
+    if nha == "gemini":
+        info = _gemini().kiem_tra()
+    else:
+        path, ver = tim_codex()
+        ok, line = dang_nhap(path)
+        info = {"path": path, "version": ".".join(map(str, ver)), "logged_in": ok, "login": line}
+    info.update(nha=nha, ten=TEN_NHA[nha], lenh="agy" if nha == "gemini" else "codex-cli")
+    return info
+
+
+def mo_ta_cli(info):
+    """Dòng đầu nhật ký: '🤖 GPT CLI: <đường dẫn> (codex-cli 0.163.0) — <đăng nhập>'."""
+    return (f"🤖 {info['ten']}: {info['path']} ({info['lenh']} {info['version']}) "
+            f"— {info['login']}")
 
 
 # ── Cài đặt model / mức cố gắng (tab 🤖 GPT CLI, 29/10/2026) ─────────────────
@@ -194,16 +240,20 @@ def _chuan_effort(value):
     return value if value in MUC_CO_GANG else ""
 
 
-def cai_dat():
+def cai_dat(nha="gpt"):
     """{"model", "effort"} ĐÃ LƯU ở tab 🤖 (trống = theo config.toml của codex)."""
+    if nha == "gemini":
+        return _gemini().cai_dat()
     d = _doc_pipe()
     return {"model": str(d.get(_KHOA_MODEL) or "").strip(),
             "effort": _chuan_effort(d.get(_KHOA_EFFORT))}
 
 
-def luu_cai_dat(model=None, effort=None):
+def luu_cai_dat(model=None, effort=None, nha="gpt"):
     """Ghi RIÊNG hai khoá gptcli_*, giữ nguyên mọi cài đặt khác trong file (như
     gemini_backend.set_backend). None = không đổi; "" = về mặc định config.toml."""
+    if nha == "gemini":
+        return _gemini().luu_cai_dat(model=model)
     d = _doc_pipe()
     if model is not None:
         d[_KHOA_MODEL] = str(model).strip()
@@ -230,9 +280,11 @@ def config_mac_dinh():
             "effort": str(d.get("model_reasoning_effort") or "").strip()}
 
 
-def danh_sach_model():
+def danh_sach_model(nha="gpt"):
     """Model tài khoản này dùng được, theo ~/.codex/models_cache.json mà codex tự tải
     (chỉ visibility "list"), xếp theo priority codex đề nghị. Không có file → []."""
+    if nha == "gemini":
+        return _gemini().danh_sach_model()
     try:
         d = json.loads((codex_home() / "models_cache.json").read_text(encoding="utf-8"))
         models = d.get("models") or []
@@ -254,9 +306,11 @@ def danh_sach_model():
     return out
 
 
-def hieu_luc():
+def hieu_luc(nha=None):
     """Model / mức cố gắng SẼ dùng cho lệnh kế và lấy từ đâu (tab 🤖 và nhật ký nói
     rõ): biến môi trường → ô cài đặt → config.toml → codex tự chọn."""
+    if nha_hien_tai(nha) == "gemini":
+        return _gemini().hieu_luc()
     saved, cfg = cai_dat(), config_mac_dinh()
     out = {}
     for k, ten_env in (("model", "OMNI_GPT_CLI_MODEL"), ("effort", "OMNI_GPT_CLI_EFFORT")):
@@ -271,20 +325,25 @@ def hieu_luc():
     return out
 
 
-def mo_ta_hieu_luc(hl=None):
+def mo_ta_hieu_luc(hl=None, nha=None):
     """Một dòng cho nhật ký: 'gpt-6.1-sol (ô cài đặt tab GPT CLI) · mức medium (…)'."""
-    hl = hl or hieu_luc()
+    if nha_hien_tai(nha) == "gemini":
+        return _gemini().mo_ta_hieu_luc(hl)
+    hl = hl or hieu_luc("gpt")
     return (f"{hl['model'] or 'model codex tự chọn'} ({hl['model_nguon']}) · "
             f"mức {hl['effort'] or 'mặc định'} ({hl['effort_nguon']})")
 
 
-def goi(prompt, timeout=None, on_log=None, model=None, effort=None):
+def goi(prompt, timeout=None, on_log=None, model=None, effort=None, nha=None):
     """Chạy MỘT lệnh `codex exec` với đề bài (qua stdin) → văn bản trả lời cuối cùng.
 
     Đề bài đi qua stdin (tham số `-`) nên không vướng giới hạn độ dài / ký tự lạ của
     dòng lệnh Windows. Trả lời lấy từ file `-o` (chỉ tin nhắn cuối của mô hình, không
     lẫn dòng tiến trình). Lỗi → GptCliError kèm đuôi stderr để người dùng thấy lý do
-    (chưa đăng nhập, model không hợp tài khoản, hết hạn mức...)."""
+    (chưa đăng nhập, model không hợp tài khoản, hết hạn mức...).
+    nha "gemini" (hoặc ô cách dịch đang là Gemini CLI) → một lệnh `agy -p` (dich_geminicli)."""
+    if nha_hien_tai(nha) == "gemini":
+        return _gemini().goi(prompt, timeout=timeout, on_log=on_log, model=model)
     path, _ = tim_codex()
     timeout = timeout or TIMEOUT
     if model is None:        # tham số → biến môi trường → ô cài đặt tab 🤖 → config.toml
@@ -358,19 +417,22 @@ class GptCliDriver:
     is_chrome_extension = False
     generating = False
 
-    def __init__(self, url="", on_log=None):
-        self.url = url or "gpt-cli://codex"
+    def __init__(self, url="", on_log=None, nha=None):
+        # nha chốt MỘT LẦN lúc tạo driver: đổi ô cách dịch giữa chừng không làm việc đang
+        # chạy nhảy sang CLI khác. Tab thử truyền nha rõ để thử CLI không phải cái đang chọn.
+        self.nha = nha_hien_tai(nha)
+        self.ten = TEN_NHA[self.nha]                 # "GPT CLI" / "Gemini CLI" — cho nhật ký
+        self.lenh = LENH_NHA[self.nha]
+        self.url = url or ("gemini-cli://agy" if self.nha == "gemini" else "gpt-cli://codex")
         self.instruction = ""
         self.context = ""
         self.calls = 0
-        self.info = kiem_tra()                       # không có codex → GptCliError
+        self.info = kiem_tra(self.nha)               # không có binary → GptCliError
         if on_log:
-            on_log(f"🤖 GPT CLI: {self.info['path']} (codex-cli {self.info['version']}) "
-                   f"— {self.info['login']}")
-            on_log(f"🎛 {mo_ta_hieu_luc()}")
+            on_log(mo_ta_cli(self.info))
+            on_log(f"🎛 {mo_ta_hieu_luc(nha=self.nha)}")
             if not self.info["logged_in"]:
-                on_log("⚠️ Có vẻ chưa đăng nhập: mở terminal chạy `codex login` (tài khoản "
-                       "ChatGPT). Vẫn thử gửi...")
+                on_log(f"⚠️ Có vẻ chưa đăng nhập: {CACH_DANG_NHAP[self.nha]}. Vẫn thử gửi...")
 
     @property
     def current_url(self):
@@ -412,27 +474,27 @@ class GptCliDriver:
         prompt = self.compose(text, prefix)
         self.calls += 1
         try:
-            return goi(prompt, timeout=timeout, on_log=on_log)
+            return goi(prompt, timeout=timeout, on_log=on_log, nha=self.nha)
         except GptCliError as e:
             if on_log:
-                on_log(f"⚠️ GPT CLI lỗi: {e} — thử lại một lần...")
-            return goi(prompt, timeout=timeout, on_log=on_log)
+                on_log(f"⚠️ {self.ten} lỗi: {e} — thử lại một lần...")
+            return goi(prompt, timeout=timeout, on_log=on_log, nha=self.nha)
 
 
-def main(argv=None):
+def main(argv=None, nha="gpt"):
     import argparse
     ap = argparse.ArgumentParser(
-        description="Gọi GPT CLI (codex exec) MỘT lần với đề bài đọc từ stdin.")
+        description=f"Gọi {TEN_NHA[nha]} ({LENH_NHA[nha]}) MỘT lần với đề bài đọc từ stdin.")
     ap.add_argument("--kiem-tra", action="store_true",
                     help="Chỉ báo binary / phiên bản / trạng thái đăng nhập rồi thoát.")
     a = ap.parse_args(argv)
     try:
-        info = kiem_tra()
+        info = kiem_tra(nha)
     except GptCliError as e:
         print(f"❌ {e}")
         return 1
-    print(f"🤖 {info['path']} (codex-cli {info['version']}) — {info['login']}")
-    print(f"🎛 {mo_ta_hieu_luc()}")
+    print(mo_ta_cli(info))
+    print(f"🎛 {mo_ta_hieu_luc(nha=nha)}")
     if a.kiem_tra:
         return 0 if info["logged_in"] else 1
     prompt = sys.stdin.read()
@@ -440,7 +502,7 @@ def main(argv=None):
         print("❌ Đề bài rỗng (đưa qua stdin).")
         return 1
     try:
-        print(goi(prompt, on_log=print))
+        print(goi(prompt, on_log=print, nha=nha))
     except GptCliError as e:
         print(f"❌ {e}")
         return 1

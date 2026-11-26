@@ -1,0 +1,38 @@
+{# TAB 🤖 CLI dịch của myvideo (26/11/2026) — GPT CLI + Gemini CLI trong MỘT tab.
+   Nội dung là NGUYÊN template của myvoice (myvoice/web/templates/gpt_cli.html — loader
+   của server tìm sang đó; "base.html" nó kế thừa vẫn là khung myvideo), nên sửa tab ở
+   một chỗ là cả hai bảng đổi. Ở đây chỉ thêm thứ myvideo chưa có: phần TỰ LƯU cho form
+   mang data-tuluu (bên myvoice nằm trong app.js) — đổi ô nào gửi cả form, ghi “✓ Đã lưu”
+   vào ô .luunote cùng khối rồi phát sự kiện mv:daluu cho cli_tab.js đọc lại thẻ trạng thái. #}
+{% extends "gpt_cli.html" %}
+{% block bodyclass %}rong p-cli{% endblock %}
+{% block content %}
+{{ super() }}
+<script>
+(() => {
+  let hen = null;
+  async function luu(form) {
+    const khoi = form.closest('.panel');
+    const note = khoi && khoi.querySelector('.luunote');
+    try {
+      const r = await fetch(form.dataset.tuluu, {
+        method: 'POST', body: new FormData(form), credentials: 'same-origin',
+        headers: { 'HX-Request': 'true' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      if (note) note.innerHTML = await r.text();
+      document.dispatchEvent(new CustomEvent('mv:daluu', { detail: { form } }));
+    } catch (e) {
+      if (note) note.textContent = '⚠️ Chưa lưu được: ' + e.message;
+    }
+  }
+  const bat = (e, ms) => {
+    const form = e.target.form;
+    if (!form || !form.dataset.tuluu || !e.target.name) return;
+    clearTimeout(hen);
+    hen = setTimeout(() => luu(form), ms);
+  };
+  document.addEventListener('change', e => bat(e, 0));
+  document.addEventListener('input', e => { if (e.target.type === 'text') bat(e, 600); });
+})();
+</script>
+{% endblock %}

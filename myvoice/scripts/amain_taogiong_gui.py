@@ -6977,6 +6977,10 @@ class App(tk.Tk):
     def _save_pipe_settings(self):
         """Lưu cài đặt quy trình hiện tại (auto + model/tốc độ) cho lần sau."""
         save_pipe_settings(dict(
+            # Nền = file đang lưu: giữ các khoá GUI không quản (gptcli_model / gptcli_effort /
+            # geminicli_model của hai tab CLI trên web) — trước 26/11/2026 bấm chạy ở GUI là
+            # mất model đã chọn ở tab 🤖 / ✨.
+            load_pipe_settings(),
             # Ô "Tải Bilibili" chỉ có trên web (GUI tải link bằng yt-dlp, không qua
             # Bili23) → chép lại giá trị đang lưu, kẻo bấm chạy ở GUI là web mất lựa chọn.
             bili_quality=chuan_bili_quality(load_pipe_settings().get("bili_quality")),

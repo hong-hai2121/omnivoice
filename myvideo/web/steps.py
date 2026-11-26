@@ -378,6 +378,10 @@ def _steps_for(keys: list[str], src: str, base: Path, s: dict,
             if s.get("offline"):
                 argv.append("--offline")
                 label = "② Dịch offline opus-mt (nháp)"
+            elif gemini_backend.saved_backend() == "gemini_cli":
+                # ✨ Ô "Gemini CLI" (26/11/2026): cùng đường --cli, lệnh gọi là agy.
+                argv.append("--gemini-cli")
+                label = "② Dịch Gemini CLI (agy) → SRT tiếng Việt"
             elif gemini_backend.saved_backend() == "cli":
                 # 🤖 Ô "GPT CLI" (lựa chọn thứ ba cạnh Extension/Firefox, dùng chung
                 # myvoice): chốt lúc xếp hàng đợi → --cli, không cần Chrome/Firefox;

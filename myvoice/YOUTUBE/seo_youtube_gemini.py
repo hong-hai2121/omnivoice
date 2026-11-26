@@ -213,7 +213,7 @@ def _open_chat(driver, log):
     đọng (driver dùng chung với bước dịch) để lệnh SEO chỉ mang đề bài SEO; không chờ."""
     if g._is_cli(driver):
         driver.get(NEW_CHAT_URL)
-        log("🤖 GPT CLI: đề bài SEO + đoạn trích đi chung MỘT lệnh codex exec (không mở chat, "
+        log(f"🤖 {g._ten_cli(driver)}: đề bài SEO + đoạn trích đi chung MỘT lệnh CLI (không mở chat, "
             "không chờ).")
         return True
     if SEO_NEW_CHAT:

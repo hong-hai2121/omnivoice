@@ -35,6 +35,9 @@ LƯU Ý: dùng đường Firefox (dự phòng hoặc chọn tay) thì Firefox đ
 --cli: dịch bằng GPT CLI (OpenAI Codex CLI `codex exec`, đăng nhập tài khoản
 ChatGPT một lần bằng `codex login`; lớp gọi ở myvoice/scripts/dich_gptcli.py). Không
 có --cli mà ô cách dịch dùng chung (gemini_backend) đang chọn "cli" thì cũng đi đường này.
+--gemini-cli (26/11/2026): cùng đường ấy nhưng lệnh gọi là Gemini CLI (Antigravity `agy`,
+tài khoản Google; lớp gọi ở myvoice/scripts/dich_geminicli.py) — ô cách dịch chọn
+"gemini_cli" thì cũng tự đi đường này.
 Không cần Chrome/Firefox, không cần giữ màn hình sáng. Khác Gemini ở chỗ CLI
 chỉ nhận MỘT lệnh rồi quên: không có hội thoại, không nhớ lời dặn hay lô trước —
 nên MỖI lô gửi lại trọn gói yêu cầu dịch (cùng luật với Gemini) + lời dặn riêng
@@ -578,23 +581,27 @@ def cli_prompt(lang, body, ngu_canh=()):
 CLI_LOI_LIEN_TIEP = 3      # lỗi gọi CLI ngần này lô liên tiếp thì dừng (hỏng cả đường)
 
 
-def translate_cli(texts, partial_path, batch_chars=1200, lang="zh"):
+def translate_cli(texts, partial_path, batch_chars=1200, lang="zh", nha=None):
     """Dịch qua GPT CLI (codex exec). Mỗi lô một lệnh, đề bài gửi lại trọn gói
     (cli_prompt); tiến độ + lượt bổ sung y như đường Gemini (TienDo). Trả list
     cùng độ dài (câu hỏng giữ nguyên tiếng gốc), hoặc None nếu không gọi được
-    CLI / không dịch được câu nào (để bước ③ không đọc nhầm tiếng gốc)."""
+    CLI / không dịch được câu nào (để bước ③ không đọc nhầm tiếng gốc).
+    nha: "gpt" (codex) | "gemini" (agy) | None = theo ô cách dịch — chốt một lần ở đây
+    cho cả lượt, đổi ô giữa chừng không làm các lô sau nhảy sang CLI khác."""
     import dich_gptcli as gc
 
+    nha = gc.nha_hien_tai(nha)
+    ten = gc.TEN_NHA[nha]
     try:
-        info = gc.kiem_tra()
+        info = gc.kiem_tra(nha)
     except gc.GptCliError as e:
         print(f"❌ {e}")
         return None
-    print(f"🤖 GPT CLI: {info['path']} (codex-cli {info['version']}) — {info['login']}")
-    print(f"🎛 {gc.mo_ta_hieu_luc()}")
+    print(gc.mo_ta_cli(info))
+    print(f"🎛 {gc.mo_ta_hieu_luc(nha=nha)}")
     if not info["logged_in"]:
-        print("⚠️ Có vẻ chưa đăng nhập: mở terminal chạy `codex login` (tài khoản "
-              "ChatGPT) rồi chạy lại. Vẫn thử gửi...")
+        print(f"⚠️ Có vẻ chưa đăng nhập: {gc.CACH_DANG_NHAP[nha]} rồi chạy lại. "
+              "Vẫn thử gửi...")
 
     td = TienDo(texts, partial_path, lang)
     n_total = len(texts)
@@ -612,15 +619,15 @@ def translate_cli(texts, partial_path, batch_chars=1200, lang="zh"):
             body = "\n".join(f"B[{i + 1}] {texts[i]}" for i in chunk)
             prompt = cli_prompt(lang, body, td.ngu_canh(chunk[0], NGU_CANH_SO_CAU))
             print(f"📤 Gửi lô {ci}/{len(chunks)} ({len(chunk)} câu, đề bài "
-                  f"{len(prompt)} ký tự) qua GPT CLI...")
+                  f"{len(prompt)} ký tự) qua {ten}...")
             try:
-                ans = gc.goi(prompt, on_log=print)
+                ans = gc.goi(prompt, on_log=print, nha=nha)
                 loi = 0
             except gc.GptCliError as e:
                 loi += 1
                 print(f"⚠️ Lô {ci} lỗi: {e}")
                 if loi >= CLI_LOI_LIEN_TIEP:
-                    print(f"❌ GPT CLI lỗi {loi} lô liên tiếp — dừng; tiến độ đã lưu, "
+                    print(f"❌ {ten} lỗi {loi} lô liên tiếp — dừng; tiến độ đã lưu, "
                           "sửa xong (đăng nhập / model / hạn mức) thì chạy lại là dịch tiếp.")
                     dung = True
                     break
@@ -633,7 +640,7 @@ def translate_cli(texts, partial_path, batch_chars=1200, lang="zh"):
             print(f"✅ Lô {ci}/{len(chunks)}: nhận {got}/{len(chunk)} câu "
                   f"— tổng {td.so_xong()}/{n_total}.")
     if td.so_xong() == 0:
-        print("❌ Không dịch được câu nào qua GPT CLI — không ghi file kết quả.")
+        print(f"❌ Không dịch được câu nào qua {ten} — không ghi file kết quả.")
         return None
     return td.ket_qua()
 
@@ -666,7 +673,7 @@ def _backend_cli():
     CLI? — để chạy lẻ `python dich_srt.py x.srt` cũng theo đúng lựa chọn trên web."""
     try:
         import gemini_backend
-        return gemini_backend.get_backend() == "cli"
+        return gemini_backend.la_cli()
     except Exception:
         return False
 
@@ -685,6 +692,9 @@ def main():
                         help="Dịch bằng GPT CLI (codex exec, tài khoản ChatGPT) thay vì "
                              "Gemini web: không cần trình duyệt; mỗi lô là MỘT lệnh riêng "
                              "nên toàn bộ yêu cầu dịch được gửi lại kèm từng lô.")
+    parser.add_argument("--gemini-cli", action="store_true",
+                        help="Như --cli nhưng gọi Gemini CLI (Antigravity `agy`, tài khoản "
+                             "Google) thay cho codex.")
     parser.add_argument("--offline", action="store_true",
                         help="Dịch bằng opus-mt offline (nhanh, thô) thay vì Gemini.")
     parser.add_argument("--batch", type=int, default=32,
@@ -718,9 +728,11 @@ def main():
               "Muốn giữ từng dòng thì thêm --giu-dong.")
     if args.offline:
         vi = translate_offline(texts, batch=args.batch, lang=lang)
-    elif args.cli or _backend_cli():
+    elif args.cli or args.gemini_cli or _backend_cli():
+        # Cờ gõ rõ thắng ô cách dịch; không cờ nào → translate_cli tự theo ô.
         vi = translate_cli(texts, stem + "_vi.partial.json",
-                           batch_chars=args.batch_chars, lang=lang)
+                           batch_chars=args.batch_chars, lang=lang,
+                           nha="gemini" if args.gemini_cli else "gpt" if args.cli else None)
     else:
         vi = translate_gemini(texts, stem + "_vi.partial.json",
                               batch_chars=args.batch_chars, lang=lang)
