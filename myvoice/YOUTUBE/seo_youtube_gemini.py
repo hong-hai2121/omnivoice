@@ -129,11 +129,18 @@ Viết một đoạn văn bản chứa các thẻ tag cách nhau bằng dấu ph
 ---
 
 ### 📝 BƯỚC 3: VIẾT MÔ TẢ VIDEO CHUẨN SEO
-Viết mô tả siêu rút gọn đúng 5 dòng theo cấu trúc sau (không thêm bớt dòng, không viết tràn lan):
-- Dòng 1 (bộ hashtag cố định): #MimiAudio #TruyenAudio #TruyenTamLyXaHoi #TruyenKichTinh #Audio
+Viết mô tả ĐẦY ĐỦ chuẩn SEO YouTube, dài 900 – 1.400 ký tự, dựa HOÀN TOÀN vào đoạn trích (đoạn mở đầu của kịch bản audio). Đúng cấu trúc và thứ tự sau, mỗi phần cách nhau một dòng trống:
+- Dòng 1 (bộ hashtag cố định, chép nguyên): #MimiAudio #TruyenAudio #TruyenTamLyXaHoi #TruyenKichTinh #Audio
 - Dòng 2: [Tiêu đề tốt nhất đã chọn ở Bước 1]
-- Dòng 3 & 4 (tóm tắt nội dung): 2 câu ngắn gọn, súc tích, mô tả tình huống kịch tính, nghẹt thở của truyện (TUYỆT ĐỐI KHÔNG dùng các từ "ngủ ngon", "giấc ngủ", "dễ ngủ").
-- Dòng 5 (kêu gọi hành động cố định): 👉 Đăng ký Mimi audio và bật chuông để nghe truyện mới mỗi ngày.
+- Phần MỞ ĐẦU (1 đoạn, 2 – 3 câu, khoảng 200 – 300 ký tự): kể lại đúng tình huống mở màn của kịch bản để người xem muốn nghe tiếp. Ngay câu đầu phải có tên nhân vật chính và từ khóa chính của truyện (thể loại + tình huống), viết tự nhiên như văn kể chuyện.
+- Phần NỘI DUNG (1 – 2 đoạn, tổng 4 – 7 câu, khoảng 450 – 750 ký tự): nêu rõ nhân vật là ai, bối cảnh, mâu thuẫn và những diễn biến ĐÃ XẢY RA trong đoạn trích, kết bằng một câu hỏi bỏ lửng về điều sắp tới. Lồng tự nhiên 4 – 6 cụm từ khóa người ta hay tìm (ví dụ: truyện audio, truyện full, tên thể loại, tên nhân vật, kênh Mimi audio).
+- Phần ĐIỂM NHẤN: dòng "🎧 Trong tập này:" rồi 3 gạch đầu dòng (mỗi dòng bắt đầu bằng "• ", dưới 90 ký tự), mỗi gạch là một tình tiết cụ thể có trong đoạn trích.
+- Dòng CUỐI (kêu gọi hành động cố định, chép nguyên, phải là dòng cuối cùng): 👉 Đăng ký Mimi audio và bật chuông để nghe truyện mới mỗi ngày.
+*Yêu cầu nghiêm ngặt cho mô tả:*
+- CHỈ dùng nhân vật, tên riêng và tình tiết CÓ THẬT trong đoạn trích; không bịa diễn biến, không đoán kết truyện, không tiết lộ điều đoạn trích chưa nói.
+- Không nhồi một dãy từ khóa rời rạc, không lặp lại tiêu đề quá 1 lần, không thêm hashtag nào ngoài dòng 1, không chèn link, không dùng ký tự "<" và ">".
+- TUYỆT ĐỐI KHÔNG dùng các từ "ngủ ngon", "giấc ngủ", "dễ ngủ".
+- Không ghi chú số ký tự, không đặt tên phần ("Mở đầu:", "Nội dung:") vào mô tả — chỉ in nội dung mô tả để dán thẳng lên YouTube.
 
 ---
 

@@ -3509,7 +3509,8 @@ class App(tk.Tk):
                            ("thumb",  "🖼  Thumb\nnail"),
                            ("copy",   "📑  Copy\nSEO"),
                            ("report", "📋  Tiến\nđộ"),
-                           ("recog",  "🎧  Nhận\ndiện")]:
+                           ("recog",  "🎧  Nhận\ndiện"),
+                           ("binhluan", "💬  Bình\nluận")]:
             b = ttk.Button(side, text=label, width=11,
                            command=lambda k=key: self._show_view(k))
             b.pack(fill="x", pady=(0, 8))
@@ -3583,6 +3584,23 @@ class App(tk.Tk):
         frame_recog.columnconfigure(0, weight=1)
         self._panels["recog"] = frame_recog
         self._recog_frame = frame_recog
+
+        # Panel 💬 Bình luận YouTube — lấy bình luận của kênh, Gemini CLI soạn trả lời
+        # (cần duyệt / không cần duyệt). Khung nằm ở scripts/binhluan_tab.py, lõi ở
+        # YOUTUBE/binh_luan.py (dùng chung với tab cùng tên của bảng web).
+        frame_bl = ttk.Frame(content)
+        frame_bl.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        frame_bl.rowconfigure(0, weight=1)
+        frame_bl.columnconfigure(0, weight=1)
+        self._panels["binhluan"] = frame_bl
+        self._binhluan_panel = None
+        try:
+            import binhluan_tab
+            self._binhluan_panel = binhluan_tab.BinhLuanPanel(frame_bl)
+            self._binhluan_panel.grid(row=0, column=0, sticky="nsew")
+        except Exception as e:      # thiếu thư viện Google… → tab báo lý do, app vẫn mở
+            ttk.Label(frame_bl, text=f"Không mở được tab Bình luận: {e}",
+                      style="Sub.TLabel").grid(row=0, column=0, sticky="nw")
 
         # ════════════════════════════════════════════════
         # PANEL pipeline — Quy trình tạo kịch bản (nhận diện → Gemini → SEO → input.txt)
@@ -4187,6 +4205,7 @@ class App(tk.Tk):
             "copy":   ("copyseo",),
             "report": ("report",),
             "recog":  ("recog",),
+            "binhluan": ("binhluan",),
         }[key]
         for name, fr in self._panels.items():
             if name in show:
@@ -4207,6 +4226,8 @@ class App(tk.Tk):
             self._refresh_copyseo()  # quét lại danh sách tập mỗi khi mở tab
         elif key == "recog":
             self._recog_refresh_table()  # cập nhật bảng trạng thái các tập
+        elif key == "binhluan" and getattr(self, "_binhluan_panel", None):
+            self._binhluan_panel.lam_moi()
         # Riêng tab "Tạo kịch bản": dàn 3 bước theo NGANG + hiện nhật ký, lấp đầy
         # chiều rộng. Ở Home/Giọng nói: pipeline là cột DỌC hẹp (như giao diện gốc).
         is_script = (key == "script")

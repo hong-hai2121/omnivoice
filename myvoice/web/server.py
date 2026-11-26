@@ -1957,6 +1957,84 @@ def page_seo(request: Request, tap: str = ""):
                  chosen=chosen, blocks=blocks)
 
 
+# ── Tab 💬 Bình luận YouTube (26/11/2026) ────────────────────────────────────
+# Lấy bình luận của kênh, nhờ Gemini CLI soạn câu trả lời, gửi trả lời. Toàn bộ việc
+# nằm ở YOUTUBE/binh_luan.QuanLy (GUI dùng chung); ở đây chỉ chuyển nút bấm thành lệnh
+# và trả state() cho static/binhluan.js vẽ.
+def _bl():
+    import binh_luan
+    return binh_luan
+
+
+def _bl_lenh(ham):
+    """Chạy một lệnh của QuanLy; lỗi nghiệp vụ → 400 kèm lý do để trang hiện ra."""
+    try:
+        ham()
+    except _bl().BinhLuanError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _bl().quan_ly().state()
+
+
+@app.get("/binhluan", response_class=HTMLResponse)
+def page_binhluan(request: Request):
+    bl = _bl()
+    return _page(request, "binhluan.html", active="binhluan", cd=bl.doc_cai_dat(),
+                 huong_dan_mac_dinh=bl.HUONG_DAN_MAC_DINH, so_luong_max=bl.SO_LUONG_MAX)
+
+
+@app.get("/api/binhluan")
+def api_binhluan():
+    return _bl().quan_ly().state()
+
+
+@app.post("/api/binhluan/tai")
+async def api_binhluan_tai(request: Request):
+    form = await request.form()
+    bl = _bl()
+    if form.get("so_luong"):
+        bl.luu_cai_dat(so_luong=form.get("so_luong"))
+    log("💬 Lấy bình luận YouTube của kênh — xem tab Bình luận.")
+    return _bl_lenh(lambda: bl.quan_ly().tai())
+
+
+@app.post("/api/binhluan/luu")
+async def api_binhluan_luu(request: Request):
+    """Tự lưu ô cài đặt của tab: chế độ duyệt / không duyệt, câu hướng dẫn, số lượng, lọc."""
+    form = await request.form()
+    bl = _bl()
+    moi = {k: form.get(k) for k in ("che_do", "so_luong", "huong_dan") if k in form}
+    for k in ("an_da_tra_loi", "bo_qua_emoji"):
+        if k in form:
+            moi[k] = str(form.get(k)) == "1"
+    bl.luu_cai_dat(**moi)
+    return bl.quan_ly().state()
+
+
+@app.post("/api/binhluan/traloi")
+async def api_binhluan_traloi(request: Request):
+    """🤖 Trả lời: Gemini CLI soạn. Chế độ (cần duyệt / không cần duyệt) lấy ĐÚNG ô đang
+    chọn trên trang lúc bấm — không cần duyệt thì soạn xong gửi luôn."""
+    form = await request.form()
+    cid, che_do = str(form.get("id") or ""), str(form.get("che_do") or "")
+    if che_do == "tu_dong":
+        log("💬 Trả lời bình luận KHÔNG cần duyệt — Gemini soạn xong sẽ gửi luôn.")
+    return _bl_lenh(lambda: _bl().quan_ly().tra_loi(cid, che_do))
+
+
+@app.post("/api/binhluan/gui")
+async def api_binhluan_gui(request: Request):
+    form = await request.form()
+    cid, text = str(form.get("id") or ""), str(form.get("text") or "")
+    return _bl_lenh(lambda: _bl().quan_ly().gui(cid, text))
+
+
+@app.post("/api/binhluan/bo")
+async def api_binhluan_bo(request: Request):
+    form = await request.form()
+    cid = str(form.get("id") or "")
+    return _bl_lenh(lambda: _bl().quan_ly().bo(cid))
+
+
 # ── Trang Đăng bài: hai khối đăng của Home trên một màn hình ────────────────
 @app.get("/dangbai", response_class=HTMLResponse)
 def page_post(request: Request):

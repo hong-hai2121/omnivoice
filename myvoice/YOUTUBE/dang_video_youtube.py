@@ -75,6 +75,9 @@ IMAGE_EXTS = [("Ảnh", "*.jpg *.jpeg *.png"), ("Tất cả", "*.*")]
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
+    # Đọc (và sau này trả lời/duyệt) bình luận: commentThreads.list trả 403
+    # insufficientPermissions nếu chỉ có hai quyền trên.
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 # Giới hạn của YouTube (để cảnh báo sớm trước khi gọi API).

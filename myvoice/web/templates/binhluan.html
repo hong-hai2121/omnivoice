@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{# Tab 💬 Bình luận YouTube (26/11/2026): lấy bình luận của kênh → 🤖 Trả lời (Gemini CLI
+   soạn) → cần duyệt thì hiện câu trả lời cho đọc/sửa rồi 📤 Gửi; không cần duyệt thì soạn
+   xong gửi luôn. Dữ liệu + việc nền: YOUTUBE/binh_luan.QuanLy; vẽ: static/binhluan.js. #}
+{% block title %}Bình luận YouTube — myvoice{% endblock %}
+
+{% block content %}
+<div class="pagehead">
+  <h1><span class="ico">💬</span> Bình luận YouTube</h1>
+  <p class="muted">Lấy bình luận mới nhất trên mọi video của kênh, nhờ <b>Gemini CLI</b> (<code>agy</code>) soạn
+     câu trả lời rồi gửi lên YouTube. Cần quyền bình luận trong token đăng nhập YouTube.</p>
+</div>
+
+<div class="bl-top">
+  {# ① Chế độ trả lời — tự lưu khi chọn. #}
+  <div class="panel" id="bl-chedo">
+    <div class="phead">
+      <span class="num">1</span><h2>Bấm 🤖 Trả lời thì…</h2>
+      <span class="luunote" id="bl-luunote"></span>
+    </div>
+    <div class="modes">
+      <label class="mode">
+        <input type="radio" name="che_do" value="duyet" {{ 'checked' if cd.che_do == 'duyet' }}>
+        <b>✋ Cần duyệt</b><span class="muted">Gemini soạn → câu trả lời hiện ra → bạn đọc, sửa rồi bấm 📤 Gửi</span>
+      </label>
+      <label class="mode">
+        <input type="radio" name="che_do" value="tu_dong" {{ 'checked' if cd.che_do == 'tu_dong' }}>
+        <b>⚡ Không cần duyệt</b><span class="muted">Gemini soạn xong là GỬI LUÔN lên YouTube, không hỏi lại</span>
+      </label>
+    </div>
+    <p class="hint" id="bl-chedo-note"></p>
+  </div>
+
+  {# ② Lấy danh sách. #}
+  <div class="panel" id="bl-lay">
+    <div class="phead">
+      <span class="num">2</span><h2>Danh sách bình luận</h2>
+      <span class="muted small" id="bl-kenh"></span>
+    </div>
+    <div class="grid">
+      <label class="field"><span>Lấy bao nhiêu bình luận mới nhất (tối đa {{ so_luong_max }})</span>
+        <input type="number" id="bl-soluong" min="1" max="{{ so_luong_max }}" value="{{ cd.so_luong }}"></label>
+    </div>
+    <div class="chks">
+      <label class="chk"><input type="checkbox" id="bl-an" {{ 'checked' if cd.an_da_tra_loi }}>
+        Chỉ hiện bình luận kênh CHƯA trả lời</label>
+      <label class="chk"><input type="checkbox" id="bl-boqua" {{ 'checked' if cd.bo_qua_emoji }}>
+        Bỏ qua bình luận chỉ có emoji / mốc giờ (Gemini không trả lời loại này)</label>
+    </div>
+    <div class="actions">
+      <button type="button" class="primary" id="bl-tai">📥 Lấy bình luận</button>
+      <span class="muted small" id="bl-status"></span>
+    </div>
+  </div>
+
+  {# ③ Câu hướng dẫn cho Gemini — tự lưu khi rời ô. #}
+  <div class="panel" id="bl-hd">
+    <div class="phead">
+      <span class="num">3</span><h2>Dặn Gemini trả lời thế nào</h2>
+      <span class="spacer"></span>
+      <button type="button" class="ghost" id="bl-hd-macdinh">↺ Về câu mặc định</button>
+    </div>
+    <textarea id="bl-huongdan" rows="5">{{ cd.huong_dan }}</textarea>
+    <p class="hint">Gửi kèm MỖI bình luận (Gemini CLI không nhớ gì giữa hai lệnh), cùng vài câu <b>kênh đã tự
+       trả lời trước đây</b> trong danh sách để Gemini bắt chước đúng giọng của bạn. Model dùng theo ô ở tab
+       <a href="/gemini-cli">🤖 CLI dịch → Gemini CLI</a>.</p>
+    <template id="bl-hd-goc">{{ huong_dan_mac_dinh }}</template>
+  </div>
+</div>
+
+<div class="panel" id="bl-bang">
+  <div class="phead">
+    <span class="num">4</span><h2>Bình luận</h2>
+    <span class="muted small" id="bl-dem"></span>
+  </div>
+  <div class="bl-loi warn" id="bl-loi" hidden></div>
+  <div class="bl-list" id="bl-list"><p class="empty">Chưa lấy danh sách — bấm <b>📥 Lấy bình luận</b> ở khối 2.</p></div>
+  <details class="hintmore"><summary>📜 Nhật ký</summary>
+    <pre class="copybox" id="bl-log">Chưa chạy.</pre></details>
+</div>
+
+<script src="/static/binhluan.js?v={{ asset_v() }}" defer></script>
+{% endblock %}
